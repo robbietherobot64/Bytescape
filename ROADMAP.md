@@ -62,26 +62,20 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Parity verification tooling**: Added consistency report metrics for total items, path coverage ratio, and canonical path mismatches.
 - [x] **Canary read rollout**: Added `BYTESCAPE_WILLOW_PATH_ONLY_READS` flag for source-filtered vault feed reads to run path-prefix-only without legacy fallback.
 
-## Phase 3: P2P Sync & Identity 🔗
-**Goal:** Prove the core differentiator—two devices syncing via Iroh.
-
-- [x] **Expose SyncManager**: Tauri commands for `create_doc`, `join_doc`, `send_message`.
-- [ ] **Two-Device Sync**: Verify doc sync between instances (use `test-peer/`).
-- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery.
-  - In progress: backend identity lifecycle + recovery commands added (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
-- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via Bluesky profile metadata.
-
-## Phase 4: Syndication & Connectors 📤🌐
+## Phase 3: Syndication & Connectors 📤🌐
 **Goal:** Safe posting to external networks + remaining connectors. Connectors matter once sharing exists.
 
 ### Syndication
-- [ ] **Syndication Backend**: `syndicate_item` command posts to Bluesky via `createRecord`.
+- [x] **Syndication Backend**: `syndicate_vault_item` command posts to Bluesky via `createRecord`.
+- [ ] **Full Post Box UI**:
+  - Text composition area.
+  - Media upload support (Images, Video).
+  - Pre-population logic for Vault items.
+- [ ] **Video Upload Support**: Implement video blob uploading to Bluesky PDS.
 - [ ] **"Post to Wall" UX**: 
-  - On import: Checkbox "Queue for posting" (default: unchecked)
-  - In vault: "Post to Wall" button on individual items or bulk selection
+  - In vault: "Syndicate" button triggers Post Box.
 - [ ] **Background Syndication Job**: Rate-limited processing of `PendingSyndication` items.
 - [ ] **"Memory" Post Type**: Research AT Protocol lexicon for archive/throwback semantics.
-- [ ] **Audience Circles**: User-defined groups (Close Friends, Family, Work) with P2P-only option.
 
 ### Connectors
 - [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
@@ -90,6 +84,15 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [ ] **Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions.
 - [ ] **Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs.
 - [ ] **Add `Instagram`, `Threads`, `Rss` variants to Source enum**: In `connectors/mod.rs`.
+
+## Phase 4: P2P Sync & Identity 🔗
+**Goal:** Prove the core differentiator—two devices syncing via Iroh.
+
+- [x] **Expose SyncManager**: Tauri commands for `create_doc`, `join_doc`, `send_message`.
+- [ ] **Two-Device Sync**: Verify doc sync between instances (use `test-peer/`).
+- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery.
+  - In progress: backend identity lifecycle + recovery commands added (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
+- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via Bluesky profile metadata.
 
 ## Phase 5: Profile Builder, Spatial Discovery & UI Polish 🗺️🎨
 **Goal:** Build the sovereign profile system, spatial graph-based discovery, the Aero-Skeuomorphic visual language, and MySpace-style profile personalization. The profile is the product.

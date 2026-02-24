@@ -119,6 +119,7 @@ pub fn run() {
             commands::media::backfill_media_mimes,
             commands::media::get_media_server_port,
             commands::syndicate::syndicate_vault_item,
+            commands::posting::publish_post_v2,
         ])
         .setup(|app| {
             // Initialize application state

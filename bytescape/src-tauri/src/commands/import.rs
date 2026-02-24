@@ -55,7 +55,7 @@ fn willow_item_kind(item_type: BytescapeType) -> &'static str {
     }
 }
 
-fn willow_path_for_item(source: &str, item_type: BytescapeType, timestamp: i64, id: &str) -> String {
+pub fn willow_path_for_item(source: &str, item_type: BytescapeType, timestamp: i64, id: &str) -> String {
     fn normalize_component(raw: &str) -> String {
         let cleaned = raw
             .trim()

@@ -1,28 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult, FeedEntry } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
-import { ComposeBox } from '../components/ComposeBox';
+import { ComposeBox, Attachment } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
+import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, customFeedUris } from '../hooks/useUnifiedFeed';
 
 interface FeedScreenProps {
     auth: AuthStatus | null;
 }
 
-import { useUnifiedFeed, FeedTab, LIVE_TABS, FEED_FILTER_ALL, customFeedUris } from '../hooks/useUnifiedFeed';
-
 export function FeedScreen({ auth }: FeedScreenProps) {
     // === UI Control State ===
     const [activeTab, setActiveTab] = useState<FeedTab>('all');
-    const [autoRefreshFeeds, setAutoRefreshFeeds] = useState(false);
+    const [autoRefreshFeeds] = useState(false);
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
-    const [composeText, setComposeText] = useState('');
-    const [postTarget] = useState<'local' | 'bluesky' | 'activitypub' | 'all'>('local');
     const [isPosting, setIsPosting] = useState(false);
     const [postStatus, setPostStatus] = useState<string>('');
+    const [syndicateTarget, setSyndicateTarget] = useState<FeedEntry | null>(null);
 
     // === Data Hook ===
     const {
@@ -58,37 +56,43 @@ export function FeedScreen({ auth }: FeedScreenProps) {
         const tag = hashtagInput.trim().replace(/^#/, '');
         if (!tag) return;
         try {
-            await invoke('save_hashtag', { tag });
+            const current = followedHashtags || [];
+            if (!current.includes(tag)) {
+                const refreshed = await invoke<string[]>('add_followed_hashtag', { hashtag: tag });
+                setFollowedHashtags(refreshed);
+            }
             setHashtagInput('');
-            const updated = await invoke<string[]>('list_followed_hashtags');
-            setFollowedHashtags(updated);
-            if (activeTab === 'hashtags') fetchFeed('hashtags', false);
         } catch (e) {
-            console.error('Failed to save hashtag:', e);
+            console.error('Failed to add hashtag:', e);
         }
     };
 
     const handleRemoveHashtag = async (tag: string) => {
         try {
-            await invoke('delete_hashtag', { tag });
-            const updated = await invoke<string[]>('list_followed_hashtags');
-            setFollowedHashtags(updated);
-            if (activeTab === 'hashtags') fetchFeed('hashtags', false);
+            const refreshed = await invoke<string[]>('remove_followed_hashtag', { hashtag: tag });
+            setFollowedHashtags(refreshed);
         } catch (e) {
             console.error('Failed to remove hashtag:', e);
         }
     };
 
-    const handlePublishPost = async () => {
-        const text = composeText.trim();
-        if (!text) return;
+    const handleSyndicateClick = useCallback((entry: FeedEntry) => {
+        setSyndicateTarget(entry);
+        setPostStatus('');
+    }, []);
 
+    const handlePublishPost = async (text: string, target: 'local' | 'bluesky' | 'activitypub' | 'all', attachments: Attachment[]) => {
         setIsPosting(true);
         setPostStatus('Publishing...');
         try {
-            const result = await invoke<PublishResult>('publish_post', {
+            const result = await invoke<PublishResult>('publish_post_v2', {
                 text,
-                destination: postTarget,
+                attachments: attachments.map(a => ({
+                    path: a.path,
+                    blob_hash: a.blob_hash,
+                    mime_type: a.mime_type
+                })),
+                destination: target,
             });
 
             const okTargets = [
@@ -101,7 +105,7 @@ export function FeedScreen({ auth }: FeedScreenProps) {
                 setPostStatus(`${okTargets ? `Posted to ${okTargets}. ` : ''}${result.errors[0]}`);
             } else {
                 setPostStatus(`✅ Posted to ${okTargets || 'selected destination'}`);
-                setComposeText('');
+                if (syndicateTarget) setSyndicateTarget(null);
                 fetchFeed(activeTab, false);
             }
         } catch (e: any) {
@@ -111,126 +115,89 @@ export function FeedScreen({ auth }: FeedScreenProps) {
         }
     };
 
-    // === Media Path Resolution ===
-    const [mediaDir, setMediaDir] = useState<string>("");
-    useEffect(() => {
-        invoke('get_media_dir').then((dir) => setMediaDir(dir as string));
-    }, []);
+    const resolveMediaPath = (src: string) => {
+        if (src.startsWith('http')) return src;
+        return src;
+    };
 
-    const resolveMediaPath = useCallback((path: string) => {
-        if (!path) return '';
-        if (path.startsWith('http') || path.startsWith('blob:') || path.startsWith('data:')) return path;
+    const mediaDir = '';
 
-        // Handle relative paths (media/filename)
-        // Similar logic to old feed, but simplified if backend is consistent now
-        if (mediaDir && !path.startsWith('/')) {
-            // Basic join logic
-            const filename = path.replace(/^media\//, ""); // remove prefix if present to avoid doubling
-            return convertFileSrc(`${mediaDir}/${filename}`);
-        }
-        return convertFileSrc(path);
-    }, [mediaDir]);
-
-
-    // === Render ===
     return (
         <div className="feed-layout">
-
-            {/* Main Content Area */}
             <div className="feed-main">
-
-                {/* Header / Tabs */}
+                {/* Fixed Header with Tabs */}
                 <div className="feed-header">
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
-                        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, whiteSpace: 'nowrap' }}>Home</h1>
-
-                        {/* Tabs */}
-                        <div className="tabs">
-                            {([
-                                ['all', 'All'],
-                                ['following', 'Following'],
-                                ['feeds', 'Feeds'],
-                                ['hashtags', '#Hashtags'],
-                                ['rss', 'RSS'],
-                                ['archives', 'Archives'],
-                            ] as [FeedTab, string][]).map(([tab, label]) => (
-                                <button
-                                    key={tab}
-                                    className={`tab ${activeTab === tab ? 'active' : ''}`}
-                                    onClick={() => setActiveTab(tab)}
-                                >
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
+                    <div className="tabs">
+                        {(['all', 'following', 'archives'] as FeedTab[]).map(tab => (
+                            <button
+                                key={tab}
+                                className={`tab ${activeTab === tab ? 'active' : ''}`}
+                                onClick={() => setActiveTab(tab)}
+                            >
+                                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                            </button>
+                        ))}
                     </div>
-
-                    <button className="btn btn-ghost btn-sm" onClick={() => fetchFeed(activeTab, false)}>
-                        Refresh
-                    </button>
+                    {isLoading && <div className="status-pill"><div className="dot online"></div> Syncing</div>}
                 </div>
 
-                {(LIVE_TABS.includes(activeTab) || activeTab === 'archives') && (
-                    <div style={{ padding: '0 16px 10px', fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                        <span>
-                            {activeTab === 'archives' ? 'Your imported content — read-only.' : 'Live view from connected networks.'}
-                        </span>
-                        {LIVE_TABS.includes(activeTab) && (
-                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                                <input
-                                    type="checkbox"
-                                    checked={autoRefreshFeeds}
-                                    onChange={e => setAutoRefreshFeeds(e.target.checked)}
-                                />
-                                Auto-refresh
-                            </label>
-                        )}
-                    </div>
-                )}
-
-                {/* Feed List */}
+                {/* Scrollable Center Area */}
                 <div className="feed-scroll-container">
+                    {/* Composition Area */}
+                    <div className="feed-compose">
+                        <ComposeBox
+                            onPublish={handlePublishPost}
+                            isPosting={isPosting}
+                            postStatus={postStatus}
+                        />
+                    </div>
 
-                    <ComposeBox
-                        onPublish={handlePublishPost}
-                        isPosting={isPosting}
-                        postStatus={postStatus}
-                    />
-
-                    {isLoading && <div style={{ textAlign: 'center', padding: 20 }}>Loading...</div>}
-
-                    {feedError && (
-                        <div className="card" style={{ margin: '12px 0', borderColor: 'rgba(239,68,68,0.4)' }}>
-                            <div style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {feedError}</div>
-                        </div>
-                    )}
-
-                    {activeTab === 'rss' && !isLoading && (
-                        <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
-                            <div style={{ fontSize: '2rem', marginBottom: 12 }}>📡</div>
-                            <div style={{ fontWeight: 600, marginBottom: 8 }}>RSS / Atom — coming soon</div>
-                            <div style={{ fontSize: '0.85rem' }}>Subscribe to any blog, newsletter, or Atom feed. Your subscriptions live in your Willow vault alongside everything else.</div>
-                        </div>
-                    )}
-
-                    {activeTab !== 'rss' && !isLoading && <FeedList entries={feedEntries} resolveMediaPath={resolveMediaPath} mediaDir={mediaDir} />}
-
-                    {!isLoading && feedEntries.length > 0 &&
-                        (activeTab === 'following' ? !!cursor : activeTab === 'archives' ? feedEntries.length < archiveTotal : false) && (
-                            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                                <button
-                                    className="btn btn-ghost"
-                                    onClick={handleLoadMore}
-                                    disabled={isFetchingMore}
-                                >
-                                    {isFetchingMore ? 'Loading...' : 'Load More'}
-                                </button>
+                    {/* Feed Content */}
+                    <div className="feed-list">
+                        {feedError && (
+                            <div className="card error" style={{ margin: '16px 0', padding: 16 }}>
+                                <div style={{ fontWeight: 600, marginBottom: 8 }}>Failed to load feed</div>
+                                <div style={{ fontSize: '0.9rem' }}>{feedError}</div>
+                                <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => fetchFeed(activeTab, true)}>Retry</button>
                             </div>
                         )}
+
+                        {isLoading && feedEntries.length === 0 && (
+                            <div className="empty-state">Loading latest posts...</div>
+                        )}
+
+                        {!isLoading && feedEntries.length === 0 && !feedError && (
+                            <div className="empty-state">
+                                <div className="empty-icon">🕸️</div>
+                                <div className="empty-title">Nothing here yet</div>
+                                <div className="empty-hint">Try switching tags or following more channels.</div>
+                            </div>
+                        )}
+
+                        {filterFacebookDuplicateImagePosts(feedEntries).map(entry => (
+                            <FeedEntryCard
+                                key={entry.id}
+                                entry={entry}
+                                resolveMediaPath={resolveMediaPath}
+                                mediaDir={mediaDir}
+                                onSyndicate={handleSyndicateClick}
+                            />
+                        ))}
+
+                        {isFetchingMore && (
+                            <div style={{ textAlign: 'center', padding: 20, opacity: 0.6 }}>Loading more archives...</div>
+                        )}
+
+                        {!isLoading && cursor && (
+                            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                                <button className="btn btn-ghost" onClick={handleLoadMore}>Load Older Posts</button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            {/* Right Context Panel (Desktop) */}
+            {/* Right Panel stays fixed on the right */}
             <FeedRightPanel
                 activeTab={activeTab}
                 followingList={followingList}
@@ -241,73 +208,39 @@ export function FeedScreen({ auth }: FeedScreenProps) {
                 hashtagInput={hashtagInput}
                 setHashtagInput={setHashtagInput}
                 handleAddHashtag={handleAddHashtag}
-                followedHashtags={followedHashtags}
+                followedHashtags={followedHashtags || []}
                 handleRemoveHashtag={handleRemoveHashtag}
                 archiveSourceFilter={archiveSourceFilter}
                 setArchiveSourceFilter={setArchiveSourceFilter}
                 vaultSources={vaultSources}
                 archiveTotal={archiveTotal}
             />
-        </div>
-    );
-}
 
-
-function FeedList({ entries, resolveMediaPath, mediaDir }: { entries: FeedEntry[], resolveMediaPath: (p: string) => string, mediaDir: string }) {
-    const visibleEntries = filterArchiveArtifacts(filterFacebookDuplicateImagePosts(entries));
-
-    if (visibleEntries.length === 0) {
-        return <div className="empty-state">No posts found.</div>;
-    }
-
-    return (
-        <div className="feed-list">
-            {visibleEntries.map(entry =>
-                <FeedEntryCard key={entry.id} entry={entry} resolveMediaPath={resolveMediaPath} mediaDir={mediaDir} />
+            {/* Syndication Modal */}
+            {syndicateTarget && (
+                <div className="modal-overlay" onClick={() => setSyndicateTarget(null)}>
+                    <div className="modal" style={{ maxWidth: 650, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ margin: 0 }}>Syndicate to Bluesky</h3>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setSyndicateTarget(null)} style={{ padding: '0 8px' }}>✕</button>
+                        </div>
+                        <div style={{ padding: 24 }}>
+                            <ComposeBox
+                                onPublish={handlePublishPost}
+                                isPosting={isPosting}
+                                postStatus={postStatus}
+                                initialText={syndicateTarget.content}
+                                initialAttachments={syndicateTarget.media_urls.map((url, i) => ({
+                                    blob_hash: url.startsWith('blob:') ? url : undefined,
+                                    path: !url.startsWith('blob:') ? url : undefined,
+                                    preview: url,
+                                    mime_type: syndicateTarget.media_mimes ? syndicateTarget.media_mimes[i] : undefined
+                                }))}
+                            />
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
 }
-
-function isLiveSource(source?: string): boolean {
-    const s = (source || '').toLowerCase();
-    return s === 'bluesky' || s === 'mastodon';
-}
-
-function looksLikeGifUrl(url?: string): boolean {
-    if (!url) return false;
-    const clean = url.toLowerCase().split('?')[0];
-    return clean.endsWith('.gif') || clean.includes('.gif#') || clean.includes('/gif/');
-}
-
-function isGroupSharePost(entry: FeedEntry): boolean {
-    const haystack = `${entry.title || ''} ${entry.content || ''}`.toLowerCase();
-    // e.g. "Rob shared a link in Ska Musicians group"
-    return /shared\s+(a\s+)?link\s+in\s+.+\s+group/.test(haystack);
-}
-
-function filterArchiveArtifacts(entries: FeedEntry[]): FeedEntry[] {
-    return entries.filter(entry => {
-        // Keep live network behavior untouched (including GIFs)
-        if (isLiveSource(entry.source)) return true;
-
-        const source = (entry.source || '').toLowerCase();
-
-        // Hide archived GIF posts/media artifacts in archive-derived sources.
-        if (source === 'facebook' || source === 'instagram') {
-            const hasGifMedia = (entry.media_urls || []).some(looksLikeGifUrl)
-                || (entry.media_thumbnails || []).some(looksLikeGifUrl)
-                || looksLikeGifUrl(entry.link_url || undefined);
-            if (hasGifMedia) return false;
-
-            // Hide group-share artifacts from public/main feed.
-            if (source === 'facebook' && isGroupSharePost(entry)) {
-                return false;
-            }
-        }
-
-        return true;
-    });
-}
-
-
