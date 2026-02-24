@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FeedEntry, TaggedPerson, PostLocation } from '../types';
+import { FeedEntry, TaggedPerson, PostLocation, SyndicationStatus } from '../types';
+import { invoke } from '@tauri-apps/api/core';
 import { SourceBadge } from './SourceBadge';
 import { BlobImage } from './BlobImage';
 import { VideoPlayer } from './VideoPlayer';
@@ -96,10 +97,35 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, isQuote = fal
     const hasMedia = entry.media_urls.length > 0;
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
-    const syndication = syndicationLabel(entry.syndication_status);
     const taggedPeople = parseTaggedPeople(entry.tagged_people);
     const location = parseLocation(entry.location);
     const tagLine = renderTaggedPeople(taggedPeople);
+
+    // --- Syndication state ---
+    const [isSyndicating, setIsSyndicating] = useState(false);
+    const [syndicateError, setSyndicateError] = useState<string | null>(null);
+    const [localSyndicationStatus, setLocalSyndicationStatus] = useState<string | undefined>(entry.syndication_status);
+    const [localSyndicatedUri, setLocalSyndicatedUri] = useState<string | undefined | null>(entry.syndicated_uri);
+
+    const handleSyndicate = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (isSyndicating) return;
+
+        setIsSyndicating(true);
+        setSyndicateError(null);
+        try {
+            console.log("FeedEntryCard: Syndicating item", entry.id);
+            const uri = await invoke<string>('syndicate_vault_item', { itemId: entry.id });
+            setLocalSyndicationStatus('Syndicated');
+            setLocalSyndicatedUri(uri);
+        } catch (err) {
+            console.error("Syndication failed:", err);
+            setLocalSyndicationStatus('LocalOnly');
+            setSyndicateError(typeof err === 'string' ? err : 'Publication failed');
+        } finally {
+            setIsSyndicating(false);
+        }
+    };
 
     const mediaSources = entry.media_urls.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
     const thumbnailSources = entry.media_thumbnails.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
@@ -109,6 +135,9 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, isQuote = fal
     const isGif = looksLikeGif(entry.link_url);
     const isPdfLink = !!(entry.link_url && entry.link_url.toLowerCase().includes('.pdf'));
     const externalHost = entry.link_url ? safeHostname(entry.link_url) : '';
+
+    const currentSyndication = syndicationLabel(localSyndicationStatus);
+    const canSyndicate = localSyndicationStatus === 'LocalOnly' && (entry.source !== 'bluesky' && entry.source !== 'rss');
 
     const openGallery = (index: number) => {
         setGalleryIndex(index);
@@ -172,15 +201,51 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, isQuote = fal
                 </div>
                 {!isQuote && (
                     <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {entry.syndication_status && (
-                            <span className={`syndication-badge ${syndication.className}`} title={syndication.text}>
-                                {syndication.emoji}
+                        {canSyndicate ? (
+                            <button
+                                className="syndicate-button"
+                                onClick={handleSyndicate}
+                                disabled={isSyndicating}
+                                title="Syndicate to Bluesky"
+                                style={{
+                                    background: 'var(--brand-primary)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    padding: '2px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: isSyndicating ? 'wait' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4
+                                }}
+                            >
+                                {isSyndicating ? '⏳' : '🌐'} Syndicat{isSyndicating ? 'ing...' : 'e'}
+                            </button>
+                        ) : entry.syndication_status && (
+                            <span className={`syndication-badge ${currentSyndication.className}`} title={currentSyndication.text}>
+                                {currentSyndication.emoji}
                             </span>
                         )}
                         <SourceBadge source={entry.source} />
                     </div>
                 )}
             </div>
+
+            {syndicateError && (
+                <div style={{ color: 'var(--error)', fontSize: '0.75rem', marginTop: 4, background: 'var(--error-surface)', padding: '4px 8px', borderRadius: 4 }}>
+                    ⚠️ {syndicateError}
+                </div>
+            )}
+
+            {localSyndicatedUri && (
+                <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
+                    <a href={localSyndicatedUri} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--brand-primary)', textDecoration: 'none' }}>
+                        🔗 View on Bluesky
+                    </a>
+                </div>
+            )}
 
             {/* Location badge */}
             {location && (

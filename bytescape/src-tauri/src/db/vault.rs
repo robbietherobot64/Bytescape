@@ -182,6 +182,29 @@ impl DbManager {
         })
     }
 
+    pub async fn get_item_by_id(&self, item_id: &str) -> Result<Option<BytescapeItem>, String> {
+        let db = self.db.lock().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        // Try direct lookup first (if key is the ID)
+        if let Some(val) = table.get(item_id).map_err(|e| e.to_string())? {
+            let item: BytescapeItem = serde_json::from_str(val.value()).map_err(|e| e.to_string())?;
+            return Ok(Some(item));
+        }
+
+        // Fallback: search values (rare cases where key is source:original_id)
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_, value) = row.map_err(|e| e.to_string())?;
+            let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+            if item.id == item_id {
+                return Ok(Some(item));
+            }
+        }
+
+        Ok(None)
+    }
+
     pub async fn list_items(&self) -> Result<Vec<BytescapeItem>, String> {
         let db = self.db.lock().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;

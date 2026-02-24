@@ -15,9 +15,9 @@ function normalizeBlobRef(value: string): string {
 
 export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
     const mediaUrls = post.video_url ? [post.video_url] : post.image_urls || [];
-    
+
     // If video_url is present, we know it's a video. Otherwise, image_urls are images.
-    const media_kinds = post.video_url 
+    const media_kinds = post.video_url
         ? ['video' as const]
         : (post.image_urls || []).map(_ => 'image' as const);
 
@@ -29,24 +29,24 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         author_handle: post.author_handle,
         author_avatar: post.author_avatar,
         source: 'bluesky',
-        
+
         media_urls: mediaUrls,
         media_thumbnails: post.video_thumbnail ? [post.video_thumbnail] : [],
         media_kinds,
-        
+
         link_url: post.external_url,
         link_title: post.external_title,
         link_description: post.external_description,
         link_thumbnail: post.external_thumb,
-        
+
         like_count: post.like_count,
         reply_count: post.reply_count,
         repost_count: post.repost_count,
-        
+
         reposted_by: post.reposted_by,
         reposted_by_handle: post.reposted_by_handle,
         quoted_post: post.quoted_post ? adaptBlueskyPost(post.quoted_post) : undefined,
-        
+
         item_type: 'Status',
         original_url: post.uri,
     };
@@ -55,10 +55,10 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
 export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
     const { text, link } = sanitizeVaultContent(item.content || '');
 
-    const media_urls = item.media_blobs && item.media_blobs.length > 0 
+    const media_urls = item.media_blobs && item.media_blobs.length > 0
         ? item.media_blobs.map(normalizeBlobRef)
         : item.media_paths || [];
-        
+
     const media_thumbnails = item.thumbnail_blobs && item.thumbnail_blobs.length > 0
         ? item.thumbnail_blobs.map(normalizeBlobRef)
         : [];
@@ -101,26 +101,27 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         author_handle: item.author_handle,
         author_avatar: item.author_avatar,
         source: item.source,
-        
+
         media_urls,
         media_thumbnails,
         media_kinds,
         media_mimes,
-        
+
         link_url: item.link_url || link,
         link_title: item.title,
         link_description: item.description,
         link_thumbnail: item.preview_img,
-        
+
         like_count: item.like_count,
         reply_count: item.reply_count,
         repost_count: item.repost_count,
-        
+
         item_type: item.item_type,
         syndication_status: item.syndication_status,
         location: item.location,
         tagged_people: item.tagged_people,
         title: item.title,
         original_url: item.url,
+        syndicated_uri: item.syndicated_uri,
     };
 }

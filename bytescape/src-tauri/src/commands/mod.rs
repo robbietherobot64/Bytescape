@@ -9,6 +9,7 @@ pub mod auth;
 pub mod import;
 pub mod media;
 pub mod feed_aggregation;
+pub mod syndicate;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
@@ -16,3 +17,4 @@ pub use vault::*;
 pub use auth::*;
 pub use import::*;
 pub use media::*;
+pub use syndicate::*;

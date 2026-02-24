@@ -148,6 +148,8 @@ pub struct BytescapeItem {
     pub media_mimes: Vec<String>,
     #[serde(default = "default_syndication_status")]
     pub syndication_status: SyndicationStatus,
+    #[serde(default)]
+    pub syndicated_uri: Option<String>,
 }
 
 pub fn default_item_type() -> BytescapeType {

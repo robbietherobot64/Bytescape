@@ -644,6 +644,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             thumbnail_blobs: vec![],
             media_mimes,
             syndication_status: SyndicationStatus::LocalOnly,
+            syndicated_uri: None,
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -774,6 +775,7 @@ async fn save_posts(
             thumbnail_blobs: vec![],
             media_mimes,
             syndication_status: SyndicationStatus::LocalOnly,
+            syndicated_uri: None,
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1536,6 +1538,7 @@ pub async fn publish_post(
                 thumbnail_blobs: vec![],
                 media_mimes: vec![],
                 syndication_status: SyndicationStatus::LocalOnly,
+                syndicated_uri: None,
             };
 
             match db.save_item(&item).await {
@@ -1597,7 +1600,7 @@ pub async fn publish_post(
                                 repost_count: None,
                                 quote_count: None,
                                 item_type: BytescapeType::Status,
-                                url: Some(uri),
+                                url: Some(uri.clone()),
                                 link_url: None,
                                 content_html: None,
                                 preview_img: None,
@@ -1605,6 +1608,7 @@ pub async fn publish_post(
                                 thumbnail_blobs: vec![],
                                 media_mimes: vec![],
                                 syndication_status: SyndicationStatus::Syndicated,
+                                syndicated_uri: Some(uri.clone()),
                             };
                             let _ = db.save_item(&item).await;
                         }

@@ -35,7 +35,7 @@ fn xrpc_from_access_jwt(access_jwt: &str) -> Option<String> {
     Some(format!("{}/xrpc", iss.trim_end_matches('/')))
 }
 
-fn authenticated_xrpc_candidates(access_jwt: &str, prefer_private: bool) -> Vec<String> {
+pub fn authenticated_xrpc_candidates(access_jwt: &str, prefer_private: bool) -> Vec<String> {
     let mut urls = Vec::new();
 
     if prefer_private {
@@ -75,7 +75,7 @@ impl<'a> BlueskyClient<'a> {
     /// Performs an authenticated request. If it fails with ExpiredToken, 
     /// it refreshes the JWT and retries the exact same request once.
     pub async fn get(&self, url: &str) -> std::result::Result<reqwest::Response, String> {
-        let mut access_jwt = self.state.keychain.get_access_jwt()
+        let access_jwt = self.state.keychain.get_access_jwt()
             .map_err(|e| format!("Keychain error: {}", e))?
             .ok_or_else(|| "No active session".to_string())?;
 
@@ -88,7 +88,6 @@ impl<'a> BlueskyClient<'a> {
             .map_err(|e| format!("Request failed: {}", e))?;
 
         if response.status() == reqwest::StatusCode::BAD_REQUEST {
-            // Read body to check for ExpiredToken
             let body_bytes = response.bytes().await.map_err(|e| e.to_string())?;
             let body_str = String::from_utf8_lossy(&body_bytes);
 
@@ -99,8 +98,6 @@ impl<'a> BlueskyClient<'a> {
                     .ok_or_else(|| "No refresh token available".to_string())?;
 
                 let new_session = self.state.auth_manager.refresh_session(refresh_jwt).await?;
-                
-                // Save new tokens
                 self.state.keychain.save_session(
                     new_session.did.clone(), 
                     new_session.handle.clone(), 
@@ -109,21 +106,91 @@ impl<'a> BlueskyClient<'a> {
                 ).map_err(|e| format!("Failed to save new session: {}", e))?;
 
                 println!("bluesky: Token refreshed successfully. Retrying request...");
-                access_jwt = new_session.access_jwt;
-
-                // Retry
                 response = self.client.get(url)
-                    .header("Authorization", format!("Bearer {}", access_jwt))
+                    .header("Authorization", format!("Bearer {}", new_session.access_jwt))
                     .send()
                     .await
                     .map_err(|e| format!("Retry request failed: {}", e))?;
             } else {
-                // Not an expired token error, reconstruct response from bytes for higher level logic
-                let _ = body_bytes; // Unused for now, the caller will fail on status
                 return Err(format!("Bad Request: {}", body_str));
             }
         }
+        Ok(response)
+    }
 
+    pub async fn post_blob(&self, url: &str, content_type: &str, bytes: Vec<u8>) -> std::result::Result<reqwest::Response, String> {
+        let access_jwt = self.state.keychain.get_access_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No active session".to_string())?;
+
+        let request_builder = self.client.post(url);
+        
+        let mut response = request_builder.try_clone().ok_or("Cannot clone request")?
+            .header("Authorization", format!("Bearer {}", access_jwt))
+            .header("Content-Type", content_type)
+            .body(bytes.clone())
+            .send()
+            .await
+            .map_err(|e| format!("Blob upload failed: {}", e))?;
+
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let body_bytes = response.bytes().await.map_err(|e| e.to_string())?;
+            let body_str = String::from_utf8_lossy(&body_bytes);
+
+            if body_str.contains("ExpiredToken") {
+                println!("bluesky: Token expired during blob upload. Attempting refresh...");
+                let refresh_jwt = self.state.keychain.get_refresh_jwt()
+                    .map_err(|e| format!("Keychain error: {}", e))?.unwrap_or_default();
+                let new_session = self.state.auth_manager.refresh_session(refresh_jwt).await?;
+                self.state.keychain.save_session(new_session.did.clone(), new_session.handle.clone(), new_session.access_jwt.clone(), new_session.refresh_jwt.clone()).ok();
+                
+                response = self.client.post(url)
+                    .header("Authorization", format!("Bearer {}", new_session.access_jwt))
+                    .header("Content-Type", content_type)
+                    .body(bytes)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Retry blob upload failed: {}", e))?;
+            } else {
+                return Err(format!("Bad Request (Blob): {}", body_str));
+            }
+        }
+        Ok(response)
+    }
+
+    pub async fn create_record(&self, url: &str, body: serde_json::Value) -> std::result::Result<reqwest::Response, String> {
+        let access_jwt = self.state.keychain.get_access_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No active session".to_string())?;
+
+        let mut response = self.client.post(url)
+            .header("Authorization", format!("Bearer {}", access_jwt))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Create record failed: {}", e))?;
+
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let body_bytes = response.bytes().await.map_err(|e| e.to_string())?;
+            let body_str = String::from_utf8_lossy(&body_bytes);
+
+            if body_str.contains("ExpiredToken") {
+                println!("bluesky: Token expired during record creation. Attempting refresh...");
+                let refresh_jwt = self.state.keychain.get_refresh_jwt()
+                    .map_err(|e| format!("Keychain error: {}", e))?.unwrap_or_default();
+                let new_session = self.state.auth_manager.refresh_session(refresh_jwt).await?;
+                self.state.keychain.save_session(new_session.did.clone(), new_session.handle.clone(), new_session.access_jwt.clone(), new_session.refresh_jwt.clone()).ok();
+                
+                response = self.client.post(url)
+                    .header("Authorization", format!("Bearer {}", new_session.access_jwt))
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Retry record creation failed: {}", e))?;
+            } else {
+                return Err(format!("Bad Request (Record): {}", body_str));
+            }
+        }
         Ok(response)
     }
 }

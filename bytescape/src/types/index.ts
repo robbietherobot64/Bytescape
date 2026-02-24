@@ -129,6 +129,7 @@ export interface FeedEntry {
     tagged_people?: string;
     title?: string | null;
     original_url?: string | null;
+    syndicated_uri?: string | null;
 }
 
 export interface BytescapeItem {
@@ -167,6 +168,7 @@ export interface BytescapeItem {
     media_mimes?: string[];
     // Syndication
     syndication_status?: SyndicationStatus;
+    syndicated_uri?: string | null;
 }
 
 export interface VaultStats {
