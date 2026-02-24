@@ -1,8 +1,8 @@
 use tauri::State;
-use serde::{Deserialize, Serialize};
+
 use serde_json::json;
 use crate::AppState;
-use crate::models::{BytescapeItem, SyndicationStatus};
+use crate::models::SyndicationStatus;
 use crate::connectors::bluesky::{BlueskyClient, authenticated_xrpc_candidates};
 use crate::sync::Hash;
 use data_encoding::BASE32_NOPAD;

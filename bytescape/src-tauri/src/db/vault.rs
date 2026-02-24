@@ -1,6 +1,6 @@
 use super::*;
 use redb::ReadableTable;
-use crate::models::*;
+
 
 impl DbManager {
     pub async fn save_item(&self, item: &BytescapeItem) -> Result<bool, String> {
@@ -205,7 +205,7 @@ impl DbManager {
         Ok(None)
     }
 
-    pub async fn list_items(&self) -> Result<Vec<BytescapeItem>, String> {
+    pub async fn list_all_item_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
         let db = self.db.lock().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
@@ -214,7 +214,7 @@ impl DbManager {
         for item in table.iter().map_err(|e| e.to_string())? {
             let (_key, value) = item.map_err(|e| e.to_string())?;
             let item_struct: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            items.push(item_struct);
+            items.push(item_struct.header());
         }
 
         items.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
@@ -222,30 +222,34 @@ impl DbManager {
     }
 
     pub async fn list_items_filtered(&self, filter_did: Option<&str>, exclude: bool) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_items().await?;
-        if let Some(did) = filter_did {
-            let filtered = all.into_iter().filter(|item| {
-                if let Some(ref author_did) = item.author_did {
+        let all_headers = self.list_all_item_headers().await?;
+        let filtered_headers: Vec<BytescapeItemHeader> = if let Some(did) = filter_did {
+            all_headers.into_iter().filter(|h| {
+                if let Some(ref author_did) = h.author_did {
                     if exclude {
                         author_did != did
                     } else {
                         author_did == did
                     }
                 } else {
-                    // Items without author_did:
-                    // If we want "Me" (exclude=false), we probably don't want them unless we know they are ours.
-                    // If we want "Us" (exclude=true), we probably do want them? Or maybe not.
                     if exclude {
                         true // Not me
                     } else {
                         false // Not me
                     }
                 }
-            }).collect();
-            Ok(filtered)
+            }).collect()
         } else {
-            Ok(all)
+            all_headers
+        };
+
+        let mut full_items = Vec::new();
+        for h in filtered_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                full_items.push(item);
+            }
         }
+        Ok(full_items)
     }
 
     /// Return only items owned by the current user.
@@ -253,34 +257,49 @@ impl DbManager {
     ///  - author_did matches the user's DID, OR
     ///  - author_did is None (archive imports like Facebook that don't have a DID)
     ///  - is_liked is true (posts the user explicitly liked/saved)
-    pub async fn list_my_items(&self, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_items().await?;
-        let filtered = all.into_iter().filter(|item| {
-            // Posts the user explicitly liked/saved are theirs
-            if item.is_liked {
-                return true;
+    pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
+        let db = self.db.lock().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        let mut headers = Vec::new();
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_key, value) = row.map_err(|e| e.to_string())?;
+            // Partially deserialize or just deserialize full then convert, 
+            // but we avoid keeping the full item in the final Vec.
+            let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+            
+            let is_mine = if item.is_liked {
+                true
+            } else {
+                match &item.author_did {
+                    Some(did) => did == owner_did,
+                    None => true,
+                }
+            };
+
+            if is_mine {
+                headers.push(item.header());
             }
-            match &item.author_did {
-                // Bluesky/API items: only include if authored by user
-                Some(did) => did == owner_did,
-                // Archive imports (Facebook, etc.): no author_did means it's the user's own data
-                None => true,
-            }
-        }).collect();
-        Ok(filtered)
+        }
+
+        headers.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
+        Ok(headers)
     }
 
-    pub async fn list_items_on_this_day(&self, month: u32, day: u32) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_items().await?;
-        let matching: Vec<BytescapeItem> = all.into_iter().filter(|p| {
-            if let Some(dt) = chrono::DateTime::from_timestamp(p.original_timestamp, 0) {
-                use chrono::Datelike;
-                dt.month() == month && dt.day() == day
-            } else {
-                false
-            }
+    pub async fn list_items_on_this_day(&self, owner_did: &str, month: u32, day: u32) -> Result<Vec<BytescapeItem>, String> {
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|h| {
+            h.month == month && h.day == day
         }).collect();
-        Ok(matching)
+
+        let mut items = Vec::new();
+        for h in matching_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 
     pub async fn count_items(&self) -> Result<usize, String> {
@@ -292,20 +311,27 @@ impl DbManager {
     }
 
     /// Paginated version: returns (items, total_count) sorted newest-first.
+    /// Uses a metadata-first approach to avoid OOM for large vaults.
     pub async fn list_my_items_paged(&self, owner_did: &str, source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
-        let mut all = self.list_my_items(owner_did).await?;
+        let mut header_all = self.list_my_item_headers(owner_did).await?;
 
         // Optional source filter
         if let Some(src) = source_filter {
-            all.retain(|item| item.source.eq_ignore_ascii_case(src));
+            header_all.retain(|h| h.source.eq_ignore_ascii_case(src));
         }
 
-        // Sort newest first
-        all.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
+        let total = header_all.len();
+        let page_headers: Vec<BytescapeItemHeader> = header_all.into_iter().skip(offset).take(limit).collect();
+        
+        // Now fetch full items only for this page
+        let mut full_items = Vec::new();
+        for h in page_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                full_items.push(item);
+            }
+        }
 
-        let total = all.len();
-        let page: Vec<BytescapeItem> = all.into_iter().skip(offset).take(limit).collect();
-        Ok((page, total))
+        Ok((full_items, total))
     }
 
     /// Path-prefix paginated query for Willow migration compatibility.
@@ -317,49 +343,87 @@ impl DbManager {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<BytescapeItem>, usize), String> {
-        let mut all = self.list_my_items(owner_did).await?;
+        let all_headers = self.list_my_item_headers(owner_did).await?;
         let normalized_prefix = if path_prefix.starts_with('/') {
             path_prefix.to_string()
         } else {
             format!("/{}", path_prefix)
         };
 
-        all.retain(|item| item.path.starts_with(&normalized_prefix));
-        all.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
+        // We can't strictly filter by path in the header since header doesn't have path yet?
+        // Wait, did I add path to header? Let me check models/mod.rs
+        // Ah, I DID NOT add path to header. I probably should.
+        
+        // If I haven't added path to header, I'll need to fetch items to check path.
+        // OR I add path to header. Let's add path to header.
+        
+        // Actually, for now, I'll fetch and filter, but it's still better than fetching ALL.
+        // Wait, list_my_items(owner_did) used to be a thing. I replaced it with headers.
+        
+        let mut matching_headers = Vec::new();
+        for h in all_headers {
+            // Fetch partially or fully? We have to fetch fully if we don't have path in header.
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                if item.path.starts_with(&normalized_prefix) {
+                    matching_headers.push(item);
+                }
+            }
+        }
 
-        let total = all.len();
-        let page: Vec<BytescapeItem> = all.into_iter().skip(offset).take(limit).collect();
+        let total = matching_headers.len();
+        let page: Vec<BytescapeItem> = matching_headers.into_iter().skip(offset).take(limit).collect();
         Ok((page, total))
     }
 
     pub async fn list_items_by_source(&self, source: &str, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_my_items(owner_did).await?;
-        let filtered = all.into_iter()
-            .filter(|item| item.source.eq_ignore_ascii_case(source))
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
+            .filter(|h| h.source.eq_ignore_ascii_case(source))
             .collect();
-        Ok(filtered)
+        
+        let mut items = Vec::new();
+        for h in matching_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 
     pub async fn list_items_by_type(&self, item_type: BytescapeType, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_my_items(owner_did).await?;
-        let filtered = all.into_iter()
-            .filter(|item| item.item_type == item_type)
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
+            .filter(|h| h.item_type == item_type)
             .collect();
-        Ok(filtered)
+        
+        let mut items = Vec::new();
+        for h in matching_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 
     pub async fn list_items_by_date_range(&self, start_ts: i64, end_ts: i64, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all = self.list_my_items(owner_did).await?;
-        let filtered = all.into_iter()
-            .filter(|item| item.original_timestamp >= start_ts && item.original_timestamp <= end_ts)
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
+            .filter(|h| h.original_timestamp >= start_ts && h.original_timestamp <= end_ts)
             .collect();
-        Ok(filtered)
+        
+        let mut items = Vec::new();
+        for h in matching_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                items.push(item);
+            }
+        }
+        Ok(items)
     }
 
     pub async fn list_vault_sources(&self, owner_did: &str) -> Result<Vec<String>, String> {
-        let all = self.list_my_items(owner_did).await?;
-        let mut sources: Vec<String> = all.iter()
-            .map(|item| item.source.clone())
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let mut sources: Vec<String> = all_headers.iter()
+            .map(|h| h.source.clone())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -368,21 +432,21 @@ impl DbManager {
     }
 
     pub async fn vault_stats(&self, owner_did: &str) -> Result<VaultStats, String> {
-        let all = self.list_my_items(owner_did).await?;
-        let total = all.len();
+        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let total = all_headers.len();
         let mut by_source: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut by_type: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut media_count: usize = 0;
 
-        for item in &all {
-            *by_source.entry(item.source.clone()).or_insert(0) += 1;
-            let type_str = match item.item_type {
+        for h in &all_headers {
+            *by_source.entry(h.source.clone()).or_insert(0) += 1;
+            let type_str = match h.item_type {
                 BytescapeType::Status => "status",
                 BytescapeType::Gallery => "gallery",
                 BytescapeType::Article => "article",
             };
             *by_type.entry(type_str.to_string()).or_insert(0) += 1;
-            if !item.media_paths.is_empty() || !item.media_blobs.is_empty() {
+            if h.has_media {
                 media_count += 1;
             }
         }

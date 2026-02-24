@@ -152,6 +152,44 @@ pub struct BytescapeItem {
     pub syndicated_uri: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BytescapeItemHeader {
+    pub id: String,
+    pub original_timestamp: i64,
+    pub source: String,
+    pub author_did: Option<String>,
+    pub item_type: BytescapeType,
+    pub is_liked: bool,
+    pub has_media: bool,
+    pub media_blob_count: usize,
+    pub media_mimes_count: usize,
+    pub month: u32,
+    pub day: u32,
+}
+
+impl BytescapeItem {
+    pub fn header(&self) -> BytescapeItemHeader {
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(self.original_timestamp, 0)
+            .unwrap_or_else(|| chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap());
+        
+        use chrono::Datelike;
+
+        BytescapeItemHeader {
+            id: self.id.clone(),
+            original_timestamp: self.original_timestamp,
+            source: self.source.clone(),
+            author_did: self.author_did.clone(),
+            item_type: self.item_type,
+            is_liked: self.is_liked,
+            has_media: !self.media_paths.is_empty() || !self.media_blobs.is_empty(),
+            media_blob_count: self.media_blobs.len(),
+            media_mimes_count: self.media_mimes.len(),
+            month: dt.month(),
+            day: dt.day(),
+        }
+    }
+}
+
 pub fn default_item_type() -> BytescapeType {
     BytescapeType::Status
 }

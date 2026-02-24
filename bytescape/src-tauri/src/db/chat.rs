@@ -1,6 +1,6 @@
 use super::*;
 use redb::ReadableTable;
-use crate::models::*;
+
 
 impl DbManager {
     pub async fn save_message(&self, msg: &Message) -> Result<(), String> {

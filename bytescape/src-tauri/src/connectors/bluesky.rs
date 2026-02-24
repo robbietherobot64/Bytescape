@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::connectors::Source;
 use crate::sync::SyncManager;
 use crate::AppState;
-use tauri::State;
+
 
 const PUBLIC_XRPC: &str = "https://bsky.social/xrpc";
 const PLC_DIRECTORY: &str = "https://plc.directory";
@@ -1319,7 +1319,7 @@ pub async fn get_saved_feeds(
     }
 
     // 3. Resolve Feed Generators (best effort, tolerant to partial/invalid feeds)
-    let feeds_url = format!("{}/app.bsky.feed.getFeedGenerators", PUBLIC_XRPC);
+    // let feeds_url = format!("{}/app.bsky.feed.getFeedGenerators", PUBLIC_XRPC);
     let mut resolved_feeds: Vec<GeneratorView> = Vec::new();
 
     // Query in small batches to avoid 400/414 from a single bad URI poisoning all results.

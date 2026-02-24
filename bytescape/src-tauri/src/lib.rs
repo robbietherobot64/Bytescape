@@ -208,14 +208,22 @@ pub fn run() {
                     };
                     drop(sync_guard2);
 
-                    let items = match db.list_items().await {
-                        Ok(items) => items,
+                    let item_headers = match db.list_all_item_headers().await {
+                        Ok(headers) => headers,
                         Err(_) => return,
                     };
                     let mut updated = 0usize;
-                    for mut item in items {
-                        if item.media_blobs.is_empty() { continue; }
-                        if item.media_mimes.len() == item.media_blobs.len() { continue; }
+                    for h in item_headers {
+                        // Lightweight check before full fetch
+                        if h.media_blob_count == 0 { continue; }
+                        if h.media_blob_count == h.media_mimes_count { continue; }
+
+                        // Fetch full item only if it needs backfill
+                        let mut item = match db.get_item_by_id(&h.id).await {
+                            Ok(Some(item)) => item,
+                            _ => continue,
+                        };
+
                         let mut mimes = Vec::with_capacity(item.media_blobs.len());
                         for blob_ref in &item.media_blobs {
                             let mut hash_str = blob_ref.trim().to_string();

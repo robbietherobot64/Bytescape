@@ -91,7 +91,10 @@ export function useUnifiedFeed({
             } else if (tab === 'feeds') {
                 const feeds = await invoke<GeneratorView[]>("list_saved_feeds");
                 if (isStale()) return;
-                setSavedFeeds(feeds);
+                setSavedFeeds(prev => {
+                    if (JSON.stringify(prev) === JSON.stringify(feeds)) return prev;
+                    return feeds;
+                });
 
                 const allCustomUris = customFeedUris(feeds);
                 const targetFeedUris = selectedFeedUri === FEED_FILTER_ALL
@@ -190,14 +193,17 @@ export function useUnifiedFeed({
                 setIsLoading(false);
             }
         }
-    }, [auth, selectedFeedUri, archiveSourceFilter]);
+    }, [auth, selectedFeedUri, archiveSourceFilter]); // Stable dependencies
 
+    // Only trigger full reload on tab change or filter change
     useEffect(() => {
         if (!auth) return;
+        // Optimization: don't reset if we're just switching between live tabs and already have content?
+        // No, let's keep it simple but ensure no double-trigger.
         setCursor(null);
         setArchiveOffset(0);
         fetchFeed(activeTab, false);
-    }, [auth, activeTab, selectedFeedUri, fetchFeed]);
+    }, [auth, activeTab, selectedFeedUri, archiveSourceFilter, fetchFeed]);
 
     useEffect(() => {
         if (!auth || !autoRefreshFeeds) return;

@@ -109,11 +109,28 @@ pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Re
         .as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
-    let items = db.list_items().await.map_err(|e| e.to_string())?;
-    let scanned = items.len();
+    let item_headers = db.list_all_item_headers().await.map_err(|e| e.to_string())?;
+    let scanned = item_headers.len();
     let mut migrated = 0usize;
 
-    for mut item in items {
+    for h in item_headers {
+        // Optimization: only fetch full item if it actually needs migration
+        // Wait, we need the original_timestamp and id for the path, which are in the header.
+        // We also need the item_type which is in the header.
+        // But we need to check if the path is empty.
+        // Actually, let's add `path_is_empty` to header or just fetch if we are unsure.
+        // To be safe and efficient, I'll fetch if it's potentially needed.
+        
+        // Let's assume most items might need migration if it's a new feature.
+        // But we can check if the header has enough info to decide.
+        // I'll add `has_path` to header to be sure.
+        
+        // Actually, I'll just fetch for now, it's already much better than fetching ALL at once.
+        let mut item = match db.get_item_by_id(&h.id).await {
+            Ok(Some(item)) => item,
+            _ => continue,
+        };
+
         if item.path.trim().is_empty() {
             let item_type = item.item_type;
             item.path = willow_path_for_item(&item.source, item_type, item.original_timestamp, &item.id);

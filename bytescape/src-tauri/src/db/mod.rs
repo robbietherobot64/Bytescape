@@ -1,5 +1,5 @@
 use redb::{Database, TableDefinition, ReadableTable, ReadableDatabase, ReadableTableMetadata};
-use serde::{Deserialize, Serialize};
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::path::PathBuf;

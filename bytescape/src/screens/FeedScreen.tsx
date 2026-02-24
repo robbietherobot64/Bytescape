@@ -46,9 +46,13 @@ export function FeedScreen({ auth }: FeedScreenProps) {
     });
 
     useEffect(() => {
-        const uris = customFeedUris(savedFeeds);
-        if (selectedFeedUri !== FEED_FILTER_ALL && !uris.includes(selectedFeedUri)) {
-            setSelectedFeedUri(FEED_FILTER_ALL);
+        // Only run reset if we actually have feeds loaded and current selection is invalid
+        if (savedFeeds.length > 0 && selectedFeedUri !== FEED_FILTER_ALL) {
+            const uris = customFeedUris(savedFeeds);
+            if (!uris.includes(selectedFeedUri)) {
+                console.log('FeedScreen: Selected feed no longer available, resetting to Global Timeline');
+                setSelectedFeedUri(FEED_FILTER_ALL);
+            }
         }
     }, [savedFeeds, selectedFeedUri]);
 

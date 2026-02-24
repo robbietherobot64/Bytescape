@@ -70,8 +70,8 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     *state.sync_manager.lock().await = Some(sync_manager);
 
     // Spawn background P2P listener
-    let db_manager_arc = state.db_manager.clone();
-    let app_handle = state.app_handle.clone();
+    // let db_manager_arc = state.db_manager.clone();
+    // let app_handle = state.app_handle.clone();
 
     /* 
     // TODO: This loop steals connections from Iroh DocsEngine. 

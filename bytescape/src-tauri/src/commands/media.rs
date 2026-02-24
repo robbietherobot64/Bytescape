@@ -414,17 +414,20 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
     };
     drop(sync_guard);
 
-    let items = db.list_items().await.map_err(|e| e.to_string())?;
+    let item_headers = db.list_all_item_headers().await.map_err(|e| e.to_string())?;
     let mut updated = 0usize;
 
-    for mut item in items {
-        // Skip items that already have correct MIME metadata
-        if !item.media_blobs.is_empty() && item.media_mimes.len() == item.media_blobs.len() {
+    for h in item_headers {
+        // Skip items that already have correct MIME metadata based on header info
+        if h.media_blob_count == 0 || h.media_mimes_count == h.media_blob_count {
             continue;
         }
-        if item.media_blobs.is_empty() {
-            continue;
-        }
+
+        // Fetch full item to perform backfill
+        let mut item = match db.get_item_by_id(&h.id).await {
+            Ok(Some(item)) => item,
+            _ => continue,
+        };
 
         let mut mimes = Vec::with_capacity(item.media_blobs.len());
         for blob_ref in &item.media_blobs {
@@ -452,13 +455,13 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
                     Err(_) => {
                         // Fall back to path hint if available
                         let idx = mimes.len();
-                        let hint = item.media_paths.get(idx).map(|s| s.as_str()).unwrap_or("");
+                        let hint = item.media_paths.get(idx).map(|s: &String| s.as_str()).unwrap_or("");
                         mimes.push(mime_from_path_hint(hint));
                     }
                 }
             } else {
                 let idx = mimes.len();
-                let hint = item.media_paths.get(idx).map(|s| s.as_str()).unwrap_or("");
+                let hint = item.media_paths.get(idx).map(|s: &String| s.as_str()).unwrap_or("");
                 mimes.push(mime_from_path_hint(hint));
             }
         }
