@@ -1,0 +1,23 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+build/
+.env
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Bytescape specific
+bytescape/src-tauri/target/
+bytescape/test-peer/target/
+instagram-gostaticband-*/
+facebook-*/
+.agent/
+fix_summary.md

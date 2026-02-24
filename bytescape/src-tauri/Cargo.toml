@@ -1,0 +1,64 @@
+[package]
+name = "bytescape"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+default-run = "bytescape"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "bytescape_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+willow = ["dep:willow_25"]
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+getrandom = { version = "0.2", features = ["js"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+iroh = { version = "0.96.1", features = ["address-lookup-pkarr-dht"] }
+iroh-docs = "0.96.0"
+iroh-blobs = "0.98.0"
+iroh-gossip = "0.96.0"
+irpc = "0.12.0"
+pkarr = "5.0.2"
+tokio = { version = "1.49.0", features = ["full"] }
+anyhow = "1.0.101"
+thiserror = "2.0"
+url = "2.5.8"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+hex = { version = "0.4.3", features = ["serde"] }
+rand = "0.9"
+dirs = "6.0.0"
+redb = "3.1.0"
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
+bytes = "1"
+zip = "4"
+scraper = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+md5 = "0.8.0"
+urlencoding = "2.1.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+data-encoding = "2.10"
+willow_25 = { version = "0.1.1", optional = true }
+
+[dev-dependencies]
+tempfile = "3.10"
+zip = "4"

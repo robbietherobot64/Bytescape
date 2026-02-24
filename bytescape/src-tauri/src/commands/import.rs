@@ -1,0 +1,1683 @@
+//! Data Import Commands
+//! 
+//! Commands for importing data from external sources (Facebook, Bluesky).
+
+use serde::{Deserialize, Serialize};
+use data_encoding::BASE32_NOPAD;
+use tauri::{State, Emitter, Manager};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use chrono::Datelike;
+
+#[cfg(feature = "willow")]
+use willow_25::{MCC25, MCL25, MPL25};
+
+#[cfg(not(feature = "willow"))]
+const MCL25: usize = 1024;
+#[cfg(not(feature = "willow"))]
+const MCC25: usize = 1024;
+#[cfg(not(feature = "willow"))]
+const MPL25: usize = 1024;
+
+use crate::error::BytescapeError;
+use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport};
+use crate::connectors::{Source, facebook};
+use crate::sync::{Hash, SyncManager};
+use crate::AppState;
+
+/// Response from parsing a Facebook ZIP export
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ParseResult {
+    pub posts: Vec<facebook::ParsedPost>,
+    pub trackers: Vec<facebook::TrackerEntry>,
+    pub total_photos: usize,
+    pub total_videos: usize,
+    pub total_tracker_events: usize,
+    #[serde(default)]
+    pub source: String,
+}
+
+#[derive(Serialize)]
+pub struct PublishResult {
+    pub local: bool,
+    pub bluesky: bool,
+    pub activitypub: bool,
+    pub bluesky_uri: Option<String>,
+    pub errors: Vec<String>,
+}
+
+fn willow_item_kind(item_type: BytescapeType) -> &'static str {
+    match item_type {
+        BytescapeType::Status => "status",
+        BytescapeType::Gallery => "gallery",
+        BytescapeType::Article => "article",
+    }
+}
+
+fn willow_path_for_item(source: &str, item_type: BytescapeType, timestamp: i64, id: &str) -> String {
+    fn normalize_component(raw: &str) -> String {
+        let cleaned = raw
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect::<String>();
+
+        if cleaned.len() > MCL25 {
+            cleaned[..MCL25].to_string()
+        } else if cleaned.is_empty() {
+            "unknown".to_string()
+        } else {
+            cleaned
+        }
+    }
+
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)
+        .unwrap_or_else(|| chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap());
+
+    let mut components = vec![
+        normalize_component(source),
+        normalize_component(willow_item_kind(item_type)),
+        format!("{:04}", dt.year()),
+        format!("{:02}", dt.month()),
+        normalize_component(id),
+    ];
+
+    if components.len() > MCC25 {
+        components.truncate(MCC25);
+    }
+
+    let mut path = format!("/{}", components.join("/"));
+    if path.len() > MPL25 {
+        path.truncate(MPL25);
+    }
+    path
+}
+
+#[derive(Serialize)]
+pub struct WillowMigrationResult {
+    pub scanned: usize,
+    pub migrated: usize,
+}
+
+/// Backfill Willow-style paths for existing items and normalize missing paths.
+#[tauri::command]
+pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Result<WillowMigrationResult, String> {
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let items = db.list_items().await.map_err(|e| e.to_string())?;
+    let scanned = items.len();
+    let mut migrated = 0usize;
+
+    for mut item in items {
+        if item.path.trim().is_empty() {
+            let item_type = item.item_type;
+            item.path = willow_path_for_item(&item.source, item_type, item.original_timestamp, &item.id);
+            db.upsert_item(&item).await.map_err(|e| e.to_string())?;
+            migrated += 1;
+        }
+    }
+
+    Ok(WillowMigrationResult {
+        scanned,
+        migrated,
+    })
+}
+
+#[tauri::command]
+pub async fn get_willow_write_parity_report(state: State<'_, AppState>) -> std::result::Result<WillowWriteParityReport, String> {
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    db.get_willow_write_parity_report().await
+        .map_err(|e| e.to_string())
+}
+
+/// Import a Facebook ZIP archive and parse its contents.
+/// 
+/// The parsed data is held in memory until `commit_memories` is called.
+/// This allows the user to review before committing.
+#[tauri::command]
+pub async fn import_facebook_zip(
+    path: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<ParseResult, String> {
+    let zip_path = std::path::PathBuf::from(path);
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let media_dir = app_data_dir.join("media");
+
+    let app_handle = state.app_handle.clone();
+    let sync_manager = state.sync_manager.lock().await.clone();
+
+    // Capture the tokio runtime handle BEFORE entering spawn_blocking
+    let rt_handle = tokio::runtime::Handle::current();
+
+    let result = tokio::task::spawn_blocking(move || {
+        facebook::parse_facebook_zip(zip_path, media_dir, &app_handle, sync_manager, rt_handle)
+    })
+    .await
+    .map_err(|e| BytescapeError::Internal(format!("Parser task failed: {}", e)))?
+    .map_err(|e| BytescapeError::FacebookImport(e))?;
+
+    let parsed_result = ParseResult {
+        posts: result.posts,
+        trackers: result.trackers,
+        total_photos: result.total_photos,
+        total_videos: result.total_videos,
+        total_tracker_events: result.total_tracker_events,
+        source: "facebook".to_string(),
+    };
+
+    *state.pending_import.lock().await = Some(parsed_result.clone());
+
+    Ok(parsed_result)
+}
+
+/// Import an Instagram ZIP archive and parse its contents.
+/// 
+/// The parsed data is held in memory until `commit_memories` is called.
+#[tauri::command]
+pub async fn import_instagram_zip(
+    path: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<ParseResult, String> {
+    let zip_path = std::path::PathBuf::from(path);
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let media_dir = app_data_dir.join("media");
+
+    let app_handle = state.app_handle.clone();
+    let sync_manager = state.sync_manager.lock().await.clone();
+
+    // Capture the tokio runtime handle BEFORE entering spawn_blocking
+    let rt_handle = tokio::runtime::Handle::current();
+
+    let result = tokio::task::spawn_blocking(move || {
+        crate::connectors::instagram::parse_instagram_zip(zip_path, media_dir, &app_handle, sync_manager, rt_handle)
+    })
+    .await
+    .map_err(|e| BytescapeError::Internal(format!("Parser task failed: {}", e)))?
+    .map_err(|e| BytescapeError::Import(e))?;
+
+    let parsed_result = ParseResult {
+        posts: result.posts,
+        trackers: result.trackers,
+        total_photos: result.total_photos,
+        total_videos: result.total_videos,
+        total_tracker_events: result.total_tracker_events,
+        source: "instagram".to_string(),
+    };
+
+    *state.pending_import.lock().await = Some(parsed_result.clone());
+
+    Ok(parsed_result)
+}
+
+fn detect_archive_source(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open ZIP: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read ZIP: {}", e))?;
+
+    let mut saw_dtp_generic_markers = false;
+
+    let mut saw_instagram_marker = false;
+    let mut saw_facebook_marker = false;
+
+    for i in 0..archive.len() {
+        let entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed reading ZIP entry: {}", e))?;
+        let name = entry.name().replace('\\', "/").to_lowercase();
+
+        if name.contains("your_instagram_activity/")
+            || name.contains("instagram_activity/")
+            || (name.ends_with("/posts_1.json") && name.contains("instagram"))
+        {
+            saw_instagram_marker = true;
+        }
+
+        if name.contains("your_facebook_activity/")
+            || name.contains("/messages/inbox/")
+            || name.contains("/posts/")
+        {
+            saw_facebook_marker = true;
+        }
+
+        if name.ends_with(".json")
+            && (name.contains("transfer")
+                || name.contains("dtp")
+                || name.contains("generic")
+                || name.contains("social"))
+        {
+            saw_dtp_generic_markers = true;
+        }
+    }
+
+    // Instagram exports frequently include /messages/inbox/, so prefer explicit
+    // Instagram markers when both patterns appear.
+    if saw_instagram_marker {
+        return Ok("instagram".to_string());
+    }
+    if saw_facebook_marker {
+        return Ok("facebook".to_string());
+    }
+
+    if saw_dtp_generic_markers {
+        return Ok("dtp".to_string());
+    }
+
+    Ok("unknown".to_string())
+}
+
+fn timestamp_from_dtp_published(v: &serde_json::Value) -> i64 {
+    if let Some(n) = v.as_i64() {
+        return n;
+    }
+    if let Some(n) = v.as_u64() {
+        return n as i64;
+    }
+    if let Some(f) = v.as_f64() {
+        return f.round() as i64;
+    }
+    0
+}
+
+fn collect_dtp_social_posts(value: &serde_json::Value, out: &mut Vec<facebook::ParsedPost>, seen: &mut HashSet<String>) {
+    if let Some(obj) = value.as_object() {
+        let activity = obj
+            .get("activity")
+            .or_else(|| obj.get("payload").and_then(|p| p.get("activity")));
+
+        if let Some(activity) = activity {
+            let content = activity
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+
+            let title = activity
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let timestamp = activity
+                .get("published")
+                .map(timestamp_from_dtp_published)
+                .unwrap_or(0);
+
+            let mut media_uris: Vec<String> = Vec::new();
+            if let Some(attachments) = activity.get("attachments").and_then(|v| v.as_array()) {
+                for att in attachments {
+                    if let Some(url) = att.get("url").and_then(|u| u.as_str()) {
+                        let t = url.trim();
+                        if !t.is_empty() {
+                            media_uris.push(t.to_string());
+                        }
+                    }
+                }
+            }
+
+            if !content.is_empty() || !media_uris.is_empty() || title.is_some() {
+                let author = obj
+                    .get("metadata")
+                    .and_then(|m| m.get("actor"))
+                    .and_then(|a| a.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string());
+
+                let dedupe_key = format!("{}|{}|{}", timestamp, title.clone().unwrap_or_default(), content);
+                if !seen.contains(&dedupe_key) {
+                    seen.insert(dedupe_key);
+                    out.push(facebook::ParsedPost {
+                        timestamp,
+                        content,
+                        media_uris,
+                        media_local_paths: Vec::new(),
+                        title,
+                        author_name: author,
+                        action_type: Some("dtp:imported-activity".to_string()),
+                        tagged_people: Vec::new(),
+                        location: None,
+                    });
+                }
+            }
+        }
+
+        for nested in obj.values() {
+            collect_dtp_social_posts(nested, out, seen);
+        }
+    } else if let Some(arr) = value.as_array() {
+        for item in arr {
+            collect_dtp_social_posts(item, out, seen);
+        }
+    }
+}
+
+fn parse_dtp_generic_zip(path: &Path) -> Result<ParseResult, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open ZIP: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read ZIP: {}", e))?;
+
+    let mut posts: Vec<facebook::ParsedPost> = Vec::new();
+    let mut seen = HashSet::new();
+
+    for i in 0..archive.len() {
+        let mut entry = match archive.by_index(i) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let name = entry.name().to_lowercase();
+        if !name.ends_with(".json") {
+            continue;
+        }
+
+        // Skip very large JSON blobs to keep import responsive.
+        if entry.size() > 8 * 1024 * 1024 {
+            continue;
+        }
+
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut text).is_err() {
+            continue;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        collect_dtp_social_posts(&value, &mut posts, &mut seen);
+    }
+
+    Ok(ParseResult {
+        total_photos: posts
+            .iter()
+            .map(|p| p.media_uris.iter().filter(|u| {
+                let l = u.to_lowercase();
+                l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".webp")
+            }).count())
+            .sum(),
+        total_videos: posts
+            .iter()
+            .map(|p| p.media_uris.iter().filter(|u| {
+                let l = u.to_lowercase();
+                l.ends_with(".mp4") || l.ends_with(".mov") || l.ends_with(".webm")
+            }).count())
+            .sum(),
+        total_tracker_events: 0,
+        posts,
+        trackers: Vec::new(),
+        source: "dtp".to_string(),
+    })
+}
+
+/// Import an archive ZIP with source auto-detection, including DTP-generic JSON payloads.
+#[tauri::command]
+pub async fn import_archive_auto(
+    path: String,
+    state: State<'_, AppState>,
+    source_hint: Option<String>,
+) -> std::result::Result<ParseResult, String> {
+    let zip_path = PathBuf::from(path.clone());
+    let hinted = source_hint.unwrap_or_default().to_lowercase();
+
+    let detected = if hinted.is_empty() {
+        detect_archive_source(&zip_path)?
+    } else {
+        hinted
+    };
+
+    let parsed_result = match detected.as_str() {
+        "facebook" => {
+            import_facebook_zip(path, state.clone()).await?
+        }
+        "instagram" => {
+            import_instagram_zip(path, state.clone()).await?
+        }
+        "dtp" => {
+            let parsed = parse_dtp_generic_zip(&zip_path)
+                .map_err(BytescapeError::Import)?;
+            *state.pending_import.lock().await = Some(parsed.clone());
+            parsed
+        }
+        _ => {
+            // Attempt DTP generic parse as a fallback first.
+            let parsed = parse_dtp_generic_zip(&zip_path)
+                .map_err(BytescapeError::Import)?;
+            if !parsed.posts.is_empty() {
+                *state.pending_import.lock().await = Some(parsed.clone());
+                parsed
+            } else {
+                return Err(BytescapeError::UnsupportedSource(
+                    "Could not detect supported archive format (facebook, instagram, dtp-generic)".to_string(),
+                ).to_string());
+            }
+        }
+    };
+
+    Ok(parsed_result)
+}
+
+/// Debug: list the contents of a ZIP archive.
+/// 
+/// Useful for diagnosing import issues by showing the directory structure
+/// and file types contained in the export.
+#[tauri::command]
+pub async fn debug_zip_contents(path: String) -> std::result::Result<Vec<String>, String> {
+    let zip_path = std::path::PathBuf::from(path);
+    let file = std::fs::File::open(&zip_path)
+        .map_err(|e| BytescapeError::ZipError(e.to_string()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| BytescapeError::ZipError(e.to_string()))?;
+
+    let mut results: Vec<String> = Vec::new();
+    let mut dirs: BTreeSet<String> = BTreeSet::new();
+    let mut ext_counts: HashMap<String, usize> = HashMap::new();
+    let mut content_files: Vec<String> = Vec::new();
+
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            let name = entry.name().to_string();
+            let lower = name.to_lowercase();
+
+            // Collect unique directory paths (up to 2 segments deep)
+            let parts: Vec<&str> = name.split('/').collect();
+            if parts.len() >= 2 {
+                let dir2 = format!("{}/{}/", parts[0], parts[1]);
+                dirs.insert(dir2);
+            }
+
+            // Count file extensions
+            if let Some(ext_pos) = lower.rfind('.') {
+                let ext = &lower[ext_pos..];
+                *ext_counts.entry(ext.to_string()).or_insert(0) += 1;
+            }
+
+            // Collect JSON and HTML content files
+            if lower.ends_with(".json") || lower.ends_with(".html") || lower.ends_with(".htm") {
+                content_files.push(name.clone());
+            }
+        }
+    }
+
+    // File extension breakdown
+    let mut ext_list: Vec<_> = ext_counts.iter().collect();
+    ext_list.sort_by(|a, b| b.1.cmp(a.1));
+    results.push(format!("📊 File types ({} total entries):", archive.len()));
+    for (ext, count) in &ext_list {
+        results.push(format!("  {} × {}", count, ext));
+    }
+
+    // Directory structure
+    results.push(format!("📁 Directories ({} folders):", dirs.len()));
+    for dir in &dirs {
+        results.push(format!("  📁 {}", dir));
+    }
+
+    // Content files (JSON/HTML) — limit to 50
+    results.push(format!("📄 Content files ({}):", content_files.len()));
+    for (i, cf) in content_files.iter().enumerate() {
+        if i >= 50 {
+            results.push(format!("  ... and {} more", content_files.len() - 50));
+            break;
+        }
+        results.push(format!("  📄 {}", cf));
+    }
+
+    Ok(results)
+}
+
+/// Commit pending Facebook import to the database.
+/// 
+/// Converts parsed Facebook posts into BytescapeItems and saves them.
+/// Returns the count of new items saved.
+#[tauri::command]
+pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<usize, String> {
+    let pending_guard = state.pending_import.lock().await;
+    let pending = pending_guard.as_ref()
+        .ok_or_else(|| BytescapeError::Import("No pending import. Call import_facebook_zip first.".to_string()))?;
+
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let mut saved_count = 0;
+    let sync_manager = state.sync_manager.lock().await.clone();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    for post in &pending.posts {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        let app_data_dir = state.app_handle.path()
+            .app_data_dir()
+            .unwrap_or_default();
+        let media_dir = app_data_dir.join("media");
+        let imported_media = import_item_media_into_vault(
+            &sync_manager,
+            &post.media_local_paths,
+            &pending.source,
+            Some(item_id.clone()),
+            Some(post.timestamp),
+            Some(&media_dir),
+        ).await;
+        let media_blobs: Vec<String> = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
+        let media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
+
+        let media_hints: Vec<String> = if media_blobs.is_empty() {
+            post.media_local_paths.clone()
+        } else {
+            imported_media
+                .iter()
+                .filter_map(|(idx, _, _)| {
+                    post.media_uris
+                        .get(*idx)
+                        .cloned()
+                        .or_else(|| post.media_local_paths.get(*idx).cloned())
+                })
+                .collect()
+        };
+
+        let tagged_people_json = if post.tagged_people.is_empty() {
+            None
+        } else {
+            let tags: Vec<facebook::TaggedPerson> = post.tagged_people.iter().map(|name| facebook::TaggedPerson {
+                source_name: name.clone(),
+                source_platform: "facebook".to_string(),
+                linked_did: None,
+                linked_handle: None,
+            }).collect();
+            serde_json::to_string(&tags).ok()
+        };
+
+        let location_json = post.location.as_ref()
+            .and_then(|loc| serde_json::to_string(loc).ok());
+
+        // Determine item type based on content
+        let item_type = if !post.media_uris.is_empty() {
+            BytescapeType::Gallery
+        } else if post.title.as_ref().map_or(false, |t| t.len() > 100) {
+            BytescapeType::Article
+        } else {
+            BytescapeType::Status
+        };
+
+        let item = BytescapeItem {
+            id: item_id.clone(),
+            original_timestamp: post.timestamp,
+            content: post.content.clone(),
+            media_paths: media_hints,
+            source: pending.source.clone(),
+            path: willow_path_for_item(&pending.source, item_type, post.timestamp, &item_id),
+            imported_at: now,
+            title: post.title.clone(),
+            original_id: None,
+            author_did: None,
+            author_handle: None,
+            author_avatar: None,
+            tagged_people: tagged_people_json,
+            location: location_json,
+            is_liked: false,
+            like_count: None,
+            reply_count: None,
+            repost_count: None,
+            quote_count: None,
+            item_type,
+            url: None,
+            link_url: None,
+            content_html: None,
+            preview_img: None,
+            media_blobs,
+            thumbnail_blobs: vec![],
+            media_mimes,
+            syndication_status: SyndicationStatus::LocalOnly,
+        };
+
+        if let Ok(true) = db.save_item(&item).await {
+            saved_count += 1;
+        }
+    }
+
+    Ok(saved_count)
+}
+
+/// Import Bluesky posts from the authenticated user's feed.
+/// 
+/// Fetches the user's feed and downloads embedded media.
+/// Returns the count of new posts imported.
+#[tauri::command]
+pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Result<usize, String> {
+    let session = state.keychain.load_session()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    println!("lib: Starting import_bluesky_posts...");
+
+    let app_handle = state.app_handle.clone();
+    let app_data_dir = app_handle.path()
+        .app_data_dir()
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let media_dir = app_data_dir.join("media");
+    let sync_manager = state.sync_manager.lock().await.clone();
+
+    // Import user's own feed
+    let _ = app_handle.emit("import-progress", crate::connectors::bluesky::ImportProgress {
+        source: "bluesky".to_string(),
+        stage: "fetching".to_string(),
+        posts_imported: 0,
+        photos_downloaded: 0,
+        current_item: "Fetching your feed...".to_string(),
+    });
+
+    let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
+        &user_did,
+        &access_jwt,
+        media_dir.clone(),
+        &app_handle,
+        None,
+        None,
+        sync_manager.clone(),
+    ).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Own feed import failed: {}", e);
+            Vec::new()
+        }
+    };
+
+    // Save to database
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir)).await;
+
+    println!("Bluesky import: saved {} own posts", saved_posts);
+    Ok(saved_posts)
+}
+
+/// Save Bluesky posts to the database
+async fn save_posts(
+    _feed_name: &str,
+    db: &DbManager,
+    posts: &[crate::connectors::bluesky::BlueskyImportedPost],
+    _is_own_feed: bool,
+    now: u64,
+    sync_manager: &Option<Arc<SyncManager>>,
+    media_base_dir: Option<&Path>,
+) -> usize {
+    let mut saved = 0;
+    for post in posts {
+        let imported_media = import_item_media_into_vault(
+            sync_manager,
+            &post.image_local_paths,
+            Source::Bluesky.as_str(),
+            Some(post.cid.clone()),
+            Some(post.created_at),
+            media_base_dir,
+        ).await;
+        let media_blobs: Vec<String> = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
+        let media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
+
+        let item_type = if !post.image_urls.is_empty() {
+            BytescapeType::Gallery
+        } else if post.external_url.is_some() {
+            BytescapeType::Article
+        } else {
+            BytescapeType::Status
+        };
+
+        let item = BytescapeItem {
+            id: post.cid.clone(),
+            original_timestamp: post.created_at,
+            content: post.text.clone(),
+            media_paths: post.image_local_paths.clone(),
+            source: Source::Bluesky.as_str().to_string(),
+            path: willow_path_for_item(Source::Bluesky.as_str(), item_type, post.created_at, &post.cid),
+            imported_at: now,
+            title: post.external_title.clone(),
+            original_id: Some(post.uri.clone()),
+            author_did: Some(post.author_did.clone()),
+            author_handle: Some(post.author_handle.clone()),
+            author_avatar: post.author_avatar.clone(),
+            tagged_people: None,
+            location: None,
+            is_liked: false,
+            like_count: post.like_count,
+            reply_count: post.reply_count,
+            repost_count: post.repost_count,
+            quote_count: None,
+            item_type,
+            url: Some(post.uri.clone()),
+            link_url: post.external_url.clone(),
+            content_html: None,
+            preview_img: post.external_thumb.clone(),
+            media_blobs,
+            thumbnail_blobs: vec![],
+            media_mimes,
+            syndication_status: SyndicationStatus::LocalOnly,
+        };
+
+        if let Ok(true) = db.save_item(&item).await {
+            saved += 1;
+        }
+    }
+    saved
+}
+
+fn mime_from_path(path: &Path) -> String {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) {
+        Some(ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg".to_string(),
+        Some(ext) if ext == "png" => "image/png".to_string(),
+        Some(ext) if ext == "webp" => "image/webp".to_string(),
+        Some(ext) if ext == "gif" => "image/gif".to_string(),
+        Some(ext) if ext == "bmp" => "image/bmp".to_string(),
+        Some(ext) if ext == "mp4" => "video/mp4".to_string(),
+        Some(ext) if ext == "mov" => "video/quicktime".to_string(),
+        Some(ext) if ext == "avi" => "video/x-msvideo".to_string(),
+        Some(ext) if ext == "mkv" => "video/x-matroska".to_string(),
+        Some(ext) if ext == "mp3" => "audio/mpeg".to_string(),
+        Some(ext) if ext == "wav" => "audio/wav".to_string(),
+        Some(ext) if ext == "ogg" => "audio/ogg".to_string(),
+        Some(ext) if ext == "flac" => "audio/flac".to_string(),
+        Some(ext) if ext == "pdf" => "application/pdf".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
+}
+
+fn mime_from_bytes(data: &[u8]) -> String {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg".to_string()
+    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png".to_string()
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        "image/gif".to_string()
+    } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
+        "image/webp".to_string()
+    } else if data.starts_with(b"%PDF-") {
+        "application/pdf".to_string()
+    } else if data.len() > 12 && &data[4..8] == b"ftyp" {
+        // ISO BMFF family (mp4/mov/m4v/heic/avif).
+        // For import playback we prioritize video when ingesting timeline/archive media.
+        "video/mp4".to_string()
+    } else if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        // EBML container (commonly WebM/Matroska)
+        "video/webm".to_string()
+    } else if data.starts_with(b"OggS") {
+        "video/ogg".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
+}
+
+fn parse_blob_hash_path(media_path: &str) -> Option<Hash> {
+    let mut normalized = media_path.trim().to_string();
+    while let Some(rest) = normalized.strip_prefix("blob:") {
+        normalized = rest.trim().to_string();
+    }
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if normalized.len() == 64 && normalized.chars().all(|c| c.is_ascii_hexdigit()) {
+        return match std::panic::catch_unwind(|| normalized.parse::<Hash>()) {
+            Ok(Ok(hash)) => Some(hash),
+            _ => None,
+        };
+    }
+
+    let mut candidates = vec![normalized.trim().to_string()];
+    if let Some(stripped) = normalized.strip_prefix('b') {
+        candidates.push(stripped.trim().to_string());
+    }
+
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        let uppercase = candidate.to_ascii_uppercase();
+        let Ok(decoded) = BASE32_NOPAD.decode(uppercase.as_bytes()) else {
+            continue;
+        };
+
+        if decoded.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&decoded);
+            return Some(Hash::from_bytes(arr));
+        }
+
+        if decoded.len() >= 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&decoded[decoded.len() - 32..]);
+            return Some(Hash::from_bytes(arr));
+        }
+    }
+
+    None
+}
+
+/// Returns Vec<(index, blob_hash, mime_type)> for each successfully imported media.
+async fn import_item_media_into_vault(
+    sync_manager: &Option<Arc<SyncManager>>,
+    media_paths: &[String],
+    source: &str,
+    item_id: Option<String>,
+    created_at: Option<i64>,
+    media_base_dir: Option<&Path>,
+) -> Vec<(usize, String, String)> {
+    let Some(sync) = sync_manager.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut imported_blobs = Vec::new();
+
+    for (idx, media_path) in media_paths.iter().enumerate() {
+        if media_path.trim().is_empty() {
+            continue;
+        }
+
+        // blob:<hash> paths (common for sync-backed imports), plus legacy raw
+        // hash strings from older pending import payloads.
+        if let Some(hash) = parse_blob_hash_path(media_path) {
+            let bytes = match sync.get_media(hash).await {
+                Ok(b) => b,
+                Err(e) => {
+                    println!("import_item_media_into_vault: Failed to get media for hash {}: {}", hash, e);
+                    continue;
+                }
+            };
+
+            let mime_type = mime_from_bytes(bytes.as_ref());
+            let ext = if mime_type == "image/jpeg" {
+                "jpg"
+            } else if mime_type == "image/png" {
+                "png"
+            } else if mime_type == "image/gif" {
+                "gif"
+            } else if mime_type == "image/webp" {
+                "webp"
+            } else if mime_type == "video/mp4" {
+                "mp4"
+            } else if mime_type == "video/webm" {
+                "webm"
+            } else if mime_type == "video/ogg" {
+                "ogv"
+            } else if mime_type == "application/pdf" {
+                "pdf"
+            } else {
+                "bin"
+            };
+
+            let name = format!("{}-{}-{}.{}", source, item_id.clone().unwrap_or_else(|| "item".to_string()), idx, ext);
+            match sync.vault_add_file(
+                name,
+                mime_type.clone(),
+                bytes,
+                source.to_string(),
+                item_id.clone(),
+                created_at,
+                vec![],
+            ).await {
+                Ok(file) => {
+                    imported_blobs.push((idx, file.blob_hash, mime_type));
+                    println!("import_item_media_into_vault: Successfully added blob file to vault");
+                }
+                Err(e) => println!("import_item_media_into_vault: Failed to add blob file to vault: {}", e),
+            }
+            continue;
+        }
+
+        // Filesystem-backed media paths
+        let mut path = PathBuf::from(media_path);
+        if !path.is_absolute() {
+            if let Some(base) = media_base_dir {
+                path = base.join(path);
+            }
+        }
+
+        let data = match tokio::fs::read(&path).await {
+            Ok(d) => d,
+            Err(e) => {
+                println!("import_item_media_into_vault: Failed to read file {:?}: {}", path, e);
+                continue;
+            }
+        };
+
+        let mime_type = mime_from_path(&path);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("{}-{}", source, idx));
+
+        match sync.vault_add_file(
+            name,
+            mime_type.clone(),
+            bytes::Bytes::from(data),
+            source.to_string(),
+            item_id.clone(),
+            created_at,
+            vec![],
+        ).await {
+            Ok(file) => {
+                imported_blobs.push((idx, file.blob_hash, mime_type));
+                println!("import_item_media_into_vault: Successfully added fs file to vault");
+            }
+            Err(e) => println!("import_item_media_into_vault: Failed to add fs file to vault: {}", e),
+        }
+    }
+
+    imported_blobs
+}
+
+/// Get the Bluesky timeline (friends feed)
+#[tauri::command]
+pub async fn get_timeline(
+    state: State<'_, AppState>,
+    limit: Option<u8>,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    let session = state.keychain.load_session()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    // Timeline browsing should not persist/download media for other users' posts.
+    let app_handle = state.app_handle.clone();
+
+    let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
+        &access_jwt,
+        std::path::PathBuf::new(),
+        &app_handle,
+        limit,
+        cursor,
+        None,
+        false,
+    ).await?;
+
+    Ok((posts, next_cursor))
+}
+
+/// Import Bluesky DM messages
+#[tauri::command]
+pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
+    use crate::db::VaultMessage;
+    
+    let session = state.keychain.load_session()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    let chat_client = state.chat_client.clone();
+    let db_manager = state.db_manager.clone();
+    
+    // List conversations
+    let convos = chat_client.list_convos(&access_jwt, &user_did).await
+        .map_err(|e| BytescapeError::BlueskyApi(e))?;
+    
+    let db_guard = db_manager.lock().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+    
+    let mut new_count = 0;
+    
+    for convo in &convos {
+        // Get messages from this conversation
+        let (messages, _cursor) = chat_client.get_messages(&access_jwt, &user_did, &convo.id, None).await
+            .map_err(|e| BytescapeError::BlueskyApi(e))?;
+        
+        for msg in messages {
+            let vault_msg = VaultMessage {
+                id: msg.id.clone(),
+                owner_did: Some(user_did.clone()),
+                convo_id: convo.id.clone(),
+                sender_did: msg.sender.did.clone(),
+                sender_handle: msg.sender.handle.clone().unwrap_or_default(),
+                text: msg.text.clone(),
+                sent_at: msg.sent_at.clone().unwrap_or_default(),
+                source: "bluesky".to_string(),
+                imported_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as u64,
+            };
+            
+            if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                new_count += 1;
+            }
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "new": new_count,
+        "convos": convos.len()
+    }))
+}
+
+fn archive_message_placeholder(msg: &serde_json::Value) -> Option<String> {
+    if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let photos = msg.get("photos").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if photos > 0 {
+        return Some(format!("[{} photo{}]", photos, if photos == 1 { "" } else { "s" }));
+    }
+
+    let videos = msg.get("videos").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if videos > 0 {
+        return Some(format!("[{} video{}]", videos, if videos == 1 { "" } else { "s" }));
+    }
+
+    let audio = msg.get("audio_files").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if audio > 0 {
+        return Some(format!("[{} audio file{}]", audio, if audio == 1 { "" } else { "s" }));
+    }
+
+    let gifs = msg.get("gifs").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    if gifs > 0 {
+        return Some(format!("[{} GIF{}]", gifs, if gifs == 1 { "" } else { "s" }));
+    }
+
+    if msg.get("sticker").is_some() {
+        return Some("[sticker]".to_string());
+    }
+    if msg.get("share").is_some() {
+        return Some("[shared attachment]".to_string());
+    }
+
+    None
+}
+
+fn parse_facebook_html_timestamp_to_rfc3339(raw: &str) -> Option<String> {
+    let value = raw
+        .replace('\u{202f}', " ")
+        .replace('\u{00a0}', " ")
+        .trim()
+        .to_string();
+
+    let formats = [
+        "%b %d, %Y %I:%M:%S %P",
+        "%b %-d, %Y %-I:%M:%S %P",
+        "%B %d, %Y %I:%M:%S %P",
+        "%B %-d, %Y %-I:%M:%S %P",
+    ];
+
+    for fmt in formats {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&value, fmt) {
+            let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc);
+            return Some(dt.to_rfc3339());
+        }
+    }
+
+    None
+}
+
+fn parse_facebook_html_messages(html_text: &str) -> Vec<(String, String, String)> {
+    use scraper::{Html, Selector};
+
+    let mut out = Vec::new();
+    let doc = Html::parse_document(html_text);
+
+    let Ok(block_sel) = Selector::parse("div._a6-g") else { return out; };
+    let Ok(sender_sel) = Selector::parse("div._a6-h._a6-i") else { return out; };
+    let Ok(text_sel) = Selector::parse("div._a6-p") else { return out; };
+    let Ok(time_sel) = Selector::parse("div._a72d") else { return out; };
+
+    for block in doc.select(&block_sel) {
+        let sender = block
+            .select(&sender_sel)
+            .next()
+            .map(|n| n.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let text = block
+            .select(&text_sel)
+            .next()
+            .map(|n| n.text().collect::<Vec<_>>().join(" ").split_whitespace().collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
+
+        let sent_raw = block
+            .select(&time_sel)
+            .next()
+            .map(|n| n.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .unwrap_or_default();
+
+        if text.is_empty() || sent_raw.is_empty() {
+            continue;
+        }
+
+        out.push((sender, text, sent_raw));
+    }
+
+    out
+}
+
+/// Import archived chat threads from a Facebook/Instagram ZIP export into vault messages.
+#[tauri::command]
+pub async fn import_archive_messages(
+    state: State<'_, AppState>,
+    path: String,
+    source: Option<String>,
+) -> std::result::Result<serde_json::Value, String> {
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let normalized_source = source
+        .unwrap_or_else(|| {
+            if path.to_lowercase().contains("instagram") {
+                "instagram".to_string()
+            } else {
+                "facebook".to_string()
+            }
+        })
+        .to_lowercase();
+
+    let owner_did = state
+        .keychain
+        .get_did()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    let db_manager = state.db_manager.clone();
+    let db_guard = db_manager.lock().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let archive_file = std::fs::File::open(&path)
+        .map_err(|e| BytescapeError::FileSystem(format!("Failed to open archive: {}", e)))?;
+    let mut zip = ZipArchive::new(archive_file)
+        .map_err(|e| BytescapeError::ZipError(e.to_string()))?;
+
+    let mut message_files: Vec<(usize, String)> = Vec::new();
+    for i in 0..zip.len() {
+        let Ok(file) = zip.by_index(i) else { continue; };
+        let name = file.name().replace('\\', "/");
+        let lower = name.to_lowercase();
+        let is_chat_file = (lower.ends_with(".json") || lower.ends_with(".html"))
+            && lower.contains("/messages/")
+            && (lower.contains("/inbox/") || lower.contains("/archived_threads/"))
+            && (lower.contains("/message_") || lower.ends_with("/message.html"));
+
+        if is_chat_file {
+            message_files.push((i, name));
+        }
+    }
+
+    let mut imported_new = 0usize;
+    let mut parsed_messages = 0usize;
+    let mut imported_threads = BTreeSet::new();
+    let imported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as u64;
+
+    for (index, file_name) in message_files {
+        let mut file = match zip.by_index(index) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+
+        let mut text = String::new();
+        if file.read_to_string(&mut text).is_err() {
+            continue;
+        }
+
+        let thread_id = {
+            let normalized = file_name.to_lowercase();
+            if let Some(idx) = normalized.rfind("/message_") {
+                normalized[..idx].to_string()
+            } else if let Some(idx) = normalized.rfind("/message.html") {
+                normalized[..idx].to_string()
+            } else {
+                normalized
+            }
+        };
+        let convo_id = format!("archive:{}:{}", normalized_source, thread_id);
+        imported_threads.insert(convo_id.clone());
+
+        if file_name.to_lowercase().ends_with(".json") {
+            let parsed: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let messages = parsed
+                .get("messages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for msg in messages {
+                let sender_name = msg
+                    .get("sender_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown")
+                    .to_string();
+
+                let Some(message_text) = archive_message_placeholder(&msg) else {
+                    continue;
+                };
+
+                let timestamp_ms = msg
+                    .get("timestamp_ms")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+
+                if timestamp_ms <= 0 {
+                    continue;
+                }
+
+                let sent_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestamp_ms)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+
+                let id = format!(
+                    "archive:{}:{}:{}:{}",
+                    normalized_source,
+                    thread_id,
+                    timestamp_ms,
+                    sender_name
+                );
+
+                let vault_msg = crate::db::VaultMessage {
+                    id,
+                    owner_did: Some(owner_did.clone()),
+                    convo_id: convo_id.clone(),
+                    sender_did: String::new(),
+                    sender_handle: sender_name,
+                    text: message_text,
+                    sent_at,
+                    source: normalized_source.clone(),
+                    imported_at,
+                };
+
+                parsed_messages += 1;
+                if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                    imported_new += 1;
+                }
+            }
+        } else if normalized_source == "facebook" && file_name.to_lowercase().ends_with(".html") {
+            let html_messages = parse_facebook_html_messages(&text);
+            for (idx, (sender_name, message_text, sent_raw)) in html_messages.into_iter().enumerate() {
+                let sent_at = parse_facebook_html_timestamp_to_rfc3339(&sent_raw)
+                    .unwrap_or(sent_raw.clone());
+
+                let id = format!(
+                    "archive:{}:{}:{}:{}",
+                    normalized_source,
+                    thread_id,
+                    idx,
+                    sender_name
+                );
+
+                let vault_msg = crate::db::VaultMessage {
+                    id,
+                    owner_did: Some(owner_did.clone()),
+                    convo_id: convo_id.clone(),
+                    sender_did: String::new(),
+                    sender_handle: sender_name,
+                    text: message_text,
+                    sent_at,
+                    source: normalized_source.clone(),
+                    imported_at,
+                };
+
+                parsed_messages += 1;
+                if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                    imported_new += 1;
+                }
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "source": normalized_source,
+        "threads": imported_threads.len(),
+        "parsed": parsed_messages,
+        "new": imported_new
+    }))
+}
+
+/// Send a Bluesky DM
+#[tauri::command]
+pub async fn send_bsky_dm(
+    state: State<'_, AppState>,
+    convo_id: String,
+    _recipient_did: Option<String>,
+    content: String,
+) -> std::result::Result<serde_json::Value, String> {
+
+    let session = state.keychain.load_session()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    let chat_client = state.chat_client.clone();
+    let db_manager = state.db_manager.clone();
+    
+    // Send via chat API
+    let msg = chat_client.send_dm(&access_jwt, &user_did, &convo_id, &content).await
+        .map_err(|e| BytescapeError::BlueskyApi(e))?;
+    
+    // Save to local DB
+    let db_guard = db_manager.lock().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+    
+    let vault_msg = crate::db::VaultMessage {
+        id: msg.id.clone(),
+        owner_did: Some(user_did.clone()),
+        convo_id: convo_id.clone(),
+        sender_did: user_did.clone(),
+        sender_handle: _user_handle.clone(),
+        text: msg.text.clone(),
+        sent_at: msg.sent_at.clone().unwrap_or_default(),
+        source: "bluesky".to_string(),
+        imported_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u64,
+    };
+    
+    let _ = db.save_vault_message(&vault_msg).await;
+    
+    Ok(serde_json::json!({
+        "id": msg.id,
+        "convo_id": convo_id,
+        "sent": true
+    }))
+}
+
+/// List saved Bluesky custom feeds.
+#[tauri::command]
+pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+}
+
+/// List profiles this actor follows.
+#[tauri::command]
+pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+    Ok(profiles)
+}
+
+/// List profiles following this actor.
+#[tauri::command]
+pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
+    let members = state.chat_client.get_followers(&actor).await
+        .map_err(BytescapeError::BlueskyApi)?;
+
+    let profiles = members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
+        did: m.did,
+        handle: m.handle.unwrap_or_default(),
+        display_name: m.display_name,
+        avatar: None,
+        description: None,
+    }).collect();
+
+    Ok(profiles)
+}
+
+/// Build a merged feed from followed hashtags and saved feeds.
+#[tauri::command]
+pub async fn get_unified_feed(
+    state: State<'_, AppState>,
+    tags: Vec<String>,
+    feed_uris: Vec<String>,
+    limit: u8,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+}
+
+/// Publish a new post with explicit destination routing.
+///
+/// Supported destinations:
+/// - "local": save locally in Bytescape vault (P2P/local-first)
+/// - "bluesky": publish to Bluesky via createRecord
+/// - "activitypub": placeholder (not implemented yet)
+/// - "all": attempt local + bluesky + activitypub placeholder
+#[tauri::command]
+pub async fn publish_post(
+    state: State<'_, AppState>,
+    text: String,
+    destination: String,
+) -> std::result::Result<PublishResult, String> {
+    let content = text.trim();
+    if content.is_empty() {
+        return Err("Post cannot be empty".to_string());
+    }
+
+    let dest = destination.to_lowercase();
+    let publish_local = dest == "local" || dest == "all";
+    let publish_bluesky = dest == "bluesky" || dest == "all";
+    let publish_activitypub = dest == "activitypub" || dest == "all";
+
+    let mut result = PublishResult {
+        local: false,
+        bluesky: false,
+        activitypub: false,
+        bluesky_uri: None,
+        errors: Vec::new(),
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Local/P2P-first save
+    if publish_local {
+        let db_guard = state.db_manager.lock().await;
+        if let Some(db) = db_guard.as_ref() {
+            let item_id = uuid::Uuid::new_v4().to_string();
+            let item = BytescapeItem {
+                id: item_id.clone(),
+                original_timestamp: now as i64,
+                content: content.to_string(),
+                media_paths: vec![],
+                source: Source::Manual.as_str().to_string(),
+                path: willow_path_for_item(Source::Manual.as_str(), BytescapeType::Status, now as i64, &item_id),
+                imported_at: now,
+                title: None,
+                original_id: None,
+                author_did: state.keychain.get_did().ok().flatten(),
+                author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
+                author_avatar: None,
+                tagged_people: None,
+                location: None,
+                is_liked: false,
+                like_count: None,
+                reply_count: None,
+                repost_count: None,
+                quote_count: None,
+                item_type: BytescapeType::Status,
+                url: None,
+                link_url: None,
+                content_html: None,
+                preview_img: None,
+                media_blobs: vec![],
+                thumbnail_blobs: vec![],
+                media_mimes: vec![],
+                syndication_status: SyndicationStatus::LocalOnly,
+            };
+
+            match db.save_item(&item).await {
+                Ok(_) => result.local = true,
+                Err(e) => result.errors.push(format!("Local publish failed: {}", e)),
+            }
+        } else {
+            result.errors.push("Local publish failed: database not initialized".to_string());
+        }
+    }
+
+    // Bluesky publish
+    if publish_bluesky {
+        let session = state.keychain.load_session()
+            .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+        let (user_did, user_handle) = match session {
+            Some(v) => v,
+            None => {
+                result.errors.push("Bluesky publish failed: not authenticated".to_string());
+                (String::new(), String::new())
+            }
+        };
+
+        if !user_did.is_empty() {
+            let access_jwt = state.keychain.get_access_jwt()
+                .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+                .unwrap_or_default();
+
+            if access_jwt.is_empty() {
+                result.errors.push("Bluesky publish failed: no access token".to_string());
+            } else {
+                match publish_to_bluesky(&access_jwt, &user_did, content).await {
+                    Ok((uri, cid)) => {
+                        result.bluesky = true;
+                        result.bluesky_uri = Some(uri.clone());
+
+                        // Save a local copy as syndicated
+                        let db_guard = state.db_manager.lock().await;
+                        if let Some(db) = db_guard.as_ref() {
+                            let item_id = cid.clone();
+                            let item = BytescapeItem {
+                                id: cid,
+                                original_timestamp: now as i64,
+                                content: content.to_string(),
+                                media_paths: vec![],
+                                source: Source::Bluesky.as_str().to_string(),
+                                path: willow_path_for_item(Source::Bluesky.as_str(), BytescapeType::Status, now as i64, &item_id),
+                                imported_at: now,
+                                title: None,
+                                original_id: Some(uri.clone()),
+                                author_did: Some(user_did.clone()),
+                                author_handle: Some(user_handle),
+                                author_avatar: None,
+                                tagged_people: None,
+                                location: None,
+                                is_liked: false,
+                                like_count: None,
+                                reply_count: None,
+                                repost_count: None,
+                                quote_count: None,
+                                item_type: BytescapeType::Status,
+                                url: Some(uri),
+                                link_url: None,
+                                content_html: None,
+                                preview_img: None,
+                                media_blobs: vec![],
+                                thumbnail_blobs: vec![],
+                                media_mimes: vec![],
+                                syndication_status: SyndicationStatus::Syndicated,
+                            };
+                            let _ = db.save_item(&item).await;
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("Bluesky publish failed: {}", e)),
+                }
+            }
+        }
+    }
+
+    // ActivityPub placeholder
+    if publish_activitypub {
+        result.errors.push("ActivityPub posting is not implemented yet (placeholder).".to_string());
+    }
+
+    Ok(result)
+}
+
+async fn publish_to_bluesky(access_jwt: &str, did: &str, text: &str) -> Result<(String, String), String> {
+    #[derive(Serialize)]
+    struct Record<'a> {
+        #[serde(rename = "$type")]
+        record_type: &'a str,
+        text: &'a str,
+        #[serde(rename = "createdAt")]
+        created_at: String,
+    }
+
+    #[derive(Serialize)]
+    struct CreateRecordRequest<'a> {
+        repo: &'a str,
+        collection: &'a str,
+        record: Record<'a>,
+    }
+
+    #[derive(Deserialize)]
+    struct CreateRecordResponse {
+        uri: String,
+        cid: String,
+    }
+
+    let body = CreateRecordRequest {
+        repo: did,
+        collection: "app.bsky.feed.post",
+        record: Record {
+            record_type: "app.bsky.feed.post",
+            text,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    };
+
+    let resp = reqwest::Client::new()
+        .post("https://bsky.social/xrpc/com.atproto.repo.createRecord")
+        .header("Authorization", format!("Bearer {}", access_jwt))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let msg = resp.text().await.unwrap_or_default();
+        return Err(format!("{} {}", status, msg));
+    }
+
+    let created: CreateRecordResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok((created.uri, created.cid))
+}

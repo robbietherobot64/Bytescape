@@ -1,0 +1,17 @@
+//! Tauri Command Modules
+//! 
+//! This module organizes Tauri commands by concern area for better maintainability.
+//! Each submodule exports its commands which are re-exported here for registration.
+
+pub mod node;
+pub mod vault;
+pub mod auth;
+pub mod import;
+pub mod media;
+
+// Re-export all commands for easy registration in lib.rs
+pub use node::*;
+pub use vault::*;
+pub use auth::*;
+pub use import::*;
+pub use media::*;
