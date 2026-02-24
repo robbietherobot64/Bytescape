@@ -220,23 +220,12 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, isQuote = fal
                                 style={isInteractive ? undefined : { cursor: 'pointer' }}
                             >
                                 {kind === 'video' && (
-                                    <>
-                                        <VideoPlayer
-                                            src={src}
-                                            poster={thumbnailSources[i]}
-                                            mime={entry.media_mimes?.[i]}
-                                            style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 8 }}
-                                        />
-                                        <button
-                                            type="button"
-                                            className="media-expand-btn"
-                                            onClick={(e) => { e.stopPropagation(); openGallery(i); }}
-                                            aria-label="Expand video"
-                                            title="View fullscreen"
-                                        >
-                                            ⛶
-                                        </button>
-                                    </>
+                                    <VideoPlayer
+                                        src={src}
+                                        poster={thumbnailSources[i]}
+                                        mime={entry.media_mimes?.[i]}
+                                        style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 8 }}
+                                    />
                                 )}
                                 {kind === 'audio' && (
                                     <audio controls style={{ width: '100%' }}>

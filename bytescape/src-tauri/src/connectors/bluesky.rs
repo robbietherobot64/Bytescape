@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use crate::connectors::Source;
 use crate::sync::SyncManager;
+use crate::AppState;
+use tauri::State;
 
 const PUBLIC_XRPC: &str = "https://bsky.social/xrpc";
 const PLC_DIRECTORY: &str = "https://plc.directory";
@@ -51,6 +53,79 @@ fn authenticated_xrpc_candidates(access_jwt: &str, prefer_private: bool) -> Vec<
     }
 
     urls
+}
+
+// === Authenticated API Client ===
+
+/// A wrapper around reqwest::Client that automatically intercepts 400 ExpiredToken
+/// errors and attempts to refresh the Bluesky session via AuthManager.
+pub struct BlueskyClient<'a> {
+    pub client: Client,
+    pub state: &'a AppState,
+}
+
+impl<'a> BlueskyClient<'a> {
+    pub fn new(state: &'a AppState) -> Self {
+        Self {
+            client: Client::new(),
+            state,
+        }
+    }
+
+    /// Performs an authenticated request. If it fails with ExpiredToken, 
+    /// it refreshes the JWT and retries the exact same request once.
+    pub async fn get(&self, url: &str) -> std::result::Result<reqwest::Response, String> {
+        let mut access_jwt = self.state.keychain.get_access_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No active session".to_string())?;
+
+        let request_builder = self.client.get(url);
+        
+        let mut response = request_builder.try_clone().ok_or("Cannot clone request")?
+            .header("Authorization", format!("Bearer {}", access_jwt))
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            // Read body to check for ExpiredToken
+            let body_bytes = response.bytes().await.map_err(|e| e.to_string())?;
+            let body_str = String::from_utf8_lossy(&body_bytes);
+
+            if body_str.contains("ExpiredToken") {
+                println!("bluesky: Token expired. Attempting automatic refresh...");
+                let refresh_jwt = self.state.keychain.get_refresh_jwt()
+                    .map_err(|e| format!("Keychain error: {}", e))?
+                    .ok_or_else(|| "No refresh token available".to_string())?;
+
+                let new_session = self.state.auth_manager.refresh_session(refresh_jwt).await?;
+                
+                // Save new tokens
+                self.state.keychain.save_session(
+                    new_session.did.clone(), 
+                    new_session.handle.clone(), 
+                    new_session.access_jwt.clone(), 
+                    new_session.refresh_jwt.clone()
+                ).map_err(|e| format!("Failed to save new session: {}", e))?;
+
+                println!("bluesky: Token refreshed successfully. Retrying request...");
+                access_jwt = new_session.access_jwt;
+
+                // Retry
+                response = self.client.get(url)
+                    .header("Authorization", format!("Bearer {}", access_jwt))
+                    .send()
+                    .await
+                    .map_err(|e| format!("Retry request failed: {}", e))?;
+            } else {
+                // Not an expired token error, reconstruct response from bytes for higher level logic
+                let _ = body_bytes; // Unused for now, the caller will fail on status
+                return Err(format!("Bad Request: {}", body_str));
+            }
+        }
+
+        Ok(response)
+    }
 }
 
 // === Bluesky Feed API Response Types ===
@@ -298,7 +373,7 @@ struct DidService {
 // === Timeline Import (The "Us" Feed) ===
 
 pub async fn import_bluesky_timeline(
-    access_jwt: &str,
+    state: &AppState,
     media_dir: PathBuf,
     app_handle: &AppHandle,
     limit: Option<u8>,
@@ -306,14 +381,15 @@ pub async fn import_bluesky_timeline(
     sync_manager: Option<Arc<SyncManager>>,
     download_media: bool,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::new();
-    let token = access_jwt.trim();
+    let client = BlueskyClient::new(state);
     let limit = limit.unwrap_or(50);
 
     let mut feed_res: Option<AuthorFeedResponse> = None;
     let mut last_error = String::new();
 
-    for base in authenticated_xrpc_candidates(token, false) {
+    let access_jwt = state.keychain.get_access_jwt().map_err(|e| format!("Keychain error: {}", e))?.unwrap_or_default();
+    
+    for base in authenticated_xrpc_candidates(&access_jwt, false) {
         let mut url = format!("{}/app.bsky.feed.getTimeline?limit={}", base, limit);
         if let Some(c) = cursor.as_ref() {
             url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
@@ -321,9 +397,6 @@ pub async fn import_bluesky_timeline(
 
         let resp = client
             .get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .send()
             .await
             .map_err(|e| e.to_string())?;
 
@@ -367,7 +440,7 @@ pub async fn import_bluesky_timeline(
 
         // For timeline browsing, avoid local downloads by default.
         let (local_paths, remote_urls) = if download_media {
-            download_media_from_embed_with_sync(&client, &post.embed, &media_dir, sync_manager.clone()).await
+            download_media_from_embed_with_sync(&client.client, &post.embed, &media_dir, sync_manager.clone()).await
         } else {
             let mut image_urls: Vec<String> = Vec::new();
             if let Some(ref e) = post.embed {
@@ -424,22 +497,20 @@ pub async fn import_bluesky_timeline(
 
 pub async fn import_bluesky_feed(
     did: &str,
-    _access_jwt: &str,
+    state: &AppState,
     media_dir: PathBuf,
     app_handle: &AppHandle,
     max_pages: Option<usize>,
     per_page_limit: Option<u8>,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
+    
     std::fs::create_dir_all(&media_dir)
         .map_err(|e| format!("Failed to create media dir: {}", e))?;
 
     // Resolve the user's PDS for downloading blobs
-    let _pds_url = resolve_pds(&client, did).await.unwrap_or_else(|_| "https://bsky.social".to_string());
+    let _pds_url = resolve_pds(&client.client, did).await.unwrap_or_else(|_| "https://bsky.social".to_string());
 
     let mut all_posts: Vec<BlueskyImportedPost> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -471,8 +542,6 @@ pub async fn import_bluesky_feed(
         }
 
         let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", _access_jwt))
-            .send()
             .await
             .map_err(|e| format!("Feed fetch failed: {}", e))?;
 
@@ -521,7 +590,7 @@ pub async fn import_bluesky_feed(
                 let filename = format!("bsky_{}_{}.{}", post.cid, i, ext);
                 let dest = media_dir.join(&filename);
 
-                match client.get(img_url).send().await {
+                match client.client.get(img_url).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         if let Ok(bytes) = resp.bytes().await {
                             // Try to store in Iroh blobs if available
@@ -829,14 +898,11 @@ async fn resolve_pds(client: &Client, did: &str) -> Result<String, String> {
 /// This calls the authenticated `getTimeline` API.
 /// Returns posts with remote image URLs (does not download them).
 pub async fn get_bluesky_timeline(
-    access_jwt: &str,
+    state: &AppState,
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
 
     let mut url = format!(
         "{}/app.bsky.feed.getTimeline?limit={}",
@@ -846,12 +912,7 @@ pub async fn get_bluesky_timeline(
         url.push_str(&format!("&cursor={}", c));
     }
 
-    let token = access_jwt.trim();
-
     let response = client.get(&url)
-        .bearer_auth(token)
-        .header("Accept", "application/json")
-        .send()
         .await
         .map_err(|e| format!("Timeline fetch failed: {}", e))?;
 
@@ -941,23 +1002,18 @@ pub async fn get_bluesky_timeline(
 
 /// Search for posts on Bluesky.
 pub async fn search_posts(
-    access_jwt: &str,
+    state: &AppState,
     query: &str,
     limit: u8,
     cursor: Option<String>,
     required_tags: Option<Vec<String>>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
 
     // Use the public search endpoint (assuming app.bsky.feed.searchPosts)
     // Note: searchPosts usually takes 'q' parameter.
     let fetch_limit = if required_tags.is_some() { 100 } else { limit };
     println!("bluesky: search_posts query='{}' limit={} fetch_limit={}", query, limit, fetch_limit);
-    
-    let _token = access_jwt.trim();
     let mut url = format!(
         "{}/app.bsky.feed.searchPosts?q={}&limit={}",
         PUBLIC_XRPC, urlencoding::encode(query), fetch_limit
@@ -967,12 +1023,7 @@ pub async fn search_posts(
         url.push_str(&format!("&cursor={}", c));
     }
 
-    let token = access_jwt.trim();
-
     let response = client.get(&url)
-        .bearer_auth(token)
-        .header("Accept", "application/json")
-        .send()
         .await
         .map_err(|e| format!("Search fetch failed: {}", e))?;
 
@@ -1084,23 +1135,18 @@ pub async fn search_posts(
 
 /// Fetch list of users the actor follows.
 pub async fn get_follows(
-    access_jwt: &str,
+    state: &AppState,
     actor: &str,
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<ProfileView>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
     let mut url = format!("{}/app.bsky.graph.getFollows?actor={}&limit={}", PUBLIC_XRPC, actor, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", c));
     }
 
     let response = client.get(&url)
-        .header("Authorization", format!("Bearer {}", access_jwt))
-        .send()
         .await
         .map_err(|e| format!("Follows fetch failed: {}", e))?;
 
@@ -1116,14 +1162,12 @@ pub async fn get_follows(
 
 /// Fetch saved feeds (including pinned timeline/custom feeds).
 pub async fn get_saved_feeds(
-    access_jwt: &str,
+    state: &AppState,
 ) -> Result<Vec<GeneratorView>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
     
     // 1. Get Preferences (try PDS first for authenticated user prefs, then public endpoint)
+    let access_jwt = state.keychain.get_access_jwt().map_err(|e| format!("Keychain error: {}", e))?.unwrap_or_default();
     let token = access_jwt.trim();
     let mut res_opt: Option<GetPreferencesResponse> = None;
     let mut pref_err = String::new();
@@ -1131,9 +1175,6 @@ pub async fn get_saved_feeds(
     for base in authenticated_xrpc_candidates(token, true) {
         let url = format!("{}/app.bsky.actor.getPreferences", base);
         let response = client.get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .send()
             .await
             .map_err(|e| format!("Preferences fetch failed: {}", e))?;
 
@@ -1216,13 +1257,13 @@ pub async fn get_saved_feeds(
 
     // Query in small batches to avoid 400/414 from a single bad URI poisoning all results.
     for chunk in feed_uris.chunks(10) {
-        let params: Vec<(&str, String)> = chunk.iter().cloned().map(|uri| ("feeds", uri)).collect();
+        let mut feeds_url = format!("{}/app.bsky.feed.getFeedGenerators?", PUBLIC_XRPC);
+        for (i, param) in chunk.iter().enumerate() {
+            if i > 0 { feeds_url.push('&'); }
+            feeds_url.push_str(&format!("feeds={}", urlencoding::encode(param)));
+        }
 
-        let feed_resp = match client.get(&feeds_url)
-            .header("Authorization", format!("Bearer {}", access_jwt))
-            .query(&params)
-            .send()
-            .await {
+        let feed_resp = match client.get(&feeds_url).await {
                 Ok(r) => r,
                 Err(e) => {
                     println!("bluesky: getFeedGenerators batch request failed: {}", e);
@@ -1356,23 +1397,18 @@ pub async fn get_custom_feed(
 
 /// Fetch posts liked by the actor.
 pub async fn get_actor_likes(
-    access_jwt: &str,
+    state: &AppState,
     actor: &str,
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
     let mut url = format!("{}/app.bsky.feed.getActorLikes?actor={}&limit={}", PUBLIC_XRPC, actor, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", c));
     }
 
     let response = client.get(&url)
-        .header("Authorization", format!("Bearer {}", access_jwt))
-        .send()
         .await
         .map_err(|e| format!("Likes fetch failed: {}", e))?;
 
@@ -1444,7 +1480,7 @@ pub struct UnifiedCursor {
 
 /// 3. Merge and Sort by Date
 pub async fn get_unified_feed(
-    access_jwt: &str,
+    state: &AppState,
     tags: Vec<String>, // Followed hashtags
     feed_uris: Option<Vec<String>>, // Optional specific feeds to fetch
     limit: u8,
@@ -1466,7 +1502,7 @@ pub async fn get_unified_feed(
             return Ok((Vec::new(), None)); 
         }
         println!("UnifiedFeed: Fetching hashtags query: {}", tag_query);
-        match search_posts(access_jwt, &tag_query, limit, parsed_cursor.hashtag_cursor.clone(), strict_tags).await {
+        match search_posts(state, &tag_query, limit, parsed_cursor.hashtag_cursor.clone(), strict_tags).await {
             Ok((posts, cursor)) => {
                 println!("UnifiedFeed: Fetched {} hashtag posts", posts.len());
                 Ok((posts, cursor))
@@ -1486,7 +1522,7 @@ pub async fn get_unified_feed(
                 Ok(provided_uris)
             } else {
                 println!("UnifiedFeed: Provided feed URI list was empty, falling back to saved feeds");
-                match get_saved_feeds(access_jwt).await {
+                match get_saved_feeds(state).await {
                     Ok(views) => {
                         let uris: Vec<String> = views.into_iter()
                             .map(|v| v.uri)
@@ -1503,7 +1539,7 @@ pub async fn get_unified_feed(
             }
         } else {
             println!("UnifiedFeed: Fetching all saved feeds...");
-            match get_saved_feeds(access_jwt).await {
+            match get_saved_feeds(state).await {
                 Ok(views) => {
                     let uris: Vec<String> = views.into_iter()
                         .map(|v| v.uri)
@@ -1551,7 +1587,7 @@ pub async fn get_unified_feed(
         let mut feed_success_count = 0usize;
         for uri in uris {
             feed_count += 1;
-            let jwt = access_jwt.to_string();
+            let jwt = state.keychain.get_access_jwt().unwrap_or_default().unwrap_or_default();
             let u = uri.clone();
             let feed_cursor = parsed_cursor.feed_cursors.get(&u).cloned();
             feed_futures.push(tokio::spawn(async move {
@@ -1615,16 +1651,13 @@ pub async fn get_unified_feed(
 
 /// Import all likes for the actor.
 pub async fn import_bluesky_likes(
+    state: &AppState,
     actor: &str,
-    access_jwt: &str,
     media_dir: PathBuf,
     app_handle: &AppHandle,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = BlueskyClient::new(state);
     std::fs::create_dir_all(&media_dir)
         .map_err(|e| format!("Failed to create media dir: {}", e))?;
 
@@ -1651,8 +1684,6 @@ pub async fn import_bluesky_likes(
         }
 
         let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", access_jwt))
-            .send()
             .await
             .map_err(|e| format!("Likes fetch failed: {}", e))?;
 
@@ -1690,8 +1721,7 @@ pub async fn import_bluesky_likes(
                  let filename = format!("bsky_like_{}_{}.{}", hash, i, ext);
                  let dest = media_dir.join(&filename);
 
-                 // Try to fetch and store
-                 if let Ok(resp) = client.get(img_url).send().await {
+                 if let Ok(resp) = client.client.get(img_url).send().await {
                      if resp.status().is_success() {
                          if let Ok(bytes) = resp.bytes().await {
                              // Try Iroh blobs first
@@ -1762,10 +1792,10 @@ pub async fn import_bluesky_likes(
 
 /// Helper to fetch ALL follows for an actor.
 pub async fn get_all_follows(
-    client: &Client,
+    state: &AppState,
     actor: &str,
-    access_jwt: &str,
 ) -> Result<Vec<ProfileView>, String> {
+    let client = BlueskyClient::new(state);
     let mut all_follows = Vec::new();
     let mut cursor: Option<String> = None;
 
@@ -1776,8 +1806,6 @@ pub async fn get_all_follows(
         }
 
         let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", access_jwt))
-            .send()
             .await
             .map_err(|e| format!("Follows fetch failed: {}", e))?;
 
@@ -1801,10 +1829,10 @@ pub async fn get_all_follows(
 
 /// Helper to fetch ALL followers for an actor.
 pub async fn get_all_followers(
-    client: &Client,
+    state: &AppState,
     actor: &str,
-    access_jwt: &str,
 ) -> Result<Vec<ProfileView>, String> {
+    let client = BlueskyClient::new(state);
     let mut all_followers = Vec::new();
     let mut cursor: Option<String> = None;
 
@@ -1815,8 +1843,6 @@ pub async fn get_all_followers(
         }
 
         let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", access_jwt))
-            .send()
             .await
             .map_err(|e| format!("Followers fetch failed: {}", e))?;
 
@@ -1840,13 +1866,12 @@ pub async fn get_all_followers(
 
 /// Import recent posts from ALL users the actor follows.
 pub async fn import_follows_posts(
+    state: &AppState,
     actor: &str,
-    access_jwt: &str,
     media_dir: PathBuf,
     app_handle: &AppHandle,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::new();
     
     // 1. Get all follows
     let _ = app_handle.emit("import-progress", ImportProgress {
@@ -1857,7 +1882,7 @@ pub async fn import_follows_posts(
         current_item: "Fetching your follow list...".to_string(),
     });
 
-    let follows = get_all_follows(&client, actor, access_jwt).await?;
+    let follows = get_all_follows(state, actor).await?;
     println!("Found {} follows", follows.len());
 
     let mut all_posts = Vec::new();
@@ -1877,7 +1902,7 @@ pub async fn import_follows_posts(
         });
 
         println!("bluesky: Importing feed for {} ({})", follow.handle, follow.did);
-        match import_bluesky_feed(&follow.did, access_jwt, media_dir.clone(), app_handle, Some(1), Some(20), sync_manager.clone()).await {
+        match import_bluesky_feed(&follow.did, state, media_dir.clone(), app_handle, Some(1), Some(20), sync_manager.clone()).await {
             Ok(mut posts) => {
                 println!("bluesky: Found {} posts for {}", posts.len(), follow.handle);
                 all_posts.append(&mut posts);
@@ -1891,13 +1916,12 @@ pub async fn import_follows_posts(
 
 /// Import all follows as Contacts
 pub async fn import_bluesky_follows_as_contacts(
+    state: &AppState,
     actor: &str,
-    access_jwt: &str,
     db_manager: Arc<tokio::sync::Mutex<Option<crate::db::DbManager>>>,
     _app_handle: &AppHandle,
 ) -> Result<usize, String> {
-    let client = Client::new();
-    let follows = get_all_follows(&client, actor, access_jwt).await?;
+    let follows = get_all_follows(state, actor).await?;
     
     let db_guard: tokio::sync::MutexGuard<'_, Option<crate::db::DbManager>> = db_manager.lock().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;

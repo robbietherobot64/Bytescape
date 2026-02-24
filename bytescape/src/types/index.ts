@@ -98,30 +98,30 @@ export interface FeedEntry {
     author_handle?: string;
     author_avatar?: string;
     source: string;
-    
+
     // Media
     media_urls: string[];
     media_thumbnails: string[];
     media_kinds?: Array<'video' | 'audio' | 'pdf' | 'image' | 'unknown'>;
     /** MIME types for each media entry, aligned with media_urls */
     media_mimes?: string[];
-    
+
     // Link Preview
     link_url?: string | null;
     link_title?: string | null;
     link_description?: string | null;
     link_thumbnail?: string | null;
-    
+
     // Stats
     like_count?: number;
     reply_count?: number;
     repost_count?: number;
-    
+
     // Context
     reposted_by?: string;
     reposted_by_handle?: string;
     quoted_post?: FeedEntry;
-    
+
     // Vault specific
     item_type?: BytescapeType;
     syndication_status?: SyndicationStatus;
@@ -220,6 +220,8 @@ export interface VaultMessage {
     sent_at: string;
     source: string;
     imported_at: number;
+    peer_did?: string;
+    peer_handle?: string;
 }
 
 export interface PublishResult {

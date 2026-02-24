@@ -1,9 +1,31 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
+
+class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ color: '#ff6b6b', padding: 20, background: '#222', borderRadius: 8, margin: 20 }}>
+          <h2>Component Crash</h2>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowX: 'auto' }}>{this.state.error?.stack || this.state.error?.message}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+import { useAuthStore, useAppStore } from "./store";
 
 // Types
 import {
@@ -31,9 +53,14 @@ import { VaultScreen } from "./screens/VaultScreen";
 import { StatusBar } from "./components/StatusBar";
 function App() {
   const [screen, setScreen] = useState<Screen>("login");
-  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const { auth, setAuth } = useAuthStore();
+  const {
+    globalError: error, setGlobalError: setError,
+    importProgress: importStatusRaw, setImportProgress: setImportStatus,
+    archiveCount, setArchiveCount
+  } = useAppStore();
+  const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
 
   // Import / Audit
   const [progress, setProgress] = useState<ParseProgress | null>(null);
@@ -44,9 +71,7 @@ function App() {
   const [selectedArchivePath, setSelectedArchivePath] = useState<string | null>(null);
 
   // Feed / Archive
-  const [archiveCount, setArchiveCount] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
-  const [importStatus, setImportStatus] = useState("");
 
   // Chat
   const [messages, setMessages] = useState<VaultMessage[]>([]);
@@ -299,7 +324,7 @@ function App() {
         setSelectedArchivePath(selected);
         setError("");
         addLog("[start] Parsing archive...");
-        
+
         // Debug: list ZIP contents to help diagnose parsing
         try {
           const zipInfo = await invoke<string[]>("debug_zip_contents", { path: selected });
@@ -317,7 +342,7 @@ function App() {
         } catch (e) {
           console.error("debug_zip_contents failed:", e);
         }
-        
+
         const lowerSelected = selected.toLowerCase();
         const sourceHint = lowerSelected.includes("instagram")
           ? "instagram"
@@ -439,84 +464,85 @@ function App() {
         marginRight: 0,
       } : undefined}
     >
-      {screen === "feed" && (
-        <FeedScreen
-          auth={auth}
+      <ErrorBoundary fallback={<div>Application Error</div>}>
+        {screen === "feed" && (
+          <FeedScreen
+            auth={auth}
+          />
+        )}
+
+        {screen === "import" && (
+          <ImportScreen
+            isImporting={isImporting}
+            importStatus={importStatus}
+            archiveCount={archiveCount}
+            onImportBluesky={importBluesky}
+            onFilePick={handleFilePick}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {screen === "audit" && (
+          <AuditScreen
+            progress={progress}
+            parseResult={parseResult}
+            logs={logs}
+            isShredding={isShredding}
+            importComplete={importComplete}
+            error={error || ""}
+            onShred={handleShred}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {screen === "profile" && (
+          <ProfileScreen
+            auth={auth}
+            archiveCount={archiveCount}
+          />
+        )}
+
+        {screen === "chat" && (
+          <ChatScreen
+            auth={auth}
+            messages={messages}
+            selectedConvoId={selectedConvoId}
+            setSelectedConvoId={setSelectedConvoId}
+            messageInput={messageInput}
+            setMessageInput={setMessageInput}
+            isSending={isSending}
+            onSendMessage={handleSendMessage}
+          />
+        )}
+
+        {screen === "friends" && (
+          <FriendsScreen
+            auth={auth}
+          />
+        )}
+
+        {screen === "vault" && (
+          <VaultScreen auth={auth} />
+        )}
+
+        {screen === "settings" && (
+          <SettingsScreen
+            auth={auth}
+            archiveCount={archiveCount}
+            onLogout={handleLogout}
+            onClearVault={() => {
+              setArchiveCount(0);
+            }}
+          />
+        )}
+
+        {/* Global Status Bar */}
+        <StatusBar
+          status={importStatus}
+          isBusy={isImporting}
+          onDismiss={!isImporting ? () => setImportStatus("") : undefined}
         />
-      )}
-
-      {screen === "import" && (
-        <ImportScreen
-          isImporting={isImporting}
-          importStatus={importStatus}
-          archiveCount={archiveCount}
-          onImportBluesky={importBluesky}
-          onFilePick={handleFilePick}
-          onNavigate={handleNavigate}
-        />
-      )}
-
-      {screen === "audit" && (
-        <AuditScreen
-          progress={progress}
-          parseResult={parseResult}
-          logs={logs}
-          isShredding={isShredding}
-          importComplete={importComplete}
-          error={error}
-          onShred={handleShred}
-          onNavigate={handleNavigate}
-        />
-      )}
-
-      {screen === "profile" && (
-        <ProfileScreen
-          auth={auth}
-          archiveCount={archiveCount}
-        />
-      )}
-
-      {screen === "chat" && (
-        <ChatScreen
-          auth={auth}
-          messages={messages}
-          selectedConvoId={selectedConvoId}
-          setSelectedConvoId={setSelectedConvoId}
-          messageInput={messageInput}
-          setMessageInput={setMessageInput}
-          isSending={isSending}
-          onSendMessage={handleSendMessage}
-        />
-      )}
-
-      {screen === "friends" && (
-        <FriendsScreen
-          auth={auth}
-        />
-      )}
-
-      {screen === "vault" && (
-        <VaultScreen auth={auth} />
-      )}
-
-      {screen === "settings" && (
-        <SettingsScreen
-          auth={auth}
-          archiveCount={archiveCount}
-          onLogout={handleLogout}
-          onClearVault={() => {
-            setArchiveCount(0);
-          }}
-        />
-      )}
-
-      {/* Global Status Bar */}
-      <StatusBar
-        status={importStatus}
-        isBusy={isImporting}
-        onDismiss={!isImporting ? () => setImportStatus("") : undefined}
-      />
-
+      </ErrorBoundary>
     </AppLayout>
   );
 }

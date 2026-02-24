@@ -93,6 +93,8 @@ fn parse_hash_safe(input: &str) -> std::result::Result<Hash, String> {
     Err("Invalid blob hash format".to_string())
 }
 
+
+
 /// Store media data as a blob in Iroh.
 /// 
 /// Optionally generates a WebP thumbnail for images.
@@ -175,11 +177,10 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
 
 /// Retrieve media blob bytes directly for browser Object URL creation.
 ///
-/// Returns raw binary via tauri::ipc::Response (not JSON-serialized Vec<u8>).
-/// On the JS side this arrives as an ArrayBuffer — no JSON encoding overhead.
-/// This is used by VideoPlayer to create Object URLs with correct MIME types.
+/// Returns Vec<u8> via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
+/// For large HLS videos, use resolve_hls_video which returns tauri::ipc::Response.
 #[tauri::command]
-pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) -> std::result::Result<Vec<u8>, String> {
+pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) -> std::result::Result<tauri::ipc::Response, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
 
     let app_data_dir = state.app_handle.path()
@@ -194,7 +195,8 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
             if let Ok(metadata) = std::fs::metadata(&cached) {
                 if metadata.len() > 0 {
                     if let Ok(bytes) = std::fs::read(&cached) {
-                        return Ok(bytes);
+                        println!("get_media_blob_bytes: cache hit {} ({} bytes)", ext, bytes.len());
+                        return Ok(tauri::ipc::Response::new(bytes));
                     }
                 }
             }
@@ -218,7 +220,8 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
     let _ = std::fs::write(&cache_path, &bytes);
 
-    Ok(bytes.to_vec())
+    println!("get_media_blob_bytes: fetched from Iroh, cached as {} ({} bytes)", ext, bytes.len());
+    Ok(tauri::ipc::Response::new(bytes.to_vec()))
 }
 
 /// Get the media directory path for storing imported files.
@@ -473,7 +476,7 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
 }
 
 /// Detect MIME type from magic bytes (used by backfill)
-fn mime_from_magic_bytes(data: &[u8]) -> String {
+pub fn mime_from_magic_bytes(data: &[u8]) -> String {
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "image/jpeg".to_string()
     } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -496,7 +499,7 @@ fn mime_from_magic_bytes(data: &[u8]) -> String {
 }
 
 /// Detect MIME type from file path/URI hint
-fn mime_from_path_hint(path: &str) -> String {
+pub fn mime_from_path_hint(path: &str) -> String {
     let lower = path.to_lowercase();
     let clean = lower.split('?').next().unwrap_or(&lower);
     let clean = clean.split('#').next().unwrap_or(clean);
@@ -516,12 +519,189 @@ fn mime_from_path_hint(path: &str) -> String {
         "video/webm".to_string()
     } else if clean.ends_with(".mkv") {
         "video/x-matroska".to_string()
+    } else if clean.ends_with(".ts") || clean.ends_with(".mpg") {
+        "video/mp2t".to_string()
     } else if clean.ends_with(".pdf") {
         "application/pdf".to_string()
     } else {
         "application/octet-stream".to_string()
     }
 }
+
+/// Download an HLS video by fetching its m3u8 playlist and all segments server-side.
+///
+/// Returns the filename of the cached `.ts` file. This allows the frontend to stream it 
+/// via `bytescape-video://` which provides perfect HTTP Range support for scrubbing.
+#[tauri::command]
+pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
+    use std::io::Write;
+
+    let app_data_dir: std::path::PathBuf = state.app_handle.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let cache_dir = app_data_dir.join("blob_cache");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+
+    let url_hash = format!("{:x}", md5_hash(&playlist_url));
+    let filename = format!("{}.ts", url_hash);
+    let file_path = cache_dir.join(&filename);
+
+    // Cache hit — return filename directly
+    if file_path.exists() {
+        if let Ok(meta) = std::fs::metadata(&file_path) {
+            if meta.len() > 1000 {
+                println!("resolve_hls_video: Cache hit ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
+                return Ok(file_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    // 1. Fetch the master/media playlist
+    let playlist_text = client.get(&playlist_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch playlist: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read playlist body: {}", e))?;
+
+    // 2. Determine the base URL for resolving relative paths
+    let master_base = playlist_url
+        .split('?').next().unwrap_or(&playlist_url)
+        .rsplit_once('/').map(|(base, _)| base).unwrap_or(&playlist_url)
+        .to_string();
+
+    // 3. Select the best variant — target 720p for quality (lazy loading prevents OOM)
+    let (media_playlist_text, segment_base_url) = if playlist_text.contains("#EXT-X-STREAM-INF") {
+        let target_bandwidth: u64 = 3_500_000; // 3.5 Mbps ≈ 720p
+        let mut variants: Vec<(u64, String)> = Vec::new();
+        let mut current_bw: Option<u64> = None;
+
+        for line in playlist_text.lines() {
+            if line.starts_with("#EXT-X-STREAM-INF") {
+                if let Some(bw_str) = line.split("BANDWIDTH=").nth(1) {
+                    let bw: u64 = bw_str.split(',').next().unwrap_or("0").parse().unwrap_or(0);
+                    current_bw = Some(bw);
+                }
+            } else if let Some(bw) = current_bw.take() {
+                if !line.starts_with('#') && !line.trim().is_empty() {
+                    variants.push((bw, line.trim().to_string()));
+                }
+            }
+        }
+
+        if variants.is_empty() {
+            return Err("Could not find any variant stream in master playlist".to_string());
+        }
+
+        variants.sort_by_key(|(bw, _)| (*bw as i64 - target_bandwidth as i64).unsigned_abs());
+        let (chosen_bw, chosen_uri) = &variants[0];
+
+        let variant_url = if chosen_uri.starts_with("http") {
+            chosen_uri.clone()
+        } else {
+            format!("{}/{}", master_base, chosen_uri)
+        };
+
+        println!("resolve_hls_video: Selected {}kbps variant", chosen_bw / 1000);
+
+        let variant_text = client.get(&variant_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch variant playlist: {}", e))?
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read variant playlist: {}", e))?;
+
+        let variant_base = variant_url
+            .split('?').next().unwrap_or(&variant_url)
+            .rsplit_once('/').map(|(base, _)| base).unwrap_or(&variant_url)
+            .to_string();
+
+        (variant_text, variant_base)
+    } else {
+        (playlist_text, master_base)
+    };
+
+    // 4. Parse segment URLs
+    let mut segment_urls: Vec<String> = Vec::new();
+    for line in media_playlist_text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let segment_url = if trimmed.starts_with("http") {
+            trimmed.to_string()
+        } else {
+            format!("{}/{}", segment_base_url, trimmed)
+        };
+        segment_urls.push(segment_url);
+    }
+
+    if segment_urls.is_empty() {
+        return Err("No segments found in HLS playlist".to_string());
+    }
+
+    println!("resolve_hls_video: Downloading {} segments...", segment_urls.len());
+
+    // 5. Download segments in parallel batches and write to disk
+    let mut file = std::fs::File::create(&file_path)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    let batch_size = 6;
+    let mut total_bytes: usize = 0;
+
+    for batch_start in (0..segment_urls.len()).step_by(batch_size) {
+        let batch_end = (batch_start + batch_size).min(segment_urls.len());
+        let batch = &segment_urls[batch_start..batch_end];
+
+        let mut handles = Vec::with_capacity(batch.len());
+        for seg_url in batch.iter() {
+            let client = client.clone();
+            let url = seg_url.clone();
+            handles.push(tokio::spawn(async move {
+                let resp = client.get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Segment fetch failed: {}", e))?;
+                let bytes = resp.bytes()
+                    .await
+                    .map_err(|e| format!("Segment read failed: {}", e))?;
+                Ok::<bytes::Bytes, String>(bytes)
+            }));
+        }
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            let seg_bytes = handle.await
+                .map_err(|e| format!("Segment {} task panicked: {}", batch_start + i, e))?
+                .map_err(|e| format!("Segment {} download failed: {}", batch_start + i, e))?;
+            file.write_all(&seg_bytes)
+                .map_err(|e| format!("Failed to write segment {}: {}", batch_start + i, e))?;
+            total_bytes += seg_bytes.len();
+        }
+    }
+
+    file.flush().map_err(|e| format!("Failed to flush file: {}", e))?;
+    drop(file);
+
+    println!("resolve_hls_video: Download complete, total {:.1} MB", total_bytes as f64 / (1024.0 * 1024.0));
+    Ok(file_path.to_string_lossy().into_owned())
+}
+
+/// Simple hash for cache key generation
+fn md5_hash(input: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    hasher.finish()
+}
+
+
 
 /// Detect file extension from magic bytes
 fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
@@ -559,4 +739,11 @@ fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
         return "webm";
     }
     "bin" // unknown
+}
+
+/// Retrieve the dynamically assigned port of the native Warp localhost media server.
+/// VideoPlayer uses this to construct pure HTTP URLs that natively bypass WebKitGTK drop-dead bugs.
+#[tauri::command]
+pub async fn get_media_server_port(state: tauri::State<'_, AppState>) -> std::result::Result<u16, String> {
+    Ok(state.media_port)
 }

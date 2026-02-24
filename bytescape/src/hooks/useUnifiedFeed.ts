@@ -1,0 +1,288 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
+import { adaptBlueskyPost, adaptBytescapeItem } from '../utils/adapters';
+
+export type FeedTab = 'all' | 'following' | 'feeds' | 'hashtags' | 'rss' | 'archives';
+
+export const LIVE_TABS: FeedTab[] = ['all', 'following', 'feeds', 'hashtags'];
+export const FEED_FILTER_ALL = '__all__';
+const ARCHIVE_PAGE_SIZE = 200;
+
+export function customFeedUris(feeds: GeneratorView[]): string[] {
+    return feeds
+        .map(f => f.uri)
+        .filter(uri => !uri.includes('app.bsky.feed.generator/following'));
+}
+
+interface UseUnifiedFeedOptions {
+    auth: AuthStatus | null;
+    activeTab: FeedTab;
+    selectedFeedUri: string;
+    archiveSourceFilter: string;
+    autoRefreshFeeds: boolean;
+}
+
+export function useUnifiedFeed({
+    auth,
+    activeTab,
+    selectedFeedUri,
+    archiveSourceFilter,
+    autoRefreshFeeds
+}: UseUnifiedFeedOptions) {
+    // === Data State ===
+    const [feedEntries, setFeedEntries] = useState<FeedEntry[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [feedError, setFeedError] = useState<string | null>(null);
+    const [cursor, setCursor] = useState<string | null>(null);
+    const [isFetchingMore, setIsFetchingMore] = useState(false);
+
+    // === Context Data ===
+    const [followingList, setFollowingList] = useState<ProfileView[]>([]);
+    const [savedFeeds, setSavedFeeds] = useState<GeneratorView[]>([]);
+    const [followedHashtags, setFollowedHashtags] = useState<string[]>([]);
+    const [archiveOffset, setArchiveOffset] = useState(0);
+    const [archiveTotal, setArchiveTotal] = useState(0);
+    const [vaultSources, setVaultSources] = useState<string[]>([]);
+
+    const fetchTokenRef = useRef(0);
+
+    const fetchFollowingList = async (actorDid: string) => {
+        try {
+            const follows = await invoke<ProfileView[]>('list_follows', { actor: actorDid });
+            setFollowingList(follows);
+        } catch (e) {
+            console.error('Failed to fetch follows, falling back to local contacts:', e);
+            try {
+                const contacts = await invoke<any[]>('list_contacts');
+                const fallback: ProfileView[] = contacts.map(c => ({
+                    did: c.did,
+                    handle: c.handle,
+                }));
+                setFollowingList(fallback);
+            } catch (e2) {
+                console.error('Failed to fetch local contacts fallback:', e2);
+                setFollowingList([]);
+            }
+        }
+    };
+
+    const fetchFeed = useCallback(async (tab: FeedTab, background = false) => {
+        if (!auth) return;
+
+        const requestId = ++fetchTokenRef.current;
+        const isStale = () => fetchTokenRef.current !== requestId;
+
+        if (!background) {
+            setIsLoading(true);
+            setFeedError(null);
+        }
+
+        try {
+            console.log(`Fetching feed for tab: ${tab}${background ? ' (background)' : ''}`);
+
+            if (tab === 'following') {
+                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 50 });
+                if (isStale()) return;
+                setFeedEntries(posts.map(adaptBlueskyPost));
+                setCursor(nextCursor);
+                await fetchFollowingList(auth.did);
+
+            } else if (tab === 'feeds') {
+                const feeds = await invoke<GeneratorView[]>("list_saved_feeds");
+                if (isStale()) return;
+                setSavedFeeds(feeds);
+
+                const allCustomUris = customFeedUris(feeds);
+                const targetFeedUris = selectedFeedUri === FEED_FILTER_ALL
+                    ? allCustomUris
+                    : allCustomUris.filter(uri => uri === selectedFeedUri);
+
+                const [unified, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                    tags: [],
+                    feedUris: targetFeedUris,
+                    limit: 50,
+                    cursor: null
+                });
+                if (isStale()) return;
+                setFeedEntries(unified.map(adaptBlueskyPost));
+                setCursor(nextCursor);
+
+            } else if (tab === 'hashtags') {
+                const tags = await invoke<string[]>('list_followed_hashtags');
+                if (isStale()) return;
+                setFollowedHashtags(tags);
+                if (tags.length > 0) {
+                    const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                        tags,
+                        feedUris: [],
+                        limit: 50,
+                        cursor: null
+                    });
+                    if (isStale()) return;
+                    setFeedEntries(posts.map(adaptBlueskyPost));
+                    setCursor(nextCursor);
+                } else {
+                    setFeedEntries([]);
+                    setCursor(null);
+                }
+
+            } else if (tab === 'rss') {
+                // RSS connector not yet implemented
+                if (isStale()) return;
+                setFeedEntries([]);
+                setCursor(null);
+
+            } else if (tab === 'archives') {
+                const pageSize = ARCHIVE_PAGE_SIZE;
+                const [result, sources] = await Promise.all([
+                    invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
+                        limit: pageSize,
+                        offset: 0,
+                        source: archiveSourceFilter || null,
+                    }),
+                    invoke<string[]>('list_vault_sources').catch((): string[] => []),
+                ]);
+                if (isStale()) return;
+                setArchiveOffset(pageSize);
+                setArchiveTotal(result.total);
+                setVaultSources(sources);
+                setFeedEntries(result.items.map(adaptBytescapeItem));
+                setCursor(null);
+
+            } else if (tab === 'all') {
+                const feedsData = await invoke<GeneratorView[]>("list_saved_feeds").catch((): GeneratorView[] => []);
+                const feedUris = customFeedUris(feedsData);
+
+                const response = await invoke<{ items: FeedEntry[], next_cursor: string | null }>('get_timeline_unified', {
+                    tags: [],
+                    feedUris,
+                    limit: 30,
+                    cursor: null,
+                    vaultOffset: 0
+                }).catch(() => null);
+
+                if (isStale()) return;
+                setSavedFeeds(feedsData);
+
+                if (response) {
+                    setFeedEntries(response.items);
+                    setCursor(response.next_cursor);
+                    setArchiveOffset(200);
+                } else {
+                    setFeedEntries([]);
+                    setCursor(null);
+                }
+
+                await fetchFollowingList(auth.did);
+            }
+
+            if (!background && !isStale()) {
+                setFeedError(null);
+            }
+        } catch (e) {
+            console.error("Failed to fetch feed:", e);
+            if (!background && !isStale()) {
+                setFeedError(typeof e === 'string' ? e : 'Failed to fetch feed data');
+            }
+        } finally {
+            if (!background && !isStale()) {
+                setIsLoading(false);
+            }
+        }
+    }, [auth, selectedFeedUri, archiveSourceFilter]);
+
+    useEffect(() => {
+        if (!auth) return;
+        setCursor(null);
+        setArchiveOffset(0);
+        fetchFeed(activeTab, false);
+    }, [auth, activeTab, selectedFeedUri, fetchFeed]);
+
+    useEffect(() => {
+        if (!auth || !autoRefreshFeeds) return;
+        if (!LIVE_TABS.includes(activeTab)) return;
+
+        const interval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.hidden) return;
+            fetchFeed(activeTab, true);
+        }, 45000);
+
+        return () => clearInterval(interval);
+    }, [auth, activeTab, autoRefreshFeeds, fetchFeed]);
+
+    const handleLoadMore = async () => {
+        if (isFetchingMore || !auth) return;
+        setIsFetchingMore(true);
+        try {
+            if (activeTab === 'following' && cursor) {
+                const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
+                setFeedEntries(prev => [...prev, ...newPosts.map(adaptBlueskyPost)]);
+                setCursor(nextCursor);
+            } else if ((activeTab === 'feeds' || activeTab === 'hashtags') && cursor) {
+                const tags = activeTab === 'hashtags' ? followedHashtags : [];
+                const uris = activeTab === 'feeds' ? (selectedFeedUri === FEED_FILTER_ALL ? customFeedUris(savedFeeds) : [selectedFeedUri]) : [];
+                const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                    tags,
+                    feedUris: uris,
+                    limit: 30,
+                    cursor
+                });
+                setFeedEntries(prev => [...prev, ...newPosts.map(adaptBlueskyPost)]);
+                setCursor(nextCursor);
+            } else if (activeTab === 'archives') {
+                const pageSize = ARCHIVE_PAGE_SIZE;
+                const result = await invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
+                    limit: pageSize,
+                    offset: archiveOffset,
+                    source: archiveSourceFilter || null,
+                });
+                setFeedEntries(prev => [...prev, ...result.items.map(adaptBytescapeItem)]);
+                setArchiveOffset(prev => prev + pageSize);
+            } else if (activeTab === 'all') {
+                const response = await invoke<{ items: FeedEntry[], next_cursor: string | null }>('get_timeline_unified', {
+                    tags: [],
+                    feedUris: customFeedUris(savedFeeds),
+                    limit: 30,
+                    cursor,
+                    vaultOffset: archiveOffset
+                }).catch(() => null);
+
+                if (response) {
+                    setFeedEntries(prev => {
+                        const merged = [...prev, ...response.items];
+                        const seen = new Set<string>();
+                        return merged.filter(p => {
+                            if (seen.has(p.id)) return false;
+                            seen.add(p.id);
+                            return true;
+                        });
+                    });
+                    setCursor(response.next_cursor);
+                    setArchiveOffset(prev => prev + 200);
+                }
+            }
+        } catch (err) {
+            console.error("Load more failed:", err);
+        } finally {
+            setIsFetchingMore(false);
+        }
+    };
+
+    return {
+        feedEntries,
+        setFeedEntries,
+        isLoading,
+        feedError,
+        cursor,
+        isFetchingMore,
+        followingList,
+        savedFeeds,
+        followedHashtags,
+        setFollowedHashtags,
+        vaultSources,
+        archiveTotal,
+        fetchFeed,
+        handleLoadMore
+    };
+}

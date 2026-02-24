@@ -663,9 +663,6 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     println!("lib: Starting import_bluesky_posts...");
 
@@ -687,7 +684,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
 
     let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
         &user_did,
-        &access_jwt,
+        &state,
         media_dir.clone(),
         &app_handle,
         None,
@@ -1000,15 +997,10 @@ pub async fn get_timeline(
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
-
-    // Timeline browsing should not persist/download media for other users' posts.
+    
     let app_handle = state.app_handle.clone();
-
     let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
-        &access_jwt,
+        &state,
         std::path::PathBuf::new(),
         &app_handle,
         limit,
@@ -1050,6 +1042,10 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
         let (messages, _cursor) = chat_client.get_messages(&access_jwt, &user_did, &convo.id, None).await
             .map_err(|e| BytescapeError::BlueskyApi(e))?;
         
+        let peer = convo.members.iter().find(|m| m.did != user_did);
+        let peer_did = peer.map(|p| p.did.clone());
+        let peer_handle = peer.and_then(|p| p.handle.clone());
+
         for msg in messages {
             let vault_msg = VaultMessage {
                 id: msg.id.clone(),
@@ -1064,6 +1060,8 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs() as u64,
+                peer_did: peer_did.clone(),
+                peer_handle: peer_handle.clone(),
             };
             
             if let Ok(true) = db.save_vault_message(&vault_msg).await {
@@ -1319,6 +1317,8 @@ pub async fn import_archive_messages(
                     sent_at,
                     source: normalized_source.clone(),
                     imported_at,
+                    peer_did: None,
+                    peer_handle: None,
                 };
 
                 parsed_messages += 1;
@@ -1350,6 +1350,8 @@ pub async fn import_archive_messages(
                     sent_at,
                     source: normalized_source.clone(),
                     imported_at,
+                    peer_did: None,
+                    peer_handle: None,
                 };
 
                 parsed_messages += 1;
@@ -1402,13 +1404,15 @@ pub async fn send_bsky_dm(
         convo_id: convo_id.clone(),
         sender_did: user_did.clone(),
         sender_handle: _user_handle.clone(),
-        text: msg.text.clone(),
-        sent_at: msg.sent_at.clone().unwrap_or_default(),
+        text: content,
+        sent_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis().to_string(), // approximation
         source: "bluesky".to_string(),
         imported_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as u64,
+        peer_did: _recipient_did,
+        peer_handle: None,
     };
     
     let _ = db.save_vault_message(&vault_msg).await;
@@ -1423,21 +1427,13 @@ pub async fn send_bsky_dm(
 /// List saved Bluesky custom feeds.
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
-
-    crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+    crate::connectors::bluesky::get_saved_feeds(&state).await
 }
 
 /// List profiles this actor follows.
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
-
-    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&state, &actor, 100, None).await?;
     Ok(profiles)
 }
 
@@ -1467,11 +1463,7 @@ pub async fn get_unified_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
-
-    crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+    crate::connectors::bluesky::get_unified_feed(&state, tags, Some(feed_uris), limit, cursor).await
 }
 
 /// Publish a new post with explicit destination routing.

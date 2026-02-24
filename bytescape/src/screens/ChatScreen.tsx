@@ -58,8 +58,10 @@ export function ChatScreen({
     // Derive title from participants
     let activeTitle = "Chat";
     if (activeConvoMsgs && activeConvoMsgs.length > 0) {
-        const handles = [...new Set(activeConvoMsgs.filter((m) => m.sender_did !== auth?.did).map((m) => m.sender_handle))];
-        activeTitle = handles.length > 0 ? handles.join(", ") : "Just You";
+        const senderHandles = [...new Set(activeConvoMsgs.map(m => m.sender_handle))].filter(h => h !== auth?.handle);
+        const peerHandles = [...new Set(activeConvoMsgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h !== auth?.handle);
+        const allHandles = [...new Set([...senderHandles, ...peerHandles])];
+        activeTitle = allHandles.length > 0 ? allHandles.join(", ") : "Just You";
     }
 
     // Auto-scroll logic
@@ -116,8 +118,10 @@ export function ChatScreen({
                                 {liveConvoIds.map(cid => {
                                     const msgs = byConvo[cid];
                                     const last = msgs[0];
-                                    const handles = [...new Set(msgs.map(m => m.sender_handle))].filter(h => h !== auth?.handle);
-                                    const title = handles.length > 0 ? handles.join(", ") : "Just You";
+                                    const senderHandles = [...new Set(msgs.map(m => m.sender_handle))].filter(h => h && h !== auth?.handle);
+                                    const peerHandles = [...new Set(msgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h && h !== auth?.handle);
+                                    const allHandles = [...new Set([...senderHandles, ...peerHandles])].filter((h): h is string => !!h);
+                                    const title = allHandles.length > 0 ? allHandles.map((h: string) => `@${h.replace(/^@/, '')}`).join(", ") : "Just You";
 
                                     return (
                                         <div
@@ -144,8 +148,10 @@ export function ChatScreen({
                                 {archivedConvoIds.map(cid => {
                                     const msgs = byConvo[cid];
                                     const last = msgs[0];
-                                    const handles = [...new Set(msgs.map(m => m.sender_handle))].filter(h => h !== auth?.handle);
-                                    const title = handles.length > 0 ? handles.join(", ") : "Archived Thread";
+                                    const senderHandles = [...new Set(msgs.map(m => m.sender_handle))].filter(h => h && h !== auth?.handle);
+                                    const peerHandles = [...new Set(msgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h && h !== auth?.handle);
+                                    const allHandles = [...new Set([...senderHandles, ...peerHandles])].filter((h): h is string => !!h);
+                                    const title = allHandles.length > 0 ? allHandles.map((h: string) => `@${h.replace(/^@/, '')}`).join(", ") : "Archived Thread";
 
                                     return (
                                         <div

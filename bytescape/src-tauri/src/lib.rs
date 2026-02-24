@@ -11,10 +11,12 @@ use std::sync::Arc;
 
 pub mod error;
 pub mod db;
+pub mod models;
 pub mod sync;
 pub mod connectors;
 pub mod commands;
 pub mod keychain_encrypted;
+pub mod media_server;
 
 mod auth;
 use auth::AuthManager;
@@ -35,6 +37,7 @@ pub struct AppState {
     pub sync_manager: Mutex<Option<Arc<sync::SyncManager>>>,
     pub traffic_controller: Arc<TrafficController>,
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
+    pub media_port: u16,
 }
 
 /// Run the Bytescape application
@@ -42,7 +45,7 @@ pub struct AppState {
 /// This is the main entry point called from main.rs
 pub fn run() {
     println!("Starting Bytescape...");
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -96,6 +99,7 @@ pub fn run() {
             commands::import::migrate_willow_paths,
             commands::import::get_willow_write_parity_report,
             commands::import::get_timeline,
+            commands::feed_aggregation::get_timeline_unified,
             commands::import::import_vault_messages,
             commands::import::import_archive_messages,
             commands::import::send_bsky_dm,
@@ -109,9 +113,11 @@ pub fn run() {
             commands::media::store_media_blob,
             commands::media::get_media_blob,
             commands::media::get_media_blob_bytes,
+            commands::media::resolve_hls_video,
             commands::media::get_media_dir,
             commands::media::diagnose_media_ref,
             commands::media::backfill_media_mimes,
+            commands::media::get_media_server_port,
         ])
         .setup(|app| {
             // Initialize application state
@@ -122,6 +128,11 @@ pub fn run() {
                 .map_err(|e| format!("Failed to get app data dir: {}", e))?;
             std::fs::create_dir_all(&app_data_dir)
                 .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+
+            // Start dedicated native media server on localhost to bypass WebKitGTK protocol bugs
+            let media_port = tauri::async_runtime::block_on(async {
+                media_server::start_warp_media_server(app_data_dir.clone()).await
+            });
 
             // Initialize encrypted keychain
             // Note: In production, the master password should come from:
@@ -166,6 +177,7 @@ pub fn run() {
                 sync_manager: Mutex::new(None),
                 traffic_controller,
                 pending_import: Mutex::new(None),
+                media_port,
             };
 
             app.manage(state);

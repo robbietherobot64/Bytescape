@@ -8,6 +8,7 @@ pub mod vault;
 pub mod auth;
 pub mod import;
 pub mod media;
+pub mod feed_aggregation;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
