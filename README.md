@@ -13,7 +13,7 @@ Bytescape is a unified social vault and communication client. It operates on a "
 
 ## 📚 Documentation
 
-*   **[Architecture](./ARCHITECTURE.md)**: The "Engine/Lens" design, Universal Container schema, and P2P topology.
+*   **[Technical Specification](./TECHNICAL_SPEC.md)**: The "Engine/Lens" design, Universal Container schema, P2P topology, data flows, and security model.
 *   **[Roadmap](./ROADMAP.md)**: Our path to the Sovereign Cloud.
 
 ## 🚀 Getting Started
@@ -21,8 +21,9 @@ Bytescape is a unified social vault and communication client. It operates on a "
 The project is split into the frontend (`bytescape`) and the backend bridge (`bytescape-bridge`).
 
 ### Prerequisites
-*   **Rust** (Latest Stable)
+*   **Rust** (v1.75+ or Latest Stable)
 *   **Node.js** (v18+) & **pnpm**
+*   **Linux dependencies** for Tauri (check Tauri docs)
 
 ### Installation
 
@@ -34,10 +35,17 @@ The project is split into the frontend (`bytescape`) and the backend bridge (`by
     ```bash
     pnpm install
     ```
-3.  Run the application:
+3.  Run the application in development mode:
     ```bash
     pnpm tauri dev
     ```
+
+### Building
+
+To build for production:
+```bash
+pnpm tauri build
+```
 
 ## 🏗️ Tech Stack
 
