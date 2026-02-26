@@ -55,6 +55,9 @@ pub fn run() {
             commands::node::setup_iroh_node,
             commands::node::create_sync_doc,
             commands::node::join_sync_doc,
+            commands::node::get_node_status,
+            commands::node::p2p_create_test_doc,
+            commands::node::p2p_join_and_read_test_doc,
             
             // Vault commands
             commands::vault::vault_upload_file,

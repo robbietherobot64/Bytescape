@@ -517,4 +517,41 @@ impl SyncManager {
             by_source,
         })
     }
+
+    /// Read all entries from a given namespace (for P2P test/diagnostics).
+    /// Returns a list of key-content-author triples.
+    pub async fn read_doc_entries(&self, namespace: crate::sync::NamespaceId) -> Result<Vec<crate::commands::node::TestDocEntry>, String> {
+        let query = Query::all();
+        let (tx, mut rx) = irpc::channel::mpsc::channel::<iroh_docs::api::RpcResult<iroh_docs::SignedEntry>>(128);
+
+        self.engine.sync
+            .get_many(namespace, query.into(), tx)
+            .await
+            .map_err(|e: anyhow::Error| format!("Failed to query namespace: {}", e))?;
+
+        let mut entries = Vec::new();
+        while let Ok(Some(result)) = rx.recv().await {
+            match result {
+                Ok(entry) => {
+                    let key = String::from_utf8_lossy(entry.key()).to_string();
+                    let author = entry.author().to_string();
+
+                    // Read the content from blobs
+                    let content = match self.get_media(entry.content_hash()).await {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                        Err(_) => format!("<binary: {} bytes>", entry.content_len()),
+                    };
+
+                    entries.push(crate::commands::node::TestDocEntry {
+                        key,
+                        content,
+                        author,
+                    });
+                }
+                Err(e) => eprintln!("read_doc_entries: entry error: {}", e),
+            }
+        }
+
+        Ok(entries)
+    }
 }

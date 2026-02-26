@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use futures::StreamExt;
 use std::str::FromStr;
 
+use iroh::address_lookup::mdns::MdnsAddressLookupBuilder;
+
 #[derive(Parser)]
 #[command(name = "test-peer")]
 struct Cli {
@@ -34,10 +36,11 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_dir)?;
     println!("Storage: {:?}", data_dir);
 
-    // Initialize Iroh Node
+    // Initialize Iroh Node with mDNS LAN discovery
     let secret_key = SecretKey::generate(&mut rand::rng());
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
+        .address_lookup(MdnsAddressLookupBuilder::default())
         .bind()
         .await?;
     let node_id = endpoint.secret_key().public();
