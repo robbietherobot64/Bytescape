@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FeedEntry, TaggedPerson, Audience } from '../types';
-import { SourceBadge } from './SourceBadge';
 import { BlobImage } from './BlobImage';
 import { VideoPlayer } from './VideoPlayer';
 import { AudiencePills } from './AudiencePills';
@@ -145,6 +144,11 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     const hasMedia = entry.media_urls.length > 0;
 
     const syndicatedUris = entry.syndicated_uris || {};
+    const syndicatedAt = entry.syndicated_at || {};
+
+    // Compute syndicated platforms from audiences (excluding source and 'Local')
+    const syndicatedTo = audiences
+        .filter(a => a !== 'Local' && a.toLowerCase() !== entry.source.toLowerCase());
 
     const openGallery = (index: number) => {
         setGalleryIndex(index);
@@ -185,8 +189,13 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 </div>
                 {!isQuote && (
                     <div className="header-actions">
-                        <AudiencePills audiences={audiences} compact />
-                        <SourceBadge source={entry.source} />
+                        <AudiencePills
+                            source={entry.source}
+                            originalTimestamp={entry.timestamp}
+                            syndicatedTo={syndicatedTo}
+                            syndicatedAt={syndicatedAt}
+                            compact
+                        />
                     </div>
                 )}
             </div>

@@ -190,6 +190,9 @@ pub struct BytescapeItem {
     pub audiences: Vec<Audience>,
     #[serde(default)]
     pub syndicated_uris: std::collections::HashMap<String, String>,
+    /// Timestamps (epoch seconds) for when each platform was syndicated
+    #[serde(default)]
+    pub syndicated_at: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -368,6 +371,8 @@ pub struct FeedEntry {
     pub audiences: Vec<Audience>,
     #[serde(default)]
     pub syndicated_uris: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub syndicated_at: std::collections::HashMap<String, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

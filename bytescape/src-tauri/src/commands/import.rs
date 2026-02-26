@@ -664,6 +664,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             syndicated_uri: None,
             audiences: vec![Audience::Local],
             syndicated_uris: std::collections::HashMap::new(),
+            syndicated_at: std::collections::HashMap::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -797,6 +798,7 @@ async fn save_posts(
             syndicated_uri: None,
             audiences: vec![Audience::Local],
             syndicated_uris: std::collections::HashMap::new(),
+            syndicated_at: std::collections::HashMap::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1562,6 +1564,7 @@ pub async fn publish_post(
                 syndicated_uri: None,
                 audiences: vec![Audience::Local],
                 syndicated_uris: std::collections::HashMap::new(),
+                syndicated_at: std::collections::HashMap::new(),
             };
 
             match db.save_item(&item).await {
@@ -1636,6 +1639,11 @@ pub async fn publish_post(
                                 syndicated_uris: {
                                     let mut m = std::collections::HashMap::new();
                                     m.insert("bluesky".to_string(), uri.clone());
+                                    m
+                                },
+                                syndicated_at: {
+                                    let mut m = std::collections::HashMap::new();
+                                    m.insert("bluesky".to_string(), now);
                                     m
                                 },
                             };

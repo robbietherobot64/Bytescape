@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { Audience } from '../types';
-import { AUDIENCE_CONFIG } from './AudiencePills';
+import { PLATFORM_CONFIG } from './AudiencePills';
+
+/** Map Audience enum values to platform config keys */
+function platformKey(a: Audience): string {
+    return a.toLowerCase();
+}
 
 interface AudienceDrawerProps {
     itemId: string;
@@ -18,6 +23,8 @@ const EXPANDABLE_AUDIENCES: { id: Audience; available: boolean; disabledReason?:
     { id: 'P2p', available: true },
     { id: 'Activitypub', available: false, disabledReason: 'Coming soon' },
 ];
+
+const FALLBACK = { emoji: '📝', label: 'Unknown', bg: 'rgba(136,136,168,0.12)', color: 'var(--text-muted)', border: 'rgba(136,136,168,0.2)' };
 
 export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClose, onUpdated }: AudienceDrawerProps) {
     const [loading, setLoading] = useState<Audience | null>(null);
@@ -37,8 +44,6 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
                 onUpdated(updated);
                 setSuccessMsg(`Shared to Bluesky`);
             } else if (target === 'P2p') {
-                // P2P syndication — future: calls expand_audience command
-                // For now, just mark as P2P shared locally
                 setSuccessMsg('P2P sharing will be available soon');
             }
         } catch (e: any) {
@@ -89,10 +94,10 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
                         Currently shared on
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {currentAudiences.map(a => {
-                            const c = AUDIENCE_CONFIG[a];
-                            if (!c) return null;
-                            const uri = syndicatedUris[a.toLowerCase()];
+                        {currentAudiences.filter(a => a !== 'Local').map(a => {
+                            const key = platformKey(a);
+                            const c = PLATFORM_CONFIG[key] || FALLBACK;
+                            const uri = syndicatedUris[key];
                             return (
                                 <div key={a} style={{
                                     display: 'flex',
@@ -128,7 +133,8 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {EXPANDABLE_AUDIENCES.map(({ id, available, disabledReason }) => {
-                            const c = AUDIENCE_CONFIG[id];
+                            const key = platformKey(id);
+                            const c = PLATFORM_CONFIG[key] || FALLBACK;
                             const alreadyShared = currentAudiences.includes(id);
                             const isLoading = loading === id;
 

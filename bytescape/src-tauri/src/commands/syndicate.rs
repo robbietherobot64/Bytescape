@@ -153,6 +153,10 @@ pub async fn syndicate_vault_item(
         item.audiences.push(Audience::Bluesky);
     }
     item.syndicated_uris.insert("bluesky".to_string(), uri.clone());
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    item.syndicated_at.insert("bluesky".to_string(), now_ts);
 
     let db_guard = state.db_manager.lock().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;

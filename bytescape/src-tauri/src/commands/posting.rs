@@ -151,6 +151,7 @@ pub async fn publish_post_v2(
                     a
                 },
                 syndicated_uris: std::collections::HashMap::new(),
+                syndicated_at: std::collections::HashMap::new(),
             };
             
             if let Err(e) = db.save_item(&item).await {
@@ -273,6 +274,10 @@ pub async fn publish_post_v2(
                                      item.audiences.push(Audience::Bluesky);
                                  }
                                  item.syndicated_uris.insert("bluesky".to_string(), uri.to_string());
+                                 let now_ts = std::time::SystemTime::now()
+                                     .duration_since(std::time::UNIX_EPOCH)
+                                     .unwrap_or_default().as_secs();
+                                 item.syndicated_at.insert("bluesky".to_string(), now_ts);
                                  item.url = Some(uri.to_string());
                                  let _ = db.upsert_item(&item).await;
                              }

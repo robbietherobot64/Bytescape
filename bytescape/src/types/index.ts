@@ -128,6 +128,7 @@ export interface FeedEntry {
     syndication_status?: SyndicationStatus;
     audiences: Audience[];
     syndicated_uris: Record<string, string>;
+    syndicated_at: Record<string, number>;
     location?: string;
     tagged_people?: string;
     title?: string | null;
@@ -174,6 +175,7 @@ export interface BytescapeItem {
     syndicated_uri?: string | null;
     audiences?: Audience[];
     syndicated_uris?: Record<string, string>;
+    syndicated_at?: Record<string, number>;
 }
 
 export interface VaultStats {

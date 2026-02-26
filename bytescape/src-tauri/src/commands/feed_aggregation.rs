@@ -54,6 +54,11 @@ impl From<BlueskyImportedPost> for FeedEntry {
                 m.insert("bluesky".to_string(), post.uri.clone());
                 m
             },
+            syndicated_at: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("bluesky".to_string(), post.created_at as u64);
+                m
+            },
             location: None,
             tagged_people: None,
             title: None,
@@ -126,6 +131,7 @@ impl From<BytescapeItem> for FeedEntry {
             } else {
                 item.syndicated_uris.clone()
             },
+            syndicated_at: item.syndicated_at.clone(),
             location: item.location,
             tagged_people: item.tagged_people,
             title: item.title,
@@ -193,8 +199,24 @@ pub async fn get_timeline_unified(
         }
     }
 
-    // Sort by descending timestamp
-    feed.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // Sort by effective timestamp (latest of original or any syndication)
+    feed.sort_by(|a, b| {
+        let a_max = a
+            .syndicated_at
+            .values()
+            .map(|&v| v as i64)
+            .max()
+            .unwrap_or(a.timestamp)
+            .max(a.timestamp);
+        let b_max = b
+            .syndicated_at
+            .values()
+            .map(|&v| v as i64)
+            .max()
+            .unwrap_or(b.timestamp)
+            .max(b.timestamp);
+        b_max.cmp(&a_max)
+    });
 
     // Deduplicate by ID
     let mut seen = std::collections::HashSet::new();
