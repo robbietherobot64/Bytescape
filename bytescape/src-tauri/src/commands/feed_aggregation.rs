@@ -177,8 +177,9 @@ pub async fn get_timeline_unified(
         }
     }
 
-    // 2. Fetch vault items
+    // 3. Fetch vault items
     let mut _vault_total = 0;
+    let mut vault_entries = Vec::new();
     
     // Explicit block to limit the lifetime of `db_guard` so it's dropped 
     // before any subsequent await calls (if any), though here it's isolated anyway.
@@ -192,12 +193,43 @@ pub async fn get_timeline_unified(
                 if let Ok((items, total)) = db.list_my_items_paged(&did, None, vault_limit, offset).await {
                     _vault_total = total;
                     for item in items {
-                        feed.push(FeedEntry::from(item));
+                        vault_entries.push(FeedEntry::from(item));
                     }
                 }
             }
         }
     }
+
+    // 4. Merge timeline items with vault items (Chain of Custody dedup)
+    let mut syndicated_uris_in_vault = std::collections::HashSet::new();
+
+    for v in &mut vault_entries {
+        // Collect bindings carefully to avoid borrow checker issues
+        let syndications: Vec<(String, String)> = v.syndicated_uris
+            .iter()
+            .map(|(p, u)| (p.clone(), u.clone()))
+            .collect();
+
+        for (platform, uri) in syndications {
+            let has_timestamp = v.syndicated_at.get(&platform).map(|&t| t > 0).unwrap_or(false);
+            if !has_timestamp {
+                let matched_timeline_post = feed.iter().find(|e| e.id == uri || e.original_url.as_ref() == Some(&uri));
+                if let Some(timeline_entry) = matched_timeline_post {
+                    v.syndicated_at.insert(platform.clone(), timeline_entry.timestamp as u64);
+                }
+            }
+            syndicated_uris_in_vault.insert(uri.clone());
+        }
+    }
+
+    // Remove timeline entries that are already part of a vault item's chain of custody
+    feed.retain(|entry| {
+        let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
+        !syndicated_uris_in_vault.contains(uri)
+    });
+
+    // Bring vault items into the main feed
+    feed.extend(vault_entries);
 
     // Sort by effective timestamp (latest of original or any syndication)
     feed.sort_by(|a, b| {
