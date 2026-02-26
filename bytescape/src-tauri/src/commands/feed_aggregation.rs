@@ -1,6 +1,6 @@
 use tauri::State;
 use crate::AppState;
-use crate::models::{FeedEntry, BytescapeItem, BytescapeType};
+use crate::models::{FeedEntry, BytescapeItem, BytescapeType, Audience, audiences_from_legacy, syndicated_uris_from_legacy};
 use crate::connectors::bluesky::BlueskyImportedPost;
 use serde::{Serialize, Deserialize};
 
@@ -48,6 +48,12 @@ impl From<BlueskyImportedPost> for FeedEntry {
             quoted_post: post.quoted_post.map(|q| Box::new(FeedEntry::from(*q))),
             item_type: Some(BytescapeType::Status),
             syndication_status: None,
+            audiences: vec![Audience::Local, Audience::Bluesky],
+            syndicated_uris: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("bluesky".to_string(), post.uri.clone());
+                m
+            },
             location: None,
             tagged_people: None,
             title: None,
@@ -109,7 +115,17 @@ impl From<BytescapeItem> for FeedEntry {
             reposted_by_handle: None,
             quoted_post: None,
             item_type: Some(item.item_type),
-            syndication_status: Some(item.syndication_status),
+            syndication_status: Some(item.syndication_status.clone()),
+            audiences: if item.audiences.is_empty() {
+                audiences_from_legacy(&item.syndication_status, &item.syndicated_uri)
+            } else {
+                item.audiences.clone()
+            },
+            syndicated_uris: if item.syndicated_uris.is_empty() {
+                syndicated_uris_from_legacy(&item.syndicated_uri)
+            } else {
+                item.syndicated_uris.clone()
+            },
             location: item.location,
             tagged_people: item.tagged_people,
             title: item.title,

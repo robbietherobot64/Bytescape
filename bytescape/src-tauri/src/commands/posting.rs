@@ -2,7 +2,7 @@ use tauri::State;
 use serde::Deserialize;
 use serde_json::json;
 use crate::AppState;
-use crate::models::{BytescapeItem, SyndicationStatus, BytescapeType};
+use crate::models::{BytescapeItem, SyndicationStatus, BytescapeType, Audience};
 use crate::connectors::{Source, bluesky::{BlueskyClient, authenticated_xrpc_candidates}};
 use crate::sync::Hash;
 use data_encoding::BASE32_NOPAD;
@@ -145,6 +145,12 @@ pub async fn publish_post_v2(
                 media_mimes: media_mimes.clone(),
                 syndication_status: if publish_bluesky { SyndicationStatus::PendingSyndication } else { SyndicationStatus::LocalOnly },
                 syndicated_uri: None,
+                audiences: {
+                    let mut a = vec![Audience::Local];
+                    if publish_bluesky { a.push(Audience::Bluesky); }
+                    a
+                },
+                syndicated_uris: std::collections::HashMap::new(),
             };
             
             if let Err(e) = db.save_item(&item).await {
@@ -263,6 +269,10 @@ pub async fn publish_post_v2(
                              if let Ok(Some(mut item)) = db.get_item_by_id(&id).await {
                                  item.syndication_status = SyndicationStatus::Syndicated;
                                  item.syndicated_uri = Some(uri.to_string());
+                                 if !item.audiences.contains(&Audience::Bluesky) {
+                                     item.audiences.push(Audience::Bluesky);
+                                 }
+                                 item.syndicated_uris.insert("bluesky".to_string(), uri.to_string());
                                  item.url = Some(uri.to_string());
                                  let _ = db.upsert_item(&item).await;
                              }

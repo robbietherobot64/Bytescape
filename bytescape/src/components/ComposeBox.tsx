@@ -138,14 +138,15 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                         </button>
                         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
                         {[
-                            { id: 'local', label: '🔒 Local' },
-                            { id: 'bluesky', label: '🦋 Bluesky' },
-                            { id: 'all', label: '🌐 All' },
+                            { id: 'local', label: '🔒 Local Only', title: 'Stored in your vault, not shared' },
+                            { id: 'bluesky', label: '🦋 Bluesky', title: 'Posts to your Bluesky account' },
+                            { id: 'all', label: '🌐 All Networks', title: 'Posts to all linked networks + P2P' },
                         ].map(opt => (
                             <button
                                 key={opt.id}
                                 className={`btn btn-ghost btn-sm ${postTarget === opt.id ? 'active' : ''}`}
                                 onClick={() => setPostTarget(opt.id as typeof postTarget)}
+                                title={opt.title}
                                 style={{ padding: '2px 6px', fontSize: '0.75rem' }}
                             >
                                 {opt.label}

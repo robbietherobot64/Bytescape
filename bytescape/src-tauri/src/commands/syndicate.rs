@@ -2,7 +2,7 @@ use tauri::State;
 
 use serde_json::json;
 use crate::AppState;
-use crate::models::SyndicationStatus;
+use crate::models::{SyndicationStatus, Audience};
 use crate::connectors::bluesky::{BlueskyClient, authenticated_xrpc_candidates};
 use crate::sync::Hash;
 use data_encoding::BASE32_NOPAD;
@@ -21,8 +21,8 @@ pub async fn syndicate_vault_item(
         .ok_or_else(|| format!("Item not found: {}", item_id))?;
     drop(db_guard);
 
-    if item.syndication_status == SyndicationStatus::Syndicated {
-        return Err("Item is already syndicated".to_string());
+    if item.audiences.contains(&Audience::Bluesky) || item.syndication_status == SyndicationStatus::Syndicated {
+        return Err("Item is already syndicated to Bluesky".to_string());
     }
 
     // 2. Prepare Bluesky client and session
@@ -149,6 +149,10 @@ pub async fn syndicate_vault_item(
     // 5. Update item in database
     item.syndication_status = SyndicationStatus::Syndicated;
     item.syndicated_uri = Some(uri.clone());
+    if !item.audiences.contains(&Audience::Bluesky) {
+        item.audiences.push(Audience::Bluesky);
+    }
+    item.syndicated_uris.insert("bluesky".to_string(), uri.clone());
 
     let db_guard = state.db_manager.lock().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;

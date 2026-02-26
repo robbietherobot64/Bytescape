@@ -56,6 +56,42 @@ pub fn default_syndication_status() -> SyndicationStatus {
     SyndicationStatus::LocalOnly
 }
 
+/// Networks where a post is currently published.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Audience {
+    Local,
+    Bluesky,
+    P2p,
+    Activitypub,
+}
+
+pub fn default_audiences() -> Vec<Audience> {
+    vec![Audience::Local]
+}
+
+/// Compute audiences from legacy syndication_status + syndicated_uri.
+pub fn audiences_from_legacy(status: &SyndicationStatus, syndicated_uri: &Option<String>) -> Vec<Audience> {
+    let mut audiences = vec![Audience::Local];
+    match status {
+        SyndicationStatus::Syndicated | SyndicationStatus::PendingSyndication => {
+            if syndicated_uri.is_some() {
+                audiences.push(Audience::Bluesky);
+            }
+        }
+        SyndicationStatus::LocalOnly => {}
+    }
+    audiences
+}
+
+/// Compute syndicated_uris map from legacy syndicated_uri.
+pub fn syndicated_uris_from_legacy(syndicated_uri: &Option<String>) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(uri) = syndicated_uri {
+        map.insert("bluesky".to_string(), uri.clone());
+    }
+    map
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VaultStats {
     pub total: usize,
@@ -150,6 +186,10 @@ pub struct BytescapeItem {
     pub syndication_status: SyndicationStatus,
     #[serde(default)]
     pub syndicated_uri: Option<String>,
+    #[serde(default = "default_audiences")]
+    pub audiences: Vec<Audience>,
+    #[serde(default)]
+    pub syndicated_uris: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -324,6 +364,10 @@ pub struct FeedEntry {
     pub item_type: Option<BytescapeType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syndication_status: Option<SyndicationStatus>,
+    #[serde(default)]
+    pub audiences: Vec<Audience>,
+    #[serde(default)]
+    pub syndicated_uris: std::collections::HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

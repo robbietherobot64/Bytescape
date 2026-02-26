@@ -48,6 +48,8 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         quoted_post: post.quoted_post ? adaptBlueskyPost(post.quoted_post) : undefined,
 
         item_type: 'Status',
+        audiences: ['Local', 'Bluesky'],
+        syndicated_uris: post.uri ? { bluesky: post.uri } : {},
         original_url: post.uri,
     };
 }
@@ -118,6 +120,8 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
 
         item_type: item.item_type,
         syndication_status: item.syndication_status,
+        audiences: item.audiences || ['Local'],
+        syndicated_uris: item.syndicated_uris || {},
         location: item.location,
         tagged_people: item.tagged_people,
         title: item.title,

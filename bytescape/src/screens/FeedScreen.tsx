@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, PublishResult, FeedEntry } from '../types';
+import { AuthStatus, PublishResult } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ComposeBox, Attachment } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
@@ -20,7 +20,6 @@ export function FeedScreen({ auth }: FeedScreenProps) {
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
     const [isPosting, setIsPosting] = useState(false);
     const [postStatus, setPostStatus] = useState<string>('');
-    const [syndicateTarget, setSyndicateTarget] = useState<FeedEntry | null>(null);
 
     // === Data Hook ===
     const {
@@ -80,10 +79,7 @@ export function FeedScreen({ auth }: FeedScreenProps) {
         }
     };
 
-    const handleSyndicateClick = useCallback((entry: FeedEntry) => {
-        setSyndicateTarget(entry);
-        setPostStatus('');
-    }, []);
+
 
     const handlePublishPost = async (text: string, target: 'local' | 'bluesky' | 'activitypub' | 'all', attachments: Attachment[]) => {
         setIsPosting(true);
@@ -109,7 +105,6 @@ export function FeedScreen({ auth }: FeedScreenProps) {
                 setPostStatus(`${okTargets ? `Posted to ${okTargets}. ` : ''}${result.errors[0]}`);
             } else {
                 setPostStatus(`✅ Posted to ${okTargets || 'selected destination'}`);
-                if (syndicateTarget) setSyndicateTarget(null);
                 fetchFeed(activeTab, false);
             }
         } catch (e: any) {
@@ -184,7 +179,6 @@ export function FeedScreen({ auth }: FeedScreenProps) {
                                 entry={entry}
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
-                                onSyndicate={handleSyndicateClick}
                             />
                         ))}
 
@@ -220,31 +214,6 @@ export function FeedScreen({ auth }: FeedScreenProps) {
                 archiveTotal={archiveTotal}
             />
 
-            {/* Syndication Modal */}
-            {syndicateTarget && (
-                <div className="modal-overlay" onClick={() => setSyndicateTarget(null)}>
-                    <div className="modal" style={{ maxWidth: 650, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <h3 style={{ margin: 0 }}>Syndicate to Bluesky</h3>
-                            <button className="btn btn-ghost btn-sm" onClick={() => setSyndicateTarget(null)} style={{ padding: '0 8px' }}>✕</button>
-                        </div>
-                        <div style={{ padding: 24 }}>
-                            <ComposeBox
-                                onPublish={handlePublishPost}
-                                isPosting={isPosting}
-                                postStatus={postStatus}
-                                initialText={syndicateTarget.content}
-                                initialAttachments={syndicateTarget.media_urls.map((url, i) => ({
-                                    blob_hash: url.startsWith('blob:') ? url : undefined,
-                                    path: !url.startsWith('blob:') ? url : undefined,
-                                    preview: url,
-                                    mime_type: syndicateTarget.media_mimes ? syndicateTarget.media_mimes[i] : undefined
-                                }))}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

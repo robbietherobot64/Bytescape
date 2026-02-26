@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FeedEntry, TaggedPerson } from '../types';
+import { FeedEntry, TaggedPerson, Audience } from '../types';
 import { SourceBadge } from './SourceBadge';
 import { BlobImage } from './BlobImage';
 import { VideoPlayer } from './VideoPlayer';
+import { AudiencePills } from './AudiencePills';
+import { AudienceDrawer } from './AudienceDrawer';
 import { safeHostname, looksLikeGif } from '../utils/content';
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
     resolveMediaPath?: (p: string) => string;
     mediaDir?: string;
-    onSyndicate?: (entry: FeedEntry) => void;
+    onEntryUpdated?: (id: string, audiences: Audience[]) => void;
     isQuote?: boolean;
 }
 
@@ -121,24 +123,15 @@ function sanitizeDisplayContent(raw: string): string {
     });
 }
 
-function syndicationLabel(status?: string) {
-    switch (status) {
-        case 'Syndicated':
-            return { emoji: '✅', text: 'Syndicated to Bluesky', className: 'syndicated' };
-        case 'PendingSyndication':
-            return { emoji: '⏳', text: 'Syndication Pending', className: 'pending' };
-        case 'LocalOnly':
-            return { emoji: '🔒', text: 'Stored Locally', className: 'local' };
-        default:
-            return null;
-    }
-}
+
 
 /* ─── Component ─── */
 
-export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onSyndicate, isQuote = false }: FeedEntryCardProps) {
+export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [audiences, setAudiences] = useState<Audience[]>(entry.audiences || ['Local']);
     const taggedPeople = parseTaggedPeople(entry.tagged_people);
     const tagLine = renderTaggedPeople(taggedPeople);
 
@@ -151,17 +144,21 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onSyndicate, 
     const externalHost = entry.link_url ? safeHostname(entry.link_url) : '';
     const hasMedia = entry.media_urls.length > 0;
 
-    const currentSyndication = syndicationLabel(entry.syndication_status);
-    const canSyndicate = entry.syndication_status === 'LocalOnly' && (entry.source !== 'bluesky' && entry.source !== 'rss');
+    const syndicatedUris = entry.syndicated_uris || {};
 
     const openGallery = (index: number) => {
         setGalleryIndex(index);
         setIsGalleryOpen(true);
     };
 
-    const handleSyndicate = (e: React.MouseEvent) => {
+    const handleShareClick = (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (onSyndicate) onSyndicate(entry);
+        setDrawerOpen(true);
+    };
+
+    const handleAudienceUpdated = (newAudiences: Audience[]) => {
+        setAudiences(newAudiences);
+        if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
     };
 
     return (
@@ -188,44 +185,21 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onSyndicate, 
                 </div>
                 {!isQuote && (
                     <div className="header-actions">
-                        {canSyndicate && (
-                            <button
-                                className="syndicate-button"
-                                onClick={handleSyndicate}
-                                title="Syndicate to Bluesky"
-                                style={{
-                                    background: 'var(--accent-purple)',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: 6,
-                                    padding: '3px 10px',
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 4
-                                }}
-                            >
-                                🌐 Syndicate
-                            </button>
-                        )}
-                        {currentSyndication && !canSyndicate && (
-                            <span title={currentSyndication.text} style={{ fontSize: '0.85rem' }}>
-                                {currentSyndication.emoji}
-                            </span>
-                        )}
+                        <AudiencePills audiences={audiences} compact />
                         <SourceBadge source={entry.source} />
                     </div>
                 )}
             </div>
 
-            {/* Syndicated link */}
-            {entry.syndicated_uri && (
-                <div className="syndicated-link">
-                    <a href={entry.syndicated_uri} target="_blank" rel="noopener noreferrer">
-                        🔗 View on Bluesky
-                    </a>
+            {/* Syndicated links */}
+            {Object.entries(syndicatedUris).length > 0 && (
+                <div style={{ padding: '0 16px 4px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {Object.entries(syndicatedUris).map(([platform, uri]) => (
+                        <a key={platform} href={uri} target="_blank" rel="noopener noreferrer"
+                            style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textDecoration: 'none' }}>
+                            🔗 View on {platform.charAt(0).toUpperCase() + platform.slice(1)}
+                        </a>
+                    ))}
                 </div>
             )}
 
@@ -331,7 +305,9 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onSyndicate, 
                         <HeartIcon filled={false} />
                         <span className="count">{formatCount(entry.like_count)}</span>
                     </button>
-                    <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' }}>
+                    <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' }}
+                        onClick={handleShareClick}
+                    >
                         <ShareIcon />
                     </button>
                 </div>
@@ -369,6 +345,17 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onSyndicate, 
                     </div>
                 </div>,
                 document.body
+            )}
+
+            {/* Audience Drawer */}
+            {drawerOpen && (
+                <AudienceDrawer
+                    itemId={entry.id}
+                    currentAudiences={audiences}
+                    syndicatedUris={syndicatedUris}
+                    onClose={() => setDrawerOpen(false)}
+                    onUpdated={handleAudienceUpdated}
+                />
             )}
         </div>
     );

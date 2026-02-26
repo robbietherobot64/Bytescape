@@ -21,7 +21,7 @@ const MCC25: usize = 1024;
 const MPL25: usize = 1024;
 
 use crate::error::BytescapeError;
-use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport};
+use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport, Audience};
 use crate::connectors::{Source, facebook};
 use crate::sync::{Hash, SyncManager};
 use crate::AppState;
@@ -662,6 +662,8 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             media_mimes,
             syndication_status: SyndicationStatus::LocalOnly,
             syndicated_uri: None,
+            audiences: vec![Audience::Local],
+            syndicated_uris: std::collections::HashMap::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -793,6 +795,8 @@ async fn save_posts(
             media_mimes,
             syndication_status: SyndicationStatus::LocalOnly,
             syndicated_uri: None,
+            audiences: vec![Audience::Local],
+            syndicated_uris: std::collections::HashMap::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1556,6 +1560,8 @@ pub async fn publish_post(
                 media_mimes: vec![],
                 syndication_status: SyndicationStatus::LocalOnly,
                 syndicated_uri: None,
+                audiences: vec![Audience::Local],
+                syndicated_uris: std::collections::HashMap::new(),
             };
 
             match db.save_item(&item).await {
@@ -1626,6 +1632,12 @@ pub async fn publish_post(
                                 media_mimes: vec![],
                                 syndication_status: SyndicationStatus::Syndicated,
                                 syndicated_uri: Some(uri.clone()),
+                                audiences: vec![Audience::Local, Audience::Bluesky],
+                                syndicated_uris: {
+                                    let mut m = std::collections::HashMap::new();
+                                    m.insert("bluesky".to_string(), uri.clone());
+                                    m
+                                },
                             };
                             let _ = db.save_item(&item).await;
                         }
