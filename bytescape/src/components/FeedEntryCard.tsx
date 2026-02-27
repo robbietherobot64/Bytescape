@@ -130,7 +130,6 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
     const [drawerOpen, setDrawerOpen] = useState(false);
-    const [audiences, setAudiences] = useState<Audience[]>(entry.audiences || ['Local']);
     const taggedPeople = parseTaggedPeople(entry.tagged_people);
     const tagLine = renderTaggedPeople(taggedPeople);
 
@@ -142,13 +141,15 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     const isGif = looksLikeGif(entry.link_url);
     const externalHost = entry.link_url ? safeHostname(entry.link_url) : '';
     const hasMedia = entry.media_urls.length > 0;
+    const shareHistory = entry.share_history || [];
 
-    const syndicatedUris = entry.syndicated_uris || {};
-    const syndicatedAt = entry.syndicated_at || {};
-
-    // Compute syndicated platforms from audiences (excluding source and 'Local')
-    const syndicatedTo = audiences
-        .filter(a => a !== 'Local' && a.toLowerCase() !== entry.source.toLowerCase());
+    // Compute active syndicatedURIs for explicit links and the Drawer
+    const syndicatedUris = shareHistory
+        .filter(event => event.active)
+        .reduce((acc, event) => {
+            acc[event.platform.toLowerCase()] = event.uri;
+            return acc;
+        }, {} as Record<string, string>);
 
     const openGallery = (index: number) => {
         setGalleryIndex(index);
@@ -161,7 +162,6 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     };
 
     const handleAudienceUpdated = (newAudiences: Audience[]) => {
-        setAudiences(newAudiences);
         if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
     };
 
@@ -192,8 +192,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                         <AudiencePills
                             source={entry.source}
                             originalTimestamp={entry.timestamp}
-                            syndicatedTo={syndicatedTo}
-                            syndicatedAt={syndicatedAt}
+                            shareHistory={shareHistory}
                             compact
                         />
                     </div>
@@ -360,7 +359,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             {drawerOpen && (
                 <AudienceDrawer
                     itemId={entry.id}
-                    currentAudiences={audiences}
+                    shareHistory={shareHistory}
                     syndicatedUris={syndicatedUris}
                     onClose={() => setDrawerOpen(false)}
                     onUpdated={handleAudienceUpdated}

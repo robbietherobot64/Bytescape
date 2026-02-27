@@ -205,6 +205,77 @@ impl DbManager {
         Ok(None)
     }
 
+    pub async fn get_all_known_uris(&self) -> Result<std::collections::HashSet<String>, String> {
+        let db = self.db.lock().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        let mut known = std::collections::HashSet::new();
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_, value) = row.map_err(|e| e.to_string())?;
+            if let Ok(item) = serde_json::from_str::<BytescapeItem>(value.value()) {
+                known.insert(item.id);
+                if let Some(oid) = item.original_id {
+                    known.insert(oid);
+                }
+                for event in item.share_history {
+                    known.insert(event.uri);
+                }
+            }
+        }
+        Ok(known)
+    }
+
+    pub async fn cleanup_syndication_duplicates(&self) -> Result<usize, String> {
+        let db = self.db.lock().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        // 1. Collect all syndicated URIs from all items' share_history
+        let mut syndicated_uris = std::collections::HashSet::new();
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_, value) = row.map_err(|e| e.to_string())?;
+            if let Ok(item) = serde_json::from_str::<BytescapeItem>(value.value()) {
+                for event in item.share_history {
+                    syndicated_uris.insert(event.uri);
+                }
+            }
+        }
+
+        // 2. Find all items whose source is "bluesky" and original_id is in syndicated_uris
+        let mut keys_to_delete = Vec::new();
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (key, value) = row.map_err(|e| e.to_string())?;
+            if let Ok(item) = serde_json::from_str::<BytescapeItem>(value.value()) {
+                if item.source == "bluesky" {
+                    if let Some(ref oid) = item.original_id {
+                        if syndicated_uris.contains(oid) {
+                            keys_to_delete.push(key.value().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        drop(table);
+        drop(read_txn);
+
+        if keys_to_delete.is_empty() {
+            return Ok(0);
+        }
+
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut w_table = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+            for k in &keys_to_delete {
+                w_table.remove(k.as_str()).map_err(|e| e.to_string())?;
+                println!("cleanup: Removed duplicate imported syndication vault item with key {}", k);
+            }
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+
+        Ok(keys_to_delete.len())
+    }
+
     pub async fn list_all_item_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
         let db = self.db.lock().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -217,7 +288,7 @@ impl DbManager {
             items.push(item_struct.header());
         }
 
-        items.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
+        items.sort_by(|a, b| b.effective_timestamp.cmp(&a.effective_timestamp));
         Ok(items)
     }
 
@@ -283,7 +354,7 @@ impl DbManager {
             }
         }
 
-        headers.sort_by(|a, b| b.original_timestamp.cmp(&a.original_timestamp));
+        headers.sort_by(|a, b| b.effective_timestamp.cmp(&a.effective_timestamp));
         Ok(headers)
     }
 

@@ -570,6 +570,7 @@ pub async fn import_bluesky_feed(
     max_pages: Option<usize>,
     per_page_limit: Option<u8>,
     sync_manager: Option<Arc<SyncManager>>,
+    known_uris: &std::collections::HashSet<String>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
     let client = BlueskyClient::new(state);
     
@@ -633,6 +634,11 @@ pub async fn import_bluesky_feed(
             // Skip reposts (only import user's own posts)
             if post.author.did != did {
                 println!("bluesky: Skipping post from {} (owner of feed is {})", post.author.did, did);
+                continue;
+            }
+
+            if known_uris.contains(&post.uri) || known_uris.contains(&post.cid) {
+                println!("bluesky: Skipping already known post {}", post.uri);
                 continue;
             }
 
@@ -1952,6 +1958,22 @@ pub async fn import_follows_posts(
     let follows = get_all_follows(state, actor).await?;
     println!("Found {} follows", follows.len());
 
+    let db_guard = state.db_manager.lock().await;
+    let known_uris = if let Some(db) = db_guard.as_ref() {
+        db.get_all_known_uris().await.unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    drop(db_guard);
+
+    let db_guard = state.db_manager.lock().await;
+    let known_uris = if let Some(db) = db_guard.as_ref() {
+        db.get_all_known_uris().await.unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    drop(db_guard);
+
     let mut all_posts = Vec::new();
     let total_follows = follows.len();
 
@@ -1969,9 +1991,9 @@ pub async fn import_follows_posts(
         });
 
         println!("bluesky: Importing feed for {} ({})", follow.handle, follow.did);
-        match import_bluesky_feed(&follow.did, state, media_dir.clone(), app_handle, Some(1), Some(20), sync_manager.clone()).await {
+        match import_bluesky_feed(&follow.did, state, media_dir.clone(), app_handle, Some(1), Some(20), sync_manager.clone(), &known_uris).await {
             Ok(mut posts) => {
-                println!("bluesky: Found {} posts for {}", posts.len(), follow.handle);
+                println!("bluesky: Found {} new posts for {}", posts.len(), follow.handle);
                 all_posts.append(&mut posts);
             },
             Err(e) => eprintln!("Failed to import feed for {}: {}", follow.handle, e),

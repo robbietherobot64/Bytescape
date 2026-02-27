@@ -1,6 +1,6 @@
 use tauri::State;
 use crate::AppState;
-use crate::models::{FeedEntry, BytescapeItem, BytescapeType, Audience, audiences_from_legacy, syndicated_uris_from_legacy};
+use crate::models::{FeedEntry, BytescapeItem, BytescapeType, Audience, audiences_from_legacy};
 use crate::connectors::bluesky::BlueskyImportedPost;
 use serde::{Serialize, Deserialize};
 
@@ -49,16 +49,14 @@ impl From<BlueskyImportedPost> for FeedEntry {
             item_type: Some(BytescapeType::Status),
             syndication_status: None,
             audiences: vec![Audience::Local, Audience::Bluesky],
-            syndicated_uris: {
-                let mut m = std::collections::HashMap::new();
-                m.insert("bluesky".to_string(), post.uri.clone());
-                m
-            },
-            syndicated_at: {
-                let mut m = std::collections::HashMap::new();
-                m.insert("bluesky".to_string(), post.created_at as u64);
-                m
-            },
+            share_history: vec![
+                crate::models::SyndicationEvent {
+                    platform: "bluesky".to_string(),
+                    uri: post.uri.clone(),
+                    timestamp: post.created_at as u64,
+                    active: true,
+                }
+            ],
             location: None,
             tagged_people: None,
             title: None,
@@ -126,12 +124,11 @@ impl From<BytescapeItem> for FeedEntry {
             } else {
                 item.audiences.clone()
             },
-            syndicated_uris: if item.syndicated_uris.is_empty() {
-                syndicated_uris_from_legacy(&item.syndicated_uri)
+            share_history: if item.share_history.is_empty() {
+                crate::models::share_history_from_legacy(&item.syndicated_uris, &item.syndicated_at, &item.syndicated_uri, &item.syndication_status)
             } else {
-                item.syndicated_uris.clone()
+                item.share_history.clone()
             },
-            syndicated_at: item.syndicated_at.clone(),
             location: item.location,
             tagged_people: item.tagged_people,
             title: item.title,
@@ -204,21 +201,16 @@ pub async fn get_timeline_unified(
     let mut syndicated_uris_in_vault = std::collections::HashSet::new();
 
     for v in &mut vault_entries {
-        // Collect bindings carefully to avoid borrow checker issues
-        let syndications: Vec<(String, String)> = v.syndicated_uris
-            .iter()
-            .map(|(p, u)| (p.clone(), u.clone()))
-            .collect();
-
-        for (platform, uri) in syndications {
-            let has_timestamp = v.syndicated_at.get(&platform).map(|&t| t > 0).unwrap_or(false);
-            if !has_timestamp {
-                let matched_timeline_post = feed.iter().find(|e| e.id == uri || e.original_url.as_ref() == Some(&uri));
+        for event in &mut v.share_history {
+            if event.timestamp == 0 {
+                let matched_timeline_post = feed.iter().find(|e| e.id == event.uri || e.original_url.as_ref() == Some(&event.uri));
                 if let Some(timeline_entry) = matched_timeline_post {
-                    v.syndicated_at.insert(platform.clone(), timeline_entry.timestamp as u64);
+                    event.timestamp = timeline_entry.timestamp as u64;
                 }
             }
-            syndicated_uris_in_vault.insert(uri.clone());
+            if event.active {
+                syndicated_uris_in_vault.insert(event.uri.clone());
+            }
         }
     }
 
@@ -231,19 +223,21 @@ pub async fn get_timeline_unified(
     // Bring vault items into the main feed
     feed.extend(vault_entries);
 
-    // Sort by effective timestamp (latest of original or any syndication)
+    // Sort by effective timestamp (latest of original or any active syndication)
     feed.sort_by(|a, b| {
         let a_max = a
-            .syndicated_at
-            .values()
-            .map(|&v| v as i64)
+            .share_history
+            .iter()
+            .filter(|e| e.active)
+            .map(|e| e.timestamp as i64)
             .max()
             .unwrap_or(a.timestamp)
             .max(a.timestamp);
         let b_max = b
-            .syndicated_at
-            .values()
-            .map(|&v| v as i64)
+            .share_history
+            .iter()
+            .filter(|e| e.active)
+            .map(|e| e.timestamp as i64)
             .max()
             .unwrap_or(b.timestamp)
             .max(b.timestamp);

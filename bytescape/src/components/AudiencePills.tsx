@@ -1,14 +1,13 @@
 import { useState } from 'react';
+import { SyndicationEvent } from '../types';
 
 interface AudiencePillsProps {
     /** The post's origin platform (e.g. 'instagram', 'facebook', 'bluesky', 'dtp') */
     source: string;
     /** Original posting timestamp (epoch seconds) on the source platform */
     originalTimestamp: number;
-    /** Platforms this post has been syndicated to (e.g. ['Bluesky']) — NOT including origin */
-    syndicatedTo: string[];
-    /** Timestamps (epoch seconds) for when each platform was syndicated */
-    syndicatedAt: Record<string, number>;
+    /** The event log of where this post has been shared to and when */
+    shareHistory: SyndicationEvent[];
     /** Compact mode — icons only, no labels */
     compact?: boolean;
 }
@@ -41,10 +40,10 @@ function formatTimestamp(epoch: number): string {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined }) + ` at ${time}`;
 }
 
-export function AudiencePills({ source, originalTimestamp, syndicatedTo, syndicatedAt, compact = false }: AudiencePillsProps) {
+export function AudiencePills({ source, originalTimestamp, shareHistory, compact = false }: AudiencePillsProps) {
     const [tooltip, setTooltip] = useState<{ platform: string; x: number; y: number } | null>(null);
 
-    // Build ordered chain: origin first, then syndicated in chronological order
+    // Build ordered chain: origin first, then active syndicated platforms in chronological order
     const chain: { key: string; config: typeof FALLBACK; timestamp: number }[] = [];
 
     // 1. Origin platform
@@ -56,11 +55,12 @@ export function AudiencePills({ source, originalTimestamp, syndicatedTo, syndica
     });
 
     // 2. Syndicated platforms, sorted by timestamp (oldest first)
-    const sorted = [...syndicatedTo]
-        .map(p => ({
-            key: p.toLowerCase(),
-            config: PLATFORM_CONFIG[p.toLowerCase()] || { ...FALLBACK, label: p },
-            timestamp: syndicatedAt[p.toLowerCase()] || 0,
+    const sorted = [...shareHistory]
+        .filter(event => event.active)
+        .map(event => ({
+            key: event.platform.toLowerCase(),
+            config: PLATFORM_CONFIG[event.platform.toLowerCase()] || { ...FALLBACK, label: event.platform },
+            timestamp: event.timestamp || 0,
         }))
         // Don't duplicate the source
         .filter(p => p.key !== srcKey)

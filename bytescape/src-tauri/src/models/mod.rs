@@ -65,6 +65,14 @@ pub enum Audience {
     Activitypub,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SyndicationEvent {
+    pub platform: String, // "bluesky", "p2p"
+    pub uri: String,      // The remote ID on that platform
+    pub timestamp: u64,   // When the share happened
+    pub active: bool,     // True if currently live, False if synced as deleted upstream
+}
+
 pub fn default_audiences() -> Vec<Audience> {
     vec![Audience::Local]
 }
@@ -90,6 +98,45 @@ pub fn syndicated_uris_from_legacy(syndicated_uri: &Option<String>) -> std::coll
         map.insert("bluesky".to_string(), uri.clone());
     }
     map
+}
+
+pub fn share_history_from_legacy(
+    syndicated_uris: &std::collections::HashMap<String, String>,
+    syndicated_at: &std::collections::HashMap<String, u64>,
+    legacy_uri: &Option<String>,
+    legacy_status: &SyndicationStatus,
+) -> Vec<SyndicationEvent> {
+    let mut history = Vec::new();
+
+    // 1. Try to migrate from the old maps first
+    for (platform, uri) in syndicated_uris {
+        let ts = syndicated_at.get(platform).copied().unwrap_or(0);
+        history.push(SyndicationEvent {
+            platform: platform.clone(),
+            uri: uri.clone(),
+            timestamp: ts,
+            active: true, // Legacy implies it was active
+        });
+    }
+
+    // 2. Fallback to v1 legacy field if empty
+    if history.is_empty() {
+        if let Some(uri) = legacy_uri {
+            if matches!(legacy_status, SyndicationStatus::PendingSyndication | SyndicationStatus::Syndicated) {
+                history.push(SyndicationEvent {
+                    platform: "bluesky".to_string(),
+                    uri: uri.clone(),
+                    timestamp: 0,
+                    active: true,
+                });
+            }
+        }
+    }
+
+    // Sort by timestamp if possible
+    history.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    history
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -187,18 +234,24 @@ pub struct BytescapeItem {
     #[serde(default)]
     pub syndicated_uri: Option<String>,
     #[serde(default = "default_audiences")]
-    pub audiences: Vec<Audience>,
-    #[serde(default)]
+    pub audiences: Vec<Audience>, // Kept for backward compat locally, but share_history is source of truth
+    
+    // Legacy maps kept purely for deserialization of old items, but skipped for serialization going forward
+    #[serde(default, skip_serializing)]
     pub syndicated_uris: std::collections::HashMap<String, String>,
-    /// Timestamps (epoch seconds) for when each platform was syndicated
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub syndicated_at: std::collections::HashMap<String, u64>,
+    
+    // New Event Sourced History Log
+    #[serde(default)]
+    pub share_history: Vec<SyndicationEvent>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BytescapeItemHeader {
     pub id: String,
     pub original_timestamp: i64,
+    pub effective_timestamp: i64,
     pub source: String,
     pub author_did: Option<String>,
     pub item_type: BytescapeType,
@@ -212,6 +265,13 @@ pub struct BytescapeItemHeader {
 
 impl BytescapeItem {
     pub fn header(&self) -> BytescapeItemHeader {
+        let max_share_ts = self.share_history.iter()
+            .filter(|e| e.active)
+            .map(|e| e.timestamp as i64)
+            .max()
+            .unwrap_or(self.original_timestamp);
+        let effective_ts = max_share_ts.max(self.original_timestamp);
+
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(self.original_timestamp, 0)
             .unwrap_or_else(|| chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap());
         
@@ -220,6 +280,7 @@ impl BytescapeItem {
         BytescapeItemHeader {
             id: self.id.clone(),
             original_timestamp: self.original_timestamp,
+            effective_timestamp: effective_ts,
             source: self.source.clone(),
             author_did: self.author_did.clone(),
             item_type: self.item_type,
@@ -370,9 +431,7 @@ pub struct FeedEntry {
     #[serde(default)]
     pub audiences: Vec<Audience>,
     #[serde(default)]
-    pub syndicated_uris: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub syndicated_at: std::collections::HashMap<String, u64>,
+    pub share_history: Vec<SyndicationEvent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

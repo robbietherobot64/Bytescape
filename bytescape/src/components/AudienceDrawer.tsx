@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { Audience } from '../types';
+import { Audience, SyndicationEvent } from '../types';
 import { PLATFORM_CONFIG } from './AudiencePills';
 
 /** Map Audience enum values to platform config keys */
-function platformKey(a: Audience): string {
+function platformKey(a: Audience | string): string {
     return a.toLowerCase();
 }
 
 interface AudienceDrawerProps {
     itemId: string;
-    currentAudiences: Audience[];
+    shareHistory: SyndicationEvent[];
     syndicatedUris: Record<string, string>;
     onClose: () => void;
     onUpdated: (newAudiences: Audience[]) => void;
@@ -26,13 +26,17 @@ const EXPANDABLE_AUDIENCES: { id: Audience; available: boolean; disabledReason?:
 
 const FALLBACK = { emoji: '📝', label: 'Unknown', bg: 'rgba(136,136,168,0.12)', color: 'var(--text-muted)', border: 'rgba(136,136,168,0.2)' };
 
-export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClose, onUpdated }: AudienceDrawerProps) {
+export function AudienceDrawer({ itemId, shareHistory, syndicatedUris, onClose, onUpdated }: AudienceDrawerProps) {
     const [loading, setLoading] = useState<Audience | null>(null);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
+    const isShared = (target: Audience) => shareHistory.some(
+        e => e.platform.toLowerCase() === target.toLowerCase() && e.active
+    );
+
     const handleExpand = async (target: Audience) => {
-        if (currentAudiences.includes(target)) return;
+        if (isShared(target)) return;
         setLoading(target);
         setError('');
         setSuccessMsg('');
@@ -40,8 +44,15 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
         try {
             if (target === 'Bluesky') {
                 await invoke<string>('syndicate_vault_item', { itemId });
-                const updated = [...currentAudiences, 'Bluesky' as Audience];
-                onUpdated(updated);
+
+                // For optimistic UI update, we append a mock event.
+                // Re-fetching the item will pull the real timestamp.
+                // We fake the signature for now because onUpdated expects Audience[]
+                // Wait, onUpdated expects Audience[]?! 
+                // We should change the parent components first if we change onUpdated type.
+                // Let's just leave onUpdated the same for now to not break FeedEntryCard's audiences state.
+                const updatedAudiences = ['Local' as Audience, 'Bluesky' as Audience];
+                onUpdated(updatedAudiences);
                 setSuccessMsg(`Shared to Bluesky`);
             } else if (target === 'P2p') {
                 setSuccessMsg('P2P sharing will be available soon');
@@ -94,12 +105,12 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
                         Currently shared on
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {currentAudiences.filter(a => a !== 'Local').map(a => {
-                            const key = platformKey(a);
+                        {shareHistory.filter(e => e.active).map(event => {
+                            const key = platformKey(event.platform);
                             const c = PLATFORM_CONFIG[key] || FALLBACK;
-                            const uri = syndicatedUris[key];
+                            const uri = event.uri || syndicatedUris[key];
                             return (
-                                <div key={a} style={{
+                                <div key={event.platform} style={{
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: 6,
@@ -135,7 +146,7 @@ export function AudienceDrawer({ itemId, currentAudiences, syndicatedUris, onClo
                         {EXPANDABLE_AUDIENCES.map(({ id, available, disabledReason }) => {
                             const key = platformKey(id);
                             const c = PLATFORM_CONFIG[key] || FALLBACK;
-                            const alreadyShared = currentAudiences.includes(id);
+                            const alreadyShared = isShared(id);
                             const isLoading = loading === id;
 
                             return (

@@ -122,6 +122,7 @@ pub fn run() {
             commands::media::backfill_media_mimes,
             commands::media::get_media_server_port,
             commands::syndicate::syndicate_vault_item,
+            commands::syndicate::verify_syndications,
             commands::posting::publish_post_v2,
         ])
         .setup(|app| {
@@ -276,6 +277,24 @@ pub fn run() {
                     }
                     if updated > 0 {
                         println!("backfill_media_mimes: updated {} items on startup", updated);
+                    }
+                }
+            });
+
+            // Background: clean up mis-imported syndicated duplicates
+            let cleanup_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Short delay to let the rest of setup complete
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                let state = cleanup_handle.state::<AppState>();
+                let db_guard = state.db_manager.lock().await;
+                let db = match db_guard.as_ref() {
+                    Some(d) => d,
+                    None => return,
+                };
+                if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
+                    if removed_count > 0 {
+                        println!("cleanup: Removed {} duplicate syndicated items from vault.", removed_count);
                     }
                 }
             });

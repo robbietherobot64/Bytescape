@@ -67,6 +67,9 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ### Syndication
 - [x] **Syndication Backend**: `syndicate_vault_item` command posts to Bluesky via `createRecord`.
+- [x] **Syndication History & Rollback**: `share_history` event log with `active` flags, background `verify_syndications` rollback on upstream deletion.
+- [x] **Syndication Vault Dedup**: Timeline importers skip re-importing already syndicated items to prevent ghost duplicates.
+- [x] **Archive Sorting**: Archive feed uses `effective_timestamp` to bump recently syndicated items to the top of the feed.
 - [ ] **Full Post Box UI**:
   - Text composition area.
   - Media upload support (Images, Video).
@@ -161,3 +164,5 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Feed Compose Layout Spillover**: Fixed create-post/feed column stacking.
 - [x] **Facebook: Metadata Leaking into Post Content**: Fixed: selectively exclude footer/tag/timestamp elements from body text; strip GPS coordinates.
 - [x] **Facebook: Duplicate Photos**: Fixed: within-post media dedup via HashSet, cross-file dedup by normalized filenames.
+- [x] **Syndication Rollback Bug**: Fixed: `useUnifiedFeed` now explicitly clears its `verifiedIdsRef` cache on manual refresh, forcing `verify_syndications` to re-check stale posts accurately instead of locking them "active" forever.
+- [x] **Syndication Image Extraction Duplication Bug**: Fixed: When actively sharing an image to Bluesky, solving an edge case where the background timeline importer would subsequently see the new AT Post, download its photos over the network as a new post, and stash duplicates in the `media` folder. `known_uris` is now passed to `import_bluesky_feed` to halt media processing for AT URIs already in the local vault.

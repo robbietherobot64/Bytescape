@@ -152,11 +152,15 @@ pub async fn syndicate_vault_item(
     if !item.audiences.contains(&Audience::Bluesky) {
         item.audiences.push(Audience::Bluesky);
     }
-    item.syndicated_uris.insert("bluesky".to_string(), uri.clone());
     let now_ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default().as_secs();
-    item.syndicated_at.insert("bluesky".to_string(), now_ts);
+    item.share_history.push(crate::models::SyndicationEvent {
+        platform: "bluesky".to_string(),
+        uri: uri.clone(),
+        timestamp: now_ts,
+        active: true,
+    });
 
     let db_guard = state.db_manager.lock().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
@@ -164,4 +168,102 @@ pub async fn syndicate_vault_item(
 
     println!("syndicate: success for item {}, uri: {}", item_id, uri);
     Ok(uri)
+}
+
+#[derive(serde::Deserialize)]
+struct GetPostsResponse {
+    posts: Vec<serde_json::Value>,
+}
+
+#[tauri::command]
+pub async fn verify_syndications(
+    item_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    println!("sync: verifying syndications for item {}", item_id);
+
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+    let mut item = db.get_item_by_id(&item_id).await?.ok_or("Item not found")?;
+    drop(db_guard);
+
+    let mut changed = false;
+
+    // Migrate from legacy fields if necessary
+    if item.share_history.is_empty() {
+        let migrated = crate::models::share_history_from_legacy(
+            &item.syndicated_uris,
+            &item.syndicated_at,
+            &item.syndicated_uri,
+            &item.syndication_status,
+        );
+        if !migrated.is_empty() {
+            item.share_history = migrated;
+            changed = true; // Needs saving even if Bluesky responds OK
+        }
+    }
+
+    let mut bsky_uris_to_check = Vec::new();
+    for event in &item.share_history {
+        if event.platform == "bluesky" && event.active {
+            bsky_uris_to_check.push(event.uri.clone());
+        }
+    }
+
+    if bsky_uris_to_check.is_empty() {
+        if changed {
+            // Save the migrated history even if nothing to check
+            let db_guard = state.db_manager.lock().await;
+            if let Some(db) = db_guard.as_ref() {
+                let _ = db.upsert_item(&item).await;
+            }
+        }
+        return Ok(false); // Nothing to do
+    }
+
+    // Check Bluesky posts
+    let mut url = "https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?".to_string();
+    for uri in &bsky_uris_to_check {
+        url.push_str(&format!("uris={}&", urlencoding::encode(uri)));
+    }
+
+    let client = reqwest::Client::new();
+    println!("sync: Sending request to: {}", url);
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+    let status = resp.status();
+    println!("sync: bsky api returned status: {}", status);
+
+    if status.is_success() {
+        let body: GetPostsResponse = resp.json().await.map_err(|e| e.to_string())?;
+        let returned_uris: std::collections::HashSet<String> = body.posts
+            .into_iter()
+            .filter_map(|p| p.get("uri").and_then(|u| u.as_str()).map(|s| s.to_string()))
+            .collect();
+        println!("sync: bsky returned {} posts", returned_uris.len());
+
+        for event in &mut item.share_history {
+            if event.platform == "bluesky" && event.active {
+                if !returned_uris.contains(&event.uri) {
+                    println!("sync: Post {} not found upstream. Rolling back active status.", event.uri);
+                    event.active = false;
+                    changed = true;
+                }
+            }
+        }
+    } else {
+        let err_text = resp.text().await.unwrap_or_default();
+        println!("sync: bsky api error: {}", err_text);
+        return Err(format!("Failed to query Bluesky API: {}", status));
+    }
+
+    if changed {
+        let db_guard = state.db_manager.lock().await;
+        if let Some(db) = db_guard.as_ref() {
+            db.upsert_item(&item).await?;
+            println!("sync: Rolled back history successfully for {}", item_id);
+        }
+    }
+
+    Ok(changed)
 }

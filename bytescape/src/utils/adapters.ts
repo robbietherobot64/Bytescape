@@ -49,8 +49,12 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
 
         item_type: 'Status',
         audiences: ['Local', 'Bluesky'],
-        syndicated_uris: post.uri ? { bluesky: post.uri } : {},
-        syndicated_at: post.created_at ? { bluesky: post.created_at } : {},
+        share_history: post.uri ? [{
+            platform: 'bluesky',
+            uri: post.uri,
+            timestamp: post.created_at || 0,
+            active: true
+        }] : [],
         original_url: post.uri,
     };
 }
@@ -122,8 +126,7 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         item_type: item.item_type,
         syndication_status: item.syndication_status,
         audiences: item.audiences || ['Local'],
-        syndicated_uris: item.syndicated_uris || {},
-        syndicated_at: item.syndicated_at || {},
+        share_history: item.share_history || [],
         location: item.location,
         tagged_people: item.tagged_people,
         title: item.title,

@@ -125,6 +125,8 @@ pub async fn publish_post_v2(
                 imported_at: now,
                 title: None,
                 original_id: None,
+                syndicated_uris: std::collections::HashMap::new(),
+                syndicated_at: std::collections::HashMap::new(),
                 author_did: state.keychain.get_did().ok().flatten(),
                 author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
                 author_avatar: None,
@@ -150,8 +152,7 @@ pub async fn publish_post_v2(
                     if publish_bluesky { a.push(Audience::Bluesky); }
                     a
                 },
-                syndicated_uris: std::collections::HashMap::new(),
-                syndicated_at: std::collections::HashMap::new(),
+                share_history: Vec::new(),
             };
             
             if let Err(e) = db.save_item(&item).await {
@@ -273,11 +274,15 @@ pub async fn publish_post_v2(
                                  if !item.audiences.contains(&Audience::Bluesky) {
                                      item.audiences.push(Audience::Bluesky);
                                  }
-                                 item.syndicated_uris.insert("bluesky".to_string(), uri.to_string());
                                  let now_ts = std::time::SystemTime::now()
                                      .duration_since(std::time::UNIX_EPOCH)
                                      .unwrap_or_default().as_secs();
-                                 item.syndicated_at.insert("bluesky".to_string(), now_ts);
+                                 item.share_history.push(crate::models::SyndicationEvent {
+                                     platform: "bluesky".to_string(),
+                                     uri: uri.to_string(),
+                                     timestamp: now_ts,
+                                     active: true,
+                                 });
                                  item.url = Some(uri.to_string());
                                  let _ = db.upsert_item(&item).await;
                              }

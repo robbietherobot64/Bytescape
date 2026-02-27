@@ -76,6 +76,13 @@ export type BytescapeType = 'Status' | 'Gallery' | 'Article';
 export type SyndicationStatus = 'LocalOnly' | 'PendingSyndication' | 'Syndicated';
 export type Audience = 'Local' | 'Bluesky' | 'P2p' | 'Activitypub';
 
+export interface SyndicationEvent {
+    platform: string;
+    uri: string;
+    timestamp: number;
+    active: boolean;
+}
+
 /** A person tagged in a post — stored privately in the vault */
 export interface TaggedPerson {
     source_name: string;
@@ -127,8 +134,7 @@ export interface FeedEntry {
     item_type?: BytescapeType;
     syndication_status?: SyndicationStatus;
     audiences: Audience[];
-    syndicated_uris: Record<string, string>;
-    syndicated_at: Record<string, number>;
+    share_history: SyndicationEvent[];
     location?: string;
     tagged_people?: string;
     title?: string | null;
@@ -174,8 +180,7 @@ export interface BytescapeItem {
     syndication_status?: SyndicationStatus;
     syndicated_uri?: string | null;
     audiences?: Audience[];
-    syndicated_uris?: Record<string, string>;
-    syndicated_at?: Record<string, number>;
+    share_history?: SyndicationEvent[];
 }
 
 export interface VaultStats {

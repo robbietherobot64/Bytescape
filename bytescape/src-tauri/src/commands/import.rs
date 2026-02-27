@@ -642,6 +642,8 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             imported_at: now,
             title: post.title.clone(),
             original_id: None,
+            syndicated_uris: std::collections::HashMap::new(),
+            syndicated_at: std::collections::HashMap::new(),
             author_did: None,
             author_handle: None,
             author_avatar: None,
@@ -663,8 +665,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             syndication_status: SyndicationStatus::LocalOnly,
             syndicated_uri: None,
             audiences: vec![Audience::Local],
-            syndicated_uris: std::collections::HashMap::new(),
-            syndicated_at: std::collections::HashMap::new(),
+            share_history: Vec::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -703,6 +704,14 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         current_item: "Fetching your feed...".to_string(),
     });
 
+    let db_guard = state.db_manager.lock().await;
+    let known_uris = if let Some(db) = db_guard.as_ref() {
+        db.get_all_known_uris().await.unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    drop(db_guard);
+
     let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
         &user_did,
         &state,
@@ -711,6 +720,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         None,
         None,
         sync_manager.clone(),
+        &known_uris,
     ).await {
         Ok(p) => p,
         Err(e) => {
@@ -729,7 +739,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         .unwrap_or_default()
         .as_secs();
 
-    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir)).await;
+    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris).await;
 
     println!("Bluesky import: saved {} own posts", saved_posts);
     Ok(saved_posts)
@@ -744,9 +754,15 @@ async fn save_posts(
     now: u64,
     sync_manager: &Option<Arc<SyncManager>>,
     media_base_dir: Option<&Path>,
+    known_uris: &std::collections::HashSet<String>,
 ) -> usize {
     let mut saved = 0;
     for post in posts {
+        if known_uris.contains(&post.uri) || known_uris.contains(&post.cid) {
+            println!("import: Skipping already known post (likely syndicated): {}", post.uri);
+            continue;
+        }
+
         let imported_media = import_item_media_into_vault(
             sync_manager,
             &post.image_local_paths,
@@ -776,6 +792,8 @@ async fn save_posts(
             imported_at: now,
             title: post.external_title.clone(),
             original_id: Some(post.uri.clone()),
+            syndicated_uris: std::collections::HashMap::new(),
+            syndicated_at: std::collections::HashMap::new(),
             author_did: Some(post.author_did.clone()),
             author_handle: Some(post.author_handle.clone()),
             author_avatar: post.author_avatar.clone(),
@@ -797,8 +815,7 @@ async fn save_posts(
             syndication_status: SyndicationStatus::LocalOnly,
             syndicated_uri: None,
             audiences: vec![Audience::Local],
-            syndicated_uris: std::collections::HashMap::new(),
-            syndicated_at: std::collections::HashMap::new(),
+            share_history: Vec::new(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1542,6 +1559,8 @@ pub async fn publish_post(
                 imported_at: now,
                 title: None,
                 original_id: None,
+                syndicated_uris: std::collections::HashMap::new(),
+                syndicated_at: std::collections::HashMap::new(),
                 author_did: state.keychain.get_did().ok().flatten(),
                 author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
                 author_avatar: None,
@@ -1563,8 +1582,7 @@ pub async fn publish_post(
                 syndication_status: SyndicationStatus::LocalOnly,
                 syndicated_uri: None,
                 audiences: vec![Audience::Local],
-                syndicated_uris: std::collections::HashMap::new(),
-                syndicated_at: std::collections::HashMap::new(),
+                share_history: Vec::new(),
             };
 
             match db.save_item(&item).await {
@@ -1615,6 +1633,8 @@ pub async fn publish_post(
                                 imported_at: now,
                                 title: None,
                                 original_id: Some(uri.clone()),
+                                syndicated_uris: std::collections::HashMap::new(),
+                                syndicated_at: std::collections::HashMap::new(),
                                 author_did: Some(user_did.clone()),
                                 author_handle: Some(user_handle),
                                 author_avatar: None,
@@ -1636,16 +1656,14 @@ pub async fn publish_post(
                                 syndication_status: SyndicationStatus::Syndicated,
                                 syndicated_uri: Some(uri.clone()),
                                 audiences: vec![Audience::Local, Audience::Bluesky],
-                                syndicated_uris: {
-                                    let mut m = std::collections::HashMap::new();
-                                    m.insert("bluesky".to_string(), uri.clone());
-                                    m
-                                },
-                                syndicated_at: {
-                                    let mut m = std::collections::HashMap::new();
-                                    m.insert("bluesky".to_string(), now);
-                                    m
-                                },
+                                share_history: vec![
+                                    crate::models::SyndicationEvent {
+                                        platform: "bluesky".to_string(),
+                                        uri: uri.clone(),
+                                        timestamp: now,
+                                        active: true,
+                                    }
+                                ],
                             };
                             let _ = db.save_item(&item).await;
                         }

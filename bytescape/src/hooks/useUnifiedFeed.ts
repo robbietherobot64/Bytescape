@@ -46,6 +46,7 @@ export function useUnifiedFeed({
     const [vaultSources, setVaultSources] = useState<string[]>([]);
 
     const fetchTokenRef = useRef(0);
+    const verifiedIdsRef = useRef<Set<string>>(new Set());
 
     const fetchFollowingList = async (actorDid: string) => {
         try {
@@ -76,6 +77,7 @@ export function useUnifiedFeed({
         if (!background) {
             setIsLoading(true);
             setFeedError(null);
+            verifiedIdsRef.current.clear(); // Re-verify active syndications when user explicitly refreshes
         }
 
         try {
@@ -216,6 +218,34 @@ export function useUnifiedFeed({
 
         return () => clearInterval(interval);
     }, [auth, activeTab, autoRefreshFeeds, fetchFeed]);
+
+    // Background verification of active syndications (Rollback check)
+    useEffect(() => {
+        if (!auth || feedEntries.length === 0) return;
+
+        const unverified = feedEntries.filter(entry =>
+            entry.share_history?.some(e => e.active) && !verifiedIdsRef.current.has(entry.id)
+        );
+
+        if (unverified.length === 0) return;
+
+        unverified.forEach(async (entry) => {
+            verifiedIdsRef.current.add(entry.id);
+            try {
+                console.log(`sync: Calling verify for ${entry.id}`);
+                const changed = await invoke<boolean>('verify_syndications', { itemId: entry.id });
+                if (changed) {
+                    console.log(`sync: Post ${entry.id} updated from verify, refreshing feed...`);
+                    // Trigger a background refresh to pick up the dropped events
+                    fetchFeed(activeTab, true);
+                } else {
+                    console.log(`sync: Post ${entry.id} verify returned false (no changes)`);
+                }
+            } catch (e) {
+                console.error(`sync: verify failed for ${entry.id}`, e);
+            }
+        });
+    }, [feedEntries, auth, activeTab, fetchFeed]);
 
     const handleLoadMore = async () => {
         if (isFetchingMore || !auth) return;
