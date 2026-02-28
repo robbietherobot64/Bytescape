@@ -459,7 +459,7 @@ function App() {
     <AppLayout
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault") ? {
+      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends") ? {
         padding: 0,
         height: '100%',
         overflow: 'hidden',
