@@ -217,22 +217,7 @@ export function ChatScreen({
 
                                 {showScrollButton && (
                                     <button
-                                        style={{
-                                            position: 'fixed',
-                                            bottom: '80px',
-                                            right: '20px',
-                                            background: 'var(--accent-blue)',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '20px',
-                                            padding: '8px 16px',
-                                            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                                            cursor: 'pointer',
-                                            zIndex: 100,
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 6
-                                        }}
+                                        className="chat-scroll-btn"
                                         onClick={() => {
                                             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
                                             setShowScrollButton(false);
