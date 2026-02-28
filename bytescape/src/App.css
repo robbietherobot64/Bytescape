@@ -304,3 +304,353 @@ textarea {
     font-size: 0.7rem;
     color: var(--text-secondary);
 }
+
+/* === Feed Entry Card === */
+.feed-entry-card {
+    background: var(--bg-card);
+    border: var(--border-classic);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.feed-entry-card.is-quote {
+    border: 1px solid #2d3748;
+    margin: 8px 16px 4px;
+    border-radius: 4px;
+}
+
+/* Repost Banner */
+.repost-banner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.repost-banner svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+/* Header */
+.feed-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px 4px;
+}
+
+.feed-entry-header .avatar {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    border-radius: 50%;
+    background: var(--bg-accent);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1rem;
+    overflow: hidden;
+}
+
+.feed-entry-header .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.author-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.author-name {
+    font-weight: bold;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.post-time {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.header-actions {
+    flex-shrink: 0;
+}
+
+/* Body */
+.feed-entry-body {
+    padding: 4px 16px 8px;
+}
+
+.post-text {
+    font-size: 0.88rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 8px;
+}
+
+.post-context-chip {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+/* === Media Grid === */
+.post-media-grid {
+    display: grid;
+    gap: 2px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 8px;
+    max-width: 100%;
+}
+
+.post-media-grid.items-1 {
+    grid-template-columns: 1fr;
+}
+
+.post-media-grid.items-2 {
+    grid-template-columns: 1fr 1fr;
+}
+
+.post-media-grid.items-3 {
+    grid-template-columns: 2fr 1fr;
+    grid-template-rows: 1fr 1fr;
+}
+
+.post-media-grid.items-3 .media-item:first-child {
+    grid-row: 1 / 3;
+}
+
+.post-media-grid.items-4 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+}
+
+.media-item {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    background: var(--bg-primary);
+    aspect-ratio: 16 / 10;
+}
+
+.post-media-grid.items-1 .media-item {
+    aspect-ratio: auto;
+    max-height: 500px;
+}
+
+.media-item img,
+.media-item video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.post-media-grid.items-1 .media-item img {
+    object-fit: contain;
+    max-height: 500px;
+}
+
+.media-expand-btn {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    border: none;
+    color: white;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.media-item:hover .media-expand-btn {
+    opacity: 1;
+}
+
+/* Inline video container */
+.inline-video-container {
+    width: 100%;
+    height: 100%;
+}
+
+.inline-video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* === Link Preview === */
+.link-preview-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    margin-top: 8px;
+}
+
+.link-thumb {
+    width: 100%;
+    max-height: 200px;
+    overflow: hidden;
+}
+
+.link-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.link-meta {
+    padding: 10px 12px;
+}
+
+.link-host {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.link-title {
+    font-size: 0.84rem;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.link-desc {
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* === Engagement Bar === */
+.engagement-bar {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-top: 1px solid #2d3748;
+}
+
+.engagement-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    border-radius: 4px;
+    transition: color 0.15s;
+}
+
+.engagement-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.engagement-btn:hover {
+    color: var(--text-primary);
+}
+
+.engagement-btn .count:empty {
+    display: none;
+}
+
+.btn-like:hover,
+.btn-like.liked {
+    color: #f43f5e;
+}
+
+.btn-repost:hover {
+    color: #22c55e;
+}
+
+.btn-reply:hover {
+    color: var(--bg-accent);
+}
+
+/* === Fullscreen Gallery Overlay === */
+.gallery-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.92);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gallery-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.gallery-content img {
+    max-width: 100%;
+    max-height: 85vh;
+    object-fit: contain;
+}
+
+.gallery-close-btn {
+    position: absolute;
+    top: -30px;
+    right: -10px;
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.4rem;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.gallery-dots {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.gallery-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid white;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+}
+
+.gallery-dot.active {
+    background: white;
+}
