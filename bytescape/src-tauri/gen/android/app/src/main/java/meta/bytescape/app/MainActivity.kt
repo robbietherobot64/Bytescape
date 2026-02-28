@@ -1,3 +1,6 @@
+package meta.bytescape.app
+
+import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -14,10 +17,10 @@ class MainActivity : TauriActivity() {
     ViewCompat.setOnApplyWindowInsetsListener(decorView) { _, windowInsets ->
       val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val density = resources.displayMetrics.density
-      val top = Math.round(insets.top / density)
-      val bottom = Math.round(insets.bottom / density)
-      val left = Math.round(insets.left / density)
-      val right = Math.round(insets.right / density)
+      val top = Math.round(insets.top.toFloat() / density)
+      val bottom = Math.round(insets.bottom.toFloat() / density)
+      val left = Math.round(insets.left.toFloat() / density)
+      val right = Math.round(insets.right.toFloat() / density)
       
       val webView = findWebView(decorView)
       val js = """
