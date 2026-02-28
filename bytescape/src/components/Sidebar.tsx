@@ -9,7 +9,7 @@ export function Sidebar({ activeSidebar, onNavigate }: SidebarProps) {
     return (
         <nav className="sidebar">
             <div className="sidebar-top">
-                <div className="sidebar-logo">🔱</div>
+                <div className="sidebar-logo">BYTESCAPE</div>
                 <SidebarIcon id="feed" icon="🏠" label="Feed" active={activeSidebar} onClick={onNavigate} />
                 <SidebarIcon id="search" icon="🔍" label="Search" active={activeSidebar} onClick={onNavigate} />
                 <SidebarIcon id="profile" icon="👤" label="Profile" active={activeSidebar} onClick={onNavigate} />
