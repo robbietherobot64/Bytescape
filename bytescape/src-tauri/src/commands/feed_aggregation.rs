@@ -58,7 +58,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
                 }
             ],
             location: None,
-            tagged_people: None,
+            tagged_people: vec![],
             title: None,
             original_url: Some(post.uri),
         }

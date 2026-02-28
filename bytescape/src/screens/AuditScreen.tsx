@@ -56,6 +56,10 @@ export function AuditScreen({
                                 <span className="label">Videos</span>
                                 <span className="count">{progress?.videos_found ?? parseResult?.total_videos ?? 0}</span>
                             </div>
+                            <div className="counter-row">
+                                <span className="label">Messages</span>
+                                <span className="count">{progress?.messages_found ?? parseResult?.messages?.length ?? 0}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -110,7 +114,7 @@ export function AuditScreen({
                         <p className="text-muted text-sm mt-8">
                             This will permanently discard {parseResult.total_tracker_events.toLocaleString()} tracker events
                             from {parseResult.trackers.length.toLocaleString()} trackers
-                            and save {parseResult.posts.length.toLocaleString()} memories to your local vault.
+                            and save {(parseResult.posts.length + (parseResult.messages?.length || 0)).toLocaleString()} items to your local vault.
                         </p>
                     </div>
                 )}

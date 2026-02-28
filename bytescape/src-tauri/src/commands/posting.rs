@@ -130,7 +130,7 @@ pub async fn publish_post_v2(
                 author_did: state.keychain.get_did().ok().flatten(),
                 author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
                 author_avatar: None,
-                tagged_people: None,
+                tagged_people: vec![],
                 location: None,
                 is_liked: false,
                 like_count: None,

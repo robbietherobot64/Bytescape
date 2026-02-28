@@ -180,6 +180,62 @@ pub struct WillowWriteParityReport {
     pub parity_coverage_ratio: f64,
 }
 
+/// Backward-compatible deserializer for tagged_people.
+/// Accepts: null, JSON string (legacy), or native Vec<TaggedPerson>.
+fn deserialize_tagged_people<'de, D>(deserializer: D) -> Result<Vec<TaggedPerson>, D::Error>
+where D: serde::Deserializer<'de> {
+    use serde::de;
+    
+    struct TaggedPeopleVisitor;
+    impl<'de> de::Visitor<'de> for TaggedPeopleVisitor {
+        type Value = Vec<TaggedPerson>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("null, a JSON string, or an array of TaggedPerson")
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> { Ok(vec![]) }
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> { Ok(vec![]) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            if v.is_empty() { return Ok(vec![]); }
+            serde_json::from_str(v).map_err(|_| de::Error::custom("invalid tagged_people JSON string"))
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+            Vec::<TaggedPerson>::deserialize(de::value::SeqAccessDeserializer::new(seq))
+        }
+    }
+    deserializer.deserialize_any(TaggedPeopleVisitor)
+}
+
+/// Backward-compatible deserializer for location.
+/// Accepts: null, JSON string (legacy), or native PostLocation object.
+fn deserialize_location<'de, D>(deserializer: D) -> Result<Option<PostLocation>, D::Error>
+where D: serde::Deserializer<'de> {
+    use serde::de;
+    
+    struct LocationVisitor;
+    impl<'de> de::Visitor<'de> for LocationVisitor {
+        type Value = Option<PostLocation>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("null, a JSON string, or a PostLocation object")
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            if v.is_empty() { return Ok(None); }
+            // Try parsing as a PostLocation JSON object
+            if let Ok(loc) = serde_json::from_str::<PostLocation>(v) {
+                return Ok(Some(loc));
+            }
+            // Legacy: plain location name string
+            Ok(Some(PostLocation { name: v.to_string(), latitude: None, longitude: None }))
+        }
+        fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let loc = PostLocation::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(loc))
+        }
+    }
+    deserializer.deserialize_any(LocationVisitor)
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BytescapeItem {
     pub id: String,
@@ -199,10 +255,10 @@ pub struct BytescapeItem {
     pub author_handle: Option<String>,
     #[serde(default)]
     pub author_avatar: Option<String>,
-    #[serde(default)]
-    pub tagged_people: Option<String>,
-    #[serde(default)]
-    pub location: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_tagged_people")]
+    pub tagged_people: Vec<TaggedPerson>,
+    #[serde(default, deserialize_with = "deserialize_location")]
+    pub location: Option<PostLocation>,
     #[serde(default)]
     pub is_liked: bool,
     #[serde(default)]
@@ -253,6 +309,7 @@ pub struct BytescapeItemHeader {
     pub original_timestamp: i64,
     pub effective_timestamp: i64,
     pub source: String,
+    pub path: String,
     pub author_did: Option<String>,
     pub item_type: BytescapeType,
     pub is_liked: bool,
@@ -282,6 +339,7 @@ impl BytescapeItem {
             original_timestamp: self.original_timestamp,
             effective_timestamp: effective_ts,
             source: self.source.clone(),
+            path: self.path.clone(),
             author_did: self.author_did.clone(),
             item_type: self.item_type,
             is_liked: self.is_liked,
@@ -296,6 +354,33 @@ impl BytescapeItem {
 
 pub fn default_item_type() -> BytescapeType {
     BytescapeType::Status
+}
+
+/// A location or check-in attached to a post — universal across all connectors.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PostLocation {
+    pub name: String,
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+}
+
+/// A person tagged in a post — universal across all connectors.
+/// The source_name is stored privately in the vault and only revealed
+/// if the tagged person links their account.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaggedPerson {
+    /// The name from the source platform (e.g. Facebook display name)
+    pub source_name: String,
+    /// Which platform this tag came from
+    pub source_platform: String,
+    /// Once the tagged person registers and links their account, their DID goes here
+    #[serde(default)]
+    pub linked_did: Option<String>,
+    /// Their Bytescape handle once linked
+    #[serde(default)]
+    pub linked_handle: Option<String>,
 }
 
 pub fn willow_component_limit() -> usize {
@@ -433,9 +518,9 @@ pub struct FeedEntry {
     #[serde(default)]
     pub share_history: Vec<SyndicationEvent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub location: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tagged_people: Option<String>,
+    pub location: Option<PostLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tagged_people: Vec<TaggedPerson>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

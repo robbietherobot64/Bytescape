@@ -17,6 +17,16 @@ export interface ChatLayoutProps {
     onSendMessage: (convoId: string, content: string) => Promise<void>;
 }
 
+const BOTTOM_THRESHOLD_PX = 50;
+
+function sortBySentAtDesc(a: ChatMessage, b: ChatMessage): number {
+    return b.sent_at.localeCompare(a.sent_at);
+}
+
+function formatListDate(tsStr: string): string {
+    return new Date(tsStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export function ChatLayout({
     currentUser,
     messages,
@@ -33,11 +43,14 @@ export function ChatLayout({
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
 
-    // Group messages
+    // Group messages by conversation and normalize to newest-first ordering.
     const byConvo: Record<string, ChatMessage[]> = {};
     for (const m of messages) {
         if (!byConvo[m.convo_id]) byConvo[m.convo_id] = [];
         byConvo[m.convo_id].push(m);
+    }
+    for (const convoId of Object.keys(byConvo)) {
+        byConvo[convoId].sort(sortBySentAtDesc);
     }
 
     // Sort conversations by latest message time
@@ -56,23 +69,17 @@ export function ChatLayout({
         activeTitle = handles.length > 0 ? handles.join(", ") : "Just You";
     }
 
-    // Formatting
-    function formatDate(tsStr: string) {
-        // Handle potentially different formats if needed, but assuming ISO string or similar that Date parses
-        return new Date(tsStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    }
-
     // Scroll logic
     const handleChatScroll = () => {
         if (chatContainerRef.current) {
             const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-            const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+            const atBottom = scrollHeight - scrollTop - clientHeight < BOTTOM_THRESHOLD_PX;
             isAtBottomRef.current = atBottom;
             if (atBottom) setShowScrollButton(false);
         }
     };
 
-    // Effects from App.tsx
+    // Keep autoscroll behavior predictable: only force-scroll when already at bottom.
     useEffect(() => {
         if (messagesEndRef.current) {
             if (isAtBottomRef.current) {
@@ -126,17 +133,7 @@ export function ChatLayout({
                     ) : (
                         convoIds.map(cid => {
                             const msgs = byConvo[cid];
-                            const last = msgs[0]; // Assuming first is latest? Wait, App.tsx sort logic implies [0] is latest?
-                            // Re-check App.tsx sorting:
-                            // const convoIds = Object.keys(byConvo).sort((a, b) => { ... lastB.localeCompare(lastA) })
-                            // But how are messages sorted inside byConvo? App.tsx didn't sort them explicitly?
-                            // Wait, App.tsx loops `messages` (which might be sorted from DB) to build `byConvo`.
-                            // If `messages` are sorted DESC (newest first), then `msgs[0]` is newest.
-                            // If `messages` are sorted ASC, then `msgs[msgs.length-1]` is newest.
-                            // Let's assume input `messages` are sorted newest first for the list preview.
-                            // Actually, looking at App.tsx:
-                            // list_vault_messages likely returns generic order.
-                            // App.tsx rendered activeConvoMsgs with `.slice().reverse().map(...)` suggesting they come in NEWEST FIRST (so reverse makes them OLDEST first for chat bubble display).
+                            const last = msgs[0];
 
                             const handles = [...new Set(msgs.map((m) => m.sender_handle))].filter(h => h !== currentUser?.handle);
                             const title = handles.length > 0 ? handles.join(", ") : "Just You";
@@ -149,7 +146,7 @@ export function ChatLayout({
                                 >
                                     <div className="chat-item-header">
                                         <span className="chat-item-title">{title}</span>
-                                        <span className="chat-item-time">{formatDate(last.sent_at)}</span>
+                                        <span className="chat-item-time">{formatListDate(last.sent_at)}</span>
                                     </div>
                                     <div className="chat-item-preview">
                                         {last.sender_did === currentUser?.did ? "You: " : ""}{last.text}

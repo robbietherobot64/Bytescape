@@ -43,6 +43,7 @@ pub struct AppState {
 /// Run the Bytescape application
 /// 
 /// This is the main entry point called from main.rs
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("Starting Bytescape...");
 
@@ -81,6 +82,7 @@ pub fn run() {
             commands::vault::list_vault_messages,
             commands::vault::count_archive_posts,
             commands::vault::list_contacts,
+            commands::vault::vault_gc_tombstones,
             
             // Auth commands
             commands::auth::check_auth_status,
@@ -121,6 +123,7 @@ pub fn run() {
             commands::media::diagnose_media_ref,
             commands::media::backfill_media_mimes,
             commands::media::get_media_server_port,
+            commands::media::resolve_media_url,
             commands::syndicate::syndicate_vault_item,
             commands::syndicate::verify_syndications,
             commands::posting::publish_post_v2,

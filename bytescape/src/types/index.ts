@@ -42,6 +42,7 @@ export interface ParseProgress {
     photos_found: number;
     videos_found: number;
     trackers_found: number;
+    messages_found: number;
     current_file: string;
 }
 
@@ -57,6 +58,7 @@ export interface ParseResult {
     total_photos: number;
     total_videos: number;
     total_tracker_events: number;
+    messages: VaultMessage[];
     source: string;
 }
 
@@ -135,8 +137,8 @@ export interface FeedEntry {
     syndication_status?: SyndicationStatus;
     audiences: Audience[];
     share_history: SyndicationEvent[];
-    location?: string;
-    tagged_people?: string;
+    location?: PostLocation | null;
+    tagged_people?: TaggedPerson[];
     title?: string | null;
     original_url?: string | null;
     syndicated_uri?: string | null;
@@ -155,10 +157,10 @@ export interface BytescapeItem {
     author_did?: string;
     author_handle?: string;
     author_avatar?: string;
-    /** JSON-serialized TaggedPerson[] — private vault data */
-    tagged_people?: string;
-    /** JSON-serialized PostLocation — place/check-in data */
-    location?: string;
+    /** People tagged in this post — typed struct array */
+    tagged_people?: TaggedPerson[];
+    /** Location/check-in data — typed struct */
+    location?: PostLocation | null;
     is_liked?: boolean;
     like_count?: number;
     reply_count?: number;

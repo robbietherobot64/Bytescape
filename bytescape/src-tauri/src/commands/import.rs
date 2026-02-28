@@ -21,6 +21,7 @@ const MCC25: usize = 1024;
 const MPL25: usize = 1024;
 
 use crate::error::BytescapeError;
+use crate::models::VaultMessage;
 use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport, Audience};
 use crate::connectors::{Source, facebook};
 use crate::sync::{Hash, SyncManager};
@@ -34,6 +35,8 @@ pub struct ParseResult {
     pub total_photos: usize,
     pub total_videos: usize,
     pub total_tracker_events: usize,
+    #[serde(default)]
+    pub messages: Vec<VaultMessage>,
     #[serde(default)]
     pub source: String,
 }
@@ -190,6 +193,7 @@ pub async fn import_facebook_zip(
         total_photos: result.total_photos,
         total_videos: result.total_videos,
         total_tracker_events: result.total_tracker_events,
+        messages: result.messages,
         source: "facebook".to_string(),
     };
 
@@ -231,6 +235,7 @@ pub async fn import_instagram_zip(
         total_photos: result.total_photos,
         total_videos: result.total_videos,
         total_tracker_events: result.total_tracker_events,
+        messages: result.messages,
         source: "instagram".to_string(),
     };
 
@@ -434,6 +439,7 @@ fn parse_dtp_generic_zip(path: &Path) -> Result<ParseResult, String> {
             }).count())
             .sum(),
         total_tracker_events: 0,
+        messages: Vec::new(),
         posts,
         trackers: Vec::new(),
         source: "dtp".to_string(),
@@ -577,6 +583,17 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
         .unwrap_or_default()
         .as_secs();
 
+    // Save pending messages
+    let session = state.keychain.load_session().map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    for mut msg in pending.messages.clone() {
+        msg.owner_did = Some(user_did.clone());
+        if let Err(e) = db.save_vault_message(&msg).await {
+            eprintln!("Failed to save imported message: {}", e);
+        }
+    }
+
     for post in &pending.posts {
         let item_id = uuid::Uuid::new_v4().to_string();
         let app_data_dir = state.app_handle.path()
@@ -608,20 +625,19 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
                 .collect()
         };
 
-        let tagged_people_json = if post.tagged_people.is_empty() {
-            None
-        } else {
-            let tags: Vec<facebook::TaggedPerson> = post.tagged_people.iter().map(|name| facebook::TaggedPerson {
-                source_name: name.clone(),
-                source_platform: "facebook".to_string(),
-                linked_did: None,
-                linked_handle: None,
-            }).collect();
-            serde_json::to_string(&tags).ok()
-        };
+        let tagged_people: Vec<crate::models::TaggedPerson> = post.tagged_people.iter().map(|name| crate::models::TaggedPerson {
+            source_name: name.clone(),
+            source_platform: "facebook".to_string(),
+            linked_did: None,
+            linked_handle: None,
+        }).collect();
 
-        let location_json = post.location.as_ref()
-            .and_then(|loc| serde_json::to_string(loc).ok());
+        let location: Option<crate::models::PostLocation> = post.location.as_ref()
+            .map(|loc| crate::models::PostLocation {
+                name: loc.name.clone(),
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+            });
 
         // Determine item type based on content
         let item_type = if !post.media_uris.is_empty() {
@@ -647,8 +663,8 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             author_did: None,
             author_handle: None,
             author_avatar: None,
-            tagged_people: tagged_people_json,
-            location: location_json,
+            tagged_people: tagged_people,
+            location: location,
             is_liked: false,
             like_count: None,
             reply_count: None,
@@ -712,15 +728,18 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     };
     drop(db_guard);
 
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
     let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
         &user_did,
-        &state,
+        &access_jwt,
         media_dir.clone(),
         &app_handle,
         None,
         None,
         sync_manager.clone(),
-        &known_uris,
     ).await {
         Ok(p) => p,
         Err(e) => {
@@ -797,7 +816,7 @@ async fn save_posts(
             author_did: Some(post.author_did.clone()),
             author_handle: Some(post.author_handle.clone()),
             author_avatar: post.author_avatar.clone(),
-            tagged_people: None,
+            tagged_people: vec![],
             location: None,
             is_liked: false,
             like_count: post.like_count,
@@ -1040,9 +1059,13 @@ pub async fn get_timeline(
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
     
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+
     let app_handle = state.app_handle.clone();
     let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
-        &state,
+        &access_jwt,
         std::path::PathBuf::new(),
         &app_handle,
         limit,
@@ -1469,13 +1492,19 @@ pub async fn send_bsky_dm(
 /// List saved Bluesky custom feeds.
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
-    crate::connectors::bluesky::get_saved_feeds(&state).await
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("No access token available")?;
+    crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
 }
 
 /// List profiles this actor follows.
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&state, &actor, 100, None).await?;
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("No access token available")?;
+    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
     Ok(profiles)
 }
 
@@ -1505,7 +1534,10 @@ pub async fn get_unified_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    crate::connectors::bluesky::get_unified_feed(&state, tags, Some(feed_uris), limit, cursor).await
+    let access_jwt = state.keychain.get_access_jwt()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("No access token available")?;
+    crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
 }
 
 /// Publish a new post with explicit destination routing.
@@ -1564,7 +1596,7 @@ pub async fn publish_post(
                 author_did: state.keychain.get_did().ok().flatten(),
                 author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
                 author_avatar: None,
-                tagged_people: None,
+                tagged_people: vec![],
                 location: None,
                 is_liked: false,
                 like_count: None,
@@ -1638,7 +1670,7 @@ pub async fn publish_post(
                                 author_did: Some(user_did.clone()),
                                 author_handle: Some(user_handle),
                                 author_avatar: None,
-                                tagged_people: None,
+                                tagged_people: vec![],
                                 location: None,
                                 is_liked: false,
                                 like_count: None,

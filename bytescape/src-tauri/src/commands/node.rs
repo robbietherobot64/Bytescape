@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 
 use iroh::{Endpoint, SecretKey};
-use iroh::address_lookup::mdns::MdnsAddressLookupBuilder;
 use crate::error::BytescapeError;
 use crate::db;
 use crate::sync::{SyncManager, Capability, DocTicket};
@@ -21,44 +20,11 @@ pub struct DocTicketInfo {
     pub namespace_id: String,
 }
 
-/// Response containing P2P node status
-#[derive(Serialize)]
-pub struct NodeStatus {
-    pub node_id: String,
-    pub is_online: bool,
-    pub relay_url: Option<String>,
-    pub local_addrs: Vec<String>,
-}
-
-/// Response for P2P test doc creation
-#[derive(Serialize)]
-pub struct TestDocResult {
-    pub ticket: String,
-    pub namespace_id: String,
-    pub entry_count: usize,
-}
-
-/// Response for joining and reading a test doc
-#[derive(Serialize)]
-pub struct TestDocReadResult {
-    pub namespace_id: String,
-    pub entries: Vec<TestDocEntry>,
-    pub sync_elapsed_ms: u64,
-}
-
-/// A single entry read from a synced test doc
-#[derive(Serialize)]
-pub struct TestDocEntry {
-    pub key: String,
-    pub content: String,
-    pub author: String,
-}
-
 /// Initialize the Iroh P2P node and sync manager.
 /// 
 /// This command:
 /// 1. Loads or generates Iroh secret key from keychain
-/// 2. Creates and binds the Iroh endpoint with mDNS LAN discovery
+/// 2. Creates and binds the Iroh endpoint
 /// 3. Initializes the SyncManager for docs/blobs
 /// 4. Spawns background P2P listener for incoming connections
 /// 
@@ -85,7 +51,6 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
         .secret_key(secret_key.clone())
         .alpns(vec![b"bytescape/1.0".to_vec()])
         .address_lookup(iroh::address_lookup::DhtAddressLookup::builder().n0_dns_pkarr_relay())
-        .address_lookup(MdnsAddressLookupBuilder::default())
         .bind()
         .await
         .map_err(|e| BytescapeError::P2PNetwork(e.to_string()))?;
@@ -105,8 +70,8 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     *state.sync_manager.lock().await = Some(sync_manager);
 
     // Spawn background P2P listener
-    // let db_manager_arc = state.db_manager.clone();
-    // let app_handle = state.app_handle.clone();
+    let _db_manager_arc = state.db_manager.clone();
+    let _app_handle = state.app_handle.clone();
 
     /* 
     // TODO: This loop steals connections from Iroh DocsEngine. 
@@ -244,38 +209,50 @@ pub async fn join_sync_doc(ticket_str: String, state: State<'_, AppState>) -> st
     Ok(namespace_id.to_string())
 }
 
-/// Get the current P2P node status including node ID, relay, and local addresses.
-#[tauri::command]
-pub async fn get_node_status(state: State<'_, AppState>) -> Result<NodeStatus, String> {
-    let endpoint_guard = state.endpoint.lock().await;
-    let endpoint = endpoint_guard.as_ref()
-        .ok_or("Iroh node not initialized. Call setup_iroh_node first.")?;
-
-    let node_id = endpoint.secret_key().public().to_string();
-
-    let addr = endpoint.addr();
-    let relay_url: Option<String> = None; // relay_url extracted from addrs if available
-    let local_addrs: Vec<String> = addr.addrs.iter()
-        .map(|a| format!("{:?}", a))
-        .collect();
-
-    Ok(NodeStatus {
-        node_id,
-        is_online: true,
-        relay_url,
-        local_addrs,
-    })
+/// Entry from a P2P test/diagnostic document.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TestDocEntry {
+    pub key: String,
+    pub content: String,
+    pub author: String,
 }
 
-/// Create a test sync document with a sample entry. Returns the ticket for sharing.
+/// Return the current status of the Iroh P2P node.
+///
+/// Reports whether the node is online and its public key.
 #[tauri::command]
-pub async fn p2p_create_test_doc(state: State<'_, AppState>) -> Result<TestDocResult, String> {
+pub async fn get_node_status(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
+    let endpoint_guard = state.endpoint.lock().await;
+    match endpoint_guard.as_ref() {
+        Some(endpoint) => {
+            let node_id = endpoint.secret_key().public().to_string();
+            Ok(serde_json::json!({
+                "online": true,
+                "node_id": node_id,
+            }))
+        }
+        None => Ok(serde_json::json!({
+            "online": false,
+            "node_id": null,
+        })),
+    }
+}
+
+/// Create a new Iroh doc and write a test entry into it.
+/// Returns a shareable ticket and the namespace ID.
+#[tauri::command]
+pub async fn p2p_create_test_doc(
+    content: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<DocTicketInfo, String> {
     let sync_guard = state.sync_manager.lock().await;
-    let sync = sync_guard.as_ref()
+    let sync = sync_guard
+        .as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
-    // Create a new document
-    let ticket = sync.create_doc().await
+    let ticket = sync
+        .create_doc()
+        .await
         .map_err(|e| BytescapeError::Sync(e))?;
 
     let namespace_id = match &ticket.capability {
@@ -283,54 +260,39 @@ pub async fn p2p_create_test_doc(state: State<'_, AppState>) -> Result<TestDocRe
         Capability::Read(id) => *id,
     };
 
-    // Write a test entry
-    let test_content = format!(
-        "Hello from Bytescape! Timestamp: {}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    );
-    sync.send_message(namespace_id, test_content).await
-        .map_err(|e| format!("Failed to write test entry: {}", e))?;
+    // Write a test entry using the same pattern as send_message
+    sync.send_message(namespace_id, content)
+        .await
+        .map_err(|e| BytescapeError::Sync(e))?;
 
-    Ok(TestDocResult {
+    Ok(DocTicketInfo {
         ticket: ticket.to_string(),
         namespace_id: namespace_id.to_string(),
-        entry_count: 1,
     })
 }
 
-/// Join a test sync document by ticket, wait for sync, and return all entries.
+/// Join an existing doc via ticket and read all entries from it.
 #[tauri::command]
 pub async fn p2p_join_and_read_test_doc(
     ticket_str: String,
     state: State<'_, AppState>,
-) -> Result<TestDocReadResult, String> {
-    let start = std::time::Instant::now();
-
+) -> std::result::Result<Vec<TestDocEntry>, String> {
     let sync_guard = state.sync_manager.lock().await;
-    let sync = sync_guard.as_ref()
+    let sync = sync_guard
+        .as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
-    let ticket: DocTicket = ticket_str.parse()
-        .map_err(|e| format!("Invalid ticket: {}", e))?;
+    let ticket: DocTicket = ticket_str
+        .parse()
+        .map_err(|e| BytescapeError::InvalidTicket(format!("{}", e)).to_string())?;
 
-    let namespace_id = sync.join_doc(ticket).await
-        .map_err(|e: String| BytescapeError::Sync(e))?;
+    let namespace_id = sync
+        .join_doc(ticket)
+        .await
+        .map_err(|e| BytescapeError::Sync(e))?;
 
-    // Give sync some time to propagate entries
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    // Give the doc a moment to sync before reading
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Read all entries from the synced document
-    let entries = sync.read_doc_entries(namespace_id).await
-        .map_err(|e| format!("Failed to read entries: {}", e))?;
-
-    let elapsed = start.elapsed().as_millis() as u64;
-
-    Ok(TestDocReadResult {
-        namespace_id: namespace_id.to_string(),
-        entries,
-        sync_elapsed_ms: elapsed,
-    })
+    sync.read_doc_entries(namespace_id).await
 }

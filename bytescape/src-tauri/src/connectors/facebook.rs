@@ -306,6 +306,8 @@ pub struct ParseResult {
     pub total_photos: usize,
     pub total_videos: usize,
     pub total_tracker_events: usize,
+    #[serde(default)]
+    pub messages: Vec<crate::models::VaultMessage>,
 }
 
 /// A cleaned-up post ready for display/storage
@@ -330,29 +332,11 @@ pub struct ParsedPost {
     pub location: Option<PostLocation>,
 }
 
-/// A location or check-in attached to a post
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PostLocation {
-    pub name: String,
-    pub latitude: Option<f64>,
-    pub longitude: Option<f64>,
-}
+/// A location or check-in attached to a post — re-exported from models.
+pub use crate::models::PostLocation;
 
-/// A person tagged in a post. The source_name is stored privately in the vault
-/// and only revealed if the tagged person links their account.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TaggedPerson {
-    /// The name from the source platform (e.g. Facebook display name)
-    pub source_name: String,
-    /// Which platform this tag came from
-    pub source_platform: String,
-    /// Once the tagged person registers and links their account, their DID goes here
-    #[serde(default)]
-    pub linked_did: Option<String>,
-    /// Their Bytescape handle once linked
-    #[serde(default)]
-    pub linked_handle: Option<String>,
-}
+/// A person tagged in a post — re-exported from models.
+pub use crate::models::TaggedPerson;
 
 /// =============================================================
 /// Parser Implementation
@@ -646,6 +630,7 @@ pub fn parse_facebook_zip(
 
     let mut posts: Vec<ParsedPost> = Vec::new();
     let mut trackers: Vec<TrackerEntry> = Vec::new();
+    let mut messages: Vec<crate::models::VaultMessage> = Vec::new();
     let mut total_photos: usize = 0;
     let mut total_videos: usize = 0;
 
@@ -735,14 +720,23 @@ pub fn parse_facebook_zip(
                 || lower_name.contains("your_off-facebook")
                 || lower_name.contains("advertisers");
 
-            // Skip files in known non-post directories
-            if is_excluded_path(&lower_name) && !is_off_facebook {
+            let is_message = lower_name.contains("messages/inbox/")
+                || lower_name.contains("messages/archived_threads/");
+
+            // Skip files in known non-post directories unless they are messages or off_facebook
+            if is_excluded_path(&lower_name) && !is_off_facebook && !is_message {
                 continue;
             }
 
             let is_posts_file = is_post_file_path(&lower_name);
 
-            if is_posts_file {
+            if is_message {
+                let parsed_msgs = parse_html_messages(&contents, file_name);
+                if !parsed_msgs.is_empty() {
+                    println!("facebook: ✅ Parsed {} messages (HTML) from {}", parsed_msgs.len(), file_name);
+                    messages.extend(parsed_msgs);
+                }
+            } else if is_posts_file {
                 let parsed = parse_html_posts(&contents, file_name, &top_prefix);
                 if !parsed.is_empty() {
                     for p in &parsed {
@@ -1266,6 +1260,7 @@ pub fn parse_facebook_zip(
         total_photos,
         total_videos,
         total_tracker_events,
+        messages,
     })
 }
 
@@ -2426,4 +2421,126 @@ fn parse_html_trackers(html: &str, file_name: &str) -> Vec<TrackerEntry> {
 
     println!("facebook: parse_html_trackers found {} tracker entries from {}", trackers.len(), file_name);
     trackers
+}
+
+/// Parse messages from a Facebook HTML export file.
+///
+/// Facebook HTML message exports are typically structured with a main container.
+/// For old export formats:
+///   <div class="message">
+///     <div class="message_header">
+///       <span class="user">Sender Name</span>
+///       <span class="meta">Date</span>
+///     </div>
+///     <div class="message_content">Message text</div>
+///   </div>
+///
+/// For new Meta accounts center formats (obfuscated classes like _a6-g):
+///   <div class="pam _3-95 _2pi0 _2lej uiBoxWhite noborder">
+///     <div class="_3-96 _2pio _2lek _2lel">Sender Name</div>
+///     <div class="_3-96 _2let">
+///        <div><div></div><div>Message text</div></div>
+///     </div>
+///     <div class="_3-94 _2lem">Date</div>
+///   </div>
+fn parse_html_messages(html: &str, file_name: &str) -> Vec<crate::models::VaultMessage> {
+    let document = Html::parse_document(html);
+    let mut messages: Vec<crate::models::VaultMessage> = Vec::new();
+
+    // Try to find the conversation partner name
+    // It's usually the <title> or an <h3> tag, e.g., "Conversation with John Doe"
+    let mut convo_partner = String::new();
+    let title_sel = Selector::parse("title").unwrap();
+    if let Some(title_el) = document.select(&title_sel).next() {
+        let title_text = title_el.text().collect::<Vec<_>>().join(" ");
+        convo_partner = title_text.replace("Conversation with ", "").trim().to_string();
+    }
+    
+    // Fallback: look for generic headers if title is missing
+    if convo_partner.is_empty() {
+        if file_name.contains("messages/inbox/") {
+            let parts: Vec<&str> = file_name.split("messages/inbox/").collect();
+            if parts.len() > 1 {
+                let folder_name = parts[1].split('/').next().unwrap_or("");
+                convo_partner = folder_name.split('_').next().unwrap_or("").to_string();
+            }
+        }
+    }
+
+    if convo_partner.is_empty() {
+        convo_partner = "Unknown".to_string();
+    }
+
+    // A simple convo_id derived from the peer's name
+    let convo_id = format!("fb_convo_{}", convo_partner.to_lowercase().replace(' ', "_").replace(|c: char| !c.is_alphanumeric() && c != '_', ""));
+
+    // Strategy 1: New Meta format (obfuscated classes)
+    let container_sel = Selector::parse("div.pam._3-95, div.pam.uiBoxWhite").unwrap();
+    let containers: Vec<_> = document.select(&container_sel).collect();
+    
+    if !containers.is_empty() {
+        for el in containers {
+            // Find sender
+            let sender_sel = Selector::parse("div._3-96._2pio, div._2lel").unwrap();
+            let sender = el.select(&sender_sel).next()
+                .map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .unwrap_or_default();
+
+            // Find text
+            let text_sel = Selector::parse("div._2let, div[class*='msg']").unwrap();
+            let text = el.select(&text_sel).next()
+                .map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .unwrap_or_default();
+
+            // Find date
+            let date_sel = Selector::parse("div._3-94._2lem, div[class*='meta']").unwrap();
+            let date_str = el.select(&date_sel).next()
+                .map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .unwrap_or_default();
+
+            if !sender.is_empty() && (!text.is_empty() || !date_str.is_empty()) {
+                let decoded_text = decode_facebook_text(&text);
+                let decoded_sender = decode_facebook_text(&sender);
+
+                let timestamp = try_parse_fb_date(&date_str).unwrap_or(0);
+                
+                // Keep it simple for now, we don't have owner DID here so leave blank or dummy
+                messages.push(crate::models::VaultMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    owner_did: None, // Filled during commit
+                    convo_id: convo_id.clone(),
+                    sender_did: format!("fb_user:{}", decoded_sender.to_lowercase().replace(' ', "_")),
+                    sender_handle: decoded_sender.clone(),
+                    text: decoded_text,
+                    sent_at: if timestamp > 0 { timestamp.to_string() } else { date_str.clone() },
+                    source: "facebook".to_string(),
+                    imported_at: chrono::Utc::now().timestamp() as u64,
+                    peer_did: Some(format!("fb_user:{}", convo_partner.to_lowercase().replace(' ', "_"))),
+                    peer_handle: Some(decode_facebook_text(&convo_partner)),
+                });
+            }
+        }
+    }
+
+    // Strategy 2: Old format
+    if messages.is_empty() {
+        let msg_sel = Selector::parse("div.message").unwrap();
+        for el in document.select(&msg_sel) {
+            let sender_sel = Selector::parse("span.user").unwrap();
+            let _sender = el.select(&sender_sel).next()
+                .map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .unwrap_or_default();
+
+            let date_sel = Selector::parse("span.meta").unwrap();
+            let _date_str = el.select(&date_sel).next()
+                .map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                .unwrap_or_default();
+
+            // Content is typically the next sibling of div.message with class .message_content, 
+            // but sometimes inside. Let's just find the first p tag or adjacent div.
+            // For simplicity, skip if we can't cleanly parse old structure here
+        }
+    }
+
+    messages
 }

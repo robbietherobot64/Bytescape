@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 async-channel = "2"
-iroh = { version = "0.96.1", features = ["address-lookup-pkarr-dht", "address-lookup-mdns"] }
+iroh = { version = "0.96.1", features = ["address-lookup-pkarr-dht"] }
 iroh-docs = "0.96.0"
 iroh-blobs = "0.98.0"
 iroh-gossip = "0.96.0"

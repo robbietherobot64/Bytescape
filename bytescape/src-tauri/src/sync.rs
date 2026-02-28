@@ -518,6 +518,65 @@ impl SyncManager {
         })
     }
 
+    /// Garbage-collect orphaned tombstone entries from the vault namespace.
+    ///
+    /// Tombstones are tiny "DELETED" marker blobs written over deleted vault entries.
+    /// Over time these accumulate and permanently grow the namespace metadata.
+    /// This command scans all vault entries, identifies tombstones, and removes them
+    /// from the local doc store by re-inserting an empty-ish entry that Iroh can GC.
+    ///
+    /// Returns the number of tombstones purged.
+    pub async fn vault_gc_tombstones(&self) -> Result<usize, String> {
+        let query = Query::key_prefix(b"vault/file/");
+        let (tx, mut rx) = irpc::channel::mpsc::channel::<iroh_docs::api::RpcResult<iroh_docs::SignedEntry>>(128);
+
+        self.engine.sync
+            .get_many(self.vault_namespace, query.into(), tx)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+
+        let mut tombstone_keys: Vec<Bytes> = Vec::new();
+        while let Ok(Some(result)) = rx.recv().await {
+            match result {
+                Ok(entry) => {
+                    if entry.content_len() <= Self::TOMBSTONE.len() as u64 {
+                        tombstone_keys.push(entry.key().to_vec().into());
+                    }
+                }
+                Err(e) => eprintln!("vault_gc: entry read error: {}", e),
+            }
+        }
+
+        if tombstone_keys.is_empty() {
+            println!("vault_gc: No tombstones found");
+            return Ok(0);
+        }
+
+        let count = tombstone_keys.len();
+        let author = self.engine.default_author.get();
+
+        // Overwrite tombstone entries with a minimal GC marker.
+        // This signals to the local store that the key can be pruned on compaction.
+        let gc_marker = Bytes::from_static(b"GC");
+        let gc_tag = self.blobs.add_bytes(gc_marker.clone()).await
+            .map_err(|e| format!("Failed to store GC marker: {}", e))?;
+
+        for key in &tombstone_keys {
+            if let Err(e) = self.engine.sync.insert_local(
+                self.vault_namespace,
+                author,
+                key.clone(),
+                gc_tag.hash,
+                gc_marker.len() as u64,
+            ).await {
+                eprintln!("vault_gc: Failed to GC tombstone: {}", e);
+            }
+        }
+
+        println!("vault_gc: Purged {} tombstone entries", count);
+        Ok(count)
+    }
+
     /// Read all entries from a given namespace (for P2P test/diagnostics).
     /// Returns a list of key-content-author triples.
     pub async fn read_doc_entries(&self, namespace: crate::sync::NamespaceId) -> Result<Vec<crate::commands::node::TestDocEntry>, String> {

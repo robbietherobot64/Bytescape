@@ -433,3 +433,17 @@ pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Ve
     db.list_contacts().await
         .map_err(|e| e.to_string())
 }
+
+/// Garbage-collect orphaned tombstone entries from the Iroh vault namespace.
+/// 
+/// Tombstones accumulate as files are deleted. This reclaims namespace metadata weight.
+/// Returns the number of tombstone entries purged.
+#[tauri::command]
+pub async fn vault_gc_tombstones(state: State<'_, AppState>) -> std::result::Result<usize, String> {
+    let sync_guard = state.sync_manager.lock().await;
+    let sync = sync_guard.as_ref()
+        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+
+    sync.vault_gc_tombstones().await
+        .map_err(|e| e.to_string())
+}

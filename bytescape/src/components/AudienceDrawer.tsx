@@ -45,12 +45,8 @@ export function AudienceDrawer({ itemId, shareHistory, syndicatedUris, onClose, 
             if (target === 'Bluesky') {
                 await invoke<string>('syndicate_vault_item', { itemId });
 
-                // For optimistic UI update, we append a mock event.
-                // Re-fetching the item will pull the real timestamp.
-                // We fake the signature for now because onUpdated expects Audience[]
-                // Wait, onUpdated expects Audience[]?! 
-                // We should change the parent components first if we change onUpdated type.
-                // Let's just leave onUpdated the same for now to not break FeedEntryCard's audiences state.
+                // Optimistically update visible audiences.
+                // A subsequent item refresh will replace this with canonical share-history data.
                 const updatedAudiences = ['Local' as Audience, 'Bluesky' as Audience];
                 onUpdated(updatedAudiences);
                 setSuccessMsg(`Shared to Bluesky`);

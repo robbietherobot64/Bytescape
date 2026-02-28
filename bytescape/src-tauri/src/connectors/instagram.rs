@@ -137,6 +137,27 @@ pub struct InstagramMedia {
     pub title: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InstagramMessageParticipant {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InstagramMessage {
+    pub sender_name: Option<String>,
+    pub timestamp_ms: Option<i64>,
+    pub content: Option<String>,
+    // Ignore media/reactions for basic chat coverage
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InstagramConversation {
+    pub participants: Option<Vec<InstagramMessageParticipant>>,
+    pub messages: Option<Vec<InstagramMessage>>,
+    pub title: Option<String>,
+    pub thread_type: Option<String>,
+}
+
 /// =============================================================
 /// Parsed Output Structs
 /// =============================================================
@@ -152,6 +173,44 @@ pub struct ParsedInstagramPost {
 /// =============================================================
 /// Main Parser Function
 /// =============================================================
+
+fn parse_instagram_messages_json(
+    raw_json: &str,
+    file_name: &str,
+) -> Result<Vec<crate::models::VaultMessage>, String> {
+    let convo: InstagramConversation = serde_json::from_str(raw_json)
+        .map_err(|e| format!("Failed to parse Instagram messages json {}: {}", file_name, e))?;
+
+    let mut messages = Vec::new();
+    let partner_name = convo.title.unwrap_or_else(|| "Unknown".to_string());
+    
+    // Ignore group chats for private messages scope if we prefer, but for now just take the title
+    let convo_id = format!("ig_convo_{}", partner_name.to_lowercase().replace(' ', "_").replace(|c: char| !c.is_alphanumeric() && c != '_', ""));
+
+    if let Some(msgs) = convo.messages {
+        for msg in msgs {
+            if let (Some(sender), Some(content)) = (msg.sender_name, msg.content) {
+                let timestamp = msg.timestamp_ms.unwrap_or(0);
+                
+                messages.push(crate::models::VaultMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    owner_did: None, // Will be filled in commit_memories
+                    convo_id: convo_id.clone(),
+                    sender_did: format!("ig_user:{}", sender.to_lowercase().replace(' ', "_").replace(|c: char| !c.is_alphanumeric() && c != '_', "")),
+                    sender_handle: sender.clone(),
+                    text: crate::connectors::facebook::decode_facebook_text(&content),
+                    sent_at: if timestamp > 0 { (timestamp / 1000).to_string() } else { "0".to_string() },
+                    source: "instagram".to_string(),
+                    imported_at: chrono::Utc::now().timestamp() as u64,
+                    peer_did: Some(format!("ig_user:{}", partner_name.to_lowercase().replace(' ', "_").replace(|c: char| !c.is_alphanumeric() && c != '_', ""))),
+                    peer_handle: Some(crate::connectors::facebook::decode_facebook_text(&partner_name)),
+                });
+            }
+        }
+    }
+
+    Ok(messages)
+}
 
 pub fn parse_instagram_zip(
     zip_path: PathBuf,
@@ -223,7 +282,51 @@ pub fn parse_instagram_zip(
     media_json_files.dedup();
 
     if media_json_files.is_empty() {
-        return Err("Could not find Instagram media JSON files in ZIP (expected your_instagram_activity/media/posts_*.json, reels.json, stories.json)".to_string());
+        println!("facebook: No instagram media files found");
+    }
+
+    // 1b. Find message JSON files
+    let message_json_files: Vec<String> = file_names
+        .iter()
+        .filter(|name| {
+            let lower = name.to_lowercase();
+            if !lower.ends_with(".json") {
+                return false;
+            }
+            lower.contains("messages/inbox/")
+        })
+        .cloned()
+        .collect();
+
+    let mut messages_out: Vec<crate::models::VaultMessage> = Vec::new();
+
+    for json_file in message_json_files {
+        let mut raw = String::new();
+        let mut read_ok = false;
+
+        if let Ok(mut entry) = archive.by_name(&json_file) {
+            let _ = entry.read_to_string(&mut raw);
+            read_ok = true;
+        }
+
+        if !read_ok {
+            let key = json_file.to_lowercase();
+            if let Some(real_name) = entry_lookup.get(key.as_str()) {
+                if let Ok(mut entry) = archive.by_name(real_name) {
+                    let _ = entry.read_to_string(&mut raw);
+                }
+            }
+        }
+
+        if !raw.is_empty() {
+            if let Ok(mut parsed) = parse_instagram_messages_json(&raw, &json_file) {
+                messages_out.append(&mut parsed);
+            }
+        }
+    }
+
+    if !messages_out.is_empty() {
+        println!("instagram: ✅ Parsed {} messages", messages_out.len());
     }
 
     let mut posts: Vec<InstagramPost> = Vec::new();
@@ -255,8 +358,9 @@ pub fn parse_instagram_zip(
         posts.append(&mut parsed);
     }
 
-    if posts.is_empty() {
-        return Err("Instagram media files were found but no posts/media entries could be parsed".to_string());
+    // It is possible this export only contains messages
+    if posts.is_empty() && messages_out.is_empty() {
+        return Err("No posts or messages could be parsed from the Instagram export".to_string());
     }
 
     // 2. Process each post
@@ -397,6 +501,7 @@ pub fn parse_instagram_zip(
         total_photos,
         total_videos,
         total_tracker_events: 0,
+        messages: messages_out,
         source: "instagram".to_string(),
     })
 }

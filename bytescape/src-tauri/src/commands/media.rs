@@ -750,3 +750,67 @@ fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
 pub async fn get_media_server_port(state: tauri::State<'_, AppState>) -> std::result::Result<u16, String> {
     Ok(state.media_port)
 }
+
+/// Resolve a media reference to a frontend-ready URL.
+///
+/// Handles all reference types:
+/// - `blob:HASH` → exports to cache, returns asset:// URL
+/// - `http://` / `https://` → passthrough
+/// - Absolute paths → asset:// URL via convertFileSrc equivalent
+/// - Relative paths (`media/foo.jpg`) → resolved against app data dir
+///
+/// This moves ALL path resolution logic to the Rust engine, so the
+/// frontend Lens never negotiates filesystem topology.
+#[tauri::command]
+pub async fn resolve_media_url(src: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+
+    // Passthrough: already a web or asset URL
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://")
+        || trimmed.starts_with("asset://") || trimmed.starts_with("tauri://") {
+        return Ok(trimmed.to_string());
+    }
+
+    // Blob reference: resolve via get_media_blob logic
+    if trimmed.starts_with("blob:") {
+        let after = &trimmed[5..];
+        // Browser Object URLs (blob:http://...) are already resolved
+        if after.starts_with("http://") || after.starts_with("https://") || after.starts_with("tauri://") {
+            return Ok(trimmed.to_string());
+        }
+        // Delegate to the existing blob cache export
+        let cache_path = get_media_blob(trimmed.to_string(), state).await?;
+        // Convert to asset:// URL
+        let url = tauri::Url::from_file_path(&cache_path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", cache_path));
+        return Ok(url);
+    }
+
+    // Absolute filesystem path
+    if trimmed.starts_with('/') || (trimmed.len() >= 3 && trimmed.as_bytes()[1] == b':') {
+        let url = tauri::Url::from_file_path(trimmed)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", trimmed));
+        return Ok(url);
+    }
+
+    // Relative path — resolve against app data dir
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+
+    let resolved = if trimmed.starts_with("media/") {
+        app_data_dir.join(trimmed)
+    } else {
+        app_data_dir.join("media").join(trimmed)
+    };
+
+    let url = tauri::Url::from_file_path(&resolved)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", resolved.display()));
+    Ok(url)
+}

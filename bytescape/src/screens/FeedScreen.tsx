@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ComposeBox, Attachment } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, customFeedUris } from '../hooks/useUnifiedFeed';
+import { appDataDir } from '@tauri-apps/api/path';
 
 interface FeedScreenProps {
     auth: AuthStatus | null;
@@ -20,6 +21,7 @@ export function FeedScreen({ auth }: FeedScreenProps) {
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
     const [isPosting, setIsPosting] = useState(false);
     const [postStatus, setPostStatus] = useState<string>('');
+    const [mediaDir, setMediaDir] = useState<string>('');
 
     // === Data Hook ===
     const {
@@ -43,6 +45,10 @@ export function FeedScreen({ auth }: FeedScreenProps) {
         archiveSourceFilter,
         autoRefreshFeeds
     });
+
+    useEffect(() => {
+        appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
+    }, []);
 
     useEffect(() => {
         // Only run reset if we actually have feeds loaded and current selection is invalid
@@ -115,11 +121,21 @@ export function FeedScreen({ auth }: FeedScreenProps) {
     };
 
     const resolveMediaPath = (src: string) => {
-        if (src.startsWith('http')) return src;
+        if (!src) return '';
+        if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('asset://') || src.startsWith('tauri://') || src.startsWith('blob:')) return src;
+
+        if (mediaDir) {
+            if (src.startsWith('media/')) {
+                const filename = src.replace(/^media\//, '');
+                return convertFileSrc(`${mediaDir}/${filename}`);
+            }
+            if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) {
+                return convertFileSrc(src);
+            }
+            return convertFileSrc(`${mediaDir}/${src}`);
+        }
         return src;
     };
-
-    const mediaDir = '';
 
     return (
         <div className="feed-layout">

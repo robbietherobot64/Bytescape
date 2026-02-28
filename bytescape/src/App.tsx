@@ -2,9 +2,14 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useAuthStore, useAppStore } from "./store";
 
 import "./App.css";
 
+/**
+ * Local error boundary for screen-level rendering failures.
+ * Keeps the app shell responsive while exposing stack traces in development.
+ */
 class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: any) {
     super(props);
@@ -25,7 +30,6 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, childre
     return this.props.children;
   }
 }
-import { useAuthStore, useAppStore } from "./store";
 
 // Types
 import {
@@ -50,7 +54,7 @@ import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
-import { StatusBar } from "./components/StatusBar";
+
 function App() {
   const [screen, setScreen] = useState<Screen>("login");
   const { auth, setAuth } = useAuthStore();
@@ -87,6 +91,9 @@ function App() {
     initApp();
   }, []);
 
+  /**
+   * Initializes backend services required by feed, vault, and sync features.
+   */
   async function initApp() {
     // Initialize Iroh node first — vault, blobs, and P2P all depend on it
     try {
@@ -167,6 +174,7 @@ function App() {
   }
 
   // === Data Loading ===
+  /** Loads archive summary counts for UI badges and status text. */
   async function loadArchiveStats() {
     try {
       const stats = await invoke<VaultFileStats>("vault_get_stats");
@@ -182,6 +190,7 @@ function App() {
     }
   }
 
+  /** Loads locally cached and imported chat messages. */
   async function loadMessages() {
     try {
       const msgs = await invoke<VaultMessage[]>("list_vault_messages");
@@ -309,10 +318,7 @@ function App() {
         filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
       });
       if (selected) {
-        // Need to set sidebar? No, 'audit' is full screen or part of import?
-        // In original App.tsx, audit was a screen. import was a screen.
-        // Let's assume 'import' sidebar item leads to 'import' screen.
-        // 'audit' is a temporary state/screen triggered from import.
+        // Route into audit flow while keeping import highlighted in navigation.
         setScreen("audit");
         setActiveSidebar("import");
 
@@ -325,7 +331,7 @@ function App() {
         setError("");
         addLog("[start] Parsing archive...");
 
-        // Debug: list ZIP contents to help diagnose parsing
+        // Capture archive structure in logs to aid parser diagnostics.
         try {
           const zipInfo = await invoke<string[]>("debug_zip_contents", { path: selected });
           console.log("ZIP structure:", zipInfo);
@@ -455,7 +461,7 @@ function App() {
       onNavigate={handleNavigate}
       mainStyle={(screen === "chat" || screen === "feed" || screen === "vault") ? {
         padding: 0,
-        height: '100vh',
+        height: '100%',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
@@ -536,12 +542,7 @@ function App() {
           />
         )}
 
-        {/* Global Status Bar */}
-        <StatusBar
-          status={importStatus}
-          isBusy={isImporting}
-          onDismiss={!isImporting ? () => setImportStatus("") : undefined}
-        />
+        {/* Application End */}
       </ErrorBoundary>
     </AppLayout>
   );

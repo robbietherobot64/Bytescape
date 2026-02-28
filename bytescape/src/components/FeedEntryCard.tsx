@@ -74,10 +74,13 @@ function ExpandIcon() {
 
 /* ─── Helpers ─── */
 
-function parseTaggedPeople(json?: string): TaggedPerson[] {
-    if (!json) return [];
+function parseTaggedPeople(input?: TaggedPerson[] | string): TaggedPerson[] {
+    if (!input) return [];
+    // New typed format: already an array
+    if (Array.isArray(input)) return input;
+    // Legacy string format: JSON-encoded
     try {
-        return JSON.parse(json) as TaggedPerson[];
+        return JSON.parse(input) as TaggedPerson[];
     } catch {
         return [];
     }
@@ -223,7 +226,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 {/* Location chip */}
                 {entry.location && (
                     <div className="post-context-chip" style={{ marginTop: 4 }}>
-                        📍 {entry.location}
+                        📍 {typeof entry.location === 'string' ? entry.location : entry.location.name}
                     </div>
                 )}
 
@@ -259,6 +262,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                                             <BlobImage
                                                 src={mediaSources[i]}
                                                 alt=""
+                                                mediaDir={mediaDir}
                                                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                                             />
                                             <button

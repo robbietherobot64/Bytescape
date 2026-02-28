@@ -65,3 +65,9 @@ tokio-stream = { version = "0.1.18", features = ["net"] }
 tempfile = "3.10"
 zip = "4"
 
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

@@ -15,10 +15,10 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 36
-    namespace = "meta.dipper.app"
+    namespace = "meta.bytescape.app"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "meta.dipper.app"
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
+        applicationId = "meta.bytescape.app"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -37,6 +37,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
