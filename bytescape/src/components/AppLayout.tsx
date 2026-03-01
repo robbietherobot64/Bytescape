@@ -11,13 +11,15 @@ interface AppLayoutProps {
     onNavigate: (item: SidebarItem) => void;
     /** Optional style override for full-bleed layouts. */
     mainStyle?: React.CSSProperties;
+    /** Optional slot for feed tabs rendered in the mobile top bar. */
+    feedTabSlot?: React.ReactNode;
 }
 
 /** Application shell: persistent sidebar + main content region. */
-export function AppLayout({ children, activeSidebar, onNavigate, mainStyle }: AppLayoutProps) {
+export function AppLayout({ children, activeSidebar, onNavigate, mainStyle, feedTabSlot }: AppLayoutProps) {
     return (
         <div className="app-layout">
-            <Sidebar activeSidebar={activeSidebar} onNavigate={onNavigate} />
+            <Sidebar activeSidebar={activeSidebar} onNavigate={onNavigate} feedTabSlot={feedTabSlot} />
             <main className="main-content" style={mainStyle}>
                 {children}
             </main>

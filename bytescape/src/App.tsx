@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAuthStore, useAppStore } from "./store";
+import { FeedTab } from "./hooks/useUnifiedFeed";
 
 import "./App.css";
 
@@ -85,6 +86,24 @@ function App() {
 
   // Sidebar
   const [activeSidebar, setActiveSidebar] = useState<SidebarItem>("feed");
+
+  // Feed tab state (lifted from FeedScreen so we can render tabs in top bar)
+  const [feedActiveTab, setFeedActiveTab] = useState<FeedTab>('all');
+
+  // Build the feed tab buttons to pass into the mobile top bar
+  const feedTabSlot = screen === "feed" ? (
+    <>
+      {(['all', 'following', 'archives'] as FeedTab[]).map(tab => (
+        <button
+          key={tab}
+          className={`tab ${feedActiveTab === tab ? 'active' : ''}`}
+          onClick={() => setFeedActiveTab(tab)}
+        >
+          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+        </button>
+      ))}
+    </>
+  ) : undefined;
 
   // === Init ===
   useEffect(() => {
@@ -459,6 +478,7 @@ function App() {
     <AppLayout
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
+      feedTabSlot={feedTabSlot}
       mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends") ? {
         padding: 0,
         height: '100%',
@@ -474,6 +494,8 @@ function App() {
         {screen === "feed" && (
           <FeedScreen
             auth={auth}
+            activeTab={feedActiveTab}
+            setActiveTab={setFeedActiveTab}
           />
         )}
 

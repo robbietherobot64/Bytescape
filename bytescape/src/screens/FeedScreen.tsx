@@ -10,11 +10,12 @@ import { appDataDir } from '@tauri-apps/api/path';
 
 interface FeedScreenProps {
     auth: AuthStatus | null;
+    activeTab: FeedTab;
+    setActiveTab: (tab: FeedTab) => void;
 }
 
-export function FeedScreen({ auth }: FeedScreenProps) {
+export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     // === UI Control State ===
-    const [activeTab, setActiveTab] = useState<FeedTab>('all');
     const [autoRefreshFeeds] = useState(false);
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');

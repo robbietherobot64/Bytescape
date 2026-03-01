@@ -1328,27 +1328,6 @@ textarea::placeholder {
 
 .chat-back-btn:hover { background: #d8d0c8; }
 
-.chat-scroll-btn {
-    position: sticky;
-    bottom: 10px;
-    align-self: center;
-    background: var(--accent-orange);
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    box-shadow: var(--bevel-button), 0 4px 12px rgba(0,0,0,0.3);
-    cursor: pointer;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-sans);
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.chat-scroll-btn:hover { background: var(--accent-red); }
-
 .chat-messages {
     flex: 1;
     overflow-y: auto;
@@ -2084,21 +2063,22 @@ textarea::placeholder {
 
 /* ─── 28. MOBILE RESPONSIVE ─── */
 @media (max-width: 768px) {
-    /* ── Hide desktop sidebar, show mobile tab bar ── */
+    /* ── TOP NAV BAR: hamburger + screen title / feed tabs ── */
     .sidebar {
         position: fixed;
-        bottom: 0;
+        top: 0;
         left: 0;
         right: 0;
         width: 100%;
         height: auto;
-        flex-direction: row;
-        justify-content: center;
+        flex-direction: column;
+        justify-content: flex-start;
         padding: 0;
+        padding-top: var(--safe-top);
         border-right: none;
-        border-top: 2px solid #666;
+        border-bottom: 2px solid #444;
         z-index: 200;
-        box-shadow: 0 -2px 8px rgba(0,0,0,0.25);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         background: var(--bg-sidebar);
     }
 
@@ -2107,113 +2087,128 @@ textarea::placeholder {
     .sidebar-bottom { display: none; }
     .sidebar-logo { display: none; }
 
-    /* Show mobile tab bar */
-    .mobile-tab-bar {
+    /* Hide old mobile tab bar (replaced by top bar) */
+    .mobile-tab-bar { display: none !important; }
+
+    /* ── Mobile top bar layout ── */
+    .mobile-top-bar {
         display: flex !important;
         flex-direction: row;
-        justify-content: space-around;
-        align-items: stretch;
+        align-items: center;
         width: 100%;
-        padding: 0;
-        padding-bottom: var(--safe-bottom);
+        height: 44px;
+        padding: 0 8px;
+        gap: 0;
     }
 
-    .mobile-tab-bar .sidebar-icon {
-        flex-direction: column;
+    .mobile-hamburger {
+        background: none;
+        border: none;
+        color: var(--text-on-navy);
+        font-size: 22px;
+        padding: 6px 10px;
+        cursor: pointer;
+        flex-shrink: 0;
+        line-height: 1;
+    }
+
+    .mobile-hamburger:active,
+    .mobile-hamburger.open {
+        color: var(--accent-yellow);
+    }
+
+    .mobile-screen-title {
         flex: 1;
-        padding: 6px 0 4px;
-        gap: 1px;
-        min-width: 0;
-        border-left: none;
-        border-right: none;
+        color: var(--text-on-navy);
+        font-family: var(--font-sans);
+        font-size: 13px;
+        font-weight: 700;
+        padding: 0 8px;
+        letter-spacing: 0.5px;
     }
 
-    .mobile-tab-bar .sidebar-icon.active {
-        border-left: none;
-        border-top: 2px solid var(--accent-yellow);
-        padding-top: 4px;
-        background: var(--bg-sidebar-active);
+    /* Feed tabs rendered inline in the top bar */
+    .mobile-feed-tabs {
+        display: flex;
+        flex: 1;
+        align-items: center;
+        gap: 2px;
+        padding: 0 4px;
     }
 
-    .mobile-tab-bar .sidebar-icon-label {
-        font-size: 9px;
+    .mobile-feed-tabs .tab {
+        background: var(--bg-toolbar);
+        color: var(--text-secondary);
+        padding: 4px 12px;
+        font-size: 11px;
+        box-shadow: var(--bevel-button);
+        border: none;
+        cursor: pointer;
+        font-family: var(--font-sans);
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
     }
 
-    .mobile-tab-bar .sidebar-icon-emoji { font-size: 18px; }
-
-    /* Hamburger "More" button */
-    .mobile-more-btn.open {
-        background: var(--bg-sidebar-active);
+    .mobile-feed-tabs .tab.active {
+        background: var(--bg-content);
+        color: var(--text-primary);
+        font-weight: bold;
+        box-shadow: var(--bevel-pressed);
     }
 
-    /* ── Overflow drawer (slide-up menu) ── */
-    .mobile-overflow-drawer {
+    /* ── Dropdown menu (slides down from top bar) ── */
+    .mobile-menu-backdrop {
         position: fixed;
         top: 0;
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(0,0,0,0.5);
+        background: rgba(0,0,0,0.45);
         z-index: 300;
         display: flex;
-        align-items: flex-end;
-        justify-content: center;
-        animation: fadeIn 0.15s ease;
+        align-items: flex-start;
+        justify-content: flex-start;
+        animation: fadeIn 0.12s ease;
     }
 
-    .mobile-overflow-menu {
+    .mobile-menu-dropdown {
         background: var(--bg-panel);
         border: 2px solid #666;
-        border-bottom: none;
-        box-shadow: var(--bevel-raised), 0 -4px 20px rgba(0,0,0,0.3);
-        width: 100%;
-        max-width: 400px;
-        padding: 0;
-        padding-bottom: calc(60px + var(--safe-bottom));
-        animation: slideUp 0.2s ease;
+        border-top: none;
+        box-shadow: var(--bevel-raised), 0 4px 16px rgba(0,0,0,0.3);
+        width: 220px;
+        margin-top: calc(44px + var(--safe-top));
+        animation: slideDown 0.15s ease;
     }
 
-    .mobile-overflow-header {
-        padding: 10px 16px 6px;
-        font-family: var(--font-mono);
-        font-size: 11px;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        border-bottom: 1px solid #ccc;
-    }
-
-    .mobile-overflow-item {
+    .mobile-menu-item {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         width: 100%;
-        padding: 14px 20px;
+        padding: 12px 16px;
         background: none;
         border: none;
         border-bottom: 1px solid #ddd;
         cursor: pointer;
         font-family: var(--font-sans);
-        font-size: 14px;
+        font-size: 13px;
         color: var(--text-primary);
         text-align: left;
     }
 
-    .mobile-overflow-item:hover,
-    .mobile-overflow-item:active { background: var(--bg-card-hover); }
-    .mobile-overflow-item.active {
+    .mobile-menu-item:hover,
+    .mobile-menu-item:active { background: var(--bg-card-hover); }
+
+    .mobile-menu-item.active {
         background: var(--accent-yellow);
         font-weight: 700;
     }
 
-    .mobile-overflow-icon { font-size: 20px; }
-    .mobile-overflow-label { font-size: 14px; }
+    .mobile-menu-icon { font-size: 16px; }
+    .mobile-menu-label { font-size: 13px; }
 
-    @keyframes slideUp {
-        from { transform: translateY(100%); }
+    @keyframes slideDown {
+        from { transform: translateY(-100%); }
         to { transform: translateY(0); }
     }
     @keyframes fadeIn {
@@ -2221,10 +2216,11 @@ textarea::placeholder {
         to { opacity: 1; }
     }
 
-    /* ── Main content: clear sidebar margin, add bottom padding for tab bar ── */
+    /* ── Main content: top padding for nav bar ── */
     .main-content {
         margin-left: 0 !important;
-        padding-bottom: calc(60px + var(--safe-bottom)) !important;
+        padding-top: calc(48px + var(--safe-top)) !important;
+        padding-bottom: 0 !important;
         width: 100% !important;
     }
 
@@ -2237,7 +2233,11 @@ textarea::placeholder {
         flex-direction: column !important;
     }
 
-    .feed-right-panel { display: none !important; }
+    /* Hide the grey feed-header on mobile (tabs are in the top nav bar now) */
+    .feed-header { display: none !important; }
+
+    .feed-right-panel,
+    .right-panel { display: none !important; }
 
     .feed-scroll-container {
         padding: 4px 6px !important;
@@ -2254,9 +2254,7 @@ textarea::placeholder {
     }
 
     .post-header { gap: 6px; }
-
     .post-avatar { width: 32px; height: 32px; }
-
     .post-author-name { font-size: 12px; }
     .post-author-handle { font-size: 10px; }
 
@@ -2460,16 +2458,19 @@ textarea::placeholder {
     ::-webkit-scrollbar { width: 4px; }
 }
 
-/* ─── 29. DESKTOP OVERRIDES ─── */
-/* Hide mobile-only elements on desktop */
-.mobile-tab-bar { display: none; }
-.mobile-overflow-drawer { display: none; }
-
 /* Back button hidden on desktop (conversation list always visible) */
 .chat-back-btn { display: none; }
 
+/* ─── 29. DESKTOP OVERRIDES ─── */
+/* Hide mobile-only elements on desktop */
+.mobile-top-bar { display: none; }
+.mobile-menu-backdrop { display: none; }
+.mobile-feed-tabs { display: none; }
+
 @media (min-width: 769px) {
     .chat-back-btn { display: none; }
+    .mobile-top-bar { display: none; }
+    .mobile-menu-backdrop { display: none; }
 }
 
 @media (min-width: 1025px) {
