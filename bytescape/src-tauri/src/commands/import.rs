@@ -728,9 +728,8 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     };
     drop(db_guard);
 
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
 
     let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
         &user_did,
@@ -1059,9 +1058,8 @@ pub async fn get_timeline(
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
     
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
 
     let app_handle = state.app_handle.clone();
     let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
@@ -1085,9 +1083,8 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
 
     let chat_client = state.chat_client.clone();
     let db_manager = state.db_manager.clone();
@@ -1447,9 +1444,8 @@ pub async fn send_bsky_dm(
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
 
     let chat_client = state.chat_client.clone();
     let db_manager = state.db_manager.clone();
@@ -1492,18 +1488,14 @@ pub async fn send_bsky_dm(
 /// List saved Bluesky custom feeds.
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| format!("Keychain error: {}", e))?
-        .ok_or("No access token available")?;
+    let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
 }
 
 /// List profiles this actor follows.
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| format!("Keychain error: {}", e))?
-        .ok_or("No access token available")?;
+    let access_jwt = state.get_fresh_access_jwt().await?;
     let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
     Ok(profiles)
 }
@@ -1534,9 +1526,7 @@ pub async fn get_unified_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| format!("Keychain error: {}", e))?
-        .ok_or("No access token available")?;
+    let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
 }
 
@@ -1639,12 +1629,16 @@ pub async fn publish_post(
         };
 
         if !user_did.is_empty() {
-            let access_jwt = state.keychain.get_access_jwt()
-                .map_err(|e| BytescapeError::Keychain(e.to_string()))?
-                .unwrap_or_default();
+            let access_jwt = match state.get_fresh_access_jwt().await {
+                Ok(jwt) => jwt,
+                Err(e) => {
+                    result.errors.push(format!("Bluesky publish failed: {}", e));
+                    String::new()
+                }
+            };
 
             if access_jwt.is_empty() {
-                result.errors.push("Bluesky publish failed: no access token".to_string());
+                // error already pushed above
             } else {
                 match publish_to_bluesky(&access_jwt, &user_did, content).await {
                     Ok((uri, cid)) => {

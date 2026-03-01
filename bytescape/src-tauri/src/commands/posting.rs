@@ -170,13 +170,11 @@ pub async fn publish_post_v2(
             None => return Err("Not authenticated with Bluesky".to_string()),
         };
 
-        let access_jwt = state.keychain.get_access_jwt()
-            .map_err(|e| format!("Keychain error: {}", e))?
-            .ok_or("No access token available")?;
+        let access_jwt = state.get_fresh_access_jwt().await?;
 
         let candidates = authenticated_xrpc_candidates(&access_jwt, true);
         let pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
-        let client = BlueskyClient::new(&state);
+        let client = BlueskyClient::with_jwt(&access_jwt);
 
         let mut images_embed = Vec::new();
         let mut video_embed = None;

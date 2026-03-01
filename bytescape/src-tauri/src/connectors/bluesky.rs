@@ -1934,7 +1934,18 @@ pub struct BlueskyClient {
 }
 
 impl BlueskyClient {
-    /// Create a new BlueskyClient from AppState, extracting the access JWT from the keychain.
+    /// Create a new BlueskyClient with an already-validated access JWT.
+    ///
+    /// Prefer this over `new()` — call `state.get_fresh_access_jwt()` first
+    /// to ensure the token is valid and auto-refreshed.
+    pub fn with_jwt(access_jwt: &str) -> Self {
+        Self {
+            http: Client::new(),
+            access_jwt: access_jwt.to_string(),
+        }
+    }
+
+    /// Create a new BlueskyClient from AppState (legacy, no auto-refresh).
     pub fn new(state: &crate::AppState) -> Self {
         let access_jwt = state
             .keychain

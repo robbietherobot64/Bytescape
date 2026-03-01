@@ -40,6 +40,74 @@ pub struct AppState {
     pub media_port: u16,
 }
 
+impl AppState {
+    /// Get a valid (non-expired) access JWT, automatically refreshing if needed.
+    ///
+    /// Checks the `exp` claim in the current JWT. If expired or within 60 seconds
+    /// of expiring, uses the refresh token to obtain a new session and persists it.
+    pub async fn get_fresh_access_jwt(&self) -> Result<String, String> {
+        let access_jwt = self.keychain.get_access_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No access token available".to_string())?;
+
+        if !Self::is_jwt_expired(&access_jwt, 60) {
+            return Ok(access_jwt);
+        }
+
+        println!("Auth: Access token expired or expiring soon, refreshing...");
+
+        let refresh_jwt = self.keychain.get_refresh_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No refresh token available — please log in again".to_string())?;
+
+        let new_session = self.auth_manager.refresh_session(refresh_jwt).await
+            .map_err(|e| format!("Session refresh failed: {}. Please log in again.", e))?;
+
+        self.keychain.save_session(
+            new_session.did,
+            new_session.handle,
+            new_session.access_jwt.clone(),
+            new_session.refresh_jwt,
+        ).map_err(|e| format!("Failed to save refreshed session: {}", e))?;
+
+        println!("Auth: Session refreshed successfully");
+        Ok(new_session.access_jwt)
+    }
+
+    /// Check whether a JWT's `exp` claim has passed (or is within `margin_secs`).
+    fn is_jwt_expired(token: &str, margin_secs: u64) -> bool {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() < 2 {
+            return true; // malformed → treat as expired
+        }
+
+        let payload_bytes = match URL_SAFE_NO_PAD.decode(parts[1]) {
+            Ok(b) => b,
+            Err(_) => return true,
+        };
+
+        let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+            Ok(v) => v,
+            Err(_) => return true,
+        };
+
+        let exp = match payload.get("exp").and_then(|v| v.as_u64()) {
+            Some(e) => e,
+            None => return true, // no exp claim → treat as expired
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        now + margin_secs >= exp
+    }
+}
+
 /// Run the Bytescape application
 /// 
 /// This is the main entry point called from main.rs

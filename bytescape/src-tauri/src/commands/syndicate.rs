@@ -31,13 +31,11 @@ pub async fn syndicate_vault_item(
         .ok_or("Not authenticated with Bluesky")?;
     let (user_did, _) = session;
 
-    let access_jwt = state.keychain.get_access_jwt()
-        .map_err(|e| format!("Keychain error: {}", e))?
-        .ok_or("No access token available")?;
+    let access_jwt = state.get_fresh_access_jwt().await?;
 
     let candidates = authenticated_xrpc_candidates(&access_jwt, true);
     let pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
-    let client = BlueskyClient::new(&state);
+    let client = BlueskyClient::with_jwt(&access_jwt);
 
     // 3. Harvest and upload media blobs
     let mut images_embed = Vec::new();
