@@ -86,7 +86,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                 />
 
                 {attachments.length > 0 && (
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 8 } as React.CSSProperties}>
                         {attachments.map((att, i) => (
                             <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
                                 {att.mime_type?.startsWith('video/') ? (

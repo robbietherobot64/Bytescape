@@ -89,7 +89,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: S
     }
 
     return (
-        <div style={{ paddingBottom: 40 }}>
+        <div style={{ paddingBottom: 40 } as React.CSSProperties}>
             <div className="main-header">
                 <h1>⚙️ Settings</h1>
             </div>

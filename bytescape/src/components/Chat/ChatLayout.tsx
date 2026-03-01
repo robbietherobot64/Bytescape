@@ -217,7 +217,7 @@ export function ChatLayout({
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 6
-                                    }}
+                                    } as React.CSSProperties}
                                     onClick={() => {
                                         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
                                         setShowScrollButton(false);
