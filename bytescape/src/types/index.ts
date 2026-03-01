@@ -102,6 +102,7 @@ export interface PostLocation {
 
 export interface FeedEntry {
     id: string;
+    cid?: string;
     timestamp: number;
     content: string;
     author_did?: string;
@@ -131,6 +132,9 @@ export interface FeedEntry {
     reposted_by?: string;
     reposted_by_handle?: string;
     quoted_post?: FeedEntry;
+
+    viewer_like?: string;
+    viewer_repost?: string;
 
     // Vault specific
     item_type?: BytescapeType;
@@ -329,6 +333,9 @@ export interface BlueskyPost {
     // Repost info
     reposted_by?: string;
     reposted_by_handle?: string;
+    // Viewer state
+    viewer_like?: string;
+    viewer_repost?: string;
     // Quoted content
     quoted_post?: BlueskyPost;
 }
@@ -358,3 +365,34 @@ export interface DocTicketInfo {
 }
 
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "followers" | "import" | "vault" | "settings";
+
+export interface LikeResult {
+    uri: string;
+    cid: string;
+}
+
+export interface RepostResult {
+    uri: string;
+    cid: string;
+}
+
+export interface ReplyResult {
+    uri: string;
+    cid: string;
+}
+
+export interface ThreadReply {
+    uri: string;
+    cid: string;
+    text: string;
+    author_did: string;
+    author_handle: string;
+    author_avatar?: string;
+    created_at: number;
+    like_count?: number;
+    reply_count?: number;
+    repost_count?: number;
+    viewer_like?: string;
+    viewer_repost?: string;
+    image_urls: string[];
+}

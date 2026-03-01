@@ -195,6 +195,12 @@ pub fn run() {
             commands::syndicate::syndicate_vault_item,
             commands::syndicate::verify_syndications,
             commands::posting::publish_post_v2,
+            commands::interactions::like_post,
+            commands::interactions::unlike_post,
+            commands::interactions::repost_post,
+            commands::interactions::unrepost_post,
+            commands::interactions::reply_to_post,
+            commands::interactions::get_post_thread,
         ])
         .setup(|app| {
             // Initialize application state

@@ -23,6 +23,7 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
 
     return {
         id: post.uri || post.cid,
+        cid: post.cid,
         timestamp: post.created_at,
         content: post.text,
         author_did: post.author_did,
@@ -46,6 +47,9 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         reposted_by: post.reposted_by,
         reposted_by_handle: post.reposted_by_handle,
         quoted_post: post.quoted_post ? adaptBlueskyPost(post.quoted_post) : undefined,
+
+        viewer_like: post.viewer_like,
+        viewer_repost: post.viewer_repost,
 
         item_type: 'Status',
         audiences: ['Local', 'Bluesky'],

@@ -477,6 +477,13 @@ pub struct FeedEntry {
     pub author_avatar: Option<String>,
     pub source: String,
     
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewer_like: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewer_repost: Option<String>,
+    
     #[serde(default)]
     pub media_urls: Vec<String>,
     #[serde(default)]

@@ -97,6 +97,16 @@ struct FeedPost {
     pub repost_count: Option<i64>,
     #[serde(rename = "likeCount", default)]
     pub like_count: Option<i64>,
+    #[serde(default)]
+    pub viewer: Option<PostViewer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PostViewer {
+    #[serde(default)]
+    pub like: Option<String>,
+    #[serde(default)]
+    pub repost: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,6 +234,11 @@ pub struct BlueskyImportedPost {
     pub reposted_by_handle: Option<String>,
     // Quoted content
     pub quoted_post: Option<Box<BlueskyImportedPost>>,
+    // Viewer state (has current user liked/reposted)
+    #[serde(default)]
+    pub viewer_like: Option<String>,
+    #[serde(default)]
+    pub viewer_repost: Option<String>,
 }
 
 // === Social Graph & Feeds ===
@@ -400,6 +415,8 @@ pub async fn import_bluesky_timeline(
             reposted_by: None,
             reposted_by_handle: None,
             quoted_post: None,
+            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
         };
 
         if let Some(ref embed) = post.embed {
@@ -571,6 +588,8 @@ pub async fn import_bluesky_feed(
                 reposted_by: None,
                 reposted_by_handle: None,
                 quoted_post: None,
+                viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+                viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
             };
 
             if let Some(ref embed) = post.embed {
@@ -679,7 +698,7 @@ async fn download_media_from_embed_with_sync(
 
 /// Extract image thumbnail URLs from the post view embed JSON.
 /// The `getAuthorFeed` response includes rendered views with `thumb` URLs.
-fn extract_image_urls_from_view(embed: &serde_json::Value, urls: &mut Vec<String>) {
+pub fn extract_image_urls_from_view(embed: &serde_json::Value, urls: &mut Vec<String>) {
     // images view: { "$type": "app.bsky.embed.images#view", "images": [{ "thumb": "...", "fullsize": "..." }] }
     if let Some(images) = embed.get("images").and_then(|i| i.as_array()) {
         for img in images {
@@ -797,6 +816,8 @@ fn extract_quote_from_view(embed: &serde_json::Value) -> Option<Box<BlueskyImpor
                     reposted_by: None,
                     reposted_by_handle: None,
                     quoted_post: None,
+                    viewer_like: None,
+                    viewer_repost: None,
                 }));
             }
         }
@@ -927,6 +948,8 @@ pub async fn get_bluesky_timeline(
             reposted_by,
             reposted_by_handle,
             quoted_post,
+            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
         };
 
         if let Some(ref embed) = post.embed {
@@ -1068,6 +1091,8 @@ pub async fn search_posts(
             reposted_by: None,
             reposted_by_handle: None,
             quoted_post,
+            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
         };
 
         if let Some(ref embed) = post.embed {
@@ -1339,6 +1364,8 @@ pub async fn get_custom_feed(
             reposted_by: None,
             reposted_by_handle: None,
             quoted_post: None,
+            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
         };
 
         if let Some(ref embed) = post.embed {
@@ -1419,6 +1446,8 @@ pub async fn get_actor_likes(
             reposted_by: None,
             reposted_by_handle: None,
             quoted_post: None,
+            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
         };
 
         if let Some(ref embed) = post.embed {
@@ -1741,6 +1770,8 @@ pub async fn import_bluesky_likes(
                 reposted_by: None,
                 reposted_by_handle: None,
                 quoted_post: None,
+                viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
+                viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
             };
 
             if let Some(ref embed) = post.embed {
@@ -1990,5 +2021,33 @@ impl BlueskyClient {
             .send()
             .await
             .map_err(|e| format!("Create record request failed: {}", e))
+    }
+
+    /// Delete a record (e.g. unlike, unrepost) on the Bluesky PDS.
+    pub async fn delete_record(
+        &self,
+        url: &str,
+        body: serde_json::Value,
+    ) -> Result<reqwest::Response, String> {
+        self.http
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.access_jwt))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Delete record request failed: {}", e))
+    }
+
+    /// Fetch a resource via authenticated GET request.
+    pub async fn get_resource(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::Response, String> {
+        self.http
+            .get(url)
+            .header("Authorization", format!("Bearer {}", self.access_jwt))
+            .send()
+            .await
+            .map_err(|e| format!("GET request failed: {}", e))
     }
 }

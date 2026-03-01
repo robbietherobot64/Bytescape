@@ -26,6 +26,9 @@ impl From<BlueskyImportedPost> for FeedEntry {
 
         FeedEntry {
             id: if !post.uri.is_empty() { post.uri.clone() } else { post.cid.clone() },
+            cid: Some(post.cid.clone()),
+            viewer_like: post.viewer_like.clone(),
+            viewer_repost: post.viewer_repost.clone(),
             timestamp: post.created_at,
             content: post.text,
             author_did: Some(post.author_did),
@@ -97,6 +100,9 @@ impl From<BytescapeItem> for FeedEntry {
 
         FeedEntry {
             id: item.id.clone(),
+            cid: None,
+            viewer_like: None,
+            viewer_repost: None,
             timestamp: item.original_timestamp,
             content: item.content,
             author_did: item.author_did,

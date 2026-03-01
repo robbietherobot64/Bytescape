@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FeedEntry, TaggedPerson, Audience } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import { FeedEntry, TaggedPerson, Audience, LikeResult, ThreadReply } from '../types';
 import { BlobImage } from './BlobImage';
 import { VideoPlayer } from './VideoPlayer';
 import { AudiencePills } from './AudiencePills';
 import { AudienceDrawer } from './AudienceDrawer';
+import { ReplyCompose } from './ReplyCompose';
 import { safeHostname, looksLikeGif } from '../utils/content';
 
 interface FeedEntryCardProps {
@@ -136,6 +138,20 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     const taggedPeople = parseTaggedPeople(entry.tagged_people);
     const tagLine = renderTaggedPeople(taggedPeople);
 
+    // Interaction state
+    const [liked, setLiked] = useState(!!entry.viewer_like);
+    const [likeUri, setLikeUri] = useState<string | undefined>(entry.viewer_like);
+    const [likeCount, setLikeCount] = useState(entry.like_count || 0);
+    const [reposted, setReposted] = useState(!!entry.viewer_repost);
+    const [repostUri, setRepostUri] = useState<string | undefined>(entry.viewer_repost);
+    const [repostCount, setRepostCount] = useState(entry.repost_count || 0);
+    const [replyOpen, setReplyOpen] = useState(false);
+    const [threadReplies, setThreadReplies] = useState<ThreadReply[]>([]);
+    const [threadOpen, setThreadOpen] = useState(false);
+    const [threadLoading, setThreadLoading] = useState(false);
+
+    const isBluesky = entry.source === 'bluesky';
+
     const mediaSources = entry.media_urls.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
     const thumbnailSources = entry.media_thumbnails.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
 
@@ -166,6 +182,108 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
 
     const handleAudienceUpdated = (newAudiences: Audience[]) => {
         if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
+    };
+
+    // ─── Like / Unlike ───
+    const handleLike = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!isBluesky) return;
+
+        if (liked && likeUri) {
+            // Optimistic unlike
+            setLiked(false);
+            setLikeCount(c => Math.max(0, c - 1));
+            try {
+                await invoke<boolean>('unlike_post', { likeUri });
+                setLikeUri(undefined);
+            } catch (err) {
+                console.error('Unlike failed:', err);
+                setLiked(true);
+                setLikeCount(c => c + 1);
+            }
+        } else {
+            // Optimistic like
+            setLiked(true);
+            setLikeCount(c => c + 1);
+            try {
+                const result = await invoke<LikeResult>('like_post', { uri: entry.id, cid: getCid() });
+                setLikeUri(result.uri);
+            } catch (err) {
+                console.error('Like failed:', err);
+                setLiked(false);
+                setLikeCount(c => Math.max(0, c - 1));
+            }
+        }
+    };
+
+    // ─── Repost / Unrepost ───
+    const handleRepost = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!isBluesky) return;
+
+        if (reposted && repostUri) {
+            setReposted(false);
+            setRepostCount(c => Math.max(0, c - 1));
+            try {
+                await invoke<boolean>('unrepost_post', { repostUri });
+                setRepostUri(undefined);
+            } catch (err) {
+                console.error('Unrepost failed:', err);
+                setReposted(true);
+                setRepostCount(c => c + 1);
+            }
+        } else {
+            setReposted(true);
+            setRepostCount(c => c + 1);
+            try {
+                const result = await invoke<{ uri: string; cid: string }>('repost_post', { uri: entry.id, cid: getCid() });
+                setRepostUri(result.uri);
+            } catch (err) {
+                console.error('Repost failed:', err);
+                setReposted(false);
+                setRepostCount(c => Math.max(0, c - 1));
+            }
+        }
+    };
+
+    // ─── Reply Toggle ───
+    const handleReplyToggle = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setReplyOpen(prev => !prev);
+    };
+
+    // ─── Thread Toggle ───
+    const handleThreadToggle = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (threadOpen) {
+            setThreadOpen(false);
+            return;
+        }
+        if (!isBluesky) return;
+
+        setThreadLoading(true);
+        setThreadOpen(true);
+        try {
+            const replies = await invoke<ThreadReply[]>('get_post_thread', { uri: entry.id, depth: 6 });
+            setThreadReplies(replies);
+        } catch (err) {
+            console.error('Failed to load thread:', err);
+            setThreadReplies([]);
+        } finally {
+            setThreadLoading(false);
+        }
+    };
+
+    // Extract CID from entry
+    const getCid = (): string => {
+        return entry.cid || '';
+    };
+
+    // Callback when a reply is successfully posted
+    const handleReplySent = () => {
+        setReplyOpen(false);
+        // Optimistically bump the reply count
+        // The count state isn't tracked separately yet, but we could add it
     };
 
     return (
@@ -305,23 +423,100 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             {/* Engagement Action Bar */}
             {!isQuote && (
                 <div className="engagement-bar">
-                    <button className="engagement-btn btn-reply" title="Replies">
+                    <button
+                        className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
+                        title="Reply"
+                        onClick={handleReplyToggle}
+                        disabled={!isBluesky}
+                    >
                         <ReplyIcon />
                         <span className="count">{formatCount(entry.reply_count)}</span>
                     </button>
-                    <button className="engagement-btn btn-repost" title="Reposts">
+                    <button
+                        className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
+                        title={reposted ? 'Undo repost' : 'Repost'}
+                        onClick={handleRepost}
+                        disabled={!isBluesky}
+                    >
                         <RepostIcon />
-                        <span className="count">{formatCount(entry.repost_count)}</span>
+                        <span className="count">{formatCount(repostCount)}</span>
                     </button>
-                    <button className={`engagement-btn btn-like ${entry.like_count ? '' : ''}`} title="Likes">
-                        <HeartIcon filled={false} />
-                        <span className="count">{formatCount(entry.like_count)}</span>
+                    <button
+                        className={`engagement-btn btn-like ${liked ? 'active' : ''}`}
+                        title={liked ? 'Unlike' : 'Like'}
+                        onClick={handleLike}
+                        disabled={!isBluesky}
+                    >
+                        <HeartIcon filled={liked} />
+                        <span className="count">{formatCount(likeCount)}</span>
                     </button>
+                    {isBluesky && entry.reply_count && entry.reply_count > 0 ? (
+                        <button
+                            className={`engagement-btn btn-thread ${threadOpen ? 'active' : ''}`}
+                            title={threadOpen ? 'Hide replies' : 'Show replies'}
+                            onClick={handleThreadToggle}
+                        >
+                            💬 <span className="count">{formatCount(entry.reply_count)}</span>
+                        </button>
+                    ) : null}
                     <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' }}
                         onClick={handleShareClick}
                     >
                         <ShareIcon />
                     </button>
+                </div>
+            )}
+
+            {/* Inline Reply Compose */}
+            {replyOpen && isBluesky && !isQuote && (
+                <ReplyCompose
+                    parentUri={entry.id}
+                    parentCid={getCid()}
+                    rootUri={entry.id}
+                    rootCid={getCid()}
+                    replyToHandle={entry.author_handle || 'unknown'}
+                    onReplySent={handleReplySent}
+                    onCancel={() => setReplyOpen(false)}
+                />
+            )}
+
+            {/* Thread / Replies */}
+            {threadOpen && !isQuote && (
+                <div className="thread-replies">
+                    {threadLoading ? (
+                        <div className="thread-loading">Loading replies…</div>
+                    ) : threadReplies.length === 0 ? (
+                        <div className="thread-empty">No replies yet</div>
+                    ) : (
+                        threadReplies.map(reply => (
+                            <div key={reply.uri} className="thread-reply">
+                                <div className="thread-reply-header">
+                                    <div className="avatar small">
+                                        {reply.author_avatar ? (
+                                            <img src={reply.author_avatar} alt="" />
+                                        ) : (
+                                            reply.author_handle.charAt(0).toUpperCase()
+                                        )}
+                                    </div>
+                                    <span className="author-name">{reply.author_handle}</span>
+                                    <span className="post-time">{formatTimestamp(reply.created_at)}</span>
+                                </div>
+                                <div className="thread-reply-body">{reply.text}</div>
+                                {reply.image_urls.length > 0 && (
+                                    <div className="thread-reply-images">
+                                        {reply.image_urls.map((url, i) => (
+                                            <img key={i} src={url} alt="" className="thread-reply-img" />
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="thread-reply-stats">
+                                    <span>❤️ {formatCount(reply.like_count)}</span>
+                                    <span>💬 {formatCount(reply.reply_count)}</span>
+                                    <span>🔁 {formatCount(reply.repost_count)}</span>
+                                </div>
+                            </div>
+                        ))
+                    )}
                 </div>
             )}
 
