@@ -46,6 +46,18 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Video Support**: `VideoPlayer` handles blob-stored videos.
 - [x] **Vault Viewer UX**: Fullscreen media-first viewer, left/right navigation, optional file-data panel.
 
+## Phase 1.5: Mobile App & UX Polish 📱
+**Goal:** Ship a functional Android build with a responsive, mobile-first interface.
+
+### Completed
+- [x] **Android Build Pipeline**: Tauri v2 Android target compiling for aarch64, armv7, i686, x86_64. APK + AAB output.
+- [x] **GeoCities "Old Web" Theme**: Win98 beveled edges, navy sidebar, beige content, Verdana typography, tiled star backgrounds.
+- [x] **Mobile Top Bar Navigation**: Nav bar moved from bottom to top of screen (mobile only). All 8 nav icons behind hamburger dropdown menu. Feed tabs (All/Following/Archives) render inline in the top bar next to hamburger.
+- [x] **Collapsible Context Drawer**: Mobile-only toggle bar below nav shows "Discovery Tools" / "My Contacts" / "Archive Explorer" per active tab. Expands to show FeedRightPanel content inline.
+- [x] **Feed Tab State Lifting**: `activeTab` state lifted from FeedScreen to App.tsx for slot-based rendering in the mobile top bar.
+- [x] **CSS Cascade Fixes**: Desktop override rules moved inside `@media (min-width: 769px)` to prevent global `display: none` from breaking mobile elements.
+- [x] **TypeScript csstype Fixes**: Cast inline styles as `React.CSSProperties` to resolve strict type-checking errors in ChatLayout, ComposeBox, SettingsScreen.
+
 ## Phase 2: Willow Data Model Migration 🌳
 **Goal:** Restructure vault storage to be Willow-compatible for future P2P sync. Do this now while only FB + Bluesky data exists—simpler migration.
 
@@ -89,13 +101,31 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [ ] **Add `Instagram`, `Threads`, `Rss` variants to Source enum**: In `connectors/mod.rs`.
 
 ## Phase 4: P2P Sync & Identity 🔗
-**Goal:** Prove the core differentiator—two devices syncing via Iroh.
+**Goal:** Prove the core differentiator—two devices syncing via Iroh. This is the next active phase.
 
+### Current Infrastructure (already built)
 - [x] **Expose SyncManager**: Tauri commands for `create_doc`, `join_doc`, `send_message`.
-- [ ] **Two-Device Sync**: Verify doc sync between instances (use `test-peer/`).
-- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery.
-  - In progress: backend identity lifecycle + recovery commands added (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
-- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via Bluesky profile metadata.
+- [x] **Iroh Node Init**: `setup_iroh_node` initializes Iroh endpoint, SyncManager, secret key from keychain.
+- [x] **P2P Doc Operations**: `create_sync_doc`, `join_sync_doc`, `send_p2p_message` commands registered.
+- [x] **Gossip Presence**: `SyncManager::broadcast_presence` via `iroh-gossip`.
+- [x] **Identity Recovery**: 5 identity commands for local DID lifecycle (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
+
+### Next Steps: Local-Only Login & P2P Chat (Active)
+The current blocker: **the app requires a Bluesky login to function.** To prove P2P works, we need a fully offline user to send and receive messages without any external service.
+
+- [ ] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + DID) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
+  - Backend: New `create_local_identity` Tauri command that generates keypair, stores in keychain, returns an `AuthStatus` with `source: "local"`.
+  - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
+  - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
+- [ ] **P2P Chat Send**: Wire `send_p2p_message` (which writes to an Iroh doc) to the ChatScreen UI for local-identity users. When a user sends a message, it writes to a shared Iroh doc namespace rather than calling the Bluesky DM API.
+- [ ] **P2P Chat Receive**: Fix the disabled P2P connection listener in `lib.rs` (currently commented out due to "stealing connections from DocsEngine"). Implement a proper Iroh protocol dispatcher so both Docs sync and direct chat can coexist.
+- [ ] **P2P Chat UI Integration**: Add a "P2P" conversation type alongside "Live" and "Archived" in ChatScreen. P2P conversations show messages from Iroh doc entries, with real-time updates via doc subscription.
+- [ ] **Two-Device Sync Test**: Verify end-to-end: Device A (local identity) creates a doc → shares ticket → Device B joins → both see each other's messages. Use `test-peer/` for automated verification.
+- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
+
+### Future
+- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
+- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain.
 
 ## Phase 5: Profile Builder, Spatial Discovery & UI Polish 🗺️🎨
 **Goal:** Build the sovereign profile system, spatial graph-based discovery, the Aero-Skeuomorphic visual language, and MySpace-style profile personalization. The profile is the product.
@@ -166,3 +196,5 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Facebook: Duplicate Photos**: Fixed: within-post media dedup via HashSet, cross-file dedup by normalized filenames.
 - [x] **Syndication Rollback Bug**: Fixed: `useUnifiedFeed` now explicitly clears its `verifiedIdsRef` cache on manual refresh, forcing `verify_syndications` to re-check stale posts accurately instead of locking them "active" forever.
 - [x] **Syndication Image Extraction Duplication Bug**: Fixed: When actively sharing an image to Bluesky, solving an edge case where the background timeline importer would subsequently see the new AT Post, download its photos over the network as a new post, and stash duplicates in the `media` folder. `known_uris` is now passed to `import_bluesky_feed` to halt media processing for AT URIs already in the local vault.
+- [x] **Mobile CSS Cascade Bug**: Global `display: none` rules for mobile elements overriding `@media` rules. Fixed by scoping all desktop hide rules inside `@media (min-width: 769px)`.
+- [x] **Android Build TypeScript Errors**: `csstype` version mismatch rejecting valid CSS properties (`bottom`, `paddingBottom`). Fixed with `as React.CSSProperties` casts.
