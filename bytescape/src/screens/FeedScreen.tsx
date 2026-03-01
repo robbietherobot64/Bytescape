@@ -8,6 +8,12 @@ import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, customFeedUris } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 
+const CONTEXT_LABELS: Record<string, string> = {
+    all: 'Discovery Tools',
+    following: 'My Contacts',
+    archives: 'Archive Explorer',
+};
+
 interface FeedScreenProps {
     auth: AuthStatus | null;
     activeTab: FeedTab;
@@ -16,6 +22,7 @@ interface FeedScreenProps {
 
 export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     // === UI Control State ===
+    const [contextOpen, setContextOpen] = useState(false);
     const [autoRefreshFeeds] = useState(false);
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');
@@ -155,6 +162,38 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
                         ))}
                     </div>
                     {isLoading && <div className="status-pill"><div className="dot online"></div> Syncing</div>}
+                </div>
+
+                {/* Mobile collapsible context drawer */}
+                <div className="mobile-context-drawer">
+                    <button
+                        className={`mobile-context-toggle ${contextOpen ? 'open' : ''}`}
+                        onClick={() => setContextOpen(v => !v)}
+                    >
+                        <span className="mobile-context-arrow">{contextOpen ? '▲' : '▼'}</span>
+                        <span className="mobile-context-label">{CONTEXT_LABELS[activeTab] || 'Tools'}</span>
+                    </button>
+                    {contextOpen && (
+                        <div className="mobile-context-content">
+                            <FeedRightPanel
+                                activeTab={activeTab}
+                                followingList={followingList}
+                                savedFeeds={savedFeeds}
+                                selectedFeedUri={selectedFeedUri}
+                                setSelectedFeedUri={setSelectedFeedUri}
+                                FEED_FILTER_ALL={FEED_FILTER_ALL}
+                                hashtagInput={hashtagInput}
+                                setHashtagInput={setHashtagInput}
+                                handleAddHashtag={handleAddHashtag}
+                                followedHashtags={followedHashtags || []}
+                                handleRemoveHashtag={handleRemoveHashtag}
+                                archiveSourceFilter={archiveSourceFilter}
+                                setArchiveSourceFilter={setArchiveSourceFilter}
+                                vaultSources={vaultSources}
+                                archiveTotal={archiveTotal}
+                            />
+                        </div>
+                    )}
                 </div>
 
                 {/* Scrollable Center Area */}
