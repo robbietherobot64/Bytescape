@@ -232,7 +232,8 @@ pub async fn get_timeline_unified(
     // Remove timeline entries that are already part of a vault item's chain of custody
     feed.retain(|entry| {
         let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
-        !syndicated_uris_in_vault.contains(uri) && !syndicated_uris_in_vault.contains(&entry.id)
+        let dominated = syndicated_uris_in_vault.contains(uri) || syndicated_uris_in_vault.contains(&entry.id);
+        !dominated
     });
 
     // Bring vault items into the main feed

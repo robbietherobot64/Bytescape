@@ -1,6 +1,38 @@
 import { BlueskyPost, BytescapeItem, FeedEntry } from '../types';
 import { inferContentKind, sanitizeVaultContent } from './content';
 
+/**
+ * Deduplicate feed entries by both `id` and `original_url`.
+ *
+ * The Bluesky API can return the same post multiple times (e.g. once as
+ * an original appearance and once as a repost).  Vault items use CID as
+ * their `id` while timeline items use the AT URI, so a naive Set<id>
+ * check misses cross-format duplicates.  This helper indexes every entry
+ * by *both* its `id` and `original_url` so that any collision on either
+ * key causes the later duplicate to be dropped.
+ *
+ * When two entries collide, the one that appears first in the array wins.
+ * Callers should pre-sort if a particular ordering preference matters.
+ */
+export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
+    if (entries.length === 0) return entries;
+
+    const seen = new Set<string>();
+    return entries.filter(entry => {
+        const id = entry.id || '';
+        const alt = entry.original_url || '';
+
+        // Already seen under either identifier?
+        if ((id && seen.has(id)) || (alt && seen.has(alt))) {
+            return false;
+        }
+
+        if (id) seen.add(id);
+        if (alt && alt !== id) seen.add(alt);
+        return true;
+    });
+}
+
 function normalizeBlobRef(value: string): string {
     const v = (value || '').trim();
     if (!v) return v;

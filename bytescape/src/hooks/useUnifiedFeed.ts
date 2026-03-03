@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
-import { adaptBlueskyPost, adaptBytescapeItem } from '../utils/adapters';
+import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 
 export type FeedTab = 'all' | 'following' | 'feeds' | 'hashtags' | 'rss' | 'archives';
 
@@ -86,7 +86,7 @@ export function useUnifiedFeed({
             if (tab === 'following') {
                 const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 50 });
                 if (isStale()) return;
-                setFeedEntries(posts.map(adaptBlueskyPost));
+                setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
                 setCursor(nextCursor);
                 await fetchFollowingList(auth.did);
 
@@ -110,7 +110,7 @@ export function useUnifiedFeed({
                     cursor: null
                 });
                 if (isStale()) return;
-                setFeedEntries(unified.map(adaptBlueskyPost));
+                setFeedEntries(deduplicateFeedEntries(unified.map(adaptBlueskyPost)));
                 setCursor(nextCursor);
 
             } else if (tab === 'hashtags') {
@@ -125,7 +125,7 @@ export function useUnifiedFeed({
                         cursor: null
                     });
                     if (isStale()) return;
-                    setFeedEntries(posts.map(adaptBlueskyPost));
+                    setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
                     setCursor(nextCursor);
                 } else {
                     setFeedEntries([]);
@@ -171,7 +171,7 @@ export function useUnifiedFeed({
                 setSavedFeeds(feedsData);
 
                 if (response) {
-                    setFeedEntries(response.items);
+                    setFeedEntries(deduplicateFeedEntries(response.items));
                     setCursor(response.next_cursor);
                     setArchiveOffset(200);
                 } else {
@@ -220,11 +220,18 @@ export function useUnifiedFeed({
     }, [auth, activeTab, autoRefreshFeeds, fetchFeed]);
 
     // Background verification of active syndications (Rollback check)
+    // Only verify vault-sourced items (non-AT-URI ids) — timeline items
+    // have share_history but aren't persisted in the vault, so calling
+    // verify_syndications on them always fails with "Item not found".
     useEffect(() => {
         if (!auth || feedEntries.length === 0) return;
 
+        const isVaultId = (id: string) => !id.startsWith('at://');
+
         const unverified = feedEntries.filter(entry =>
-            entry.share_history?.some(e => e.active) && !verifiedIdsRef.current.has(entry.id)
+            isVaultId(entry.id) &&
+            entry.share_history?.some(e => e.active) &&
+            !verifiedIdsRef.current.has(entry.id)
         );
 
         if (unverified.length === 0) return;
@@ -253,7 +260,7 @@ export function useUnifiedFeed({
         try {
             if (activeTab === 'following' && cursor) {
                 const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
-                setFeedEntries(prev => [...prev, ...newPosts.map(adaptBlueskyPost)]);
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
             } else if ((activeTab === 'feeds' || activeTab === 'hashtags') && cursor) {
                 const tags = activeTab === 'hashtags' ? followedHashtags : [];
@@ -264,7 +271,7 @@ export function useUnifiedFeed({
                     limit: 30,
                     cursor
                 });
-                setFeedEntries(prev => [...prev, ...newPosts.map(adaptBlueskyPost)]);
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
             } else if (activeTab === 'archives') {
                 const pageSize = ARCHIVE_PAGE_SIZE;
@@ -273,7 +280,7 @@ export function useUnifiedFeed({
                     offset: archiveOffset,
                     source: archiveSourceFilter || null,
                 });
-                setFeedEntries(prev => [...prev, ...result.items.map(adaptBytescapeItem)]);
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...result.items.map(adaptBytescapeItem)]));
                 setArchiveOffset(prev => prev + pageSize);
             } else if (activeTab === 'all') {
                 const response = await invoke<{ items: FeedEntry[], next_cursor: string | null }>('get_timeline_unified', {
@@ -285,15 +292,7 @@ export function useUnifiedFeed({
                 }).catch(() => null);
 
                 if (response) {
-                    setFeedEntries(prev => {
-                        const merged = [...prev, ...response.items];
-                        const seen = new Set<string>();
-                        return merged.filter(p => {
-                            if (seen.has(p.id)) return false;
-                            seen.add(p.id);
-                            return true;
-                        });
-                    });
+                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...response.items]));
                     setCursor(response.next_cursor);
                     setArchiveOffset(prev => prev + 200);
                 }
