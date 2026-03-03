@@ -4,12 +4,14 @@ import { inferContentKind, sanitizeVaultContent } from './content';
 /**
  * Deduplicate feed entries by both `id` and `original_url`.
  *
- * The Bluesky API can return the same post multiple times (e.g. once as
- * an original appearance and once as a repost).  Vault items use CID as
- * their `id` while timeline items use the AT URI, so a naive Set<id>
- * check misses cross-format duplicates.  This helper indexes every entry
- * by *both* its `id` and `original_url` so that any collision on either
- * key causes the later duplicate to be dropped.
+ * Vault items use CID as their `id` while timeline items use the AT URI,
+ * so a naive Set<id> check misses cross-format duplicates.  This helper
+ * indexes every entry by *both* its `id` and `original_url` so that any
+ * collision on either key causes the later duplicate to be dropped.
+ *
+ * Reposts are treated as distinct feed events: a repost of post X by
+ * user Y uses a composite key (`repost:<did>:<uri>`) so it isn't
+ * collapsed with the original post X.
  *
  * When two entries collide, the one that appears first in the array wins.
  * Callers should pre-sort if a particular ordering preference matters.
@@ -19,8 +21,11 @@ export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
 
     const seen = new Set<string>();
     return entries.filter(entry => {
-        const id = entry.id || '';
-        const alt = entry.original_url || '';
+        // Reposts are distinct feed events — prefix their keys so a
+        // repost of post X doesn't collide with the original post X.
+        const prefix = entry.reposted_by ? `repost:${entry.reposted_by}:` : '';
+        const id = entry.id ? prefix + entry.id : '';
+        const alt = entry.original_url ? prefix + entry.original_url : '';
 
         // Already seen under either identifier?
         if ((id && seen.has(id)) || (alt && seen.has(alt))) {

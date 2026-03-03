@@ -229,8 +229,13 @@ pub async fn get_timeline_unified(
         }
     }
 
-    // Remove timeline entries that are already part of a vault item's chain of custody
+    // Remove timeline entries that are already part of a vault item's chain of custody.
+    // Reposts are distinct feed events — keep them even if the underlying
+    // post is already represented by a vault item.
     feed.retain(|entry| {
+        if entry.reposted_by.is_some() {
+            return true;
+        }
         let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
         let dominated = syndicated_uris_in_vault.contains(uri) || syndicated_uris_in_vault.contains(&entry.id);
         !dominated
@@ -262,10 +267,26 @@ pub async fn get_timeline_unified(
 
     // Deduplicate by ID and original_url (vault items use CID as id,
     // timeline items use AT URI — match both to prevent duplicates).
+    // Reposts use a composite key so they aren't collapsed with the
+    // original post they refer to.
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
-        let id = if !entry.id.is_empty() { entry.id.clone() } else { entry.original_url.clone().unwrap_or_default() };
-        let alt = entry.original_url.clone().unwrap_or_default();
+        let prefix = if let Some(ref by) = entry.reposted_by {
+            format!("repost:{}:", by)
+        } else {
+            String::new()
+        };
+        let id = if !entry.id.is_empty() {
+            format!("{}{}", prefix, entry.id)
+        } else {
+            format!("{}{}", prefix, entry.original_url.clone().unwrap_or_default())
+        };
+        let alt_raw = entry.original_url.clone().unwrap_or_default();
+        let alt = if !alt_raw.is_empty() {
+            format!("{}{}", prefix, alt_raw)
+        } else {
+            String::new()
+        };
         // Check if we've seen either identifier
         if seen.contains(&id) || (!alt.is_empty() && seen.contains(&alt)) {
             false
