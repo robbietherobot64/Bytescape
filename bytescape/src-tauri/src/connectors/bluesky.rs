@@ -71,7 +71,7 @@ struct FeedItem {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "$type")]
 enum Reason {
-    #[serde(rename = "app.bsky.feed.defs#skeletonReasonRepost")]
+    #[serde(rename = "app.bsky.feed.defs#reasonRepost")]
     Repost {
         by: FeedAuthor,
         #[serde(rename = "indexedAt")]
@@ -369,6 +369,14 @@ pub async fn import_bluesky_timeline(
         // For timeline, items are FeedViewPost, which contain 'post'. 
         // Our types match sufficiently (FeedItem has 'post').
         
+        // Extract repost reason before moving post
+        let mut reposted_by = None;
+        let mut reposted_by_handle = None;
+        if let Some(Reason::Repost { ref by, .. }) = item.reason {
+            reposted_by = Some(by.did.clone());
+            reposted_by_handle = Some(by.handle.clone());
+        }
+
         let post = item.post;
         
         // Flatten logic similar to feed import
@@ -412,8 +420,8 @@ pub async fn import_bluesky_timeline(
             external_title: None,
             external_description: None,
             external_thumb: None,
-            reposted_by: None,
-            reposted_by_handle: None,
+            reposted_by,
+            reposted_by_handle,
             quoted_post: None,
             viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
             viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),

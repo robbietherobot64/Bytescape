@@ -207,6 +207,7 @@ pub async fn get_timeline_unified(
     let mut syndicated_uris_in_vault = std::collections::HashSet::new();
 
     for v in &mut vault_entries {
+        // Index share_history URIs
         for event in &mut v.share_history {
             if event.timestamp == 0 {
                 let matched_timeline_post = feed.iter().find(|e| e.id == event.uri || e.original_url.as_ref() == Some(&event.uri));
@@ -218,12 +219,20 @@ pub async fn get_timeline_unified(
                 syndicated_uris_in_vault.insert(event.uri.clone());
             }
         }
+        // Also index vault items by their original_url (AT URI) so imported
+        // Bluesky posts match against live timeline entries even when
+        // share_history is empty (legacy imports).
+        if let Some(ref url) = v.original_url {
+            if !url.is_empty() {
+                syndicated_uris_in_vault.insert(url.clone());
+            }
+        }
     }
 
     // Remove timeline entries that are already part of a vault item's chain of custody
     feed.retain(|entry| {
         let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
-        !syndicated_uris_in_vault.contains(uri)
+        !syndicated_uris_in_vault.contains(uri) && !syndicated_uris_in_vault.contains(&entry.id)
     });
 
     // Bring vault items into the main feed
@@ -250,14 +259,18 @@ pub async fn get_timeline_unified(
         b_max.cmp(&a_max)
     });
 
-    // Deduplicate by ID
+    // Deduplicate by ID and original_url (vault items use CID as id,
+    // timeline items use AT URI — match both to prevent duplicates).
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
-        let dedup_key = if !entry.id.is_empty() { entry.id.clone() } else { entry.original_url.clone().unwrap_or_default() };
-        if seen.contains(&dedup_key) {
+        let id = if !entry.id.is_empty() { entry.id.clone() } else { entry.original_url.clone().unwrap_or_default() };
+        let alt = entry.original_url.clone().unwrap_or_default();
+        // Check if we've seen either identifier
+        if seen.contains(&id) || (!alt.is_empty() && seen.contains(&alt)) {
             false
         } else {
-            seen.insert(dedup_key);
+            seen.insert(id);
+            if !alt.is_empty() { seen.insert(alt); }
             true
         }
     });

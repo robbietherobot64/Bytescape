@@ -830,10 +830,15 @@ async fn save_posts(
             media_blobs,
             thumbnail_blobs: vec![],
             media_mimes,
-            syndication_status: SyndicationStatus::LocalOnly,
-            syndicated_uri: None,
-            audiences: vec![Audience::Local],
-            share_history: Vec::new(),
+            syndication_status: SyndicationStatus::Syndicated,
+            syndicated_uri: Some(post.uri.clone()),
+            audiences: vec![Audience::Local, Audience::Bluesky],
+            share_history: vec![crate::models::SyndicationEvent {
+                platform: "bluesky".to_string(),
+                uri: post.uri.clone(),
+                timestamp: post.created_at as u64,
+                active: true,
+            }],
         };
 
         if let Ok(true) = db.save_item(&item).await {
