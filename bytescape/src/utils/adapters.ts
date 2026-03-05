@@ -58,8 +58,13 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         ? ['video' as const]
         : (post.image_urls || []).map(_ => 'image' as const);
 
+    // Reposts share the original post's URI, so give them a distinct id
+    // to avoid React key collisions when both a repost and the original appear.
+    const baseId = post.uri || post.cid;
+    const entryId = post.reposted_by ? `repost:${post.reposted_by}:${baseId}` : baseId;
+
     return {
-        id: post.uri || post.cid,
+        id: entryId,
         cid: post.cid,
         timestamp: post.created_at,
         content: post.text,
