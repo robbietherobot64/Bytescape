@@ -39,7 +39,6 @@ import {
   ParseResult,
   ImportProgress,
   SidebarItem,
-  VaultMessage,
   VaultFileStats
 } from "./types";
 
@@ -68,12 +67,7 @@ function App() {
     activeSidebar, setActiveSidebar,
     feedActiveTab, setFeedActiveTab
   } = useNavStore();
-  const {
-    messages, setMessages,
-    selectedConvoId, setSelectedConvoId,
-    messageInput, setMessageInput,
-    isSending, setIsSending
-  } = useChatStore();
+  const chatStore = useChatStore();
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
@@ -182,9 +176,9 @@ function App() {
     setAuth(null);
     setScreen("login");
     setArchiveCount(0);
-    setMessages([]);
-    setSelectedConvoId(null);
-    setMessageInput("");
+    chatStore.setMessages([]);
+    chatStore.setSelectedConvoId(null);
+    chatStore.setMessageInput("");
     setParseResult(null);
     setProgress(null);
     setImportStatus("");
@@ -208,15 +202,7 @@ function App() {
     }
   }
 
-  /** Loads locally cached and imported chat messages. */
-  async function loadMessages() {
-    try {
-      const msgs = await invoke<VaultMessage[]>("list_vault_messages");
-      setMessages(msgs);
-    } catch (e: any) {
-      console.error("Failed to load messages:", e);
-    }
-  }
+
 
   // === Bluesky Import ===
   async function importBluesky() {
@@ -234,8 +220,8 @@ function App() {
         setImportStatus(`✅ Up to date — no new posts.`);
       }
 
-      // Pull latest messages in same import flow so import is not post-only.
-      await importBlueskyMessages(true);
+      // Pull latest messages in same import flow (ChatScreen will pick up new data via polling)
+      try { await invoke<any>("import_vault_messages"); } catch { /* chat handles its own errors */ }
 
       // Ensure stats and feed are reloaded AFTER the import is confirmed finished
       console.log("App: Reloading archive stats and feed posts...");
@@ -251,82 +237,7 @@ function App() {
     }
   }
 
-  async function importBlueskyMessages(silent = false) {
-    if (!silent) {
-      setIsImporting(true);
-      setImportStatus("Importing messages...");
-      setError("");
-    }
-    try {
-      const result = await invoke<any>("import_vault_messages");
-      if (!silent) {
-        if (result.new > 0) {
-          setImportStatus(`✅ Imported ${result.new} new messages from ${result.convos} conversations!`);
-        } else {
-          setImportStatus(`✅ Messages up to date.`);
-        }
-      }
-      if (result.new > 0 || !silent) {
-        await loadMessages();
-      }
-    } catch (e: any) {
-      if (!silent) {
-        const msg = typeof e === "string" ? e : e.message || "Message import failed";
-        setError(msg);
-        setImportStatus("");
-      }
-    } finally {
-      if (!silent) setIsImporting(false);
-    }
-  }
 
-  // Poll for messages
-  useEffect(() => {
-    if (auth && screen === "chat") {
-      importBlueskyMessages(true);
-
-      const interval = setInterval(() => {
-        importBlueskyMessages(true);
-      }, 30000); // Poll every 30s
-      return () => clearInterval(interval);
-    }
-  }, [auth, screen]);
-
-  async function handleSendMessage() {
-    if (!selectedConvoId || !messageInput.trim()) return;
-
-    const text = messageInput.trim();
-    setMessageInput("");
-    setIsSending(true);
-
-    try {
-      // Optimistic update
-      const now = Date.now() / 1000;
-      const optimisticMsg: VaultMessage = {
-        id: `temp-${now}`,
-        convo_id: selectedConvoId,
-        sender_did: auth?.did || "",
-        sender_handle: auth?.handle || "",
-        text: text,
-        sent_at: new Date().toISOString(),
-        source: "bluesky",
-        imported_at: now
-      };
-      setMessages(prev => [optimisticMsg, ...prev]);
-
-      await invoke<any>("send_bsky_dm", {
-        convoId: selectedConvoId,
-        recipientDid: null,
-        content: text
-      });
-
-    } catch (e: any) {
-      console.error("Send failed:", e);
-      setError("Failed to send message: " + (typeof e === "string" ? e : "Undefined error"));
-    } finally {
-      setIsSending(false);
-    }
-  }
 
   // === Facebook Import ===
   async function handleFilePick() {
@@ -400,7 +311,6 @@ function App() {
             source: parseResult.source,
           });
           addLog(`[chat] Imported ${chatResult.new} new messages across ${chatResult.threads} threads (${chatResult.parsed} parsed)`);
-          await loadMessages();
         } catch (chatError: any) {
           addLog(`[chat:error] ${typeof chatError === "string" ? chatError : "Chat import failed"}`);
         }
@@ -432,8 +342,6 @@ function App() {
         break;
       case "chat":
         setScreen("chat");
-        loadMessages();
-        importBlueskyMessages(true);
         break;
       case "social":
         setScreen("friends");
@@ -530,16 +438,7 @@ function App() {
         )}
 
         {screen === "chat" && (
-          <ChatScreen
-            auth={auth}
-            messages={messages}
-            selectedConvoId={selectedConvoId}
-            setSelectedConvoId={setSelectedConvoId}
-            messageInput={messageInput}
-            setMessageInput={setMessageInput}
-            isSending={isSending}
-            onSendMessage={handleSendMessage}
-          />
+          <ChatScreen />
         )}
 
         {screen === "friends" && (
