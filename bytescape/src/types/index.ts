@@ -308,6 +308,7 @@ export const PROTOCOLS: ProtocolOption[] = [
     },
 ];
 
+/** @deprecated - use Screen from store/index.ts */
 export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault";
 
 
@@ -364,7 +365,7 @@ export interface DocTicketInfo {
     namespace_id: string;
 }
 
-export type SidebarItem = "feed" | "search" | "profile" | "chat" | "followers" | "import" | "vault" | "settings";
+export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
 export interface LikeResult {
     uri: string;

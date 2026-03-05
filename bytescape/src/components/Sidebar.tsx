@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { SidebarItem } from '../types';
+import { BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill, BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill } from 'react-icons/bs';
 
 interface SidebarProps {
     activeSidebar: SidebarItem;
@@ -9,15 +10,15 @@ interface SidebarProps {
 }
 
 /* All nav items — shown in hamburger menu on mobile */
-const ALL_NAV_ITEMS: { id: SidebarItem; icon: string; label: string }[] = [
-    { id: 'feed', icon: '🏠', label: 'Feed' },
-    { id: 'chat', icon: '💬', label: 'Chat' },
-    { id: 'vault', icon: '🗄️', label: 'Vault' },
-    { id: 'search', icon: '🔍', label: 'Search' },
-    { id: 'profile', icon: '👤', label: 'Profile' },
-    { id: 'followers', icon: '👥', label: 'Social' },
-    { id: 'import', icon: '📦', label: 'Import' },
-    { id: 'settings', icon: '⚙️', label: 'Settings' },
+const ALL_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
+    { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
+    { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
+    { id: 'search', icon: <BsSearch />, label: 'Search' },
+    { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
+    { id: 'social', icon: <BsPeopleFill />, label: 'Social' },
+    { id: 'import', icon: <BsBoxArrowInDown />, label: 'Import' },
+    { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
 export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps) {
@@ -33,16 +34,16 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
             {/* Desktop layout — full sidebar (hidden on mobile via CSS) */}
             <div className="sidebar-top">
                 <div className="sidebar-logo">BYTESCAPE</div>
-                <SidebarIcon id="feed" icon="🏠" label="Feed" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="search" icon="🔍" label="Search" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="profile" icon="👤" label="Profile" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="chat" icon="💬" label="Chat" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="followers" icon="👥" label="Social" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="import" icon="📦" label="Import" active={activeSidebar} onClick={onNavigate} />
-                <SidebarIcon id="vault" icon="🗄️" label="Vault" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="feed" icon={<BsHouseFill />} label="Feed" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="search" icon={<BsSearch />} label="Search" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="profile" icon={<BsPersonFill />} label="Profile" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="chat" icon={<BsChatDotsFill />} label="Chat" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="social" icon={<BsPeopleFill />} label="Social" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="import" icon={<BsBoxArrowInDown />} label="Import" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="vault" icon={<BsFolderFill />} label="Vault" active={activeSidebar} onClick={onNavigate} />
             </div>
             <div className="sidebar-bottom">
-                <SidebarIcon id="settings" icon="⚙️" label="Settings" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="settings" icon={<BsGearFill />} label="Settings" active={activeSidebar} onClick={onNavigate} />
             </div>
 
             {/* Mobile top bar: hamburger + feed tabs (hidden on desktop via CSS) */}
@@ -90,7 +91,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
 
 interface SidebarIconProps {
     id: SidebarItem;
-    icon: string;
+    icon: React.ReactNode;
     label: string;
     active: SidebarItem;
     onClick: (id: SidebarItem) => void;

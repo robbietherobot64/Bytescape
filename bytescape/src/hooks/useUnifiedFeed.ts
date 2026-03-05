@@ -3,9 +3,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 
-export type FeedTab = 'all' | 'following' | 'feeds' | 'hashtags' | 'rss' | 'archives';
+export type FeedTab = 'all' | 'following' | 'subscribed' | 'you';
 
-export const LIVE_TABS: FeedTab[] = ['all', 'following', 'feeds', 'hashtags'];
+export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed'];
+
+export const FEED_TAB_LABELS: Record<FeedTab, string> = {
+    all: 'All',
+    following: 'Following',
+    subscribed: 'Subscribed',
+    you: 'You',
+};
 export const FEED_FILTER_ALL = '__all__';
 const ARCHIVE_PAGE_SIZE = 200;
 
@@ -90,55 +97,42 @@ export function useUnifiedFeed({
                 setCursor(nextCursor);
                 await fetchFollowingList(auth.did);
 
-            } else if (tab === 'feeds') {
-                const feeds = await invoke<GeneratorView[]>("list_saved_feeds");
+            } else if (tab === 'subscribed') {
+                // Merge feeds + hashtags into a single "subscribed" tab
+                const [feeds, tags] = await Promise.all([
+                    invoke<GeneratorView[]>("list_saved_feeds").catch((): GeneratorView[] => []),
+                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
+                ]);
                 if (isStale()) return;
                 setSavedFeeds(prev => {
                     if (JSON.stringify(prev) === JSON.stringify(feeds)) return prev;
                     return feeds;
                 });
+                setFollowedHashtags(tags);
 
                 const allCustomUris = customFeedUris(feeds);
                 const targetFeedUris = selectedFeedUri === FEED_FILTER_ALL
                     ? allCustomUris
                     : allCustomUris.filter(uri => uri === selectedFeedUri);
 
-                const [unified, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                    tags: [],
-                    feedUris: targetFeedUris,
-                    limit: 50,
-                    cursor: null
-                });
-                if (isStale()) return;
-                setFeedEntries(deduplicateFeedEntries(unified.map(adaptBlueskyPost)));
-                setCursor(nextCursor);
-
-            } else if (tab === 'hashtags') {
-                const tags = await invoke<string[]>('list_followed_hashtags');
-                if (isStale()) return;
-                setFollowedHashtags(tags);
-                if (tags.length > 0) {
-                    const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                // Only fetch if we have feeds or tags to query
+                if (targetFeedUris.length > 0 || tags.length > 0) {
+                    const [unified, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                         tags,
-                        feedUris: [],
+                        feedUris: targetFeedUris,
                         limit: 50,
                         cursor: null
                     });
                     if (isStale()) return;
-                    setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
+                    setFeedEntries(deduplicateFeedEntries(unified.map(adaptBlueskyPost)));
                     setCursor(nextCursor);
                 } else {
                     setFeedEntries([]);
                     setCursor(null);
                 }
 
-            } else if (tab === 'rss') {
-                // RSS connector not yet implemented
-                if (isStale()) return;
-                setFeedEntries([]);
-                setCursor(null);
-
-            } else if (tab === 'archives') {
+            } else if (tab === 'you') {
+                // Your own posts — vault items
                 const pageSize = ARCHIVE_PAGE_SIZE;
                 const [result, sources] = await Promise.all([
                     invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
@@ -262,9 +256,9 @@ export function useUnifiedFeed({
                 const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
                 setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
-            } else if ((activeTab === 'feeds' || activeTab === 'hashtags') && cursor) {
-                const tags = activeTab === 'hashtags' ? followedHashtags : [];
-                const uris = activeTab === 'feeds' ? (selectedFeedUri === FEED_FILTER_ALL ? customFeedUris(savedFeeds) : [selectedFeedUri]) : [];
+            } else if (activeTab === 'subscribed' && cursor) {
+                const tags = followedHashtags;
+                const uris = selectedFeedUri === FEED_FILTER_ALL ? customFeedUris(savedFeeds) : [selectedFeedUri];
                 const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                     tags,
                     feedUris: uris,
@@ -273,7 +267,7 @@ export function useUnifiedFeed({
                 });
                 setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
-            } else if (activeTab === 'archives') {
+            } else if (activeTab === 'you') {
                 const pageSize = ARCHIVE_PAGE_SIZE;
                 const result = await invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
                     limit: pageSize,

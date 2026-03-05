@@ -1,5 +1,8 @@
 import { create } from 'zustand';
+import { VaultMessage, SidebarItem } from '../types';
+import { FeedTab } from '../hooks/useUnifiedFeed';
 
+// ─── Auth Store ───
 interface AuthInfo {
     handle: string;
     did: string;
@@ -15,6 +18,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     setAuth: (auth) => set({ auth }),
 }));
 
+// ─── App Store (import/error/global) ───
 interface AppState {
     importProgress: string | null;
     setImportProgress: (progress: string | null) => void;
@@ -35,4 +39,60 @@ export const useAppStore = create<AppState>((set) => ({
 
     archiveCount: 0,
     setArchiveCount: (count) => set({ archiveCount: count }),
+}));
+
+// ─── Navigation Store ───
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault";
+
+interface NavState {
+    screen: Screen;
+    setScreen: (screen: Screen) => void;
+
+    activeSidebar: SidebarItem;
+    setActiveSidebar: (item: SidebarItem) => void;
+
+    feedActiveTab: FeedTab;
+    setFeedActiveTab: (tab: FeedTab) => void;
+}
+
+export const useNavStore = create<NavState>((set) => ({
+    screen: 'login',
+    setScreen: (screen) => set({ screen }),
+
+    activeSidebar: 'feed',
+    setActiveSidebar: (item) => set({ activeSidebar: item }),
+
+    feedActiveTab: 'all',
+    setFeedActiveTab: (tab) => set({ feedActiveTab: tab }),
+}));
+
+// ─── Chat Store ───
+interface ChatState {
+    messages: VaultMessage[];
+    setMessages: (msgs: VaultMessage[] | ((prev: VaultMessage[]) => VaultMessage[])) => void;
+
+    selectedConvoId: string | null;
+    setSelectedConvoId: (id: string | null) => void;
+
+    messageInput: string;
+    setMessageInput: (val: string) => void;
+
+    isSending: boolean;
+    setIsSending: (sending: boolean) => void;
+}
+
+export const useChatStore = create<ChatState>((set) => ({
+    messages: [],
+    setMessages: (msgs) => set((state) =>
+        ({ messages: typeof msgs === 'function' ? msgs(state.messages) : msgs })
+    ),
+
+    selectedConvoId: null,
+    setSelectedConvoId: (id) => set({ selectedConvoId: id }),
+
+    messageInput: '',
+    setMessageInput: (val) => set({ messageInput: val }),
+
+    isSending: false,
+    setIsSending: (sending) => set({ isSending: sending }),
 }));

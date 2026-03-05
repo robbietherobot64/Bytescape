@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useAuthStore, useAppStore } from "./store";
-import { FeedTab } from "./hooks/useUnifiedFeed";
+import { useAuthStore, useAppStore, useNavStore, useChatStore } from "./store";
+import { FeedTab, FEED_TAB_LABELS } from "./hooks/useUnifiedFeed";
 
 import "./App.css";
 
@@ -38,7 +38,6 @@ import {
   ParseProgress,
   ParseResult,
   ImportProgress,
-  Screen,
   SidebarItem,
   VaultMessage,
   VaultFileStats
@@ -57,13 +56,25 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 
 function App() {
-  const [screen, setScreen] = useState<Screen>("login");
+  // ─── Stores ───
   const { auth, setAuth } = useAuthStore();
   const {
     globalError: error, setGlobalError: setError,
     importProgress: importStatusRaw, setImportProgress: setImportStatus,
     archiveCount, setArchiveCount
   } = useAppStore();
+  const {
+    screen, setScreen,
+    activeSidebar, setActiveSidebar,
+    feedActiveTab, setFeedActiveTab
+  } = useNavStore();
+  const {
+    messages, setMessages,
+    selectedConvoId, setSelectedConvoId,
+    messageInput, setMessageInput,
+    isSending, setIsSending
+  } = useChatStore();
+
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
 
@@ -78,28 +89,16 @@ function App() {
   // Feed / Archive
   const [isImporting, setIsImporting] = useState(false);
 
-  // Chat
-  const [messages, setMessages] = useState<VaultMessage[]>([]);
-  const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
-  const [messageInput, setMessageInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
-
-  // Sidebar
-  const [activeSidebar, setActiveSidebar] = useState<SidebarItem>("feed");
-
-  // Feed tab state (lifted from FeedScreen so we can render tabs in top bar)
-  const [feedActiveTab, setFeedActiveTab] = useState<FeedTab>('all');
-
   // Build the feed tab buttons to pass into the mobile top bar
   const feedTabSlot = screen === "feed" ? (
     <>
-      {(['all', 'following', 'archives'] as FeedTab[]).map(tab => (
+      {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
         <button
           key={tab}
           className={`tab ${feedActiveTab === tab ? 'active' : ''}`}
           onClick={() => setFeedActiveTab(tab)}
         >
-          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          {FEED_TAB_LABELS[tab]}
         </button>
       ))}
     </>
@@ -436,7 +435,7 @@ function App() {
         loadMessages();
         importBlueskyMessages(true);
         break;
-      case "followers":
+      case "social":
         setScreen("friends");
         break;
       case "settings":

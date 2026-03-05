@@ -5,13 +5,14 @@ import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ComposeBox, Attachment } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
-import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, customFeedUris } from '../hooks/useUnifiedFeed';
+import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS, customFeedUris } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 
 const CONTEXT_LABELS: Record<string, string> = {
     all: 'Discovery Tools',
     following: 'My Contacts',
-    archives: 'Archive Explorer',
+    subscribed: 'Subscriptions',
+    you: 'Your Posts',
 };
 
 interface FeedScreenProps {
@@ -151,13 +152,13 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
                     <div className="tabs">
-                        {(['all', 'following', 'archives'] as FeedTab[]).map(tab => (
+                        {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
                             <button
                                 key={tab}
                                 className={`tab ${activeTab === tab ? 'active' : ''}`}
                                 onClick={() => setActiveTab(tab)}
                             >
-                                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {FEED_TAB_LABELS[tab]}
                             </button>
                         ))}
                     </div>
