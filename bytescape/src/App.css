@@ -966,6 +966,43 @@ a:hover {
 .btn-thread:hover { color: var(--link-blue); }
 .btn-thread.active { color: var(--link-blue); }
 
+/* Repost menu */
+.repost-btn-container {
+    position: relative;
+    display: inline-flex;
+}
+
+.repost-menu {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    background: var(--bg-secondary, #ece8dc);
+    border: 2px solid;
+    border-color: #fff #808080 #808080 #fff;
+    box-shadow: 1px 1px 0 #000;
+    z-index: 100;
+    min-width: 120px;
+}
+
+.repost-menu-item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.repost-menu-item:hover {
+    background: #000080;
+    color: #fff;
+}
+
 .engagement-btn:disabled {
     opacity: 0.4;
     cursor: default;
@@ -1160,6 +1197,189 @@ a:hover {
     margin-left: 28px;
     font-size: 0.7rem;
     color: var(--text-muted);
+}
+
+/* ─── 10b. REACTION PICKER ─── */
+.reaction-picker-container {
+    position: relative;
+    display: inline-flex;
+}
+
+.reaction-current {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.reaction-picker-popup {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 2px;
+    padding: 4px 6px;
+    background: var(--bg-secondary, #ece8dc);
+    border: 2px solid;
+    border-color: #fff #808080 #808080 #fff;
+    box-shadow: 1px 1px 0 #000, var(--bevel-raised);
+    z-index: 100;
+    white-space: nowrap;
+}
+
+.reaction-picker-emoji {
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 3px 4px;
+    border-radius: 2px;
+    line-height: 1;
+    transition: none;
+}
+
+.reaction-picker-emoji:hover {
+    border-color: #000080;
+    background: rgba(0, 0, 128, 0.1);
+}
+
+.reaction-picker-emoji.selected {
+    border-color: #000080;
+    background: rgba(0, 0, 128, 0.15);
+    box-shadow: var(--bevel-sunken);
+}
+
+/* ─── 10c. QUOTE REPOST MODAL ─── */
+.quote-repost-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.quote-repost-dialog {
+    width: 520px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.quote-compose-area {
+    padding: 8px;
+}
+
+.quote-compose-input {
+    width: 100%;
+    resize: vertical;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #aaa;
+    padding: 8px;
+    font-size: 0.9rem;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    box-shadow: var(--bevel-sunken);
+    min-height: 60px;
+}
+
+.quote-compose-input:focus {
+    outline: none;
+    border-color: var(--link-blue);
+}
+
+.quote-compose-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+
+.quote-char-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.quote-char-count.over-limit {
+    color: var(--accent-red);
+    font-weight: 700;
+}
+
+.quote-attachments {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.quote-attachment-thumb {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.quote-attachment-thumb img,
+.quote-attachment-thumb video {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border: 1px solid #aaa;
+}
+
+.quote-original-preview {
+    margin: 0 8px 8px;
+    padding: 8px;
+    border: 1px solid #aaa;
+    background: rgba(0, 0, 0, 0.03);
+    box-shadow: var(--bevel-sunken);
+}
+
+.quote-original-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.quote-original-header .avatar.small {
+    width: 22px;
+    height: 22px;
+    font-size: 10px;
+}
+
+.quote-original-header .avatar.small img {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+}
+
+.quote-original-text {
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    word-break: break-word;
+}
+
+.quote-original-media-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.quote-error {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    color: var(--accent-red);
+}
+
+.quote-compose-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px;
+    border-top: 1px solid #ccc;
 }
 
 /* ─── 11. FULLSCREEN GALLERY ─── */

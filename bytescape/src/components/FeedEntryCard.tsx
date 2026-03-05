@@ -7,6 +7,8 @@ import { VideoPlayer } from './VideoPlayer';
 import { AudiencePills } from './AudiencePills';
 import { AudienceDrawer } from './AudienceDrawer';
 import { ReplyCompose } from './ReplyCompose';
+import { ReactionPicker } from './ReactionPicker';
+import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 
 interface FeedEntryCardProps {
@@ -38,20 +40,6 @@ function RepostIcon() {
     );
 }
 
-function HeartIcon({ filled }: { filled?: boolean }) {
-    if (filled) {
-        return (
-            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-            </svg>
-        );
-    }
-    return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-        </svg>
-    );
-}
 
 function ShareIcon() {
     return (
@@ -149,6 +137,11 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     const [threadReplies, setThreadReplies] = useState<ThreadReply[]>([]);
     const [threadOpen, setThreadOpen] = useState(false);
     const [threadLoading, setThreadLoading] = useState(false);
+    const [quoteModalOpen, setQuoteModalOpen] = useState(false);
+    const [reactionEmoji, setReactionEmoji] = useState<string | undefined>(
+        entry.viewer_like ? '❤️' : undefined
+    );
+    const [repostMenuOpen, setRepostMenuOpen] = useState(false);
 
     const isBluesky = entry.source === 'bluesky';
 
@@ -184,14 +177,14 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
         if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
     };
 
-    // ─── Like / Unlike ───
-    const handleLike = async (e: React.MouseEvent) => {
-        e.stopPropagation();
+    // ─── React (Like/Unlike via emoji) ───
+    const handleReaction = async (emoji: string | null) => {
         if (!isBluesky) return;
 
-        if (liked && likeUri) {
-            // Optimistic unlike
+        if (emoji === null && liked && likeUri) {
+            // Remove reaction (unlike)
             setLiked(false);
+            setReactionEmoji(undefined);
             setLikeCount(c => Math.max(0, c - 1));
             try {
                 await invoke<boolean>('unlike_post', { likeUri });
@@ -199,11 +192,13 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             } catch (err) {
                 console.error('Unlike failed:', err);
                 setLiked(true);
+                setReactionEmoji('❤️');
                 setLikeCount(c => c + 1);
             }
-        } else {
-            // Optimistic like
+        } else if (emoji) {
+            // Add reaction (like)
             setLiked(true);
+            setReactionEmoji(emoji);
             setLikeCount(c => c + 1);
             try {
                 const result = await invoke<LikeResult>('like_post', { uri: entry.id, cid: getCid() });
@@ -211,15 +206,30 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             } catch (err) {
                 console.error('Like failed:', err);
                 setLiked(false);
+                setReactionEmoji(undefined);
                 setLikeCount(c => Math.max(0, c - 1));
             }
         }
     };
 
-    // ─── Repost / Unrepost ───
-    const handleRepost = async (e: React.MouseEvent) => {
+    // ─── Repost / Quote Repost ───
+    const handleRepostClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (!isBluesky) return;
+
+        if (reposted && repostUri) {
+            // Undo repost directly
+            handleDirectRepost(e);
+        } else {
+            // Show repost menu (repost vs quote)
+            setRepostMenuOpen(prev => !prev);
+        }
+    };
+
+    const handleDirectRepost = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!isBluesky) return;
+        setRepostMenuOpen(false);
 
         if (reposted && repostUri) {
             setReposted(false);
@@ -244,6 +254,12 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 setRepostCount(c => Math.max(0, c - 1));
             }
         }
+    };
+
+    const handleQuoteRepost = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setRepostMenuOpen(false);
+        setQuoteModalOpen(true);
     };
 
     // ─── Reply Toggle ───
@@ -420,36 +436,48 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 )}
             </div>
 
-            {/* Engagement Action Bar */}
+            {/* Engagement Action Bar — React · Comment · Repost · Share */}
             {!isQuote && (
                 <div className="engagement-bar">
+                    <ReactionPicker
+                        currentReaction={reactionEmoji}
+                        onReact={handleReaction}
+                        disabled={!isBluesky}
+                    />
+                    <span className="count">{formatCount(likeCount)}</span>
+
                     <button
                         className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
-                        title="Reply"
+                        title="Comment"
                         onClick={handleReplyToggle}
                         disabled={!isBluesky}
                     >
                         <ReplyIcon />
                         <span className="count">{formatCount(entry.reply_count)}</span>
                     </button>
-                    <button
-                        className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
-                        title={reposted ? 'Undo repost' : 'Repost'}
-                        onClick={handleRepost}
-                        disabled={!isBluesky}
-                    >
-                        <RepostIcon />
-                        <span className="count">{formatCount(repostCount)}</span>
-                    </button>
-                    <button
-                        className={`engagement-btn btn-like ${liked ? 'active' : ''}`}
-                        title={liked ? 'Unlike' : 'Like'}
-                        onClick={handleLike}
-                        disabled={!isBluesky}
-                    >
-                        <HeartIcon filled={liked} />
-                        <span className="count">{formatCount(likeCount)}</span>
-                    </button>
+
+                    <div className="repost-btn-container">
+                        <button
+                            className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
+                            title={reposted ? 'Undo repost' : 'Repost'}
+                            onClick={handleRepostClick}
+                            disabled={!isBluesky}
+                        >
+                            <RepostIcon />
+                            <span className="count">{formatCount(repostCount)}</span>
+                        </button>
+                        {repostMenuOpen && (
+                            <div className="repost-menu" onClick={e => e.stopPropagation()}>
+                                <button className="repost-menu-item" onClick={handleDirectRepost}>
+                                    🔁 Repost
+                                </button>
+                                <button className="repost-menu-item" onClick={handleQuoteRepost}>
+                                    💬 Quote Post
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
                     {isBluesky && entry.reply_count && entry.reply_count > 0 ? (
                         <button
                             className={`engagement-btn btn-thread ${threadOpen ? 'active' : ''}`}
@@ -459,6 +487,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                             💬 <span className="count">{formatCount(entry.reply_count)}</span>
                         </button>
                     ) : null}
+
                     <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' }}
                         onClick={handleShareClick}
                     >
@@ -518,6 +547,19 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                         ))
                     )}
                 </div>
+            )}
+
+            {/* Quote Repost Modal */}
+            {quoteModalOpen && createPortal(
+                <QuoteRepostModal
+                    originalEntry={entry}
+                    onClose={() => setQuoteModalOpen(false)}
+                    onQuoted={(result) => {
+                        console.log('Quote posted:', result);
+                        setQuoteModalOpen(false);
+                    }}
+                />,
+                document.body
             )}
 
             {/* Fullscreen Gallery Portal — UNCHANGED from original */}
