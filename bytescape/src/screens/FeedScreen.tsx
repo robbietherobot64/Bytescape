@@ -232,7 +232,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
 
                         {filterFacebookDuplicateImagePosts(feedEntries).map(entry => (
                             <FeedEntryCard
-                                key={entry.id}
+                                key={entry.reposted_by ? `repost:${entry.reposted_by}:${entry.id}` : entry.id}
                                 entry={entry}
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}

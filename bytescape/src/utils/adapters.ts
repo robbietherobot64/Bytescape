@@ -19,25 +19,24 @@ import { inferContentKind, sanitizeVaultContent } from './content';
 export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     if (entries.length === 0) return entries;
 
-    // Pre-sort: reposts before originals at the same position so that
-    // when we collapse by underlying URI the repost version (which
-    // carries "reposted by" attribution) wins.
-    const sorted = [...entries].sort((a, b) => {
-        // Primary: keep original array order (stable sort by index is implicit)
-        // Secondary: prefer reposts over originals for same content
-        const aRepost = a.reposted_by ? 1 : 0;
-        const bRepost = b.reposted_by ? 1 : 0;
-        return bRepost - aRepost;
-    });
-
-    // Collapse by underlying post URI — if both an original post and a
-    // repost of that post appear, only the first one seen survives.
-    const seenUri = new Set<string>();
-    return sorted.filter(entry => {
+    // Deduplicate using composite keys so reposts are distinct events.
+    // A repost of post X by user Y gets key "repost:<Y>:<uri>" while
+    // the original post X gets key "<uri>".  This means:
+    //  - Original + repost of same post both survive (different keys)
+    //  - Two copies of the same repost collapse (same composite key)
+    //  - Two copies of the same original collapse (same raw URI key)
+    const seen = new Set<string>();
+    return entries.filter(entry => {
         const uri = entry.original_url || entry.id;
         if (!uri) return true;
-        if (seenUri.has(uri)) return false;
-        seenUri.add(uri);
+
+        // Build a composite key: reposts include the reposter's identity
+        const key = entry.reposted_by
+            ? `repost:${entry.reposted_by}:${uri}`
+            : uri;
+
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
     });
 }

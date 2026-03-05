@@ -271,24 +271,41 @@ pub async fn get_timeline_unified(
             .then_with(|| b.reposted_by.is_some().cmp(&a.reposted_by.is_some()))
     });
 
-    // Deduplicate by underlying post URI (ignoring repost identity).
-    // When both an original and a repost of the same post appear,
-    // collapse them.  The sort above places reposts first, so the
-    // version with "reposted by" attribution is preferred.
+    // Deduplicate using composite keys so reposts are distinct events.
+    // A repost of post X by user Y gets key "repost:<Y>:<id>" while
+    // the original post X gets key "<id>".  This keeps both the
+    // original and the repost in the feed while still collapsing
+    // exact duplicates (e.g. same post from timeline + custom feed).
     // Vault items use CID as id while timeline items use AT URI,
-    // so we check both id and original_url.
+    // so we also check original_url as a secondary key.
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
-        let id = if !entry.id.is_empty() { entry.id.clone() } else {
+        let base_id = if !entry.id.is_empty() { entry.id.clone() } else {
             entry.original_url.clone().unwrap_or_default()
         };
         let alt = entry.original_url.clone().unwrap_or_default();
 
-        if seen.contains(&id) || (!alt.is_empty() && seen.contains(&alt)) {
+        // Build composite key: reposts include reposter identity
+        let key = if let Some(ref reposter) = entry.reposted_by {
+            format!("repost:{}:{}", reposter, base_id)
+        } else {
+            base_id.clone()
+        };
+        let alt_key = if !alt.is_empty() {
+            if let Some(ref reposter) = entry.reposted_by {
+                format!("repost:{}:{}", reposter, alt)
+            } else {
+                alt.clone()
+            }
+        } else {
+            String::new()
+        };
+
+        if seen.contains(&key) || (!alt_key.is_empty() && seen.contains(&alt_key)) {
             false
         } else {
-            seen.insert(id);
-            if !alt.is_empty() { seen.insert(alt); }
+            seen.insert(key);
+            if !alt_key.is_empty() { seen.insert(alt_key); }
             true
         }
     });
