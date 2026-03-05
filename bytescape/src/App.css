@@ -2327,6 +2327,109 @@ textarea::placeholder {
 
 .login-hint a { color: var(--link-blue); }
 
+/* Login inner wrapper */
+.login-inner {
+    padding: 20px;
+    text-align: center;
+}
+
+.login-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 4px;
+    color: var(--accent-teal);
+    font-family: var(--font-sans);
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.1);
+}
+
+.login-description {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.login-error {
+    color: var(--accent-red);
+    font-size: 0.85rem;
+    margin-top: 4px;
+}
+
+/* Login welcome options */
+.login-welcome {
+    margin-top: 12px;
+}
+
+.login-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.login-option-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.login-option-card:hover {
+    background: var(--bg-card-hover);
+}
+
+.login-option-card:active {
+    box-shadow: var(--bevel-pressed);
+}
+
+.login-option-icon {
+    font-size: 1.5rem;
+    min-width: 32px;
+    text-align: center;
+}
+
+.login-option-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+}
+
+.login-option-text strong {
+    font-size: 12px;
+}
+
+.login-option-text .text-muted {
+    font-size: 10px;
+}
+
+/* Login form header with back button */
+.login-form-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.login-back-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.login-form-title {
+    font-weight: 700;
+    font-size: 12px;
+}
+
+.login-visitor-counter {
+    font-size: 10px;
+    color: var(--text-light);
+    margin-top: 16px;
+    font-family: var(--font-mono);
+}
+
 /* Protocol selector */
 .protocol-selector {
     display: flex;
