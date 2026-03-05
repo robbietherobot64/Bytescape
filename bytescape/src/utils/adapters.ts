@@ -19,21 +19,25 @@ import { inferContentKind, sanitizeVaultContent } from './content';
 export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     if (entries.length === 0) return entries;
 
-    const seen = new Set<string>();
-    return entries.filter(entry => {
-        // Reposts are distinct feed events — prefix their keys so a
-        // repost of post X doesn't collide with the original post X.
-        const prefix = entry.reposted_by ? `repost:${entry.reposted_by}:` : '';
-        const id = entry.id ? prefix + entry.id : '';
-        const alt = entry.original_url ? prefix + entry.original_url : '';
+    // Pre-sort: reposts before originals at the same position so that
+    // when we collapse by underlying URI the repost version (which
+    // carries "reposted by" attribution) wins.
+    const sorted = [...entries].sort((a, b) => {
+        // Primary: keep original array order (stable sort by index is implicit)
+        // Secondary: prefer reposts over originals for same content
+        const aRepost = a.reposted_by ? 1 : 0;
+        const bRepost = b.reposted_by ? 1 : 0;
+        return bRepost - aRepost;
+    });
 
-        // Already seen under either identifier?
-        if ((id && seen.has(id)) || (alt && seen.has(alt))) {
-            return false;
-        }
-
-        if (id) seen.add(id);
-        if (alt && alt !== id) seen.add(alt);
+    // Collapse by underlying post URI — if both an original post and a
+    // repost of that post appear, only the first one seen survives.
+    const seenUri = new Set<string>();
+    return sorted.filter(entry => {
+        const uri = entry.original_url || entry.id;
+        if (!uri) return true;
+        if (seenUri.has(uri)) return false;
+        seenUri.add(uri);
         return true;
     });
 }
@@ -58,13 +62,8 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         ? ['video' as const]
         : (post.image_urls || []).map(_ => 'image' as const);
 
-    // Reposts share the original post's URI, so give them a distinct id
-    // to avoid React key collisions when both a repost and the original appear.
-    const baseId = post.uri || post.cid;
-    const entryId = post.reposted_by ? `repost:${post.reposted_by}:${baseId}` : baseId;
-
     return {
-        id: entryId,
+        id: post.uri || post.cid,
         cid: post.cid,
         timestamp: post.created_at,
         content: post.text,

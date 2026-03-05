@@ -1638,11 +1638,16 @@ pub async fn get_unified_feed(
 
     println!("UnifiedFeed: Total raw posts before dedup: {}", all_posts.len());
 
-    // 4. Deduplicate (by URI + repost identity)
-    //    A repost of post X by user Y is a distinct feed event from post X itself,
-    //    so we only collapse entries that share BOTH the same URI and the same reposter.
-    all_posts.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // Sort desc first
-    all_posts.dedup_by(|a, b| a.uri == b.uri && a.reposted_by == b.reposted_by);
+    // 4. Deduplicate by underlying post URI.
+    //    When both an original post and a repost of it appear (e.g. from
+    //    timeline + a custom feed), collapse them into one entry.
+    //    Sort reposts before originals so the repost version (with
+    //    attribution) survives dedup_by, which keeps the first of a pair.
+    all_posts.sort_by(|a, b| {
+        b.created_at.cmp(&a.created_at)
+            .then_with(|| b.reposted_by.is_some().cmp(&a.reposted_by.is_some()))
+    });
+    all_posts.dedup_by(|a, b| a.uri == b.uri);
 
     println!("UnifiedFeed: Total posts after dedup: {}", all_posts.len());
 

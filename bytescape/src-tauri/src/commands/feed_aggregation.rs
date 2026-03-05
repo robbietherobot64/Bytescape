@@ -25,13 +25,8 @@ impl From<BlueskyImportedPost> for FeedEntry {
         };
 
         let base_id = if !post.uri.is_empty() { post.uri.clone() } else { post.cid.clone() };
-        let entry_id = if let Some(ref by) = post.reposted_by {
-            format!("repost:{}:{}", by, base_id)
-        } else {
-            base_id
-        };
         FeedEntry {
-            id: entry_id,
+            id: base_id,
             cid: Some(post.cid.clone()),
             viewer_like: post.viewer_like.clone(),
             viewer_repost: post.viewer_repost.clone(),
@@ -273,31 +268,22 @@ pub async fn get_timeline_unified(
             .unwrap_or(b.timestamp)
             .max(b.timestamp);
         b_max.cmp(&a_max)
+            .then_with(|| b.reposted_by.is_some().cmp(&a.reposted_by.is_some()))
     });
 
-    // Deduplicate by ID and original_url (vault items use CID as id,
-    // timeline items use AT URI — match both to prevent duplicates).
-    // Reposts use a composite key so they aren't collapsed with the
-    // original post they refer to.
+    // Deduplicate by underlying post URI (ignoring repost identity).
+    // When both an original and a repost of the same post appear,
+    // collapse them.  The sort above places reposts first, so the
+    // version with "reposted by" attribution is preferred.
+    // Vault items use CID as id while timeline items use AT URI,
+    // so we check both id and original_url.
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
-        let prefix = if let Some(ref by) = entry.reposted_by {
-            format!("repost:{}:", by)
-        } else {
-            String::new()
+        let id = if !entry.id.is_empty() { entry.id.clone() } else {
+            entry.original_url.clone().unwrap_or_default()
         };
-        let id = if !entry.id.is_empty() {
-            format!("{}{}", prefix, entry.id)
-        } else {
-            format!("{}{}", prefix, entry.original_url.clone().unwrap_or_default())
-        };
-        let alt_raw = entry.original_url.clone().unwrap_or_default();
-        let alt = if !alt_raw.is_empty() {
-            format!("{}{}", prefix, alt_raw)
-        } else {
-            String::new()
-        };
-        // Check if we've seen either identifier
+        let alt = entry.original_url.clone().unwrap_or_default();
+
         if seen.contains(&id) || (!alt.is_empty() && seen.contains(&alt)) {
             false
         } else {
