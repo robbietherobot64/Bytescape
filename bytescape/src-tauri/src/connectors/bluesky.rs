@@ -384,12 +384,8 @@ pub async fn import_bluesky_timeline(
 
         let post = item.post;
         
-        // Flatten logic similar to feed import
-        let (text, created_at) = if let Some(record) = post.record.text {
-              (record, post.record.created_at.unwrap_or_default())  
-        } else {
-            (post.record.text.clone().unwrap_or_default(), post.record.created_at.clone().unwrap_or_default())
-        };
+        let text = post.record.text.unwrap_or_default();
+        let created_at = post.record.created_at.unwrap_or_default();
 
         // For reposts, prefer the repost's indexed_at over the original's created_at
         let effective_timestamp = repost_indexed_at.as_deref().unwrap_or(&created_at);
@@ -436,6 +432,7 @@ pub async fn import_bluesky_timeline(
         if let Some(ref embed) = post.embed {
             extract_video_from_view(embed, &mut new_post.video_url, &mut new_post.video_thumbnail);
             extract_external_from_view(embed, &mut new_post.external_url, &mut new_post.external_title, &mut new_post.external_description, &mut new_post.external_thumb);
+            new_post.quoted_post = extract_quote_from_view(embed);
         }
 
         imported_posts.push(new_post);
@@ -860,130 +857,6 @@ async fn resolve_pds(client: &Client, did: &str) -> Result<String, String> {
         })
         .ok_or_else(|| "No PDS found".to_string())
 }
-/// Fetch the user's timeline (home feed).
-/// This calls the authenticated `getTimeline` API.
-/// Returns posts with remote image URLs (does not download them).
-pub async fn get_bluesky_timeline(
-    access_jwt: &str,
-    limit: u8,
-    cursor: Option<String>,
-) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
-
-    let mut url = format!(
-        "{}/app.bsky.feed.getTimeline?limit={}",
-        PUBLIC_XRPC, limit
-    );
-    if let Some(ref c) = cursor {
-        url.push_str(&format!("&cursor={}", c));
-    }
-
-    let token = access_jwt.trim();
-
-    let response = client.get(&url)
-        .bearer_auth(token)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("Timeline fetch failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Timeline API returned {}: {}", status, body));
-    }
-
-    let feed_response: AuthorFeedResponse = response.json()
-        .await
-        .map_err(|e| format!("Failed to parse timeline: {}", e))?;
-
-    println!("bluesky: Timeline found {} items", feed_response.feed.len());
-    for (i, item) in feed_response.feed.iter().enumerate().take(3) {
-        println!("bluesky: DEBUG Post {}: URI={}, CID={}, Text={:?}, Author={}", 
-            i, item.post.uri, item.post.cid, item.post.record.text, item.post.author.handle);
-    }
-
-    let mut posts: Vec<BlueskyImportedPost> = Vec::new();
-
-    for item in feed_response.feed {
-        // Extract repost reason before consuming the post.
-        // For reposts, use indexed_at as the timeline timestamp.
-        let mut reposted_by = None;
-        let mut reposted_by_handle = None;
-        let mut repost_indexed_at: Option<i64> = None;
-        if let Some(Reason::Repost { by, indexed_at, .. }) = item.reason {
-            reposted_by = Some(by.did);
-            reposted_by_handle = Some(by.handle);
-            repost_indexed_at = chrono::DateTime::parse_from_rfc3339(&indexed_at)
-                .ok().map(|dt| dt.timestamp());
-        }
-
-        let post = item.post;
-        let text = post.record.text.unwrap_or_default();
-
-        let created_at = post.record.created_at.as_ref()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.timestamp())
-            .unwrap_or(0);
-
-        // For reposts, prefer the repost time over the original's creation time
-        let effective_timestamp = repost_indexed_at.unwrap_or(created_at);
-
-        let mut image_urls: Vec<String> = Vec::new();
-        let mut video_url: Option<String> = None;
-        let mut video_thumbnail: Option<String> = None;
-        let mut external_url: Option<String> = None;
-        let mut external_title: Option<String> = None;
-        let mut external_description: Option<String> = None;
-        let mut external_thumb: Option<String> = None;
-        let mut quoted_post: Option<Box<BlueskyImportedPost>> = None;
-
-        if let Some(ref embed) = post.embed {
-            extract_image_urls_from_view(embed, &mut image_urls);
-            extract_video_from_view(embed, &mut video_url, &mut video_thumbnail);
-            extract_external_from_view(embed, &mut external_url, &mut external_title, &mut external_description, &mut external_thumb);
-            quoted_post = extract_quote_from_view(embed);
-        }
-
-        let mut new_post = BlueskyImportedPost {
-            uri: post.uri,
-            cid: post.cid,
-            text,
-            created_at: effective_timestamp,
-            image_urls,
-            image_local_paths: Vec::new(),
-            author_did: post.author.did,
-            author_handle: post.author.handle,
-            author_avatar: post.author.avatar,
-            reply_count: post.reply_count,
-            repost_count: post.repost_count,
-            like_count: post.like_count,
-            video_url,
-            video_thumbnail: if video_thumbnail.is_some() { video_thumbnail } else { external_thumb.clone() },
-            external_url,
-            external_title,
-            external_description,
-            external_thumb,
-            reposted_by,
-            reposted_by_handle,
-            quoted_post,
-            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
-            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
-        };
-
-        if let Some(ref embed) = post.embed {
-            extract_video_from_view(embed, &mut new_post.video_url, &mut new_post.video_thumbnail);
-        }
-        
-        posts.push(new_post);
-    }
-
-    Ok((posts, feed_response.cursor))
-}
-
 /// Search for posts on Bluesky.
 pub async fn search_posts(
     access_jwt: &str,
