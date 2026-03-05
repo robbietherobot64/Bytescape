@@ -24,8 +24,14 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
+        let base_id = if !post.uri.is_empty() { post.uri.clone() } else { post.cid.clone() };
+        let entry_id = if let Some(ref by) = post.reposted_by {
+            format!("repost:{}:{}", by, base_id)
+        } else {
+            base_id
+        };
         FeedEntry {
-            id: if !post.uri.is_empty() { post.uri.clone() } else { post.cid.clone() },
+            id: entry_id,
             cid: Some(post.cid.clone()),
             viewer_like: post.viewer_like.clone(),
             viewer_repost: post.viewer_repost.clone(),
@@ -171,8 +177,12 @@ pub async fn get_timeline_unified(
     }
 
     // 2. Fetch custom feeds
+    // NOTE: Don't pass the timeline cursor here — it's a plain string from
+    // getTimeline, but get_unified_feed expects a JSON-encoded UnifiedCursor.
+    // Passing the wrong cursor causes silent fallback to page 1 on every
+    // load-more, producing duplicates.
     if !tags.is_empty() || !feed_uris.is_empty() {
-        let feed_res = crate::commands::import::get_unified_feed(state.clone(), tags, feed_uris, limit.unwrap_or(50), cursor).await;
+        let feed_res = crate::commands::import::get_unified_feed(state.clone(), tags, feed_uris, limit.unwrap_or(50), None).await;
         if let Ok((posts, _)) = feed_res {
             for p in posts {
                 feed.push(FeedEntry::from(p));

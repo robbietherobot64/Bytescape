@@ -1338,6 +1338,15 @@ pub async fn get_custom_feed(
 
     let mut posts: Vec<BlueskyImportedPost> = Vec::new();
     for item in feed_response.feed {
+        // Extract repost reason BEFORE consuming item.post (matches
+        // import_bluesky_timeline and import_bluesky_author_feed).
+        let mut reposted_by = None;
+        let mut reposted_by_handle = None;
+        if let Some(Reason::Repost { ref by, .. }) = item.reason {
+            reposted_by = Some(by.did.clone());
+            reposted_by_handle = Some(by.handle.clone());
+        }
+
         let post = item.post;
         let text = post.record.text.unwrap_or_default();
         let created_at = post.record.created_at.as_ref()
@@ -1369,8 +1378,8 @@ pub async fn get_custom_feed(
             external_title: None,
             external_description: None,
             external_thumb: None,
-            reposted_by: None,
-            reposted_by_handle: None,
+            reposted_by,
+            reposted_by_handle,
             quoted_post: None,
             viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
             viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
