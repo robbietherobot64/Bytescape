@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BytescapeItem, VaultStats } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
+import { Win98Box } from '../components/Win98Box';
 import { adaptBytescapeItem } from '../utils/adapters';
+import { BsPersonFill, BsGlobe, BsStar, BsBookmark } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -103,109 +105,155 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
     const hasMore = offsetRef.current < total;
 
     return (
-        <>
-            <div className="main-header">
-                <h1>👤 Profile Wall</h1>
+        <div className="profile-geocities">
+            {/* ═══ Hero Banner ═══ */}
+            <div className="profile-hero">
+                <div className="profile-hero-gradient" />
+                <div className="profile-hero-content">
+                    <div className="profile-avatar-large">
+                        {auth?.handle ? (
+                            <span>{auth.handle[0].toUpperCase()}</span>
+                        ) : (
+                            <BsPersonFill size={32} />
+                        )}
+                    </div>
+                    <div className="profile-hero-info">
+                        <h1 className="profile-display-name-large">
+                            {auth?.handle || 'Anonymous'}
+                        </h1>
+                        <div className="profile-did">{auth?.did}</div>
+                    </div>
+                </div>
+                <div className="profile-visitor-counter">
+                    Visitors: {stats ? String(stats.total + 1337).padStart(6, '0') : '001337'}
+                </div>
             </div>
 
-            <div className="profile-wall">
-                {/* Profile header card */}
-                <div className="card profile-header-card">
-                    {auth?.handle ? (
-                        <div className="profile-avatar-placeholder-large">
-                            {auth.handle[0].toUpperCase()}
+            {/* ═══ GeoCities Content Grid ═══ */}
+            <div className="profile-content-grid">
+                {/* Left Column: About Boxes */}
+                <div className="profile-sidebar-boxes">
+                    <Win98Box variant="window" title="About Me">
+                        <div className="profile-about-body">
+                            <p className="profile-about-text">
+                                Welcome to my corner of the internet! 🌐
+                            </p>
+                            <p className="profile-about-text">
+                                This is where I keep my digital memories safe from
+                                corporate surveillance. All data stored locally.
+                            </p>
                         </div>
-                    ) : (
-                        <div style={{ fontSize: '3rem', marginBottom: 12 }}>👤</div>
-                    )}
-                    <h2>{auth?.handle || 'Anonymous'}</h2>
-                    <p className="text-muted text-sm">{auth?.did}</p>
+                    </Win98Box>
 
                     {stats && (
-                        <div className="profile-stats-row">
-                            <div className="profile-stat">
-                                <div className="profile-stat-num">{stats.total}</div>
-                                <div className="profile-stat-label">Posts</div>
+                        <Win98Box variant="window" title="My Stats">
+                            <div className="profile-stats-list">
+                                <div className="profile-stat-row">
+                                    <BsBookmark size={12} />
+                                    <span className="profile-stat-label">Total Posts</span>
+                                    <span className="profile-stat-value">{stats.total}</span>
+                                </div>
+                                <div className="profile-stat-row">
+                                    <BsStar size={12} />
+                                    <span className="profile-stat-label">With Media</span>
+                                    <span className="profile-stat-value">{stats.media_count}</span>
+                                </div>
+                                <div className="profile-stat-row">
+                                    <BsGlobe size={12} />
+                                    <span className="profile-stat-label">Vault Files</span>
+                                    <span className="profile-stat-value">{archiveCount}</span>
+                                </div>
+                                <div className="profile-stat-row">
+                                    <span>🛡️</span>
+                                    <span className="profile-stat-label">Storage</span>
+                                    <span className="profile-stat-value">Local Only</span>
+                                </div>
                             </div>
-                            <div className="profile-stat">
-                                <div className="profile-stat-num">{stats.media_count}</div>
-                                <div className="profile-stat-label">With Media</div>
+                        </Win98Box>
+                    )}
+
+                    {sources.length > 0 && (
+                        <Win98Box variant="window" title="My Networks">
+                            <div className="profile-networks">
+                                {sources.map(s => (
+                                    <div key={s} className="profile-network-badge">
+                                        {sourceEmoji(s)} {s}
+                                    </div>
+                                ))}
                             </div>
-                            <div className="profile-stat">
-                                <div className="profile-stat-num">{archiveCount}</div>
-                                <div className="profile-stat-label">Vault Files</div>
-                            </div>
-                            <div className="profile-stat">
-                                <div className="profile-stat-num">🛡️</div>
-                                <div className="profile-stat-label">Local Only</div>
-                            </div>
-                        </div>
+                        </Win98Box>
                     )}
                 </div>
 
-                {/* Source filter pills */}
-                {sources.length > 1 && (
-                    <div className="wall-filters">
-                        <button
-                            className={`wall-filter-btn ${sourceFilter === 'all' ? 'active' : ''}`}
-                            onClick={() => handleSourceFilter('all')}
-                        >
-                            All
-                        </button>
-                        {sources.map(s => (
+                {/* Right Column: Post Wall */}
+                <div className="profile-wall-column">
+                    <Win98Box variant="window" title={`My Wall (${total} posts)`}>
+                        {/* Source filter pills */}
+                        {sources.length > 1 && (
+                            <div className="wall-filters">
+                                <button
+                                    className={`wall-filter-btn ${sourceFilter === 'all' ? 'active' : ''}`}
+                                    onClick={() => handleSourceFilter('all')}
+                                >
+                                    All
+                                </button>
+                                {sources.map(s => (
+                                    <button
+                                        key={s}
+                                        className={`wall-filter-btn ${sourceFilter === s ? 'active' : ''}`}
+                                        onClick={() => handleSourceFilter(s)}
+                                    >
+                                        {sourceEmoji(s)} {s}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {loading && (
+                            <div className="wall-empty">
+                                <div className="wall-empty-icon">⏳</div>
+                                <p>Loading your wall...</p>
+                            </div>
+                        )}
+
+                        {error && !loading && (
+                            <div className="profile-error">
+                                <strong>Error:</strong> {error}
+                            </div>
+                        )}
+
+                        {!loading && !error && items.length === 0 && (
+                            <div className="wall-empty">
+                                <div className="wall-empty-icon">📭</div>
+                                <p>No posts yet. Import your data from the Import screen!</p>
+                            </div>
+                        )}
+                    </Win98Box>
+
+                    {!loading && items.map(item => (
+                        <FeedEntryCard key={item.id} entry={adaptBytescapeItem(item)} />
+                    ))}
+
+                    {!loading && hasMore && (
+                        <div className="profile-load-more">
                             <button
-                                key={s}
-                                className={`wall-filter-btn ${sourceFilter === s ? 'active' : ''}`}
-                                onClick={() => handleSourceFilter(s)}
+                                className="wall-filter-btn"
+                                onClick={loadMore}
+                                disabled={loadingMore}
                             >
-                                {sourceEmoji(s)} {s}
+                                {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
                             </button>
-                        ))}
-                    </div>
-                )}
-
-                {/* Loading state */}
-                {loading && (
-                    <div className="wall-empty">
-                        <div className="wall-empty-icon">⏳</div>
-                        <p>Loading your wall...</p>
-                    </div>
-                )}
-
-                {/* Error state */}
-                {error && !loading && (
-                    <div className="card" style={{ padding: 20, color: 'var(--accent-red)' }}>
-                        <strong>Error:</strong> {error}
-                    </div>
-                )}
-
-                {/* Empty state */}
-                {!loading && !error && items.length === 0 && (
-                    <div className="wall-empty">
-                        <div className="wall-empty-icon">📭</div>
-                        <p>No posts yet. Import your data from the Import screen!</p>
-                    </div>
-                )}
-
-                {/* Item feed */}
-                {!loading && items.map(item => (
-                    <FeedEntryCard key={item.id} entry={adaptBytescapeItem(item)} />
-                ))}
-
-                {/* Load More */}
-                {!loading && hasMore && (
-                    <div style={{ textAlign: 'center', padding: '20px 0 40px' }}>
-                        <button
-                            className="wall-filter-btn"
-                            onClick={loadMore}
-                            disabled={loadingMore}
-                            style={{ padding: '10px 28px', fontSize: '0.9rem' }}
-                        >
-                            {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
-                        </button>
-                    </div>
-                )}
+                        </div>
+                    )}
+                </div>
             </div>
-        </>
+
+            {/* ═══ Footer Guestbook ═══ */}
+            <div className="profile-footer">
+                <div className="profile-marquee">
+                    ⭐ Thanks for visiting my page! ⭐ Built with Bytescape ⭐ Best viewed on any screen ⭐
+                </div>
+            </div>
+        </div>
     );
 }

@@ -2598,53 +2598,209 @@ textarea::placeholder {
 
 .friend-source { flex-shrink: 0; }
 
-/* ─── 18. PROFILE SCREEN ─── */
-.profile-header {
+/* ─── 18. PROFILE SCREEN (GeoCities Theme) ─── */
+.profile-geocities {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 100%;
+    background:
+        var(--stars-bg),
+        linear-gradient(180deg, var(--bg-page) 0%, #1a1a2e 100%);
+}
+
+/* Hero Banner */
+.profile-hero {
+    position: relative;
+    padding: 28px 20px 16px;
+    background: linear-gradient(135deg, #000080 0%, #4b0082 50%, #2e003e 100%);
+    border-bottom: 3px solid #ffcc00;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    overflow: hidden;
+}
+
+.profile-hero-gradient {
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px);
+    pointer-events: none;
+}
+
+.profile-hero-content {
+    position: relative;
     display: flex;
     align-items: center;
+    gap: 16px;
+    z-index: 1;
+}
+
+.profile-avatar-large {
+    width: 80px; height: 80px;
+    background: var(--bg-toolbar);
+    border: 3px solid #ffcc00;
+    box-shadow: var(--bevel-raised), 0 0 12px rgba(255,204,0,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.profile-hero-info { flex: 1; min-width: 0; }
+
+.profile-display-name-large {
+    font-size: 20px;
+    font-weight: bold;
+    color: #ffcc00;
+    margin: 0 0 4px;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+    font-family: var(--font-sans);
+}
+
+.profile-did {
+    font-size: 9px;
+    color: rgba(255,255,255,0.5);
+    font-family: var(--font-mono);
+    word-break: break-all;
+}
+
+.profile-visitor-counter {
+    position: absolute;
+    bottom: 8px;
+    right: 16px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: #00ff00;
+    background: #000;
+    padding: 2px 8px;
+    border: 1px solid #333;
+    text-shadow: 0 0 4px #00ff00;
+    z-index: 1;
+}
+
+/* Content Grid: 2-column layout */
+.profile-content-grid {
+    display: grid;
+    grid-template-columns: 240px 1fr;
     gap: 12px;
     padding: 12px;
-    background: var(--bg-panel);
-    border: 2px solid #999;
-    box-shadow: 1px 1px 0 #666;
-    margin: 12px;
+    min-height: 0;
 }
 
-.profile-avatar-placeholder-large {
-    width: 64px; height: 64px;
-    background: var(--bg-toolbar);
-    border: 2px solid #888;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 24px;
-    color: var(--text-primary);
+.profile-sidebar-boxes {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* About Me box */
+.profile-about-body { padding: 8px; }
+.profile-about-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+    line-height: 1.5;
+}
+.profile-about-text:last-child { margin-bottom: 0; }
+
+/* Stats list */
+.profile-stats-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.profile-stat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    font-size: 11px;
+    border-bottom: 1px dotted #999;
+}
+.profile-stat-row:last-child { border-bottom: none; }
+
+.profile-stat-label {
+    flex: 1;
+    color: var(--text-secondary);
+}
+
+.profile-stat-value {
     font-weight: bold;
-    flex-shrink: 0;
-    box-shadow: var(--bevel-sunken);
-    border-radius: 0;
+    font-family: var(--font-mono);
+    color: var(--accent-teal);
+    font-size: 12px;
 }
 
-.profile-handle { font-size: 14px; font-weight: bold; color: var(--link-blue); }
-.profile-display-name { font-size: 11px; color: var(--text-muted); }
-
-.profile-stats-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
-    gap: 6px;
-    padding: 0 12px 10px;
+/* Networks */
+.profile-networks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px;
 }
 
-.profile-stat {
-    background: var(--bg-card);
-    border: 1px solid #999;
-    padding: 8px;
+.profile-network-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    background: var(--bg-toolbar);
+    border: 1px solid #aaa;
+    box-shadow: var(--bevel-raised);
+    color: var(--text-primary);
+    text-transform: capitalize;
+}
+
+/* Wall Column */
+.profile-wall-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.profile-error {
+    padding: 10px;
+    color: var(--accent-red, #ff6b6b);
+    font-size: 11px;
+}
+
+.profile-load-more {
     text-align: center;
-    box-shadow: var(--bevel-sunken);
+    padding: 16px 0 32px;
 }
 
-.profile-stat-num { font-weight: bold; font-size: 14px; color: var(--accent-teal); font-family: var(--font-mono); }
-.profile-stat-label { font-size: 9px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; }
+/* Footer / Marquee */
+.profile-footer {
+    padding: 12px;
+    text-align: center;
+    border-top: 2px solid #333;
+    background: var(--bg-panel);
+}
+
+.profile-marquee {
+    font-size: 10px;
+    color: #ffcc00;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    animation: marquee-scroll 20s linear infinite;
+}
+
+@keyframes marquee-scroll {
+    0%   { transform: translateX(100%); }
+    100% { transform: translateX(-100%); }
+}
 
 /* Profile Wall Filters */
+.wall-filters {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #999;
+}
+
 .wall-filter-btn, .wall-filters button {
     padding: 2px 8px;
     font-size: 10px;
@@ -2665,6 +2821,7 @@ textarea::placeholder {
 }
 
 .wall-empty { text-align: center; padding: 30px; color: var(--text-muted); font-style: italic; }
+.wall-empty-icon { font-size: 28px; margin-bottom: 8px; }
 
 /* ─── 19. LOGIN SCREEN ─── */
 .login-screen {
@@ -3598,14 +3755,29 @@ textarea::placeholder {
     }
 
     /* ── PROFILE SCREEN ── */
-    .profile-stats-row {
-        flex-wrap: wrap;
+    .profile-content-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .profile-sidebar-boxes {
+        flex-direction: row;
+        overflow-x: auto;
         gap: 8px;
     }
 
-    .profile-stats-row .stat-item {
-        flex: 1 1 40%;
-        min-width: 80px;
+    .profile-sidebar-boxes > * {
+        min-width: 200px;
+        flex-shrink: 0;
+    }
+
+    .profile-avatar-large {
+        width: 56px;
+        height: 56px;
+        font-size: 20px;
+    }
+
+    .profile-display-name-large {
+        font-size: 16px;
     }
 
     /* ── SETTINGS SCREEN ── */
