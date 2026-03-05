@@ -369,12 +369,17 @@ pub async fn import_bluesky_timeline(
         // For timeline, items are FeedViewPost, which contain 'post'. 
         // Our types match sufficiently (FeedItem has 'post').
         
-        // Extract repost reason before moving post
+        // Extract repost reason before moving post.
+        // For reposts, use `indexed_at` (when the repost happened) as the
+        // timeline timestamp so the entry sorts chronologically to when it
+        // appeared on the user's feed, not when the original was published.
         let mut reposted_by = None;
         let mut reposted_by_handle = None;
-        if let Some(Reason::Repost { ref by, .. }) = item.reason {
+        let mut repost_indexed_at: Option<String> = None;
+        if let Some(Reason::Repost { ref by, ref indexed_at, .. }) = item.reason {
             reposted_by = Some(by.did.clone());
             reposted_by_handle = Some(by.handle.clone());
+            repost_indexed_at = Some(indexed_at.clone());
         }
 
         let post = item.post;
@@ -383,10 +388,11 @@ pub async fn import_bluesky_timeline(
         let (text, created_at) = if let Some(record) = post.record.text {
               (record, post.record.created_at.unwrap_or_default())  
         } else {
-            // Check record type, sometimes it's just the struct directly if deserialized differently?
-            // Actually our PostRecord struct has Option<String> for text.
             (post.record.text.clone().unwrap_or_default(), post.record.created_at.clone().unwrap_or_default())
         };
+
+        // For reposts, prefer the repost's indexed_at over the original's created_at
+        let effective_timestamp = repost_indexed_at.as_deref().unwrap_or(&created_at);
 
         // For timeline browsing, avoid local downloads by default.
         let (local_paths, remote_urls) = if download_media {
@@ -406,7 +412,7 @@ pub async fn import_bluesky_timeline(
             author_handle: post.author.handle,
             author_avatar: post.author.avatar,
             text,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+            created_at: chrono::DateTime::parse_from_rfc3339(effective_timestamp)
                 .map(|dt| dt.timestamp())
                 .unwrap_or(0),
             image_urls: remote_urls,
@@ -903,6 +909,18 @@ pub async fn get_bluesky_timeline(
     let mut posts: Vec<BlueskyImportedPost> = Vec::new();
 
     for item in feed_response.feed {
+        // Extract repost reason before consuming the post.
+        // For reposts, use indexed_at as the timeline timestamp.
+        let mut reposted_by = None;
+        let mut reposted_by_handle = None;
+        let mut repost_indexed_at: Option<i64> = None;
+        if let Some(Reason::Repost { by, indexed_at, .. }) = item.reason {
+            reposted_by = Some(by.did);
+            reposted_by_handle = Some(by.handle);
+            repost_indexed_at = chrono::DateTime::parse_from_rfc3339(&indexed_at)
+                .ok().map(|dt| dt.timestamp());
+        }
+
         let post = item.post;
         let text = post.record.text.unwrap_or_default();
 
@@ -910,6 +928,9 @@ pub async fn get_bluesky_timeline(
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
+
+        // For reposts, prefer the repost time over the original's creation time
+        let effective_timestamp = repost_indexed_at.unwrap_or(created_at);
 
         let mut image_urls: Vec<String> = Vec::new();
         let mut video_url: Option<String> = None;
@@ -927,18 +948,11 @@ pub async fn get_bluesky_timeline(
             quoted_post = extract_quote_from_view(embed);
         }
 
-        let mut reposted_by = None;
-        let mut reposted_by_handle = None;
-        if let Some(Reason::Repost { by, .. }) = item.reason {
-            reposted_by = Some(by.did);
-            reposted_by_handle = Some(by.handle);
-        }
-
         let mut new_post = BlueskyImportedPost {
             uri: post.uri,
             cid: post.cid,
             text,
-            created_at,
+            created_at: effective_timestamp,
             image_urls,
             image_local_paths: Vec::new(),
             author_did: post.author.did,
@@ -1338,13 +1352,16 @@ pub async fn get_custom_feed(
 
     let mut posts: Vec<BlueskyImportedPost> = Vec::new();
     for item in feed_response.feed {
-        // Extract repost reason BEFORE consuming item.post (matches
-        // import_bluesky_timeline and import_bluesky_author_feed).
+        // Extract repost reason BEFORE consuming item.post.
+        // For reposts, use indexed_at as the timeline timestamp.
         let mut reposted_by = None;
         let mut reposted_by_handle = None;
-        if let Some(Reason::Repost { ref by, .. }) = item.reason {
+        let mut repost_indexed_at: Option<i64> = None;
+        if let Some(Reason::Repost { ref by, ref indexed_at, .. }) = item.reason {
             reposted_by = Some(by.did.clone());
             reposted_by_handle = Some(by.handle.clone());
+            repost_indexed_at = chrono::DateTime::parse_from_rfc3339(indexed_at)
+                .ok().map(|dt| dt.timestamp());
         }
 
         let post = item.post;
@@ -1353,6 +1370,9 @@ pub async fn get_custom_feed(
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
+
+        // For reposts, prefer the repost time over the original's creation time
+        let effective_timestamp = repost_indexed_at.unwrap_or(created_at);
 
         let mut image_urls: Vec<String> = Vec::new();
         if let Some(ref embed) = post.embed {
@@ -1363,7 +1383,7 @@ pub async fn get_custom_feed(
             uri: post.uri,
             cid: post.cid,
             text,
-            created_at,
+            created_at: effective_timestamp,
             image_urls,
             image_local_paths: Vec::new(),
             author_did: post.author.did,
