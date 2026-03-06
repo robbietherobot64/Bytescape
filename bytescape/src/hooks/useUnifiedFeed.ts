@@ -60,20 +60,26 @@ export function useUnifiedFeed({
             const follows = await invoke<ProfileView[]>('list_follows', { actor: actorDid });
             setFollowingList(follows);
         } catch (e) {
-            console.error('Failed to fetch follows, falling back to local contacts:', e);
+            console.error('Failed to fetch follows:', e);
             try {
                 const contacts = await invoke<any[]>('list_contacts');
-                const fallback: ProfileView[] = contacts.map(c => ({
-                    did: c.did,
-                    handle: c.handle,
-                }));
-                setFollowingList(fallback);
-            } catch (e2) {
-                console.error('Failed to fetch local contacts fallback:', e2);
+                setFollowingList(contacts.map(c => ({ did: c.did, handle: c.handle })));
+            } catch {
                 setFollowingList([]);
             }
         }
     };
+
+    // === Fetch Feed ===
+    //
+    // Each tab has a distinct data source:
+    //   'following'  → get_timeline (Bluesky getTimeline API)
+    //   'subscribed' → get_unified_feed (merged custom feeds + hashtag search)
+    //   'you'        → list_vault_posts_paged (local vault items)
+    //   'all'        → get_timeline_unified (Rust merges timeline + feeds + vault)
+    //
+    // All paths end with deduplicateFeedEntries to collapse duplicates
+    // while preserving reposts as distinct events.
 
     const fetchFeed = useCallback(async (tab: FeedTab, background = false) => {
         if (!auth) return;
@@ -84,13 +90,12 @@ export function useUnifiedFeed({
         if (!background) {
             setIsLoading(true);
             setFeedError(null);
-            verifiedIdsRef.current.clear(); // Re-verify active syndications when user explicitly refreshes
+            verifiedIdsRef.current.clear();
         }
 
         try {
-            console.log(`Fetching feed for tab: ${tab}${background ? ' (background)' : ''}`);
-
             if (tab === 'following') {
+                // ── Following tab: Bluesky home timeline ──
                 const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 50 });
                 if (isStale()) return;
                 setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
@@ -98,33 +103,29 @@ export function useUnifiedFeed({
                 await fetchFollowingList(auth.did);
 
             } else if (tab === 'subscribed') {
-                // Merge feeds + hashtags into a single "subscribed" tab
+                // ── Subscribed tab: custom feeds + followed hashtags ──
                 const [feeds, tags] = await Promise.all([
-                    invoke<GeneratorView[]>("list_saved_feeds").catch((): GeneratorView[] => []),
+                    invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []),
                     invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
                 ]);
                 if (isStale()) return;
-                setSavedFeeds(prev => {
-                    if (JSON.stringify(prev) === JSON.stringify(feeds)) return prev;
-                    return feeds;
-                });
+                setSavedFeeds(feeds);
                 setFollowedHashtags(tags);
 
-                const allCustomUris = customFeedUris(feeds);
-                const targetFeedUris = selectedFeedUri === FEED_FILTER_ALL
-                    ? allCustomUris
-                    : allCustomUris.filter(uri => uri === selectedFeedUri);
+                const allUris = customFeedUris(feeds);
+                const targetUris = selectedFeedUri === FEED_FILTER_ALL
+                    ? allUris
+                    : allUris.filter(uri => uri === selectedFeedUri);
 
-                // Only fetch if we have feeds or tags to query
-                if (targetFeedUris.length > 0 || tags.length > 0) {
-                    const [unified, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                if (targetUris.length > 0 || tags.length > 0) {
+                    const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                         tags,
-                        feedUris: targetFeedUris,
+                        feedUris: targetUris,
                         limit: 50,
-                        cursor: null
+                        cursor: null,
                     });
                     if (isStale()) return;
-                    setFeedEntries(deduplicateFeedEntries(unified.map(adaptBlueskyPost)));
+                    setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
                     setCursor(nextCursor);
                 } else {
                     setFeedEntries([]);
@@ -132,33 +133,33 @@ export function useUnifiedFeed({
                 }
 
             } else if (tab === 'you') {
-                // Your own posts — vault items
-                const pageSize = ARCHIVE_PAGE_SIZE;
+                // ── You tab: local vault items ──
                 const [result, sources] = await Promise.all([
                     invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
-                        limit: pageSize,
+                        limit: ARCHIVE_PAGE_SIZE,
                         offset: 0,
                         source: archiveSourceFilter || null,
                     }),
                     invoke<string[]>('list_vault_sources').catch((): string[] => []),
                 ]);
                 if (isStale()) return;
-                setArchiveOffset(pageSize);
+                setArchiveOffset(ARCHIVE_PAGE_SIZE);
                 setArchiveTotal(result.total);
                 setVaultSources(sources);
                 setFeedEntries(result.items.map(adaptBytescapeItem));
                 setCursor(null);
 
             } else if (tab === 'all') {
-                const feedsData = await invoke<GeneratorView[]>("list_saved_feeds").catch((): GeneratorView[] => []);
+                // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
+                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
                 const feedUris = customFeedUris(feedsData);
 
-                const response = await invoke<{ items: FeedEntry[], next_cursor: string | null }>('get_timeline_unified', {
+                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                     tags: [],
                     feedUris,
                     limit: 30,
                     cursor: null,
-                    vaultOffset: 0
+                    vaultOffset: 0,
                 }).catch(() => null);
 
                 if (isStale()) return;
@@ -175,12 +176,8 @@ export function useUnifiedFeed({
 
                 await fetchFollowingList(auth.did);
             }
-
-            if (!background && !isStale()) {
-                setFeedError(null);
-            }
         } catch (e) {
-            console.error("Failed to fetch feed:", e);
+            console.error('Failed to fetch feed:', e);
             if (!background && !isStale()) {
                 setFeedError(typeof e === 'string' ? e : 'Failed to fetch feed data');
             }
@@ -189,18 +186,17 @@ export function useUnifiedFeed({
                 setIsLoading(false);
             }
         }
-    }, [auth, selectedFeedUri, archiveSourceFilter]); // Stable dependencies
+    }, [auth, selectedFeedUri, archiveSourceFilter]);
 
-    // Only trigger full reload on tab change or filter change
+    // Trigger reload on tab/filter change
     useEffect(() => {
         if (!auth) return;
-        // Optimization: don't reset if we're just switching between live tabs and already have content?
-        // No, let's keep it simple but ensure no double-trigger.
         setCursor(null);
         setArchiveOffset(0);
         fetchFeed(activeTab, false);
     }, [auth, activeTab, selectedFeedUri, archiveSourceFilter, fetchFeed]);
 
+    // Auto-refresh for live tabs
     useEffect(() => {
         if (!auth || !autoRefreshFeeds) return;
         if (!LIVE_TABS.includes(activeTab)) return;
@@ -213,15 +209,11 @@ export function useUnifiedFeed({
         return () => clearInterval(interval);
     }, [auth, activeTab, autoRefreshFeeds, fetchFeed]);
 
-    // Background verification of active syndications (Rollback check)
-    // Only verify vault-sourced items (non-AT-URI ids) — timeline items
-    // have share_history but aren't persisted in the vault, so calling
-    // verify_syndications on them always fails with "Item not found".
+    // Background verification of active syndications
     useEffect(() => {
         if (!auth || feedEntries.length === 0) return;
 
         const isVaultId = (id: string) => !id.startsWith('at://');
-
         const unverified = feedEntries.filter(entry =>
             isVaultId(entry.id) &&
             entry.share_history?.some(e => e.active) &&
@@ -233,14 +225,9 @@ export function useUnifiedFeed({
         unverified.forEach(async (entry) => {
             verifiedIdsRef.current.add(entry.id);
             try {
-                console.log(`sync: Calling verify for ${entry.id}`);
                 const changed = await invoke<boolean>('verify_syndications', { itemId: entry.id });
                 if (changed) {
-                    console.log(`sync: Post ${entry.id} updated from verify, refreshing feed...`);
-                    // Trigger a background refresh to pick up the dropped events
                     fetchFeed(activeTab, true);
-                } else {
-                    console.log(`sync: Post ${entry.id} verify returned false (no changes)`);
                 }
             } catch (e) {
                 console.error(`sync: verify failed for ${entry.id}`, e);
@@ -248,41 +235,47 @@ export function useUnifiedFeed({
         });
     }, [feedEntries, auth, activeTab, fetchFeed]);
 
+    // === Load More ===
+
     const handleLoadMore = async () => {
         if (isFetchingMore || !auth) return;
         setIsFetchingMore(true);
+
         try {
             if (activeTab === 'following' && cursor) {
-                const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
+                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
+
             } else if (activeTab === 'subscribed' && cursor) {
-                const tags = followedHashtags;
-                const uris = selectedFeedUri === FEED_FILTER_ALL ? customFeedUris(savedFeeds) : [selectedFeedUri];
-                const [newPosts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                    tags,
+                const uris = selectedFeedUri === FEED_FILTER_ALL
+                    ? customFeedUris(savedFeeds)
+                    : [selectedFeedUri];
+                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                    tags: followedHashtags,
                     feedUris: uris,
                     limit: 30,
-                    cursor
+                    cursor,
                 });
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newPosts.map(adaptBlueskyPost)]));
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
+
             } else if (activeTab === 'you') {
-                const pageSize = ARCHIVE_PAGE_SIZE;
                 const result = await invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
-                    limit: pageSize,
+                    limit: ARCHIVE_PAGE_SIZE,
                     offset: archiveOffset,
                     source: archiveSourceFilter || null,
                 });
                 setFeedEntries(prev => deduplicateFeedEntries([...prev, ...result.items.map(adaptBytescapeItem)]));
-                setArchiveOffset(prev => prev + pageSize);
+                setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
+
             } else if (activeTab === 'all') {
-                const response = await invoke<{ items: FeedEntry[], next_cursor: string | null }>('get_timeline_unified', {
+                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                     tags: [],
                     feedUris: customFeedUris(savedFeeds),
                     limit: 30,
                     cursor,
-                    vaultOffset: archiveOffset
+                    vaultOffset: archiveOffset,
                 }).catch(() => null);
 
                 if (response) {
@@ -292,7 +285,7 @@ export function useUnifiedFeed({
                 }
             }
         } catch (err) {
-            console.error("Load more failed:", err);
+            console.error('Load more failed:', err);
         } finally {
             setIsFetchingMore(false);
         }
@@ -312,6 +305,6 @@ export function useUnifiedFeed({
         vaultSources,
         archiveTotal,
         fetchFeed,
-        handleLoadMore
+        handleLoadMore,
     };
 }

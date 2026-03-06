@@ -4,8 +4,22 @@ use crate::models::{FeedEntry, BytescapeItem, BytescapeType, Audience, audiences
 use crate::connectors::bluesky::BlueskyImportedPost;
 use serde::{Serialize, Deserialize};
 
+// === BlueskyImportedPost → FeedEntry ===
+//
+// Converts the Bluesky-specific intermediate type into the universal FeedEntry
+// container consumed by the frontend.
+//
+// For reposts:
+//   - `author_*` fields refer to the ORIGINAL post's author (whose content is shown).
+//   - `reposted_by` / `reposted_by_handle` identify who reposted it.
+//   - `timestamp` is already set to the repost time by `parse_feed_item`.
+//
+// For quote posts:
+//   - `quoted_post` contains the recursively-converted inner post.
+
 impl From<BlueskyImportedPost> for FeedEntry {
     fn from(post: BlueskyImportedPost) -> Self {
+        // Build parallel media arrays.
         let media_urls = if let Some(ref v) = post.video_url {
             vec![v.clone()]
         } else {
@@ -24,12 +38,11 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
-        let base_id = if !post.uri.is_empty() { post.uri.clone() } else { post.cid.clone() };
         FeedEntry {
-            id: base_id,
+            id: post.uri.clone(),
             cid: Some(post.cid.clone()),
-            viewer_like: post.viewer_like.clone(),
-            viewer_repost: post.viewer_repost.clone(),
+            viewer_like: post.viewer_like,
+            viewer_repost: post.viewer_repost,
             timestamp: post.created_at,
             content: post.text,
             author_did: Some(post.author_did),
@@ -68,6 +81,8 @@ impl From<BlueskyImportedPost> for FeedEntry {
         }
     }
 }
+
+// === BytescapeItem → FeedEntry ===
 
 impl From<BytescapeItem> for FeedEntry {
     fn from(item: BytescapeItem) -> Self {
@@ -144,11 +159,25 @@ impl From<BytescapeItem> for FeedEntry {
     }
 }
 
+// === Unified Feed Response ===
+
 #[derive(Serialize, Deserialize)]
 pub struct UnifiedFeedResponse {
     pub items: Vec<FeedEntry>,
     pub next_cursor: Option<String>,
 }
+
+// === Unified Feed (All Tab) ===
+//
+// Merges three sources into one chronological feed:
+//   1. Live Bluesky timeline (following feed)
+//   2. Custom/subscribed feeds
+//   3. Local vault items
+//
+// Deduplication uses composite keys so that:
+//   - A repost of post X by user Y → key "repost:Y:X" (distinct event)
+//   - The original post X           → key "X"
+//   - Two copies of the same post   → collapsed (same key)
 
 #[tauri::command]
 pub async fn get_timeline_unified(
@@ -159,153 +188,86 @@ pub async fn get_timeline_unified(
     cursor: Option<String>,
     vault_offset: Option<usize>
 ) -> Result<UnifiedFeedResponse, String> {
-    let mut feed = Vec::new();
-    let mut next_cursor = None;
+    let mut feed: Vec<FeedEntry> = Vec::new();
+    let mut next_cursor: Option<String> = None;
 
-    // 1. Fetch live timeline
-    let tl_res = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await;
-    if let Ok((posts, nc)) = tl_res {
+    // ── 1. Live timeline ──
+    if let Ok((posts, nc)) = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await {
         next_cursor = nc;
-        for p in posts {
-            feed.push(FeedEntry::from(p));
-        }
+        feed.extend(posts.into_iter().map(FeedEntry::from));
     }
 
-    // 2. Fetch custom feeds
-    // NOTE: Don't pass the timeline cursor here — it's a plain string from
-    // getTimeline, but get_unified_feed expects a JSON-encoded UnifiedCursor.
-    // Passing the wrong cursor causes silent fallback to page 1 on every
-    // load-more, producing duplicates.
+    // ── 2. Custom / subscribed feeds ──
     if !tags.is_empty() || !feed_uris.is_empty() {
-        let feed_res = crate::commands::import::get_unified_feed(state.clone(), tags, feed_uris, limit.unwrap_or(50), None).await;
-        if let Ok((posts, _)) = feed_res {
-            for p in posts {
-                feed.push(FeedEntry::from(p));
-            }
+        if let Ok((posts, _)) = crate::commands::import::get_unified_feed(
+            state.clone(), tags, feed_uris, limit.unwrap_or(50), None
+        ).await {
+            feed.extend(posts.into_iter().map(FeedEntry::from));
         }
     }
 
-    // 3. Fetch vault items
-    let mut _vault_total = 0;
-    let mut vault_entries = Vec::new();
-    
-    // Explicit block to limit the lifetime of `db_guard` so it's dropped 
-    // before any subsequent await calls (if any), though here it's isolated anyway.
+    // ── 3. Vault items ──
+    let mut vault_entries: Vec<FeedEntry> = Vec::new();
     {
         let db_manager = state.db_manager.clone();
         let db_guard = db_manager.lock().await;
         if let Some(db) = db_guard.as_ref() {
             let offset = vault_offset.unwrap_or(0);
-            let vault_limit = 200; // Pull more vault items to mix properly
             if let Ok(Some((did, _))) = state.keychain.load_session() {
-                if let Ok((items, total)) = db.list_my_items_paged(&did, None, vault_limit, offset).await {
-                    _vault_total = total;
-                    for item in items {
-                        vault_entries.push(FeedEntry::from(item));
-                    }
+                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, offset).await {
+                    vault_entries.extend(items.into_iter().map(FeedEntry::from));
                 }
             }
         }
     }
 
-    // 4. Merge timeline items with vault items (Chain of Custody dedup)
-    let mut syndicated_uris_in_vault = std::collections::HashSet::new();
+    // ── 4. Vault dedup ──
+    // Remove timeline entries that are already represented by a vault item's
+    // chain of custody. Reposts are always kept — they're distinct events.
+    let vault_uris: std::collections::HashSet<String> = vault_entries.iter()
+        .flat_map(|v| {
+            let mut uris = Vec::new();
+            for event in &v.share_history {
+                if event.active { uris.push(event.uri.clone()); }
+            }
+            if let Some(ref url) = v.original_url {
+                if !url.is_empty() { uris.push(url.clone()); }
+            }
+            uris
+        })
+        .collect();
 
-    for v in &mut vault_entries {
-        // Index share_history URIs
-        for event in &mut v.share_history {
-            if event.timestamp == 0 {
-                let matched_timeline_post = feed.iter().find(|e| e.id == event.uri || e.original_url.as_ref() == Some(&event.uri));
-                if let Some(timeline_entry) = matched_timeline_post {
-                    event.timestamp = timeline_entry.timestamp as u64;
-                }
-            }
-            if event.active {
-                syndicated_uris_in_vault.insert(event.uri.clone());
-            }
-        }
-        // Also index vault items by their original_url (AT URI) so imported
-        // Bluesky posts match against live timeline entries even when
-        // share_history is empty (legacy imports).
-        if let Some(ref url) = v.original_url {
-            if !url.is_empty() {
-                syndicated_uris_in_vault.insert(url.clone());
-            }
-        }
-    }
-
-    // Remove timeline entries that are already part of a vault item's chain of custody.
-    // Reposts are distinct feed events — keep them even if the underlying
-    // post is already represented by a vault item.
     feed.retain(|entry| {
-        if entry.reposted_by.is_some() {
-            return true;
-        }
+        if entry.reposted_by.is_some() { return true; }
         let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
-        let dominated = syndicated_uris_in_vault.contains(uri) || syndicated_uris_in_vault.contains(&entry.id);
-        !dominated
+        !vault_uris.contains(uri) && !vault_uris.contains(&entry.id)
     });
 
-    // Bring vault items into the main feed
     feed.extend(vault_entries);
 
-    // Sort by effective timestamp (latest of original or any active syndication)
-    feed.sort_by(|a, b| {
-        let a_max = a
-            .share_history
-            .iter()
-            .filter(|e| e.active)
-            .map(|e| e.timestamp as i64)
-            .max()
-            .unwrap_or(a.timestamp)
-            .max(a.timestamp);
-        let b_max = b
-            .share_history
-            .iter()
-            .filter(|e| e.active)
-            .map(|e| e.timestamp as i64)
-            .max()
-            .unwrap_or(b.timestamp)
-            .max(b.timestamp);
-        b_max.cmp(&a_max)
-            .then_with(|| b.reposted_by.is_some().cmp(&a.reposted_by.is_some()))
-    });
+    // ── 5. Sort by timestamp descending ──
+    feed.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    // Deduplicate using composite keys so reposts are distinct events.
-    // A repost of post X by user Y gets key "repost:<Y>:<id>" while
-    // the original post X gets key "<id>".  This keeps both the
-    // original and the repost in the feed while still collapsing
-    // exact duplicates (e.g. same post from timeline + custom feed).
-    // Vault items use CID as id while timeline items use AT URI,
-    // so we also check original_url as a secondary key.
+    // ── 6. Deduplicate ──
+    // Composite keys ensure reposts are distinct from originals.
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
-        let base_id = if !entry.id.is_empty() { entry.id.clone() } else {
-            entry.original_url.clone().unwrap_or_default()
-        };
-        let alt = entry.original_url.clone().unwrap_or_default();
-
-        // Build composite key: reposts include reposter identity
-        let key = if let Some(ref reposter) = entry.reposted_by {
-            format!("repost:{}:{}", reposter, base_id)
-        } else {
-            base_id.clone()
-        };
-        let alt_key = if !alt.is_empty() {
-            if let Some(ref reposter) = entry.reposted_by {
-                format!("repost:{}:{}", reposter, alt)
-            } else {
-                alt.clone()
+        let uri = if !entry.id.is_empty() { &entry.id } else {
+            match entry.original_url.as_deref() {
+                Some(u) if !u.is_empty() => u,
+                _ => return true, // No identifier — keep it
             }
-        } else {
-            String::new()
         };
 
-        if seen.contains(&key) || (!alt_key.is_empty() && seen.contains(&alt_key)) {
+        let key = match &entry.reposted_by {
+            Some(reposter) => format!("repost:{}:{}", reposter, uri),
+            None => uri.to_string(),
+        };
+
+        if seen.contains(&key) {
             false
         } else {
             seen.insert(key);
-            if !alt_key.is_empty() { seen.insert(alt_key); }
             true
         }
     });

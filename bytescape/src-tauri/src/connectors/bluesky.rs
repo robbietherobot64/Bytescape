@@ -305,21 +305,116 @@ struct DidService {
     service_endpoint: String,
 }
 
-// === Public API ===
+// === Shared Feed Item Parser ===
 
-/// Fetch all of a user's Bluesky posts, downloading embedded images.
-/// This calls the public `getAuthorFeed` API (no auth required for public posts)
-/// and the authenticated PDS for image blobs.
-// === Timeline Import (The "Us" Feed) ===
+/// Parse a single FeedItem from the Bluesky API into a BlueskyImportedPost.
+///
+/// This is the canonical entry point for converting API responses into our
+/// internal representation. All feed-fetching functions (timeline, custom feeds)
+/// route through here to ensure consistent handling of:
+///
+/// - **Regular post**: `item.post` is the post itself. `item.reason` is `None`.
+/// - **Repost**: `item.post` is the **original** post — its author, text, and media
+///   all belong to the original author. `item.reason` is `Repost { by, indexed_at }`
+///   identifying who reposted and when. A repost carries no independent content;
+///   it surfaces the original with attribution.
+/// - **Quote post**: `item.post` is the quoting author's new post. The quoted
+///   content is embedded inside `item.post.embed` as a `record#view`.
+fn parse_feed_item(item: FeedItem) -> BlueskyImportedPost {
+    let post = item.post;
 
+    // 1. Extract repost metadata from the reason field.
+    //    For reposts, `reason.by` identifies who reposted and `reason.indexed_at`
+    //    is when the repost was created (i.e. when it appeared on the timeline).
+    let (reposted_by, reposted_by_handle, repost_ts) = match item.reason {
+        Some(Reason::Repost { by, indexed_at }) => {
+            let ts = chrono::DateTime::parse_from_rfc3339(&indexed_at)
+                .ok()
+                .map(|dt| dt.timestamp());
+            (Some(by.did), Some(by.handle), ts)
+        }
+        _ => (None, None, None),
+    };
+
+    // 2. Compute effective timestamp.
+    //    Reposts use the repost time so they sort chronologically to when the
+    //    user's feed received them, not when the original was authored.
+    let original_ts = post.record.created_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+    let timestamp = repost_ts.unwrap_or(original_ts);
+
+    // 3. Text content (empty string for media-only posts).
+    let text = post.record.text.unwrap_or_default();
+
+    // 4. Extract all embed types from the rendered view.
+    let mut image_urls = Vec::new();
+    let mut video_url = None;
+    let mut video_thumbnail = None;
+    let mut external_url = None;
+    let mut external_title = None;
+    let mut external_description = None;
+    let mut external_thumb = None;
+    let mut quoted_post = None;
+
+    if let Some(ref embed) = post.embed {
+        extract_image_urls_from_view(embed, &mut image_urls);
+        extract_video_from_view(embed, &mut video_url, &mut video_thumbnail);
+        extract_external_from_view(
+            embed,
+            &mut external_url,
+            &mut external_title,
+            &mut external_description,
+            &mut external_thumb,
+        );
+        quoted_post = extract_quote_from_view(embed);
+    }
+
+    // 5. Viewer state — has the authenticated user liked/reposted this post?
+    let viewer_like = post.viewer.as_ref().and_then(|v| v.like.clone());
+    let viewer_repost = post.viewer.as_ref().and_then(|v| v.repost.clone());
+
+    BlueskyImportedPost {
+        uri: post.uri,
+        cid: post.cid,
+        text,
+        created_at: timestamp,
+        image_urls,
+        image_local_paths: Vec::new(),
+        author_did: post.author.did,
+        author_handle: post.author.handle,
+        author_avatar: post.author.avatar,
+        reply_count: post.reply_count,
+        repost_count: post.repost_count,
+        like_count: post.like_count,
+        video_url,
+        video_thumbnail,
+        external_url,
+        external_title,
+        external_description,
+        external_thumb,
+        reposted_by,
+        reposted_by_handle,
+        quoted_post,
+        viewer_like,
+        viewer_repost,
+    }
+}
+
+// === Timeline Import (Following Feed) ===
+
+/// Fetch the authenticated user's home timeline (getTimeline).
+/// Each FeedItem is parsed through `parse_feed_item` which handles
+/// regular posts, reposts, and quote posts uniformly.
 pub async fn import_bluesky_timeline(
     access_jwt: &str,
-    media_dir: PathBuf,
+    _media_dir: PathBuf,
     app_handle: &AppHandle,
     limit: Option<u8>,
     cursor: Option<String>,
-    sync_manager: Option<Arc<SyncManager>>,
-    download_media: bool,
+    _sync_manager: Option<Arc<SyncManager>>,
+    _download_media: bool,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
     let client = Client::new();
     let token = access_jwt.trim();
@@ -362,92 +457,22 @@ pub async fn import_bluesky_timeline(
         }
     })?;
     
-    let mut imported_posts = Vec::new();
+    // Parse every FeedItem through the canonical parser.
+    let posts: Vec<BlueskyImportedPost> = feed_res
+        .feed
+        .into_iter()
+        .map(parse_feed_item)
+        .collect();
 
-    for item in feed_res.feed {
-        // Skip if not a post record (e.g. might be empty or wrong type)
-        // For timeline, items are FeedViewPost, which contain 'post'. 
-        // Our types match sufficiently (FeedItem has 'post').
-        
-        // Extract repost reason before moving post.
-        // For reposts, use `indexed_at` (when the repost happened) as the
-        // timeline timestamp so the entry sorts chronologically to when it
-        // appeared on the user's feed, not when the original was published.
-        let mut reposted_by = None;
-        let mut reposted_by_handle = None;
-        let mut repost_indexed_at: Option<String> = None;
-        if let Some(Reason::Repost { ref by, ref indexed_at, .. }) = item.reason {
-            reposted_by = Some(by.did.clone());
-            reposted_by_handle = Some(by.handle.clone());
-            repost_indexed_at = Some(indexed_at.clone());
-        }
+    let _ = app_handle.emit("import-progress", ImportProgress {
+        source: "bluesky".to_string(),
+        stage: "timeline".to_string(),
+        posts_imported: posts.len(),
+        photos_downloaded: 0,
+        current_item: format!("Loaded {} timeline posts", posts.len()),
+    });
 
-        let post = item.post;
-        
-        let text = post.record.text.unwrap_or_default();
-        let created_at = post.record.created_at.unwrap_or_default();
-
-        // For reposts, prefer the repost's indexed_at over the original's created_at
-        let effective_timestamp = repost_indexed_at.as_deref().unwrap_or(&created_at);
-
-        // For timeline browsing, avoid local downloads by default.
-        let (local_paths, remote_urls) = if download_media {
-            download_media_from_embed_with_sync(&client, &post.embed, &media_dir, sync_manager.clone()).await
-        } else {
-            let mut image_urls: Vec<String> = Vec::new();
-            if let Some(ref e) = post.embed {
-                extract_image_urls_from_view(e, &mut image_urls);
-            }
-            (Vec::new(), image_urls)
-        };
-
-        let mut new_post = BlueskyImportedPost {
-            uri: post.uri,
-            cid: post.cid,
-            author_did: post.author.did,
-            author_handle: post.author.handle,
-            author_avatar: post.author.avatar,
-            text,
-            created_at: chrono::DateTime::parse_from_rfc3339(effective_timestamp)
-                .map(|dt| dt.timestamp())
-                .unwrap_or(0),
-            image_urls: remote_urls,
-            image_local_paths: local_paths,
-            like_count: post.like_count,
-            reply_count: post.reply_count,
-            repost_count: post.repost_count,
-            video_url: None, 
-            video_thumbnail: None,
-            external_url: None,
-            external_title: None,
-            external_description: None,
-            external_thumb: None,
-            reposted_by,
-            reposted_by_handle,
-            quoted_post: None,
-            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
-            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
-        };
-
-        if let Some(ref embed) = post.embed {
-            extract_video_from_view(embed, &mut new_post.video_url, &mut new_post.video_thumbnail);
-            extract_external_from_view(embed, &mut new_post.external_url, &mut new_post.external_title, &mut new_post.external_description, &mut new_post.external_thumb);
-            new_post.quoted_post = extract_quote_from_view(embed);
-        }
-
-        imported_posts.push(new_post);
-
-        // Emit progress for every item to keep UI lively
-        let _ = app_handle.emit("import-progress", ImportProgress {
-            source: "bluesky".to_string(),
-            stage: "timeline".to_string(),
-            posts_imported: imported_posts.len(),
-            photos_downloaded: 0, // Simplified for now
-            current_item: "Processing timeline...".to_string(),
-        });
-    }
-
-    Ok((imported_posts, feed_res.cursor))
+    Ok((posts, feed_res.cursor))
 }
 
 pub async fn import_bluesky_feed(
@@ -1198,12 +1223,7 @@ pub async fn get_custom_feed(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to create client: {}", e))?;
-    println!("bluesky: get_custom_feed uri='{}' limit={}", feed_uri, limit);
-    let is_following_feed = feed_uri.contains("app.bsky.feed.generator/following");
-    if is_following_feed {
-        println!("bluesky: Detected standard 'Following' feed URI: {}", feed_uri);
-    }
-    
+
     let encoded_feed = urlencoding::encode(feed_uri);
     let mut url = format!("{}/app.bsky.feed.getFeed?feed={}&limit={}", PUBLIC_XRPC, encoded_feed, limit);
     if let Some(c) = cursor {
@@ -1223,68 +1243,12 @@ pub async fn get_custom_feed(
     let feed_response: AuthorFeedResponse = response.json().await
         .map_err(|e| format!("Parse custom feed failed: {}", e))?;
 
-    let mut posts: Vec<BlueskyImportedPost> = Vec::new();
-    for item in feed_response.feed {
-        // Extract repost reason BEFORE consuming item.post.
-        // For reposts, use indexed_at as the timeline timestamp.
-        let mut reposted_by = None;
-        let mut reposted_by_handle = None;
-        let mut repost_indexed_at: Option<i64> = None;
-        if let Some(Reason::Repost { ref by, ref indexed_at, .. }) = item.reason {
-            reposted_by = Some(by.did.clone());
-            reposted_by_handle = Some(by.handle.clone());
-            repost_indexed_at = chrono::DateTime::parse_from_rfc3339(indexed_at)
-                .ok().map(|dt| dt.timestamp());
-        }
-
-        let post = item.post;
-        let text = post.record.text.unwrap_or_default();
-        let created_at = post.record.created_at.as_ref()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.timestamp())
-            .unwrap_or(0);
-
-        // For reposts, prefer the repost time over the original's creation time
-        let effective_timestamp = repost_indexed_at.unwrap_or(created_at);
-
-        let mut image_urls: Vec<String> = Vec::new();
-        if let Some(ref embed) = post.embed {
-            extract_image_urls_from_view(embed, &mut image_urls);
-        }
-
-        let mut new_post = BlueskyImportedPost {
-            uri: post.uri,
-            cid: post.cid,
-            text,
-            created_at: effective_timestamp,
-            image_urls,
-            image_local_paths: Vec::new(),
-            author_did: post.author.did,
-            author_handle: post.author.handle,
-            author_avatar: post.author.avatar,
-            reply_count: post.reply_count,
-            repost_count: post.repost_count,
-            like_count: post.like_count,
-            video_url: None,
-            video_thumbnail: None,
-            external_url: None,
-            external_title: None,
-            external_description: None,
-            external_thumb: None,
-            reposted_by,
-            reposted_by_handle,
-            quoted_post: None,
-            viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
-            viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
-        };
-
-        if let Some(ref embed) = post.embed {
-            extract_video_from_view(embed, &mut new_post.video_url, &mut new_post.video_thumbnail);
-            extract_external_from_view(embed, &mut new_post.external_url, &mut new_post.external_title, &mut new_post.external_description, &mut new_post.external_thumb);
-        }
-
-        posts.push(new_post);
-    }
+    // Parse every FeedItem through the canonical parser.
+    let posts: Vec<BlueskyImportedPost> = feed_response
+        .feed
+        .into_iter()
+        .map(parse_feed_item)
+        .collect();
 
     Ok((posts, feed_response.cursor))
 }

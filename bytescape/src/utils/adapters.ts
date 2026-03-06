@@ -1,36 +1,26 @@
 import { BlueskyPost, BytescapeItem, FeedEntry } from '../types';
 import { inferContentKind, sanitizeVaultContent } from './content';
 
-/**
- * Deduplicate feed entries by both `id` and `original_url`.
- *
- * Vault items use CID as their `id` while timeline items use the AT URI,
- * so a naive Set<id> check misses cross-format duplicates.  This helper
- * indexes every entry by *both* its `id` and `original_url` so that any
- * collision on either key causes the later duplicate to be dropped.
- *
- * Reposts are treated as distinct feed events: a repost of post X by
- * user Y uses a composite key (`repost:<did>:<uri>`) so it isn't
- * collapsed with the original post X.
- *
- * When two entries collide, the one that appears first in the array wins.
- * Callers should pre-sort if a particular ordering preference matters.
- */
+// === Feed Deduplication ===
+//
+// Composite-key dedup that treats reposts as distinct feed events.
+//
+//   Original post X       → key "X"          (the post's AT URI)
+//   Repost of X by user Y → key "repost:Y:X" (distinct from X)
+//   Repost of X by user Z → key "repost:Z:X" (distinct from Y's repost)
+//   Duplicate of X        → collapsed         (same key as first X)
+//
+// When two entries collide, the one that appears first wins.
+// Callers should pre-sort if ordering matters.
+
 export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     if (entries.length === 0) return entries;
 
-    // Deduplicate using composite keys so reposts are distinct events.
-    // A repost of post X by user Y gets key "repost:<Y>:<uri>" while
-    // the original post X gets key "<uri>".  This means:
-    //  - Original + repost of same post both survive (different keys)
-    //  - Two copies of the same repost collapse (same composite key)
-    //  - Two copies of the same original collapse (same raw URI key)
     const seen = new Set<string>();
     return entries.filter(entry => {
         const uri = entry.original_url || entry.id;
         if (!uri) return true;
 
-        // Build a composite key: reposts include the reposter's identity
         const key = entry.reposted_by
             ? `repost:${entry.reposted_by}:${uri}`
             : uri;
@@ -41,25 +31,24 @@ export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     });
 }
 
-function normalizeBlobRef(value: string): string {
-    const v = (value || '').trim();
-    if (!v) return v;
-
-    if (v.startsWith('blob:')) return v;
-    if (v.startsWith('http://') || v.startsWith('https://')) return v;
-    if (v.startsWith('/') || v.startsWith('media/') || v.includes('/') || v.includes('\\')) return v;
-
-    // Likely a raw hash token.
-    return `blob:${v}`;
-}
+// === BlueskyPost → FeedEntry ===
+//
+// Converts the Rust-serialized BlueskyImportedPost (received as BlueskyPost
+// on the TypeScript side) into the universal FeedEntry interface.
+//
+// For reposts:
+//   - author_* fields point to the ORIGINAL post's author
+//   - reposted_by / reposted_by_handle identify the reposter
+//   - timestamp is already the repost time (set by parse_feed_item in Rust)
+//
+// For quote posts:
+//   - quoted_post is recursively converted
 
 export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
-    const mediaUrls = post.video_url ? [post.video_url] : post.image_urls || [];
-
-    // If video_url is present, we know it's a video. Otherwise, image_urls are images.
-    const media_kinds = post.video_url
+    const mediaUrls = post.video_url ? [post.video_url] : (post.image_urls || []);
+    const mediaKinds = post.video_url
         ? ['video' as const]
-        : (post.image_urls || []).map(_ => 'image' as const);
+        : (post.image_urls || []).map(() => 'image' as const);
 
     return {
         id: post.uri || post.cid,
@@ -73,7 +62,7 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
 
         media_urls: mediaUrls,
         media_thumbnails: post.video_thumbnail ? [post.video_thumbnail] : [],
-        media_kinds,
+        media_kinds: mediaKinds,
 
         link_url: post.external_url,
         link_title: post.external_title,
@@ -97,11 +86,23 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
             platform: 'bluesky',
             uri: post.uri,
             timestamp: post.created_at || 0,
-            active: true
+            active: true,
         }] : [],
         original_url: post.uri,
     };
 }
+
+// === Blob Reference Normalizer ===
+
+function normalizeBlobRef(value: string): string {
+    const v = (value || '').trim();
+    if (!v) return v;
+    if (v.startsWith('blob:') || v.startsWith('http://') || v.startsWith('https://')) return v;
+    if (v.startsWith('/') || v.includes('/') || v.includes('\\')) return v;
+    return `blob:${v}`;
+}
+
+// === BytescapeItem → FeedEntry ===
 
 export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
     const { text, link } = sanitizeVaultContent(item.content || '');
