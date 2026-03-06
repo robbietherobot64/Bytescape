@@ -342,6 +342,8 @@ impl DbManager {
             
             let is_mine = if item.is_liked {
                 true
+            } else if item.reposted_by_did.as_deref() == Some(owner_did) {
+                true
             } else {
                 match &item.author_did {
                     Some(did) => did == owner_did,

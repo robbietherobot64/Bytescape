@@ -178,5 +178,8 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         title: item.title,
         original_url: item.url,
         syndicated_uri: item.syndicated_uri,
+
+        // Repost metadata — vault items with reposted_by_did are the user's own reposts
+        viewer_repost: item.reposted_by_did ? 'repost' : undefined,
     };
 }

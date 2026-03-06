@@ -301,6 +301,12 @@ pub struct BytescapeItem {
     // New Event Sourced History Log
     #[serde(default)]
     pub share_history: Vec<SyndicationEvent>,
+
+    // Repost metadata: set when this vault item is a repost by the owner
+    #[serde(default)]
+    pub reposted_by_did: Option<String>,
+    #[serde(default)]
+    pub reposted_by_handle: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

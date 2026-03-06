@@ -188,6 +188,9 @@ export interface BytescapeItem {
     syndicated_uri?: string | null;
     audiences?: Audience[];
     share_history?: SyndicationEvent[];
+    // Repost metadata
+    reposted_by_did?: string;
+    reposted_by_handle?: string;
 }
 
 export interface VaultStats {

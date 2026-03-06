@@ -153,6 +153,8 @@ pub async fn publish_post_v2(
                     a
                 },
                 share_history: Vec::new(),
+                reposted_by_did: None,
+                reposted_by_handle: None,
             };
             
             if let Err(e) = db.save_item(&item).await {

@@ -574,19 +574,47 @@ pub async fn import_bluesky_feed(
         for item in &feed_response.feed {
             let post = &item.post;
 
-            // Skip reposts (only import user's own posts)
-            if post.author.did != did {
-                println!("bluesky: Skipping post from {} (owner of feed is {})", post.author.did, did);
+            // Determine if this is a repost by the user
+            let is_users_repost = post.author.did != did && matches!(
+                &item.reason,
+                Some(Reason::Repost { ref by, .. }) if by.did == did
+            );
+
+            // Skip posts not authored or reposted by this user
+            if post.author.did != did && !is_users_repost {
+                println!("bluesky: Skipping post from {} (not authored or reposted by {})", post.author.did, did);
                 continue;
             }
 
+            // Extract repost metadata (who reposted + when)
+            let (repost_by_did, repost_by_handle, repost_timestamp) = if is_users_repost {
+                match &item.reason {
+                    Some(Reason::Repost { by, indexed_at }) => {
+                        let ts = chrono::DateTime::parse_from_rfc3339(indexed_at)
+                            .ok()
+                            .map(|dt| dt.timestamp());
+                        (Some(by.did.clone()), Some(by.handle.clone()), ts)
+                    }
+                    _ => (None, None, None),
+                }
+            } else {
+                (None, None, None)
+            };
+
+            // Extract reply context (who is this replying to?)
+            let reply_parent_handle = item.reply.as_ref()
+                .and_then(|r| r.parent.as_ref())
+                .and_then(|p| p.author.as_ref())
+                .map(|a| a.handle.clone());
+
             let text = post.record.text.clone().unwrap_or_default();
 
-            // Parse timestamp
-            let created_at = post.record.created_at.as_ref()
+            // Parse timestamp — use repost time for reposts so they sort chronologically
+            let original_created_at = post.record.created_at.as_ref()
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.timestamp())
                 .unwrap_or(0);
+            let created_at = repost_timestamp.unwrap_or(original_created_at);
 
             // Extract image URLs from the post's view embed
             let mut image_urls: Vec<String> = Vec::new();
@@ -648,9 +676,9 @@ pub async fn import_bluesky_feed(
                 external_title: None,
                 external_description: None,
                 external_thumb: None,
-                reposted_by: None,
-                reposted_by_handle: None,
-                reply_parent_handle: None,
+                reposted_by: repost_by_did.clone(),
+                reposted_by_handle: repost_by_handle.clone(),
+                reply_parent_handle,
                 quoted_post: None,
                 viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
                 viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
