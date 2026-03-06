@@ -302,12 +302,22 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
         // The count state isn't tracked separately yet, but we could add it
     };
 
+    // Determine repost banner text:
+    //   1. If reason-based repost → "{handle} reposted"
+    //   2. If viewer has reposted (no reason) → "You reposted"
+    const isRepost = !isQuote && !!(entry.reposted_by_handle || entry.viewer_repost);
+    const repostBannerText = entry.reposted_by_handle
+        ? `${entry.reposted_by_handle} reposted`
+        : (entry.viewer_repost ? 'You reposted' : null);
+
     return (
-        <div className={`feed-entry-card ${isQuote ? 'is-quote' : ''} ${entry.reposted_by_handle && !isQuote ? 'is-repost' : ''}`}>
+        <div 
+            className={`feed-entry-card ${isQuote ? 'is-quote' : ''} ${isRepost ? 'is-repost' : ''}`}
+        >
             {/* Repost Banner */}
-            {entry.reposted_by_handle && !isQuote && (
+            {isRepost && repostBannerText && (
                 <div className="repost-banner">
-                    <RepostIcon /> {entry.reposted_by_handle} reposted
+                    <RepostIcon /> {repostBannerText}
                 </div>
             )}
 

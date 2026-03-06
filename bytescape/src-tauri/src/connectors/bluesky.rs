@@ -483,7 +483,7 @@ pub async fn import_bluesky_timeline(
             last_error
         }
     })?;
-    
+
     // Parse every FeedItem through the canonical parser.
     let posts: Vec<BlueskyImportedPost> = feed_res
         .feed
