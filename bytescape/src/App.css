@@ -683,21 +683,23 @@ a:hover {
 .repost-banner {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    font-size: 10px;
-    color: var(--text-muted);
-    font-weight: normal;
-    background: #f0ece0;
-    border-bottom: 1px solid #ddd;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--accent-teal);
+    font-weight: 600;
+    background: linear-gradient(90deg, #e0f0f0 0%, #f0ece0 100%);
+    border-bottom: 2px solid var(--accent-teal);
     font-family: var(--font-sans);
+    letter-spacing: 0.02em;
 }
 
 .repost-banner svg {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
-    opacity: 0.6;
+    opacity: 0.8;
+    color: var(--accent-teal);
 }
 
 /* Card Header — forum post header */

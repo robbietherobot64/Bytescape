@@ -438,7 +438,11 @@ pub async fn import_bluesky_timeline(
             .map_err(|e| e.to_string())?;
 
         if resp.status().is_success() {
-            let parsed: AuthorFeedResponse = resp.json().await.map_err(|e| e.to_string())?;
+            // Capture raw text so we can inspect the API response before serde parsing
+            let body_text = resp.text().await.map_err(|e| e.to_string())?;
+
+            let parsed: AuthorFeedResponse = serde_json::from_str(&body_text)
+                .map_err(|e| format!("Failed to parse timeline JSON: {}", e))?;
             feed_res = Some(parsed);
             break;
         }

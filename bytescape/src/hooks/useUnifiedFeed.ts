@@ -98,7 +98,11 @@ export function useUnifiedFeed({
                 // ── Following tab: Bluesky home timeline ──
                 const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 50 });
                 if (isStale()) return;
-                setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
+
+                const adapted = posts.map(adaptBlueskyPost);
+                const deduped = deduplicateFeedEntries(adapted);
+
+                setFeedEntries(deduped);
                 setCursor(nextCursor);
                 await fetchFollowingList(auth.did);
 
@@ -166,7 +170,9 @@ export function useUnifiedFeed({
                 setSavedFeeds(feedsData);
 
                 if (response) {
-                    setFeedEntries(deduplicateFeedEntries(response.items));
+                    const deduped = deduplicateFeedEntries(response.items);
+
+                    setFeedEntries(deduped);
                     setCursor(response.next_cursor);
                     setArchiveOffset(200);
                 } else {
