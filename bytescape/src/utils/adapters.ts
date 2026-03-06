@@ -75,6 +75,7 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
 
         reposted_by: post.reposted_by,
         reposted_by_handle: post.reposted_by_handle,
+        reply_parent_handle: post.reply_parent_handle,
         quoted_post: post.quoted_post ? adaptBlueskyPost(post.quoted_post) : undefined,
 
         viewer_like: post.viewer_like,

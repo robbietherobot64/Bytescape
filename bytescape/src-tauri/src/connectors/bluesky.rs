@@ -66,6 +66,20 @@ struct FeedItem {
     post: FeedPost,
     #[serde(default)]
     reason: Option<Reason>,
+    #[serde(default)]
+    reply: Option<FeedReplyRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeedReplyRef {
+    #[serde(default)]
+    parent: Option<FeedReplyPost>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeedReplyPost {
+    #[serde(default)]
+    author: Option<FeedAuthor>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +246,8 @@ pub struct BlueskyImportedPost {
     // Repost info
     pub reposted_by: Option<String>, 
     pub reposted_by_handle: Option<String>,
+    // Reply context
+    pub reply_parent_handle: Option<String>,
     // Quoted content
     pub quoted_post: Option<Box<BlueskyImportedPost>>,
     // Viewer state (has current user liked/reposted)
@@ -375,6 +391,12 @@ fn parse_feed_item(item: FeedItem) -> BlueskyImportedPost {
     let viewer_like = post.viewer.as_ref().and_then(|v| v.like.clone());
     let viewer_repost = post.viewer.as_ref().and_then(|v| v.repost.clone());
 
+    // 6. Reply context — who is this post replying to?
+    let reply_parent_handle = item.reply
+        .and_then(|r| r.parent)
+        .and_then(|p| p.author)
+        .map(|a| a.handle);
+
     BlueskyImportedPost {
         uri: post.uri,
         cid: post.cid,
@@ -396,6 +418,7 @@ fn parse_feed_item(item: FeedItem) -> BlueskyImportedPost {
         external_thumb,
         reposted_by,
         reposted_by_handle,
+        reply_parent_handle,
         quoted_post,
         viewer_like,
         viewer_repost,
@@ -627,6 +650,7 @@ pub async fn import_bluesky_feed(
                 external_thumb: None,
                 reposted_by: None,
                 reposted_by_handle: None,
+                reply_parent_handle: None,
                 quoted_post: None,
                 viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
                 viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
@@ -855,6 +879,7 @@ fn extract_quote_from_view(embed: &serde_json::Value) -> Option<Box<BlueskyImpor
                     external_thumb: None,
                     reposted_by: None,
                     reposted_by_handle: None,
+                    reply_parent_handle: None,
                     quoted_post: None,
                     viewer_like: None,
                     viewer_repost: None,
@@ -1014,6 +1039,7 @@ pub async fn search_posts(
             external_thumb,
             reposted_by: None,
             reposted_by_handle: None,
+            reply_parent_handle: None,
             quoted_post,
             viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
             viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
@@ -1323,6 +1349,7 @@ pub async fn get_actor_likes(
             external_thumb: None,
             reposted_by: None,
             reposted_by_handle: None,
+            reply_parent_handle: None,
             quoted_post: None,
             viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
             viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),
@@ -1653,6 +1680,7 @@ pub async fn import_bluesky_likes(
                 external_thumb: None,
                 reposted_by: None,
                 reposted_by_handle: None,
+                reply_parent_handle: None,
                 quoted_post: None,
                 viewer_like: post.viewer.as_ref().and_then(|v| v.like.clone()),
                 viewer_repost: post.viewer.as_ref().and_then(|v| v.repost.clone()),

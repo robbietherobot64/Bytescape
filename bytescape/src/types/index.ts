@@ -131,6 +131,7 @@ export interface FeedEntry {
     // Context
     reposted_by?: string;
     reposted_by_handle?: string;
+    reply_parent_handle?: string;
     quoted_post?: FeedEntry;
 
     viewer_like?: string;
@@ -334,6 +335,8 @@ export interface BlueskyPost {
     // Repost info
     reposted_by?: string;
     reposted_by_handle?: string;
+    // Reply context
+    reply_parent_handle?: string;
     // Viewer state
     viewer_like?: string;
     viewer_repost?: string;

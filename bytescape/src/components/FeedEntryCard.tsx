@@ -303,11 +303,18 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
     };
 
     return (
-        <div className={`feed-entry-card ${isQuote ? 'is-quote' : ''}`}>
+        <div className={`feed-entry-card ${isQuote ? 'is-quote' : ''} ${entry.reposted_by_handle && !isQuote ? 'is-repost' : ''}`}>
             {/* Repost Banner */}
             {entry.reposted_by_handle && !isQuote && (
                 <div className="repost-banner">
                     <RepostIcon /> {entry.reposted_by_handle} reposted
+                </div>
+            )}
+
+            {/* Reply Context */}
+            {entry.reply_parent_handle && !isQuote && (
+                <div className="reply-context-chip">
+                    ↩ replying to @{entry.reply_parent_handle}
                 </div>
             )}
 

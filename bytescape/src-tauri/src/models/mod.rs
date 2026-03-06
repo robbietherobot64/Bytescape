@@ -514,6 +514,8 @@ pub struct FeedEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reposted_by_handle: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_parent_handle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quoted_post: Option<Box<FeedEntry>>,
     
     #[serde(default, skip_serializing_if = "Option::is_none")]
