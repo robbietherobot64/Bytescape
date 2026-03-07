@@ -3,6 +3,43 @@ import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 
+/**
+ * Nest owner replies under their parent posts.
+ * If a FeedEntry has a reply_parent_uri that matches another entry's id or original_url,
+ * move it into the parent's owner_replies array instead of showing it standalone.
+ */
+function nestOwnerReplies(entries: FeedEntry[]): FeedEntry[] {
+    // Build a lookup: URI → parent entry index
+    const uriToIndex = new Map<string, number>();
+    for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        // Map by id (CID), original_url (AT-URI), and syndicated_uri
+        if (e.id) uriToIndex.set(e.id, i);
+        if (e.original_url) uriToIndex.set(e.original_url, i);
+        if (e.syndicated_uri) uriToIndex.set(e.syndicated_uri, i);
+    }
+
+    const parentIndices = new Set<number>(); // entries that receive replies
+    const replyIndices = new Set<number>();   // entries that ARE replies (to be removed from top-level)
+
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (!entry.reply_parent_uri) continue;
+        const parentIdx = uriToIndex.get(entry.reply_parent_uri);
+        if (parentIdx === undefined) continue;
+
+        // Found a parent in the same page — nest this reply under it
+        const parent = entries[parentIdx];
+        if (!parent.owner_replies) parent.owner_replies = [];
+        parent.owner_replies.push(entry);
+        parentIndices.add(parentIdx);
+        replyIndices.add(i);
+    }
+
+    // Return entries without the nested replies (they're now inside their parent)
+    return entries.filter((_, i) => !replyIndices.has(i));
+}
+
 export type FeedTab = 'all' | 'following' | 'subscribed' | 'you';
 
 export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed'];
@@ -150,7 +187,7 @@ export function useUnifiedFeed({
                 setArchiveOffset(ARCHIVE_PAGE_SIZE);
                 setArchiveTotal(result.total);
                 setVaultSources(sources);
-                setFeedEntries(result.items.map(adaptBytescapeItem));
+                setFeedEntries(nestOwnerReplies(result.items.map(adaptBytescapeItem)));
                 setCursor(null);
 
             } else if (tab === 'all') {
@@ -272,7 +309,7 @@ export function useUnifiedFeed({
                     offset: archiveOffset,
                     source: archiveSourceFilter || null,
                 });
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...result.items.map(adaptBytescapeItem)]));
+                setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...result.items.map(adaptBytescapeItem)])));
                 setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
 
             } else if (activeTab === 'all') {

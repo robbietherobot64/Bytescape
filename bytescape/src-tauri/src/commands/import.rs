@@ -684,6 +684,8 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             share_history: Vec::new(),
             reposted_by_did: None,
             reposted_by_handle: None,
+            reply_parent_uri: None,
+            reply_parent_handle: None,
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -843,6 +845,8 @@ async fn save_posts(
             }],
             reposted_by_did: post.reposted_by.clone(),
             reposted_by_handle: post.reposted_by_handle.clone(),
+            reply_parent_uri: post.reply_parent_uri.clone(),
+            reply_parent_handle: post.reply_parent_handle.clone(),
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1616,6 +1620,8 @@ pub async fn publish_post(
                 share_history: Vec::new(),
                 reposted_by_did: None,
                 reposted_by_handle: None,
+                reply_parent_uri: None,
+                reply_parent_handle: None,
             };
 
             match db.save_item(&item).await {
@@ -1703,6 +1709,8 @@ pub async fn publish_post(
                                 ],
                                 reposted_by_did: None,
                                 reposted_by_handle: None,
+                                reply_parent_uri: None,
+                                reply_parent_handle: None,
                             };
                             let _ = db.save_item(&item).await;
                         }

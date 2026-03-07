@@ -181,5 +181,9 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
 
         // Repost metadata — vault items with reposted_by_did are the user's own reposts
         viewer_repost: item.reposted_by_did ? 'repost' : undefined,
+
+        // Reply context
+        reply_parent_uri: item.reply_parent_uri ?? undefined,
+        reply_parent_handle: item.reply_parent_handle ?? undefined,
     };
 }

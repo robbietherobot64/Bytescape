@@ -566,6 +566,35 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 </div>
             )}
 
+            {/* Owner Replies – inline comments by you on this post */}
+            {entry.owner_replies && entry.owner_replies.length > 0 && !isQuote && (
+                <div className="owner-replies">
+                    {entry.owner_replies.map(reply => (
+                        <div key={reply.id} className="owner-reply">
+                            <div className="owner-reply-header">
+                                <div className="avatar small">
+                                    {reply.author_avatar ? (
+                                        <img src={reply.author_avatar} alt="" />
+                                    ) : (
+                                        (reply.author_handle || 'Y').charAt(0).toUpperCase()
+                                    )}
+                                </div>
+                                <span className="author-name">{reply.author_handle || 'You'}</span>
+                                <span className="post-time">{formatTimestamp(reply.timestamp)}</span>
+                            </div>
+                            <div className="owner-reply-body">{reply.content}</div>
+                            {reply.media_urls.length > 0 && (
+                                <div className="owner-reply-images">
+                                    {reply.media_urls.map((url, i) => (
+                                        <img key={i} src={resolveMediaPath ? resolveMediaPath(url) : url} alt="" className="owner-reply-img" />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {/* Quote Repost Modal */}
             {quoteModalOpen && createPortal(
                 <QuoteRepostModal

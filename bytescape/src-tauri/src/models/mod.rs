@@ -307,6 +307,12 @@ pub struct BytescapeItem {
     pub reposted_by_did: Option<String>,
     #[serde(default)]
     pub reposted_by_handle: Option<String>,
+
+    // Reply context: set when this vault item is a reply to another post
+    #[serde(default)]
+    pub reply_parent_uri: Option<String>,
+    #[serde(default)]
+    pub reply_parent_handle: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -521,6 +527,8 @@ pub struct FeedEntry {
     pub reposted_by_handle: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_parent_handle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_parent_uri: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quoted_post: Option<Box<FeedEntry>>,
     

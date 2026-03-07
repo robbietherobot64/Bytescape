@@ -132,7 +132,10 @@ export interface FeedEntry {
     reposted_by?: string;
     reposted_by_handle?: string;
     reply_parent_handle?: string;
+    reply_parent_uri?: string;
     quoted_post?: FeedEntry;
+    /** Replies by the owner that target this post, merged from sibling vault items */
+    owner_replies?: FeedEntry[];
 
     viewer_like?: string;
     viewer_repost?: string;
@@ -191,6 +194,9 @@ export interface BytescapeItem {
     // Repost metadata
     reposted_by_did?: string;
     reposted_by_handle?: string;
+    // Reply context
+    reply_parent_uri?: string;
+    reply_parent_handle?: string;
 }
 
 export interface VaultStats {
