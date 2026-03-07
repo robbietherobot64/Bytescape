@@ -119,6 +119,19 @@ function sanitizeDisplayContent(raw: string): string {
 
 /* ─── Component ─── */
 
+/** Resolve the AT-URI for a FeedEntry. Live posts use entry.id (already an AT-URI),
+ *  but vault items store the CID as id and the AT-URI in original_url / syndicated_uri. */
+function resolveAtUri(entry: FeedEntry): string {
+    // AT-URIs start with 'at://'
+    if (entry.id.startsWith('at://')) return entry.id;
+    if (entry.original_url) return entry.original_url;
+    if (entry.syndicated_uri) return entry.syndicated_uri;
+    // Fallback: check share_history for a bluesky URI
+    const bskyEvent = entry.share_history?.find(e => e.platform === 'bluesky' && e.active);
+    if (bskyEvent?.uri) return bskyEvent.uri;
+    return entry.id;
+}
+
 export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
@@ -201,7 +214,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             setReactionEmoji(emoji);
             setLikeCount(c => c + 1);
             try {
-                const result = await invoke<LikeResult>('like_post', { uri: entry.id, cid: getCid() });
+                const result = await invoke<LikeResult>('like_post', { uri: resolveAtUri(entry), cid: getCid() });
                 setLikeUri(result.uri);
             } catch (err) {
                 console.error('Like failed:', err);
@@ -246,7 +259,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             setReposted(true);
             setRepostCount(c => c + 1);
             try {
-                const result = await invoke<{ uri: string; cid: string }>('repost_post', { uri: entry.id, cid: getCid() });
+                const result = await invoke<{ uri: string; cid: string }>('repost_post', { uri: resolveAtUri(entry), cid: getCid() });
                 setRepostUri(result.uri);
             } catch (err) {
                 console.error('Repost failed:', err);
@@ -280,7 +293,8 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
         setThreadLoading(true);
         setThreadOpen(true);
         try {
-            const replies = await invoke<ThreadReply[]>('get_post_thread', { uri: entry.id, depth: 6 });
+            const postUri = resolveAtUri(entry);
+            const replies = await invoke<ThreadReply[]>('get_post_thread', { uri: postUri, depth: 6 });
             setThreadReplies(replies);
         } catch (err) {
             console.error('Failed to load thread:', err);
@@ -516,9 +530,9 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             {/* Inline Reply Compose */}
             {replyOpen && isBluesky && !isQuote && (
                 <ReplyCompose
-                    parentUri={entry.id}
+                    parentUri={resolveAtUri(entry)}
                     parentCid={getCid()}
-                    rootUri={entry.id}
+                    rootUri={resolveAtUri(entry)}
                     rootCid={getCid()}
                     replyToHandle={entry.author_handle || 'unknown'}
                     onReplySent={handleReplySent}
@@ -566,30 +580,17 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 </div>
             )}
 
-            {/* Owner Replies – inline comments by you on this post */}
+            {/* Owner Replies – your comments on this post, rendered as full interactive cards */}
             {entry.owner_replies && entry.owner_replies.length > 0 && !isQuote && (
                 <div className="owner-replies">
                     {entry.owner_replies.map(reply => (
-                        <div key={reply.id} className="owner-reply">
-                            <div className="owner-reply-header">
-                                <div className="avatar small">
-                                    {reply.author_avatar ? (
-                                        <img src={reply.author_avatar} alt="" />
-                                    ) : (
-                                        (reply.author_handle || 'Y').charAt(0).toUpperCase()
-                                    )}
-                                </div>
-                                <span className="author-name">{reply.author_handle || 'You'}</span>
-                                <span className="post-time">{formatTimestamp(reply.timestamp)}</span>
-                            </div>
-                            <div className="owner-reply-body">{reply.content}</div>
-                            {reply.media_urls.length > 0 && (
-                                <div className="owner-reply-images">
-                                    {reply.media_urls.map((url, i) => (
-                                        <img key={i} src={resolveMediaPath ? resolveMediaPath(url) : url} alt="" className="owner-reply-img" />
-                                    ))}
-                                </div>
-                            )}
+                        <div key={reply.id} className="owner-reply-wrapper">
+                            <FeedEntryCard
+                                entry={reply}
+                                resolveMediaPath={resolveMediaPath}
+                                mediaDir={mediaDir}
+                                onEntryUpdated={onEntryUpdated}
+                            />
                         </div>
                     ))}
                 </div>
