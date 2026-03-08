@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo } from '../types';
+import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
@@ -144,10 +144,10 @@ function PeersView() {
     const handleCheckConnectivity = async (nodeId: string) => {
         setPeerStatuses(prev => ({ ...prev, [nodeId]: 'checking' }));
         try {
-            const online = await invoke<boolean>('check_peer_connectivity', { nodeId });
-            setPeerStatuses(prev => ({ ...prev, [nodeId]: online ? 'online' : 'offline' }));
-            if (online) {
-                // Refresh data to pick up updated last_seen
+            const result = await invoke<PeerConnectResult>('check_peer_connectivity', { nodeId });
+            setPeerStatuses(prev => ({ ...prev, [nodeId]: result.online ? 'online' : 'offline' }));
+            if (result.online) {
+                // Refresh data to pick up updated display_name, DID, and last_seen
                 await loadData();
             }
         } catch {
@@ -364,6 +364,11 @@ function PeersView() {
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>
                                         {peer.display_name || truncateId(peer.node_id)}
+                                        {status === 'online' && (
+                                            <span style={{ marginLeft: 8, fontSize: '0.75rem', color: '#50fa7b', fontWeight: 400 }}>
+                                                ● online
+                                            </span>
+                                        )}
                                     </div>
                                     <div style={{
                                         fontSize: '0.75rem',
@@ -375,6 +380,11 @@ function PeersView() {
                                     }}>
                                         {truncateId(peer.node_id, 10)}
                                     </div>
+                                    {peer.did && peer.did !== 'local' && (
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--accent-purple)', marginTop: 1, opacity: 0.8 }}>
+                                            DID: {truncateId(peer.did, 10)}
+                                        </div>
+                                    )}
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
                                         Added {formatAge(peer.added_at)}
                                         {peer.last_seen && ` · Last seen ${formatAge(peer.last_seen)}`}

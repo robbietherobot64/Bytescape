@@ -9,6 +9,7 @@ pub use iroh_blobs::Hash;
 use iroh_gossip::net::Gossip;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::collections::HashMap;
 use bytes::Bytes;
 use uuid::Uuid;
@@ -79,9 +80,14 @@ pub struct VaultFileStats {
 
 pub struct SyncManager {
     endpoint: Endpoint,
-    engine: DocsEngine,
+    engine: Arc<DocsEngine>,
     blobs: iroh_blobs::api::Store,
     gossip: Gossip,
+    /// The FsStore backing blob storage (kept alive for BlobsProtocol).
+    /// The `Store` API handle references internal state owned by FsStore,
+    /// so FsStore must outlive the Store.
+    #[allow(dead_code)]
+    blob_store_fs: iroh_blobs::store::fs::FsStore,
     /// Dedicated namespace for vault file metadata
     vault_namespace: NamespaceId,
 }
@@ -120,6 +126,7 @@ impl SyncManager {
             None,
         ).await.map_err(|e: anyhow::Error| e.to_string())?;
         println!("SyncManager: DocsEngine spawned.");
+        let engine = Arc::new(engine);
 
         // Create or restore the vault namespace
         let vault_ns_path = storage_path.join("vault_namespace_id");
@@ -150,6 +157,7 @@ impl SyncManager {
             engine,
             blobs,
             gossip,
+            blob_store_fs,
             vault_namespace,
         })
     }
@@ -161,6 +169,23 @@ impl SyncManager {
         
         let addr = self.endpoint.addr();
         Ok(DocTicket::new(Capability::Write(namespace_secret), vec![addr]))
+    }
+
+    // --- Accessors for Router registration ---
+
+    /// Get a clone of the `Arc<DocsEngine>` for registering with the protocol Router.
+    pub fn engine_arc(&self) -> Arc<DocsEngine> {
+        self.engine.clone()
+    }
+
+    /// Get a reference to the Gossip instance for Router registration.
+    pub fn gossip(&self) -> &Gossip {
+        &self.gossip
+    }
+
+    /// Get a reference to the endpoint.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
     }
 
     pub async fn join_doc(&self, ticket: DocTicket) -> Result<NamespaceId, String> {

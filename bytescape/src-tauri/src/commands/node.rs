@@ -3,14 +3,14 @@
 //! Commands for initializing the Iroh node and managing P2P sync documents.
 
 use serde::{Deserialize, Serialize};
-use tauri::{State, Emitter, Manager};
-use tokio::sync::Mutex;
+use tauri::{State, Manager};
 use std::sync::Arc;
 
 use iroh::{Endpoint, SecretKey};
+use iroh::protocol::Router;
 use crate::error::BytescapeError;
-use crate::db;
 use crate::sync::{SyncManager, Capability, DocTicket};
+use crate::protocol::{BytescapeProtocol, DocsHandler, PeerProfile, BYTESCAPE_ALPN};
 use crate::AppState;
 
 /// Response containing sync document ticket information
@@ -49,7 +49,6 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
 
     let endpoint = Endpoint::builder()
         .secret_key(secret_key.clone())
-        .alpns(vec![b"bytescape/1.0".to_vec()])
         .address_lookup(iroh::address_lookup::DhtAddressLookup::builder().n0_dns_pkarr_relay())
         .bind()
         .await
@@ -58,111 +57,62 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     let node_id = endpoint.secret_key().public();
     *endpoint_guard = Some(endpoint.clone());
 
-    // Initialize SyncManager
+    // Initialize SyncManager (creates DocsEngine, blobs, gossip)
     let app_data_dir = state.app_handle.path()
         .app_data_dir()
-        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+        .map_err(|e: tauri::Error| BytescapeError::FileSystem(e.to_string()))?;
     let sync_path = app_data_dir.join("sync");
     let sync_manager = Arc::new(
         SyncManager::new(endpoint.clone(), sync_path).await
             .map_err(|e| BytescapeError::Sync(e))?
     );
+
+    // --- Set up protocol Router ---
+    // The Router dispatches incoming connections to the correct protocol handler
+    // based on their ALPN (Application-Layer Protocol Negotiation) identifier.
+
+    // 1. Docs handler: forwards iroh-docs connections to the DocsEngine
+    let docs_handler = DocsHandler::new(sync_manager.engine_arc());
+
+    // 2. Gossip handler: iroh-gossip implements ProtocolHandler natively
+    let gossip = sync_manager.gossip().clone();
+
+    // 3. Blobs handler: wraps the blob store for serving/fetching blobs
+    let blobs_proto = iroh_blobs::BlobsProtocol::new(sync_manager.blobs(), None);
+
+    // 4. Bytescape handler: custom protocol for profile exchange & peer comms
+    let my_username = state.keychain.get_local_username()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_did = state.keychain.get_did()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "local".to_string());
+    let my_profile = PeerProfile {
+        node_id: node_id.to_string(),
+        username: my_username,
+        did: my_did,
+    };
+    let bytescape_handler = BytescapeProtocol::new(
+        my_profile,
+        state.db_manager.clone(),
+        state.app_handle.clone(),
+    );
+
+    // Build and spawn the Router — this starts the accept loop
+    let router = Router::builder(endpoint.clone())
+        .accept(iroh_docs::ALPN, docs_handler)
+        .accept(iroh_gossip::ALPN, gossip)
+        .accept(iroh_blobs::ALPN, blobs_proto)
+        .accept(BYTESCAPE_ALPN, bytescape_handler)
+        .spawn();
+
+    println!("P2P Router: Spawned with 4 protocol handlers (docs, gossip, blobs, bytescape)");
+
+    // Store everything in app state
     *state.sync_manager.lock().await = Some(sync_manager);
-
-    // Spawn background P2P listener
-    let _db_manager_arc = state.db_manager.clone();
-    let _app_handle = state.app_handle.clone();
-
-    /* 
-    // TODO: This loop steals connections from Iroh DocsEngine. 
-    // We need a proper dispatcher or use Iroh's protocol handling differently to support both Chat and Docs.
-    // For now, disabling Chat listener to fix Sync stability.
-    
-    tokio::spawn(async move {
-        while let Some(incoming) = endpoint.accept().await {
-            let db = db_manager_arc.clone();
-            let app = app_handle.clone();
-            tokio::spawn(async move {
-                match incoming.accept() {
-                    Ok(accepting) => {
-                        match accepting.await {
-                            Ok(connection) => {
-                                let alpn = connection.alpn();
-                                if alpn == b"bytescape/1.0" {
-                                    handle_established_connection(connection, db, app).await;
-                                } else {
-                                    // Let DocsEngine handle it?
-                                    // Actually, if we're stealing connections from DocsEngine, this loop is problematic.
-                                    // For now, let's just log it and see if DocsEngine complains.
-                                    // If DocsEngine handles its own loop, we are definitely racing. 
-                                    // But maybe iroh handles this gracefully? I'll check if DocsEngine loop is running.
-                                    // If we accepted it here, DocsEngine MISSED it.
-                                    println!("Received non-chat connection (ALPN: {:?}). DocsEngine might have missed this.", String::from_utf8_lossy(&alpn));
-                                }
-                            }
-                            Err(e) => eprintln!("Connection handshake failed: {}", e),
-                        }
-                    }
-                    Err(e) => eprintln!("Failed to accept incoming connection: {}", e),
-                }
-            });
-        }
-    }); 
-    */
+    *state.router.lock().await = Some(router);
 
     Ok(node_id.to_string())
-}
-
-/// Handle established P2P connections and save received messages
-async fn handle_established_connection(
-    connection: iroh::endpoint::Connection,
-    db: Arc<Mutex<Option<crate::db::DbManager>>>,
-    app: tauri::AppHandle,
-) {
-    let remote_node_id = connection.remote_id();
-    if let Ok((_send, mut recv)) = connection.accept_bi().await {
-        if let Ok(content) = recv.read_to_end(1024 * 1024).await {
-            if let Ok(msg_str) = String::from_utf8(content) {
-                println!("Received P2P message from {}: {}", remote_node_id, msg_str);
-                process_p2p_message(&msg_str, remote_node_id.to_string(), &db, &app).await;
-            }
-        }
-    }
-}
-
-/// Process and save a received P2P message
-async fn process_p2p_message(
-    content: &str,
-    remote_node_id: String,
-    db: &Arc<Mutex<Option<crate::db::DbManager>>>,
-    app: &tauri::AppHandle,
-) {
-    let id = uuid::Uuid::new_v4().to_string();
-    let created_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    
-    let message = db::Message {
-        id: id.clone(),
-        conversation_id: remote_node_id.clone(),
-        sender_did: remote_node_id,
-        content: content.to_string(),
-        created_at,
-        transport_layer: db::TransportLayer::Iroh,
-        synced_with_bsky: false,
-    };
-    
-    let db_guard = db.lock().await;
-    if let Some(db_ref) = db_guard.as_ref() {
-        if let Err(e) = db_ref.save_message(&message).await {
-            eprintln!("Failed to save message: {}", e);
-        }
-    }
-    
-    if let Err(e) = app.emit("new-message", &message) {
-        eprintln!("Failed to emit event: {}", e);
-    }
 }
 
 /// Create a new sync document and return a ticket for sharing.

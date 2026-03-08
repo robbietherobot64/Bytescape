@@ -402,6 +402,19 @@ export interface PeerInfo {
     is_following: boolean;
 }
 
+/** Profile exchanged over the bytescape/1.0 P2P protocol. */
+export interface PeerProfile {
+    node_id: string;
+    username: string;
+    did: string;
+}
+
+/** Result from check_peer_connectivity — includes the remote profile on success. */
+export interface PeerConnectResult {
+    online: boolean;
+    profile: PeerProfile | null;
+}
+
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
 export interface LikeResult {

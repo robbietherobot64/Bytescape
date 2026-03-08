@@ -3,10 +3,11 @@
 //! Commands for managing the local peer directory — adding, listing,
 //! removing, and checking the connectivity of known P2P peers.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::peers::PeerInfo;
+use crate::protocol::{PeerProfile, BYTESCAPE_ALPN};
 use crate::AppState;
 
 /// Summary of the local user's P2P identity, returned to the frontend.
@@ -127,16 +128,25 @@ pub async fn remove_peer(node_id: String, state: State<'_, AppState>) -> Result<
     db.remove_peer(&node_id).await
 }
 
-/// Attempt to connect to a peer and report whether they're reachable.
+/// Result of a peer connectivity check, including the remote peer's profile
+/// if the connection succeeded.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PeerConnectResult {
+    pub online: bool,
+    pub profile: Option<PeerProfile>,
+}
+
+/// Attempt to connect to a peer, exchange profiles, and report connectivity.
 ///
 /// Uses Iroh's address lookup (mDNS for LAN, Pkarr DHT for internet)
-/// to resolve the peer and establish a QUIC connection with a 5-second
-/// timeout. On success, updates the peer's `last_seen` timestamp.
+/// to resolve the peer and establish a QUIC connection. On success,
+/// sends a PROFILE_REQUEST and parses the response, updating the peer's
+/// display name, DID, and last_seen timestamp in the local database.
 #[tauri::command]
 pub async fn check_peer_connectivity(
     node_id: String,
     state: State<'_, AppState>,
-) -> Result<bool, String> {
+) -> Result<PeerConnectResult, String> {
     let node_id_parsed: iroh::PublicKey = node_id
         .parse()
         .map_err(|e| format!("Invalid Node ID: {}", e))?;
@@ -152,29 +162,47 @@ pub async fn check_peer_connectivity(
 
     let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
 
-    let is_online = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        endpoint.connect(endpoint_addr, b"bytescape/1.0"),
-    )
-    .await
-    {
-        Ok(Ok(_connection)) => {
-            // Connection succeeded — peer is reachable.
-            // The connection is dropped here, which closes it cleanly.
-            true
+    // Try to connect and exchange profiles
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async {
+            let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
+                .map_err(|e| format!("Connection failed: {}", e))?;
+            let (mut send, mut recv) = connection.open_bi().await
+                .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+            // Send PROFILE_REQUEST
+            send.write_all(b"PROFILE_REQUEST").await
+                .map_err(|e| format!("Failed to send request: {}", e))?;
+            let _ = send.finish();
+
+            // Read response (max 4 KiB)
+            let response = recv.read_to_end(4096).await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            // Parse as PeerProfile
+            let profile: PeerProfile = serde_json::from_slice(&response)
+                .map_err(|e| format!("Failed to parse profile: {}", e))?;
+
+            Ok::<PeerProfile, String>(profile)
+        }
+    ).await {
+        Ok(Ok(profile)) => {
+            println!("Peer {} connected — username: {}", &node_id[..8.min(node_id.len())], profile.username);
+            PeerConnectResult { online: true, profile: Some(profile) }
         }
         Ok(Err(e)) => {
             println!("Peer {} unreachable: {}", &node_id[..8.min(node_id.len())], e);
-            false
+            PeerConnectResult { online: false, profile: None }
         }
         Err(_) => {
             println!("Peer {} connectivity check timed out", &node_id[..8.min(node_id.len())]);
-            false
+            PeerConnectResult { online: false, profile: None }
         }
     };
 
-    // Update last_seen if online
-    if is_online {
+    // Update peer in database with profile info and last_seen
+    if result.online {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -184,10 +212,19 @@ pub async fn check_peer_connectivity(
         if let Some(db) = db_guard.as_ref() {
             if let Ok(Some(mut peer)) = db.get_peer(&node_id).await {
                 peer.last_seen = Some(now);
+                // Update display name and DID from the remote profile
+                if let Some(ref profile) = result.profile {
+                    if !profile.username.is_empty() && profile.username != "Anonymous" {
+                        peer.display_name = Some(profile.username.clone());
+                    }
+                    if !profile.did.is_empty() && profile.did != "local" {
+                        peer.did = Some(profile.did.clone());
+                    }
+                }
                 let _ = db.save_peer(&peer).await;
             }
         }
     }
 
-    Ok(is_online)
+    Ok(result)
 }

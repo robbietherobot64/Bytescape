@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 use iroh::Endpoint;
+use iroh::protocol::Router;
 use std::sync::Arc;
 
 pub mod error;
@@ -17,6 +18,7 @@ pub mod connectors;
 pub mod commands;
 pub mod keychain_encrypted;
 pub mod media_server;
+pub mod protocol;
 
 mod auth;
 use auth::AuthManager;
@@ -30,6 +32,7 @@ use traffic::TrafficController;
 pub struct AppState {
     pub app_handle: AppHandle,
     pub endpoint: Mutex<Option<Endpoint>>,
+    pub router: Mutex<Option<Router>>,
     pub keychain: keychain_encrypted::EncryptedKeychain,
     pub auth_manager: AuthManager,
     pub db_manager: Arc<Mutex<Option<db::DbManager>>>,
@@ -262,6 +265,7 @@ pub fn run() {
             let state = AppState {
                 app_handle: app_handle.clone(),
                 endpoint: Mutex::new(None),
+                router: Mutex::new(None),
                 keychain,
                 auth_manager,
                 db_manager,
