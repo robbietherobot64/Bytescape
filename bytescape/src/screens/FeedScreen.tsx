@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
@@ -24,7 +24,7 @@ interface FeedScreenProps {
 export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
-    const [autoRefreshFeeds] = useState(false);
+    const autoRefreshFeeds = true;
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
@@ -32,6 +32,13 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     const [postStatus, setPostStatus] = useState<string>('');
     const [mediaDir, setMediaDir] = useState<string>('');
 
+    // === Pull-to-Refresh State ===
+    const [pullDistance, setPullDistance] = useState(0);
+    const [isPulling, setIsPulling] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const pullStartY = useRef(0);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const PULL_THRESHOLD = 80;
     // === Data Hook ===
     const {
         feedEntries,
@@ -146,6 +153,48 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
         return src;
     };
 
+    // === Pull-to-Refresh Handlers ===
+    const handlePointerDown = useCallback((e: React.PointerEvent) => {
+        const container = scrollContainerRef.current;
+        if (!container || container.scrollTop > 0 || isRefreshing) return;
+        pullStartY.current = e.clientY;
+        setIsPulling(true);
+    }, [isRefreshing]);
+
+    const handlePointerMove = useCallback((e: React.PointerEvent) => {
+        if (!isPulling || isRefreshing) return;
+        const container = scrollContainerRef.current;
+        if (!container || container.scrollTop > 0) {
+            setIsPulling(false);
+            setPullDistance(0);
+            return;
+        }
+        const delta = e.clientY - pullStartY.current;
+        if (delta > 0) {
+            // Rubber-band: diminishing returns as you pull further
+            const dampened = Math.min(delta * 0.45, 140);
+            setPullDistance(dampened);
+            e.preventDefault();
+        }
+    }, [isPulling, isRefreshing]);
+
+    const handlePointerUp = useCallback(async () => {
+        if (!isPulling) return;
+        setIsPulling(false);
+        if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
+            setIsRefreshing(true);
+            setPullDistance(PULL_THRESHOLD); // Hold at threshold while refreshing
+            try {
+                await fetchFeed(activeTab, false);
+            } finally {
+                setIsRefreshing(false);
+                setPullDistance(0);
+            }
+        } else {
+            setPullDistance(0);
+        }
+    }, [isPulling, pullDistance, isRefreshing, fetchFeed, activeTab]);
+
     return (
         <div className="feed-layout">
             <div className="feed-main">
@@ -198,7 +247,33 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
                 </div>
 
                 {/* Scrollable Center Area */}
-                <div className="feed-scroll-container">
+                <div
+                    className="feed-scroll-container"
+                    ref={scrollContainerRef}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                    style={{ touchAction: pullDistance > 0 ? 'none' : undefined }}
+                >
+                    {/* Pull-to-Refresh Indicator */}
+                    <div
+                        className={`pull-to-refresh-indicator ${isRefreshing ? 'refreshing' : ''} ${pullDistance > 0 ? 'visible' : ''}`}
+                        style={{
+                            height: pullDistance,
+                            opacity: Math.min(pullDistance / PULL_THRESHOLD, 1),
+                        }}
+                    >
+                        <div className={`ptr-spinner ${pullDistance >= PULL_THRESHOLD || isRefreshing ? 'active' : ''}`}>
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+                            </svg>
+                        </div>
+                        <span className="ptr-label">
+                            {isRefreshing ? 'Refreshing…' : pullDistance >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull to refresh'}
+                        </span>
+                    </div>
+
                     {/* Composition Area */}
                     <div className="feed-compose">
                         <ComposeBox

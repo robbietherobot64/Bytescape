@@ -424,6 +424,60 @@ a:hover {
         var(--bg-content);
 }
 
+/* ── Pull-to-Refresh ── */
+.pull-to-refresh-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    overflow: hidden;
+    height: 0;
+    opacity: 0;
+    transition: height 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                opacity 0.2s ease;
+    color: var(--text-secondary, #aaa);
+    user-select: none;
+    padding-bottom: 4px;
+}
+
+.pull-to-refresh-indicator.visible {
+    transition: none; /* No transition while actively dragging */
+}
+
+.pull-to-refresh-indicator.refreshing {
+    transition: height 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                opacity 0.2s ease;
+}
+
+.ptr-spinner {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+}
+
+.ptr-spinner svg {
+    color: var(--accent-purple, #a78bfa);
+}
+
+.ptr-spinner.active {
+    animation: ptr-spin 0.8s linear infinite;
+}
+
+@keyframes ptr-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+.ptr-label {
+    font-size: 0.75rem;
+    margin-top: 2px;
+    color: var(--text-secondary, #888);
+    letter-spacing: 0.02em;
+}
+
 .feed-list {
     max-width: var(--content-max-width);
     margin: 0 auto;
