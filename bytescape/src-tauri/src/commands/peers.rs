@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::peers::PeerInfo;
-use crate::protocol::{PeerProfile, ProtocolRequest, BYTESCAPE_ALPN};
+use crate::protocol::{PeerProfile, ProtocolRequest, ChatMessagePayload, BYTESCAPE_ALPN};
 use crate::AppState;
 
 /// Summary of the local user's P2P identity, returned to the frontend.
@@ -189,6 +189,7 @@ pub async fn check_peer_connectivity(
             let request = ProtocolRequest {
                 request: "PROFILE_EXCHANGE".to_string(),
                 profile: Some(my_profile),
+                message: None,
             };
             let request_json = serde_json::to_vec(&request)
                 .map_err(|e| format!("Failed to serialize request: {}", e))?;
@@ -275,4 +276,192 @@ pub async fn check_peer_connectivity(
     }
 
     Ok(result)
+}
+
+/// A P2P conversation entry for the frontend chat sidebar.
+#[derive(Serialize, Clone, Debug)]
+pub struct P2pConversation {
+    /// Deterministic convo ID: "p2p:{node_id}"
+    pub convo_id: String,
+    /// Peer's display name or truncated node ID
+    pub display_name: String,
+    /// Peer's node ID
+    pub node_id: String,
+    /// Peer's DID if known
+    pub did: Option<String>,
+    /// Whether the peer was recently seen online
+    pub online: bool,
+    /// Number of messages in this conversation
+    pub message_count: usize,
+}
+
+/// List all known P2P peers as potential conversations.
+///
+/// Returns a list of P2P conversation entries that the chat sidebar
+/// can display. Each peer gets a deterministic `convo_id` of `p2p:{node_id}`.
+#[tauri::command]
+pub async fn list_p2p_conversations(
+    state: State<'_, AppState>,
+) -> Result<Vec<P2pConversation>, String> {
+    let db_guard = state.db_manager.lock().await;
+    let db = db_guard.as_ref()
+        .ok_or("Database not initialized")?;
+
+    let peers = db.list_peers().await.unwrap_or_default();
+    let owner_did = state.keychain.get_did()
+        .map_err(|e| e.to_string())?;
+
+    // Count messages per P2P convo
+    let all_msgs = db.list_vault_messages(owner_did.as_deref()).await.unwrap_or_default();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let conversations: Vec<P2pConversation> = peers.iter().map(|peer| {
+        let convo_id = format!("p2p:{}", peer.node_id);
+        let msg_count = all_msgs.iter().filter(|m| m.convo_id == convo_id).count();
+        let online = peer.last_seen.map(|ls| now.saturating_sub(ls) < 120).unwrap_or(false);
+
+        P2pConversation {
+            convo_id,
+            display_name: peer.display_name.clone()
+                .unwrap_or_else(|| {
+                    let id = &peer.node_id;
+                    if id.len() > 12 { format!("{}…", &id[..12]) } else { id.clone() }
+                }),
+            node_id: peer.node_id.clone(),
+            did: peer.did.clone(),
+            online,
+            message_count: msg_count,
+        }
+    }).collect();
+
+    Ok(conversations)
+}
+
+/// Send a P2P chat message to a peer.
+///
+/// 1. Connects to the peer via the Bytescape protocol
+/// 2. Sends a CHAT_MESSAGE with the text
+/// 3. Saves a copy locally as a VaultMessage (source: "p2p")
+/// 4. Returns the message ID on success
+#[tauri::command]
+pub async fn send_p2p_chat_message(
+    node_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let node_id_parsed: iroh::PublicKey = node_id
+        .parse()
+        .map_err(|e| format!("Invalid Node ID: {}", e))?;
+
+    let endpoint = {
+        let guard = state.endpoint.lock().await;
+        guard
+            .as_ref()
+            .ok_or("Iroh node not initialized")?
+            .clone()
+    };
+
+    // Build sender info
+    let my_username = state.keychain.get_local_username()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_did = state.keychain.get_did()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "local".to_string());
+    let my_node_id = endpoint.secret_key().public().to_string();
+
+    let my_profile = PeerProfile {
+        node_id: my_node_id.clone(),
+        username: my_username.clone(),
+        did: my_did.clone(),
+    };
+
+    // Build message payload
+    let msg_id = uuid::Uuid::new_v4().to_string();
+    let sent_at = chrono::Utc::now().to_rfc3339();
+    let convo_id = format!("p2p:{}", node_id);
+
+    let msg_payload = ChatMessagePayload {
+        id: msg_id.clone(),
+        text: text.clone(),
+        sent_at: sent_at.clone(),
+    };
+
+    let request = ProtocolRequest {
+        request: "CHAT_MESSAGE".to_string(),
+        profile: Some(my_profile),
+        message: Some(msg_payload),
+    };
+
+    // Try to send over the network (10s timeout)
+    let send_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async {
+            let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
+            let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
+                .map_err(|e| format!("Connection failed: {}", e))?;
+            let (mut send, mut recv) = connection.open_bi().await
+                .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+            let request_json = serde_json::to_vec(&request)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            send.write_all(&request_json).await
+                .map_err(|e| format!("Send error: {}", e))?;
+            let _ = send.finish();
+
+            let ack = recv.read_to_end(256).await
+                .map_err(|e| format!("Read ACK error: {}", e))?;
+            let ack_str = String::from_utf8_lossy(&ack);
+            if ack_str != "ACK" {
+                return Err(format!("Peer rejected message: {}", ack_str));
+            }
+            Ok(())
+        }
+    ).await;
+
+    let delivered = match send_result {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            println!("P2P chat send failed: {}", e);
+            false
+        }
+        Err(_) => {
+            println!("P2P chat send timed out to {}", &node_id[..8.min(node_id.len())]);
+            false
+        }
+    };
+
+    // Always save our outgoing message locally
+    let vault_msg = crate::db::VaultMessage {
+        id: msg_id.clone(),
+        owner_did: Some(my_did.clone()),
+        convo_id: convo_id.clone(),
+        sender_did: my_did.clone(),
+        sender_handle: my_username.clone(),
+        text: text.clone(),
+        sent_at: sent_at.clone(),
+        source: "p2p".to_string(),
+        imported_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        peer_did: Some(format!("p2p:{}", node_id)),
+        peer_handle: None,
+    };
+
+    let db_guard = state.db_manager.lock().await;
+    if let Some(db) = db_guard.as_ref() {
+        let _ = db.save_vault_message(&vault_msg).await;
+    }
+
+    Ok(serde_json::json!({
+        "id": msg_id,
+        "convo_id": convo_id,
+        "delivered": delivered,
+        "sent_at": sent_at,
+    }))
 }

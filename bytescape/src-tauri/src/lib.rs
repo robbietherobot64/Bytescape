@@ -212,6 +212,8 @@ pub fn run() {
             commands::peers::list_peers,
             commands::peers::remove_peer,
             commands::peers::check_peer_connectivity,
+            commands::peers::list_p2p_conversations,
+            commands::peers::send_p2p_chat_message,
         ])
         .setup(|app| {
             // Initialize application state

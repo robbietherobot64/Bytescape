@@ -467,8 +467,10 @@ function App() {
         {screen === "friends" && (
           <FriendsScreen
             auth={auth}
-            onOpenChat={(peerNodeId, peerName) => {
-              console.log(`[P2P] Opening chat with peer: ${peerName} (${peerNodeId})`);
+            onOpenChat={(peerNodeId, _peerName) => {
+              // Set the P2P convo ID in the chat store so ChatScreen opens the right conversation
+              const { setSelectedConvoId } = useChatStore.getState();
+              setSelectedConvoId(`p2p:${peerNodeId}`);
               setScreen("chat");
               setActiveSidebar("chat");
             }}

@@ -51,11 +51,25 @@ pub struct PeerProfile {
 /// The requester includes their own profile so both sides learn about each other.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProtocolRequest {
-    /// The request type: "PING", "PROFILE_EXCHANGE"
+    /// The request type: "PING", "PROFILE_EXCHANGE", "CHAT_MESSAGE"
     pub request: String,
     /// The requester's profile (included so the responder learns who we are)
     #[serde(default)]
     pub profile: Option<PeerProfile>,
+    /// Chat message payload (for CHAT_MESSAGE requests)
+    #[serde(default)]
+    pub message: Option<ChatMessagePayload>,
+}
+
+/// A chat message sent between peers.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChatMessagePayload {
+    /// Unique message ID (UUID)
+    pub id: String,
+    /// The message text
+    pub text: String,
+    /// ISO 8601 timestamp
+    pub sent_at: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +160,33 @@ impl ProtocolHandler for BytescapeProtocol {
                     remote_profile.as_ref().map(|p| p.username.as_str()).unwrap_or("unknown"),
                 );
             }
+            "CHAT_MESSAGE" => {
+                // Receive a chat message from a peer
+                if let Some(ref msg_payload) = serde_json::from_slice::<ProtocolRequest>(&request)
+                    .ok()
+                    .and_then(|r| r.message)
+                {
+                    // Save the incoming message to our VaultMessage table
+                    self.save_incoming_chat_message(
+                        &remote_id.to_string(),
+                        remote_profile.as_ref(),
+                        msg_payload,
+                    ).await;
+
+                    send.write_all(b"ACK").await.map_err(to_accept_err)?;
+                    let _ = send.finish();
+
+                    println!(
+                        "BytescapeProtocol: Chat message from {} saved (id: {})",
+                        remote_id, msg_payload.id,
+                    );
+                } else {
+                    send.write_all(b"ERROR: Missing message payload")
+                        .await
+                        .map_err(to_accept_err)?;
+                    let _ = send.finish();
+                }
+            }
             _ => {
                 println!(
                     "BytescapeProtocol: Unknown request from {}: {}",
@@ -229,6 +270,69 @@ impl BytescapeProtocol {
 
         // Notify frontend that a peer connected to us
         let _ = self.app_handle.emit("peer-connected", event_payload);
+    }
+
+    /// Save an incoming chat message from a remote peer as a VaultMessage.
+    /// Also emits a `p2p-message` event so the frontend can update in real-time.
+    async fn save_incoming_chat_message(
+        &self,
+        remote_node_id: &str,
+        remote_profile: Option<&PeerProfile>,
+        msg: &ChatMessagePayload,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Determine sender info from profile or fallback to node_id
+        let sender_handle = remote_profile
+            .map(|p| p.username.clone())
+            .unwrap_or_else(|| remote_node_id[..12.min(remote_node_id.len())].to_string());
+        let sender_did = remote_profile
+            .map(|p| p.did.clone())
+            .unwrap_or_else(|| format!("p2p:{}", remote_node_id));
+
+        // convo_id uses a deterministic format: "p2p:{remote_node_id}"
+        let convo_id = format!("p2p:{}", remote_node_id);
+
+        // Build VaultMessage
+        let vault_msg = crate::db::VaultMessage {
+            id: msg.id.clone(),
+            owner_did: Some(self.my_profile.did.clone()),
+            convo_id: convo_id.clone(),
+            sender_did: sender_did.clone(),
+            sender_handle: sender_handle.clone(),
+            text: msg.text.clone(),
+            sent_at: msg.sent_at.clone(),
+            source: "p2p".to_string(),
+            imported_at: now,
+            peer_did: Some(format!("p2p:{}", remote_node_id)),
+            peer_handle: Some(sender_handle.clone()),
+        };
+
+        // Save to DB
+        let db_guard = self.db_manager.lock().await;
+        if let Some(db) = db_guard.as_ref() {
+            let _ = db.save_vault_message(&vault_msg).await;
+        }
+        drop(db_guard);
+
+        // Also update the peer's last_seen
+        self.update_peer_from_incoming(remote_node_id, remote_profile).await;
+
+        // Emit event to frontend for live update
+        let _ = self.app_handle.emit("p2p-message", serde_json::json!({
+            "convo_id": convo_id,
+            "message": {
+                "id": msg.id,
+                "sender_handle": sender_handle,
+                "sender_did": sender_did,
+                "text": msg.text,
+                "sent_at": msg.sent_at,
+                "source": "p2p",
+            }
+        }));
     }
 }
 

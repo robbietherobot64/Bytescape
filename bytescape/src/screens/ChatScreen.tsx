@@ -1,7 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useAuthStore } from '../store';
-import { VaultMessage } from '../types';
+import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
 import { BsPersonFill, BsCircleFill, BsSearch, BsArrowDown } from 'react-icons/bs';
@@ -11,7 +12,8 @@ import { BsPersonFill, BsCircleFill, BsSearch, BsArrowDown } from 'react-icons/b
    Layout: [Convo List 220px] [Chat Area flex-1] [Buddy List 200px]
    ──────────────────────────────────────────────────────── */
 
-const LIVE_SOURCES = new Set(['bluesky', 'mastodon']);
+const LIVE_SOURCES = new Set(['bluesky', 'mastodon', 'p2p']);
+const P2P_PREFIX = 'p2p:';
 
 interface BuddyInfo {
     handle: string;
@@ -31,15 +33,25 @@ export function ChatScreen() {
     const [buddyFilter, setBuddyFilter] = useState('');
     const [showScrollBtn, setShowScrollBtn] = useState(false);
     const [buddies, setBuddies] = useState<BuddyInfo[]>([]);
+    const [p2pConvos, setP2pConvos] = useState<P2pConversation[]>([]);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
 
-    // ── Load messages + buddies on mount ──
+    // ── Load messages + buddies + P2P convos on mount ──
     useEffect(() => {
         loadMessages();
         loadBuddies();
+        loadP2pConvos();
+    }, []);
+
+    // ── Listen for incoming P2P messages ──
+    useEffect(() => {
+        const unlisten = listen<{ convo_id: string; message: any }>('p2p-message', () => {
+            loadMessages();
+        });
+        return () => { unlisten.then(fn => fn()); };
     }, []);
 
     // ── Poll for new messages ──
@@ -74,6 +86,15 @@ export function ChatScreen() {
         }
     }
 
+    async function loadP2pConvos() {
+        try {
+            const convos = await invoke<P2pConversation[]>('list_p2p_conversations');
+            setP2pConvos(convos);
+        } catch {
+            setP2pConvos([]);
+        }
+    }
+
     // ── Group messages by conversation ──
     const byConvo: Record<string, VaultMessage[]> = {};
     for (const m of messages) {
@@ -96,19 +117,35 @@ export function ChatScreen() {
                peerHandles.includes(searchFilter.toLowerCase());
     });
 
+    // Split into P2P, Live (Bluesky/Mastodon), and Archived
+    const p2pConvoIds = filteredConvoIds.filter(cid => cid.startsWith(P2P_PREFIX));
     const liveConvoIds = filteredConvoIds.filter(cid => {
+        if (cid.startsWith(P2P_PREFIX)) return false;
         const src = (byConvo[cid]?.[0]?.source || '').toLowerCase();
         return LIVE_SOURCES.has(src);
     });
-    const archivedConvoIds = filteredConvoIds.filter(cid => !liveConvoIds.includes(cid));
+    const archivedConvoIds = filteredConvoIds.filter(cid =>
+        !cid.startsWith(P2P_PREFIX) && !liveConvoIds.includes(cid)
+    );
+
+    // P2P peers that have no messages yet — show them as empty convos
+    const emptyP2pConvos = p2pConvos.filter(pc =>
+        !p2pConvoIds.includes(pc.convo_id) &&
+        (!searchFilter.trim() || pc.display_name.toLowerCase().includes(searchFilter.toLowerCase()))
+    );
 
     const activeConvoMsgs = selectedConvoId ? byConvo[selectedConvoId] : null;
     const activeSource = (activeConvoMsgs?.[0]?.source || '').toLowerCase();
-    const activeIsLive = activeSource ? LIVE_SOURCES.has(activeSource) : true;
+    const activeIsP2p = selectedConvoId?.startsWith(P2P_PREFIX) ?? false;
+    const activeIsLive = activeIsP2p || (activeSource ? LIVE_SOURCES.has(activeSource) : true);
 
     // Derive title from participants
     let activeTitle = 'Chat';
-    if (activeConvoMsgs && activeConvoMsgs.length > 0) {
+    if (activeIsP2p && selectedConvoId) {
+        const nodeId = selectedConvoId.slice(P2P_PREFIX.length);
+        const p2pMatch = p2pConvos.find(pc => pc.node_id === nodeId);
+        activeTitle = p2pMatch?.display_name || nodeId.slice(0, 12) + '…';
+    } else if (activeConvoMsgs && activeConvoMsgs.length > 0) {
         const senderHandles = [...new Set(activeConvoMsgs.map(m => m.sender_handle))].filter(h => h !== auth?.handle);
         const peerHandles = [...new Set(activeConvoMsgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h !== auth?.handle);
         const allHandles = [...new Set([...senderHandles, ...peerHandles])];
@@ -151,23 +188,51 @@ export function ChatScreen() {
 
         try {
             const now = Date.now() / 1000;
-            const optimisticMsg: VaultMessage = {
-                id: `temp-${now}`,
-                convo_id: selectedConvoId,
-                sender_did: auth?.did || '',
-                sender_handle: auth?.handle || '',
-                text,
-                sent_at: new Date().toISOString(),
-                source: 'bluesky',
-                imported_at: now,
-            };
-            setMessages(prev => [optimisticMsg, ...prev]);
 
-            await invoke<any>('send_bsky_dm', {
-                convoId: selectedConvoId,
-                recipientDid: null,
-                content: text,
-            });
+            if (selectedConvoId.startsWith(P2P_PREFIX)) {
+                // P2P message — send via Bytescape protocol
+                const nodeId = selectedConvoId.slice(P2P_PREFIX.length);
+                const optimisticMsg: VaultMessage = {
+                    id: `temp-${now}`,
+                    convo_id: selectedConvoId,
+                    sender_did: auth?.did || '',
+                    sender_handle: auth?.handle || auth?.local_username || 'Me',
+                    text,
+                    sent_at: new Date().toISOString(),
+                    source: 'p2p',
+                    imported_at: now,
+                };
+                setMessages(prev => [optimisticMsg, ...prev]);
+
+                const result = await invoke<{ id: string; delivered: boolean }>('send_p2p_chat_message', {
+                    nodeId,
+                    text,
+                });
+                if (!result.delivered) {
+                    console.warn('P2P message saved locally but peer was unreachable');
+                }
+                // Reload to replace optimistic message with the persisted one
+                await loadMessages();
+            } else {
+                // Bluesky DM
+                const optimisticMsg: VaultMessage = {
+                    id: `temp-${now}`,
+                    convo_id: selectedConvoId,
+                    sender_did: auth?.did || '',
+                    sender_handle: auth?.handle || '',
+                    text,
+                    sent_at: new Date().toISOString(),
+                    source: 'bluesky',
+                    imported_at: now,
+                };
+                setMessages(prev => [optimisticMsg, ...prev]);
+
+                await invoke<any>('send_bsky_dm', {
+                    convoId: selectedConvoId,
+                    recipientDid: null,
+                    content: text,
+                });
+            }
         } catch (e) {
             console.error('Send failed:', e);
         } finally {
@@ -227,10 +292,52 @@ export function ChatScreen() {
                     />
                 </div>
                 <div className="chat-convo-scroll">
-                    {filteredConvoIds.length === 0 ? (
+                    {filteredConvoIds.length === 0 && emptyP2pConvos.length === 0 ? (
                         <div className="chat-convo-empty">No conversations found.</div>
                     ) : (
                         <>
+                            {/* P2P Peers */}
+                            {(p2pConvoIds.length > 0 || emptyP2pConvos.length > 0) && (
+                                <div className="chat-convo-section-label">
+                                    <BsCircleFill size={6} color="#a78bfa" /> P2P
+                                </div>
+                            )}
+                            {p2pConvoIds.map(cid => {
+                                const nodeId = cid.slice(P2P_PREFIX.length);
+                                const p2pMatch = p2pConvos.find(pc => pc.node_id === nodeId);
+                                const title = p2pMatch?.display_name || getConvoTitle(cid);
+                                return (
+                                    <ConvoItem
+                                        key={cid}
+                                        cid={cid}
+                                        title={title}
+                                        initial={title.charAt(0).toUpperCase()}
+                                        lastMsg={byConvo[cid][0]}
+                                        isActive={selectedConvoId === cid}
+                                        isMine={byConvo[cid][0]?.sender_did === auth?.did}
+                                        onClick={() => setSelectedConvoId(cid)}
+                                        online={p2pMatch?.online}
+                                    />
+                                );
+                            })}
+                            {emptyP2pConvos.map(pc => (
+                                <div
+                                    key={pc.convo_id}
+                                    className={`chat-convo-item ${selectedConvoId === pc.convo_id ? 'active' : ''}`}
+                                    onClick={() => setSelectedConvoId(pc.convo_id)}
+                                >
+                                    <div className="chat-convo-avatar">{pc.display_name.charAt(0).toUpperCase()}</div>
+                                    <div className="chat-convo-info">
+                                        <div className="chat-convo-name">
+                                            {pc.display_name}
+                                            {pc.online && <span style={{ marginLeft: 6, color: '#50fa7b', fontSize: '0.7rem' }}>●</span>}
+                                        </div>
+                                        <div className="chat-convo-preview" style={{ fontStyle: 'italic', opacity: 0.5 }}>No messages yet</div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Live (Bluesky/Mastodon) */}
                             {liveConvoIds.length > 0 && (
                                 <div className="chat-convo-section-label">
                                     <BsCircleFill size={6} color="#22c55e" /> Live
@@ -276,10 +383,20 @@ export function ChatScreen() {
                         <Win98Box variant="raised" className="chat-main-header">
                             <button className="chat-back-btn" onClick={() => setSelectedConvoId(null)}>←</button>
                             <span className="chat-main-title">{activeTitle}</span>
-                            {!activeIsLive && <span className="chat-archived-badge">archived</span>}
+                            {activeIsP2p && <span className="chat-archived-badge" style={{ background: '#a78bfa', color: '#fff' }}>P2P</span>}
+                            {!activeIsLive && !activeIsP2p && <span className="chat-archived-badge">archived</span>}
                         </Win98Box>
 
                         <div className="chat-msg-scroll" ref={chatContainerRef} onScroll={handleChatScroll}>
+                            {(!activeConvoMsgs || activeConvoMsgs.length === 0) && activeIsP2p && (
+                                <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
+                                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔗</div>
+                                    <div>Start a P2P conversation</div>
+                                    <div style={{ fontSize: '0.8rem', marginTop: 4, opacity: 0.7 }}>
+                                        Messages are sent directly over the Iroh network — no servers involved.
+                                    </div>
+                                </div>
+                            )}
                             {activeConvoMsgs?.slice().reverse().map((m, i, arr) => {
                                 const isMe = m.sender_did === auth?.did;
                                 const date = new Date(m.sent_at);
@@ -384,7 +501,7 @@ export function ChatScreen() {
 
 /* ── Conversation List Item ── */
 function ConvoItem({
-    title, initial, lastMsg, isActive, isMine, onClick, archived
+    title, initial, lastMsg, isActive, isMine, onClick, archived, online
 }: {
     cid: string;
     title: string;
@@ -394,6 +511,7 @@ function ConvoItem({
     isMine: boolean;
     onClick: () => void;
     archived?: boolean;
+    online?: boolean;
 }) {
     const time = new Date(lastMsg.sent_at);
     const timeStr = formatDate(time.getTime() / 1000).split(',')[0];
@@ -402,7 +520,10 @@ function ConvoItem({
         <div className={`chat-convo-item ${isActive ? 'active' : ''} ${archived ? 'archived' : ''}`} onClick={onClick}>
             <div className="chat-convo-avatar">{initial}</div>
             <div className="chat-convo-info">
-                <div className="chat-convo-name">{title}</div>
+                <div className="chat-convo-name">
+                    {title}
+                    {online && <span style={{ marginLeft: 6, color: '#50fa7b', fontSize: '0.7rem' }}>●</span>}
+                </div>
                 <div className="chat-convo-preview">{isMine ? 'You: ' : ''}{lastMsg.text}</div>
             </div>
             <span className="chat-convo-time">{timeStr}</span>

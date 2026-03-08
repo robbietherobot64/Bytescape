@@ -37,6 +37,15 @@ export interface PeerConnectResult {
     profile: PeerProfile | null;
 }
 
+export interface P2pConversation {
+    convo_id: string;
+    display_name: string;
+    node_id: string;
+    did: string | null;
+    online: boolean;
+    message_count: number;
+}
+
 export interface IdentityInitResult {
     did: string;
     public_key: string;
