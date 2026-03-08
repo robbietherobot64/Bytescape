@@ -36,6 +36,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     const [pullDistance, setPullDistance] = useState(0);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const activeTabRef = useRef(activeTab);
+    activeTabRef.current = activeTab;
     const PULL_THRESHOLD = 80;
     // === Data Hook ===
     const {
@@ -195,13 +197,13 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
         setIsRefreshing(true);
         setPullDistance(PULL_THRESHOLD);
         try {
-            await fetchFeed(activeTab, false);
+            await fetchFeed(activeTabRef.current, false);
         } finally {
             overscrollAccum.current = 0;
             setIsRefreshing(false);
             setPullDistance(0);
         }
-    }, [fetchFeed, activeTab]);
+    }, [fetchFeed]);
 
     // Cleanup decay timer on unmount
     useEffect(() => {
