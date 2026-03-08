@@ -108,8 +108,6 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Iroh Node Init**: `setup_iroh_node` initializes Iroh endpoint, SyncManager, secret key from keychain.
 - [x] **P2P Doc Operations**: `create_sync_doc`, `join_sync_doc`, `send_p2p_message` commands registered.
 - [x] **Gossip Presence**: `SyncManager::broadcast_presence` via `iroh-gossip`.
-- [x] **Protocol Router**: `iroh::protocol::Router` dispatches incoming QUIC connections by ALPN to correct handler (docs, gossip, blobs, bytescape).
-- [x] **Bidirectional P2P Connectivity**: Custom `BytescapeProtocol` handler exchanges profiles on inbound connections, solving asymmetric NAT. Desktop↔Mobile verified working.
 - [x] **Identity Recovery**: 5 identity commands for local DID lifecycle (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
 
 ### Next Steps: Local-Only Login & P2P Chat (Active)
@@ -120,7 +118,7 @@ The current blocker: **the app requires a Bluesky login to function.** To prove 
   - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
 - [ ] **P2P Chat Send**: Wire `send_p2p_message` (which writes to an Iroh doc) to the ChatScreen UI for local-identity users. When a user sends a message, it writes to a shared Iroh doc namespace rather than calling the Bluesky DM API.
-- [x] **P2P Chat Receive**: Fixed the disabled P2P connection listener by implementing `iroh::protocol::Router` with ALPN-based dispatch (`protocol.rs`). Four protocol handlers coexist: `iroh-docs`, `iroh-gossip`, `iroh-blobs`, and custom `bytescape/1.0`. Bidirectional `PROFILE_EXCHANGE` solves asymmetric NAT (mobile→desktop inbound connection carries profile data both ways).
+- [ ] **P2P Chat Receive**: Fix the disabled P2P connection listener in `lib.rs` (currently commented out due to "stealing connections from DocsEngine"). Implement a proper Iroh protocol dispatcher so both Docs sync and direct chat can coexist.
 - [ ] **P2P Chat UI Integration**: Add a "P2P" conversation type alongside "Live" and "Archived" in ChatScreen. P2P conversations show messages from Iroh doc entries, with real-time updates via doc subscription.
 - [ ] **Two-Device Sync Test**: Verify end-to-end: Device A (local identity) creates a doc → shares ticket → Device B joins → both see each other's messages. Use `test-peer/` for automated verification.
 - [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
@@ -202,5 +200,4 @@ The current blocker: **the app requires a Bluesky login to function.** To prove 
 - [x] **Android Build TypeScript Errors**: `csstype` version mismatch rejecting valid CSS properties (`bottom`, `paddingBottom`). Fixed with `as React.CSSProperties` casts.
 - [x] **Repost Dedup Pipeline**: Fixed 3-layer dedup (Rust `get_unified_feed`, Rust `get_timeline_unified`, TS `deduplicateFeedEntries`) to use composite keys (`repost:<did>:<uri>`) so reposts are distinct feed events that aren't collapsed with originals. Commits: 421efa9, 76a71ec.
 - [x] **Repost Timestamp Sorting**: Reposts now use the repost's `indexed_at` (when the repost appeared on the feed) instead of the original post's `created_at`, so they sort chronologically to when the user actually saw them.
-- [x] **P2P Connection Dispatch**: Old manual accept loop raced with DocsEngine. Replaced with `iroh::protocol::Router` (ALPN-based dispatch). Custom `BytescapeProtocol` handler with bidirectional `PROFILE_EXCHANGE` solves asymmetric NAT between desktop and mobile.
 - [x] **Repost Display & Reply Nesting**: Fixed end-to-end repost rendering and owner reply merging. Reposts now display the correct original post content with a "X reposted" banner. `import_bluesky_feed()` no longer skips reposts due to `post.author.did != did` filtering. Owner replies to reposted posts are nested inline under the parent card as fully interactive `FeedEntryCard` components (with engagement bar, thread toggle, reply compose, reactions). Added `reply_parent_uri` field through the full Rust→TS pipeline (`FeedReplyPost` → `BlueskyImportedPost` → `BytescapeItem` → `FeedEntry`) and `nestOwnerReplies()` grouping in `useUnifiedFeed`. Also introduced `resolveAtUri()` helper in `FeedEntryCard` to correctly resolve AT-URIs for vault items (where `entry.id` is a CID), fixing thread loading, likes, reposts, and reply compose for imported posts.

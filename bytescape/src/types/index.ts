@@ -383,38 +383,6 @@ export interface DocTicketInfo {
     namespace_id: string;
 }
 
-// === P2P Peers ===
-
-/** The local user's P2P identity summary. */
-export interface MyPeerInfo {
-    node_id: string;
-    username: string | null;
-    did: string | null;
-}
-
-/** A known peer stored in the local directory. */
-export interface PeerInfo {
-    node_id: string;
-    display_name: string | null;
-    did: string | null;
-    added_at: number;
-    last_seen: number | null;
-    is_following: boolean;
-}
-
-/** Profile exchanged over the bytescape/1.0 P2P protocol. */
-export interface PeerProfile {
-    node_id: string;
-    username: string;
-    did: string;
-}
-
-/** Result from check_peer_connectivity — includes the remote profile on success. */
-export interface PeerConnectResult {
-    online: boolean;
-    profile: PeerProfile | null;
-}
-
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
 export interface LikeResult {

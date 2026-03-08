@@ -7,7 +7,6 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 use iroh::Endpoint;
-use iroh::protocol::Router;
 use std::sync::Arc;
 
 pub mod error;
@@ -32,12 +31,12 @@ use traffic::TrafficController;
 pub struct AppState {
     pub app_handle: AppHandle,
     pub endpoint: Mutex<Option<Endpoint>>,
-    pub router: Mutex<Option<Router>>,
     pub keychain: keychain_encrypted::EncryptedKeychain,
     pub auth_manager: AuthManager,
     pub db_manager: Arc<Mutex<Option<db::DbManager>>>,
     pub chat_client: Arc<ChatClient>,
     pub sync_manager: Mutex<Option<Arc<sync::SyncManager>>>,
+    pub router: Mutex<Option<iroh::protocol::Router>>,
     pub traffic_controller: Arc<TrafficController>,
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
     pub media_port: u16,
@@ -206,13 +205,6 @@ pub fn run() {
             commands::interactions::unrepost_post,
             commands::interactions::reply_to_post,
             commands::interactions::get_post_thread,
-            
-            // Peer discovery & following
-            commands::peers::get_my_peer_info,
-            commands::peers::add_peer,
-            commands::peers::list_peers,
-            commands::peers::remove_peer,
-            commands::peers::check_peer_connectivity,
         ])
         .setup(|app| {
             // Initialize application state
@@ -265,12 +257,12 @@ pub fn run() {
             let state = AppState {
                 app_handle: app_handle.clone(),
                 endpoint: Mutex::new(None),
-                router: Mutex::new(None),
                 keychain,
                 auth_manager,
                 db_manager,
                 chat_client,
                 sync_manager: Mutex::new(None),
+                router: Mutex::new(None),
                 traffic_controller,
                 pending_import: Mutex::new(None),
                 media_port,
