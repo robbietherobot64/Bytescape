@@ -34,9 +34,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
 
     // === Pull-to-Refresh State ===
     const [pullDistance, setPullDistance] = useState(0);
-    const [isPulling, setIsPulling] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const pullStartY = useRef(0);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const PULL_THRESHOLD = 80;
     // === Data Hook ===
@@ -153,47 +151,64 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
         return src;
     };
 
-    // === Pull-to-Refresh Handlers ===
-    const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    // === Pull-to-Refresh via Scroll Wheel Overscroll ===
+    const overscrollAccum = useRef(0);
+    const decayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleWheel = useCallback((e: React.WheelEvent) => {
         const container = scrollContainerRef.current;
-        if (!container || container.scrollTop > 0 || isRefreshing) return;
-        pullStartY.current = e.clientY;
-        setIsPulling(true);
+        if (!container || isRefreshing) return;
+
+        // Only activate when scrolled to the very top and scrolling up
+        if (container.scrollTop <= 0 && e.deltaY < 0) {
+            // Accumulate upward scroll with rubber-band dampening
+            overscrollAccum.current = Math.min(
+                overscrollAccum.current + Math.abs(e.deltaY) * 0.35,
+                140
+            );
+            setPullDistance(overscrollAccum.current);
+
+            // Reset decay timer — snap back if user stops scrolling
+            if (decayTimer.current) clearTimeout(decayTimer.current);
+            decayTimer.current = setTimeout(() => {
+                if (!isRefreshing) {
+                    // Check if we passed threshold before decaying
+                    if (overscrollAccum.current >= PULL_THRESHOLD) {
+                        triggerRefresh();
+                    } else {
+                        overscrollAccum.current = 0;
+                        setPullDistance(0);
+                    }
+                }
+            }, 300);
+
+            e.preventDefault();
+        } else if (overscrollAccum.current > 0 && !isRefreshing) {
+            // Scrolling down or not at top — reset overscroll
+            overscrollAccum.current = 0;
+            setPullDistance(0);
+            if (decayTimer.current) clearTimeout(decayTimer.current);
+        }
     }, [isRefreshing]);
 
-    const handlePointerMove = useCallback((e: React.PointerEvent) => {
-        if (!isPulling || isRefreshing) return;
-        const container = scrollContainerRef.current;
-        if (!container || container.scrollTop > 0) {
-            setIsPulling(false);
+    const triggerRefresh = useCallback(async () => {
+        setIsRefreshing(true);
+        setPullDistance(PULL_THRESHOLD);
+        try {
+            await fetchFeed(activeTab, false);
+        } finally {
+            overscrollAccum.current = 0;
+            setIsRefreshing(false);
             setPullDistance(0);
-            return;
         }
-        const delta = e.clientY - pullStartY.current;
-        if (delta > 0) {
-            // Rubber-band: diminishing returns as you pull further
-            const dampened = Math.min(delta * 0.45, 140);
-            setPullDistance(dampened);
-            e.preventDefault();
-        }
-    }, [isPulling, isRefreshing]);
+    }, [fetchFeed, activeTab]);
 
-    const handlePointerUp = useCallback(async () => {
-        if (!isPulling) return;
-        setIsPulling(false);
-        if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
-            setIsRefreshing(true);
-            setPullDistance(PULL_THRESHOLD); // Hold at threshold while refreshing
-            try {
-                await fetchFeed(activeTab, false);
-            } finally {
-                setIsRefreshing(false);
-                setPullDistance(0);
-            }
-        } else {
-            setPullDistance(0);
-        }
-    }, [isPulling, pullDistance, isRefreshing, fetchFeed, activeTab]);
+    // Cleanup decay timer on unmount
+    useEffect(() => {
+        return () => {
+            if (decayTimer.current) clearTimeout(decayTimer.current);
+        };
+    }, []);
 
     return (
         <div className="feed-layout">
@@ -250,11 +265,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
                 <div
                     className="feed-scroll-container"
                     ref={scrollContainerRef}
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPointerLeave={handlePointerUp}
-                    style={{ touchAction: pullDistance > 0 ? 'none' : undefined }}
+                    onWheel={handleWheel}
                 >
                     {/* Pull-to-Refresh Indicator */}
                     <div

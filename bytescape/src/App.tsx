@@ -154,6 +154,8 @@ function App() {
         setAuth(status);
         setScreen("feed");
         await loadArchiveStats();
+        // Auto-sync Bluesky feed on every boot
+        importBluesky();
       }
     } catch { /* not logged in */ }
     setLoading(false);
