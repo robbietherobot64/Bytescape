@@ -12,12 +12,14 @@ pub(crate) const ITEMS_TABLE: TableDefinition<&str, &str> = TableDefinition::new
 pub(crate) const VAULT_MESSAGES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("vault_messages");
 pub(crate) const FOLLOWED_HASHTAGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("followed_hashtags");
 pub(crate) const WILLOW_WRITE_PARITY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("willow_write_parity");
+pub(crate) const PEERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("peers");
 
 pub use crate::models::*;
 
 pub mod contacts;
 pub mod chat;
 pub mod vault;
+pub mod peers;
 
 #[derive(Clone)]
 pub struct DbManager {
@@ -39,6 +41,7 @@ impl DbManager {
             let _ = write_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
@@ -131,6 +134,8 @@ impl DbManager {
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         let parity = read_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
+        let peers = read_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?
+            .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         drop(read_txn);
 
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
@@ -143,6 +148,7 @@ impl DbManager {
             write_txn.delete_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
+            write_txn.delete_table(PEERS_TABLE).map_err(|e| e.to_string())?;
 
             write_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(MESSAGES_TABLE).map_err(|e| e.to_string())?;
@@ -152,10 +158,11 @@ impl DbManager {
             write_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
+            write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
-        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + parity)
+        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + parity + peers)
     }
 
     pub async fn count_archive_posts(&self) -> Result<u64, String> {

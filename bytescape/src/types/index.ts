@@ -383,6 +383,25 @@ export interface DocTicketInfo {
     namespace_id: string;
 }
 
+// === P2P Peers ===
+
+/** The local user's P2P identity summary. */
+export interface MyPeerInfo {
+    node_id: string;
+    username: string | null;
+    did: string | null;
+}
+
+/** A known peer stored in the local directory. */
+export interface PeerInfo {
+    node_id: string;
+    display_name: string | null;
+    did: string | null;
+    added_at: number;
+    last_seen: number | null;
+    is_following: boolean;
+}
+
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
 export interface LikeResult {

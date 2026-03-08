@@ -203,6 +203,13 @@ pub fn run() {
             commands::interactions::unrepost_post,
             commands::interactions::reply_to_post,
             commands::interactions::get_post_thread,
+            
+            // Peer discovery & following
+            commands::peers::get_my_peer_info,
+            commands::peers::add_peer,
+            commands::peers::list_peers,
+            commands::peers::remove_peer,
+            commands::peers::check_peer_connectivity,
         ])
         .setup(|app| {
             // Initialize application state
