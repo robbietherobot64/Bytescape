@@ -160,8 +160,10 @@ function App() {
         if (!status.identity_ready) {
           setShowIdentitySetup(true);
         }
-        // Auto-sync Bluesky feed on every boot
-        importBluesky();
+        // Auto-sync Bluesky feed on every boot (only if user has a Bluesky session)
+        if (status.source === 'bluesky') {
+          importBluesky();
+        }
       }
     } catch { /* not logged in */ }
     setLoading(false);
@@ -427,12 +429,14 @@ function App() {
 
         {screen === "import" && (
           <ImportScreen
+            auth={auth}
             isImporting={isImporting}
             importStatus={importStatus}
             archiveCount={archiveCount}
             onImportBluesky={importBluesky}
             onFilePick={handleFilePick}
             onNavigate={handleNavigate}
+            error={error || ""}
           />
         )}
 
@@ -477,6 +481,9 @@ function App() {
             onLogout={handleLogout}
             onClearVault={() => {
               setArchiveCount(0);
+            }}
+            onAuthUpdated={(updatedAuth) => {
+              setAuth(updatedAuth);
             }}
           />
         )}

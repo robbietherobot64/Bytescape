@@ -1,22 +1,28 @@
-import { SidebarItem } from '../types';
+import { SidebarItem, AuthStatus } from '../types';
 
 interface ImportScreenProps {
+    auth: AuthStatus | null;
     isImporting: boolean;
     importStatus: string;
     archiveCount: number;
     onImportBluesky: () => void;
     onFilePick: () => void;
     onNavigate: (item: SidebarItem) => void;
+    error: string;
 }
 
 export function ImportScreen({
+    auth,
     isImporting,
     importStatus,
     archiveCount,
     onImportBluesky,
     onFilePick,
-    onNavigate
+    onNavigate,
+    error
 }: ImportScreenProps) {
+    const isBlueskyLinked = auth?.source === 'bluesky';
+
     return (
         <>
             <div className="main-header">
@@ -31,21 +37,31 @@ export function ImportScreen({
                     </p>
 
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        {/* Bluesky — instant */}
+                        {/* Bluesky — instant (requires linked Bluesky account) */}
                         <button
                             className="btn btn-primary btn-block"
                             onClick={onImportBluesky}
-                            disabled={isImporting}
+                            disabled={isImporting || !isBlueskyLinked}
                             style={{ padding: "14px 20px", fontSize: "0.95rem" }}
                         >
                             {isImporting ? "⏳ Importing..." : "🦋 Import from Bluesky"}
                         </button>
+                        {!isBlueskyLinked && (
+                            <p className="text-sm text-muted" style={{ textAlign: "center", marginTop: -4 }}>
+                                Link a Bluesky account in <strong>Settings</strong> to enable this.
+                            </p>
+                        )}
                         {importStatus && (
                             <p className="text-sm" style={{
                                 color: importStatus.startsWith("✅") ? "var(--accent-green)" : "var(--text-secondary)",
                                 textAlign: "center",
                             }}>
                                 {importStatus}
+                            </p>
+                        )}
+                        {error && (
+                            <p className="text-sm" style={{ color: "var(--accent-red)", textAlign: "center" }}>
+                                {error}
                             </p>
                         )}
 

@@ -583,9 +583,10 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
         .unwrap_or_default()
         .as_secs();
 
-    // Save pending messages
-    let session = state.keychain.load_session().map_err(|e| BytescapeError::Keychain(e.to_string()))?;
-    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    // Save pending messages — use owner DID which works for both Bluesky and local-only users
+    let user_did = state.keychain.get_owner_did()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?
+        .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     for mut msg in pending.messages.clone() {
         msg.owner_did = Some(user_did.clone());
@@ -1276,7 +1277,7 @@ pub async fn import_archive_messages(
 
     let owner_did = state
         .keychain
-        .get_did()
+        .get_owner_did()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 

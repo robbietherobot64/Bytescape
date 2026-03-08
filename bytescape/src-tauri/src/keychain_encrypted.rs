@@ -724,7 +724,7 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get DID
+    /// Get DID (Bluesky session DID only)
     pub fn get_did(&self) -> Result<Option<String>, BytescapeError> {
         let cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -733,6 +733,32 @@ impl EncryptedKeychain {
             return Ok(data.did.clone());
         }
         
+        Ok(None)
+    }
+
+    /// Get the owner DID — returns Bluesky DID if available, otherwise local identity DID.
+    /// Use this for operations that need *any* valid DID (vault writes, archive imports).
+    pub fn get_owner_did(&self) -> Result<Option<String>, BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+
+        if let Some(ref data) = *cache {
+            if let Some(ref did) = data.did {
+                return Ok(Some(did.clone()));
+            }
+            if let Some(ref did) = data.local_identity_did {
+                return Ok(Some(did.clone()));
+            }
+            return Ok(None);
+        }
+
+        // Load from disk
+        if let Some(data) = self.load_encrypted()? {
+            let result = data.did.clone().or_else(|| data.local_identity_did.clone());
+            *cache = Some(data);
+            return Ok(result);
+        }
+
         Ok(None)
     }
 

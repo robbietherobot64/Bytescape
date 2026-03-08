@@ -7,13 +7,22 @@ interface SettingsScreenProps {
     archiveCount: number;
     onLogout: () => void;
     onClearVault: () => void;
+    onAuthUpdated?: (auth: AuthStatus) => void;
 }
 
-export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: SettingsScreenProps) {
+export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onAuthUpdated }: SettingsScreenProps) {
     const [error, setError] = useState("");
     const [status, setStatus] = useState("");
     const [savedFeeds, setSavedFeeds] = useState<GeneratorView[]>([]);
     const [loadingFeeds, setLoadingFeeds] = useState(false);
+
+    // Link Bluesky account state
+    const [showLinkBluesky, setShowLinkBluesky] = useState(false);
+    const [linkIdentifier, setLinkIdentifier] = useState("");
+    const [linkPassword, setLinkPassword] = useState("");
+    const [linkLoading, setLinkLoading] = useState(false);
+    const [linkError, setLinkError] = useState("");
+    const [linkSuccess, setLinkSuccess] = useState("");
 
     // Sync state
     const [loadingSync, setLoadingSync] = useState(false);
@@ -88,6 +97,35 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: S
         }
     }
 
+    async function handleLinkBluesky() {
+        if (!linkIdentifier.trim() || !linkPassword.trim()) {
+            setLinkError("Handle and app password are required.");
+            return;
+        }
+        setLinkLoading(true);
+        setLinkError("");
+        setLinkSuccess("");
+        try {
+            const status = await invoke<AuthStatus>("login", {
+                identifier: linkIdentifier.trim(),
+                password: linkPassword.trim(),
+            });
+            setLinkSuccess(`✅ Linked as ${status.handle}! You can now import from Bluesky.`);
+            setShowLinkBluesky(false);
+            setLinkIdentifier("");
+            setLinkPassword("");
+            if (onAuthUpdated) {
+                onAuthUpdated(status);
+            }
+        } catch (e: any) {
+            setLinkError(typeof e === "string" ? e : e.message || "Failed to link Bluesky account");
+        } finally {
+            setLinkLoading(false);
+        }
+    }
+
+    const isLocalOnly = auth?.source === 'local';
+
     return (
         <div style={{ paddingBottom: 40 } as React.CSSProperties}>
             <div className="main-header">
@@ -99,9 +137,11 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: S
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                     <div>
                         <p className="text-muted text-sm" style={{ margin: 0 }}>
-                            Signed in as <strong>{auth?.handle}</strong>
+                            Signed in as <strong>{auth?.local_username || auth?.handle}</strong>
                         </p>
-                        <p className="text-xs text-muted" style={{ opacity: 0.7 }}>{auth?.did}</p>
+                        <p className="text-xs text-muted" style={{ opacity: 0.7 }}>
+                            {auth?.source === 'local' ? '🔒 Local identity' : '🦋 Bluesky'} · {auth?.did}
+                        </p>
                     </div>
                     <button className="btn btn-danger" onClick={onLogout}>
                         Sign Out
@@ -109,6 +149,77 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: S
                 </div>
             </div>
 
+            {/* Connected Accounts */}
+            <div className="card" style={{ marginTop: 16 }}>
+                <h3>🔗 Connected Accounts</h3>
+                <p className="text-muted text-sm" style={{ marginBottom: 16 }}>
+                    Link external accounts to import live feeds and sync data.
+                </p>
+
+                {auth?.source === 'bluesky' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                        <span style={{ fontSize: '1.2rem' }}>🦋</span>
+                        <div style={{ flex: 1 }}>
+                            <strong style={{ fontSize: '0.9rem' }}>{auth.handle}</strong>
+                            <p className="text-xs text-muted" style={{ margin: 0 }}>Bluesky · Connected</p>
+                        </div>
+                        <span style={{ color: 'var(--accent-green)', fontSize: '0.82rem', fontWeight: 600 }}>✓ Linked</span>
+                    </div>
+                ) : (
+                    <>
+                        {linkSuccess && (
+                            <p className="text-sm" style={{ color: 'var(--accent-green)', marginBottom: 12 }}>{linkSuccess}</p>
+                        )}
+                        {!showLinkBluesky ? (
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => setShowLinkBluesky(true)}
+                                style={{ padding: '10px 18px' }}
+                            >
+                                🦋 Link Bluesky Account
+                            </button>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
+                                    <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setLinkError(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                        Cancel
+                                    </button>
+                                </div>
+                                <input
+                                    className="input-field"
+                                    type="text"
+                                    placeholder="Handle (e.g. user.bsky.social)"
+                                    value={linkIdentifier}
+                                    onChange={(e) => setLinkIdentifier(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
+                                />
+                                <input
+                                    className="input-field"
+                                    type="password"
+                                    placeholder="App Password"
+                                    value={linkPassword}
+                                    onChange={(e) => setLinkPassword(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
+                                />
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleLinkBluesky}
+                                    disabled={linkLoading}
+                                >
+                                    {linkLoading ? "Linking..." : "Connect & Link"}
+                                </button>
+                                {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
+                                <p className="text-xs text-muted" style={{ margin: 0 }}>
+                                    Use an App Password from Bluesky Settings → Privacy → App Passwords.
+                                </p>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+
+            {!isLocalOnly && (
             <div className="card" style={{ marginTop: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                     <h3 style={{ margin: 0 }}>🦋 Bluesky Feeds</h3>
@@ -153,6 +264,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault }: S
                     </div>
                 )}
             </div>
+            )}
 
             <div className="card" style={{ marginTop: 16 }}>
                 <h3>🔄 Device Sync (Beta)</h3>
