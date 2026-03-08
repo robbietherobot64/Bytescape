@@ -110,17 +110,25 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Gossip Presence**: `SyncManager::broadcast_presence` via `iroh-gossip`.
 - [x] **Identity Recovery**: 5 identity commands for local DID lifecycle (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
 
-### Next Steps: Local-Only Login & P2P Chat (Active)
-The current blocker: **the app requires a Bluesky login to function.** To prove P2P works, we need a fully offline user to send and receive messages without any external service.
+### Completed: P2P Connectivity & Protocol
+- [x] **Iroh Router Architecture**: Replaced broken manual accept loop with `iroh::protocol::Router` dispatching 4 ALPN handlers: docs (`/iroh-sync/1`), gossip (`/iroh-gossip/1`), blobs (`/iroh-bytes/4`), and custom `bytescape/1.0`. Commits: `28bc93b`, `b957cb4`.
+- [x] **Bidirectional Profile Exchange**: `PROFILE_EXCHANGE` protocol sends requester's profile to responder and vice versa, with `last_seen` fallback for asymmetric NAT. Desktop↔Mobile connectivity verified.
+- [x] **Peer Management Commands**: `get_my_peer_info`, `add_peer`, `list_peers`, `remove_peer`, `check_peer_connectivity` — all registered and functional.
+- [x] **P2P Chat Protocol**: `CHAT_MESSAGE` handler in `BytescapeProtocol` saves incoming messages to `VaultMessage` via `save_incoming_chat_message()`, emits `p2p-message` frontend event.
+- [x] **P2P Chat Commands**: `send_p2p_chat_message` (QUIC connect → send → save locally) and `list_p2p_conversations` (peer list with message counts and online status).
+- [x] **P2P Chat UI**: ChatScreen has P2P section in sidebar (purple dot), P2P send routing, `p2p-message` event listener, empty-state prompt. FriendsScreen peer names are clickable with 💬 icon → navigates to `p2p:{node_id}` conversation.
+- [x] **Android APK**: Built with full P2P chat code (77MB, March 2026).
 
+### Next Steps: P2P Chat Debugging & Local-Only Login (Active)
+**Current blocker:** P2P chat UI opens correctly but messages do not appear to send/receive between devices. The protocol plumbing is in place but needs debugging — likely an issue with message serialization, delivery confirmation, or the frontend not loading/displaying `VaultMessage` entries for P2P conversations.
+
+- [ ] **🐛 P2P Chat Messages Not Delivering**: Chat window opens for a peer but sent messages don't appear on the other device and received messages don't render. Debug the full pipeline: `send_p2p_chat_message` → QUIC connect → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen render. Check: Is the QUIC connection actually established? Is the message serialized/deserialized correctly? Are `VaultMessage` entries being written and read back? Is the `p2p-message` event reaching the frontend?
+- [ ] **🐛 Mobile Chat Input Hidden Behind Nav**: The chat compose text box renders below the bottom navigation bar on mobile, making it impossible to type. Needs CSS fix to ensure the chat input stays above the mobile nav (similar to prior `Feed Compose Layout Spillover` fix).
 - [ ] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + DID) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
   - Backend: New `create_local_identity` Tauri command that generates keypair, stores in keychain, returns an `AuthStatus` with `source: "local"`.
   - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
-- [ ] **P2P Chat Send**: Wire `send_p2p_message` (which writes to an Iroh doc) to the ChatScreen UI for local-identity users. When a user sends a message, it writes to a shared Iroh doc namespace rather than calling the Bluesky DM API.
-- [ ] **P2P Chat Receive**: Fix the disabled P2P connection listener in `lib.rs` (currently commented out due to "stealing connections from DocsEngine"). Implement a proper Iroh protocol dispatcher so both Docs sync and direct chat can coexist.
-- [ ] **P2P Chat UI Integration**: Add a "P2P" conversation type alongside "Live" and "Archived" in ChatScreen. P2P conversations show messages from Iroh doc entries, with real-time updates via doc subscription.
-- [ ] **Two-Device Sync Test**: Verify end-to-end: Device A (local identity) creates a doc → shares ticket → Device B joins → both see each other's messages. Use `test-peer/` for automated verification.
+- [ ] **Two-Device Sync Test**: Verify end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
 - [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
 
 ### Future
@@ -150,8 +158,42 @@ The current blocker: **the app requires a Bluesky login to function.** To prove 
 - [ ] **AppView Indexer**: `bytescape-bridge` subscribes to the AT Protocol firehose, indexes `com.platform.webring.member` records, and stitches member nodes into navigable loops and forum feeds.
 - [ ] **Webring UI**: Display webring membership on profile; prev/next navigation through the ring.
 
+### Local Communities & Groups (inspired by [Habitat](https://github.com/carlnewton/habitat))
+Habitat is an open-source hyperlocal social platform where posts are linked to map coordinates, giving communities a sense of *place*. We adapt its core ideas to Bytescape's P2P/local-first architecture.
+
+#### Location-Tagged Content
+- [ ] **Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema. Posts, vault files, and marketplace listings can be pinned to a location.
+- [ ] **Location Picker UI**: Map-based coordinate picker (Leaflet or Maplibre GL) in the compose flow. Users tap a point on the map or enter an address; result stored as `GeoPoint`. Privacy-first: coarsen to ~1 km geohash by default.
+- [ ] **"Pin to Map" Action**: Existing vault items can be retroactively geotagged via a context-menu action.
+
+#### Local Groups
+- [ ] **Group Data Model**: `LocalGroup` record in redb — `group_id`, `name`, `description`, `geohash_prefix` (defines the geographic boundary), `category`, `owner_did`, `created_at`. Backed by an Iroh doc namespace for P2P replication.
+- [ ] **Group Creation Flow**: "Create Local Group" UI with name, description, category selector, and map-drawn boundary (circle or polygon → geohash prefix).
+- [ ] **Group Feed**: Dedicated feed view showing `BytescapeItem` entries tagged to a group, ordered chronologically. Filter by category (e.g., Events, For Sale, Landmarks, Q&A, General).
+- [ ] **Group Discovery (Nearby)**: Automatically surface groups whose geohash prefix overlaps the user's current approximate location. Sort by distance. Inspired by Habitat's "Nearby" feed concept — visitors see relevant local groups without subscribing.
+- [ ] **Group Membership**: Join/leave groups. Members' posts to the group replicate via Iroh doc sync. Non-members see a read-only preview.
+- [ ] **Group Categories**: Admins define per-group categories (Landmarks, Events, Buy/Sell, Discussion, etc.). Categories control visibility: some may be "Home only" (members) vs. "Nearby visible" (visitors), mirroring Habitat's category scoping.
+- [ ] **Group Moderation**: Group owner can pin posts, remove content, and delegate moderator roles to other DIDs.
+
+#### Spatial Map View
+- [ ] **MapScreen**: New top-level screen rendering a Leaflet/Maplibre map. Clusters of geotagged `BytescapeItem` markers, colored by category or source. Tap a cluster → expand; tap a pin → preview card.
+- [ ] **Heatmap Layer**: Toggle overlay showing content density by geohash tile — reveals where conversations are happening.
+- [ ] **"Around Me" Mode**: Uses device location (with permission) to center the map and auto-load nearby groups + posts. Radius slider (500 m → 50 km).
+- [ ] **Map Embed in Group Feed**: Inline mini-map at the top of each group feed showing the spatial distribution of recent posts.
+
+#### Local Marketplace
+- [ ] **Marketplace Category**: Special group category type `ForSale` / `Wanted` with structured fields: price, condition, pickup location (geohash).
+- [ ] **Marketplace Browse View**: Grid layout with thumbnail, price badge, distance indicator. Filter by category, price range, distance.
+- [ ] **Listing Detail**: Full item view with media carousel, seller profile link, "Message Seller" button (routes to P2P chat).
+- [ ] **Sold/Expired State**: Seller marks listing as sold; item grays out in feed but remains in vault history.
+
+#### P2P Group Sync (ties into Phase 4 & 6)
+- [ ] **Gossip-Based Group Discovery**: Leverage `iroh-gossip` to propagate group metadata (name, geohash, member count) across nearby peers — similar to Habitat's gossip protocol for instance discovery.
+- [ ] **Geohash Routing**: Community Stations (Phase 6) index groups by geohash prefix, enabling efficient spatial queries without a central server.
+- [ ] **Cross-Group "Nearby" Feed**: Aggregate recent posts from all groups within a geohash radius into a single "Nearby" feed tab, ordered by distance then recency.
+
 ### Network State Feed
-- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed).
+- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).
 - [ ] **Feed Injection**: Bridge emits network state events for followed contacts; rendered inline in the feed with distinct visual treatment.
 
 ### Interface & Lenses
@@ -201,3 +243,6 @@ The current blocker: **the app requires a Bluesky login to function.** To prove 
 - [x] **Repost Dedup Pipeline**: Fixed 3-layer dedup (Rust `get_unified_feed`, Rust `get_timeline_unified`, TS `deduplicateFeedEntries`) to use composite keys (`repost:<did>:<uri>`) so reposts are distinct feed events that aren't collapsed with originals. Commits: 421efa9, 76a71ec.
 - [x] **Repost Timestamp Sorting**: Reposts now use the repost's `indexed_at` (when the repost appeared on the feed) instead of the original post's `created_at`, so they sort chronologically to when the user actually saw them.
 - [x] **Repost Display & Reply Nesting**: Fixed end-to-end repost rendering and owner reply merging. Reposts now display the correct original post content with a "X reposted" banner. `import_bluesky_feed()` no longer skips reposts due to `post.author.did != did` filtering. Owner replies to reposted posts are nested inline under the parent card as fully interactive `FeedEntryCard` components (with engagement bar, thread toggle, reply compose, reactions). Added `reply_parent_uri` field through the full Rust→TS pipeline (`FeedReplyPost` → `BlueskyImportedPost` → `BytescapeItem` → `FeedEntry`) and `nestOwnerReplies()` grouping in `useUnifiedFeed`. Also introduced `resolveAtUri()` helper in `FeedEntryCard` to correctly resolve AT-URIs for vault items (where `entry.id` is a CID), fixing thread loading, likes, reposts, and reply compose for imported posts.
+- [ ] **P2P Chat Messages Not Delivering**: Chat window opens for peers but messages don't send/receive. Full pipeline needs debugging: `send_p2p_chat_message` → QUIC → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen.
+- [ ] **Mobile Chat Input Hidden Behind Nav Bar**: Chat compose text box renders below the mobile bottom navigation, making it unusable. Needs CSS viewport/layout fix.
+- [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
