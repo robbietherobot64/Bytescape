@@ -9,6 +9,34 @@ export interface AuthStatus {
     identity_ready: boolean;
 }
 
+// ─── P2P Peer Types ───
+
+export interface MyPeerInfo {
+    node_id: string;
+    username: string | null;
+    did: string | null;
+}
+
+export interface PeerInfo {
+    node_id: string;
+    display_name: string | null;
+    did: string | null;
+    added_at: number;
+    last_seen: number | null;
+    is_following: boolean;
+}
+
+export interface PeerProfile {
+    node_id: string;
+    username: string;
+    did: string;
+}
+
+export interface PeerConnectResult {
+    online: boolean;
+    profile: PeerProfile | null;
+}
+
 export interface IdentityInitResult {
     did: string;
     public_key: string;

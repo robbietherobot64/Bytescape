@@ -5,9 +5,10 @@ import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
+    onOpenChat?: (peerNodeId: string, peerName: string) => void;
 }
 
-export function FriendsScreen({ auth }: FriendsScreenProps) {
+export function FriendsScreen({ auth, onOpenChat }: FriendsScreenProps) {
     const [subview, setSubview] = useState<'peers' | 'following' | 'followers'>('peers');
 
     return (
@@ -39,7 +40,7 @@ export function FriendsScreen({ auth }: FriendsScreenProps) {
             </div>
 
             <div className="friends-content">
-                {subview === 'peers' && <PeersView />}
+                {subview === 'peers' && <PeersView onOpenChat={onOpenChat} />}
                 {(subview === 'following' || subview === 'followers') && (
                     <BlueskyFollowsView auth={auth} subview={subview} />
                 )}
@@ -50,7 +51,7 @@ export function FriendsScreen({ auth }: FriendsScreenProps) {
 
 // ─── P2P Peers View ───
 
-function PeersView() {
+function PeersView({ onOpenChat }: { onOpenChat?: (peerNodeId: string, peerName: string) => void }) {
     const [myInfo, setMyInfo] = useState<MyPeerInfo | null>(null);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
     const [peerStatuses, setPeerStatuses] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
@@ -381,10 +382,31 @@ function PeersView() {
 
                                 {/* Peer info */}
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>
-                                        {peer.display_name || truncateId(peer.node_id)}
+                                    <div style={{ fontWeight: 600, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span
+                                            onClick={() => onOpenChat?.(peer.node_id, peer.display_name || truncateId(peer.node_id))}
+                                            title="Open chat"
+                                            style={{
+                                                cursor: onOpenChat ? 'pointer' : 'default',
+                                                color: 'var(--text-primary)',
+                                                textDecoration: 'none',
+                                                borderBottom: onOpenChat ? '1px dashed var(--accent-purple)' : 'none',
+                                                transition: 'color 0.15s',
+                                            }}
+                                            onMouseEnter={e => { if (onOpenChat) (e.target as HTMLElement).style.color = 'var(--accent-purple)'; }}
+                                            onMouseLeave={e => { if (onOpenChat) (e.target as HTMLElement).style.color = 'var(--text-primary)'; }}
+                                        >
+                                            {peer.display_name || truncateId(peer.node_id)}
+                                        </span>
+                                        {onOpenChat && (
+                                            <span
+                                                onClick={() => onOpenChat(peer.node_id, peer.display_name || truncateId(peer.node_id))}
+                                                title="Open chat"
+                                                style={{ cursor: 'pointer', fontSize: '0.8rem', opacity: 0.7 }}
+                                            >💬</span>
+                                        )}
                                         {status === 'online' && (
-                                            <span style={{ marginLeft: 8, fontSize: '0.75rem', color: '#50fa7b', fontWeight: 400 }}>
+                                            <span style={{ fontSize: '0.75rem', color: '#50fa7b', fontWeight: 400 }}>
                                                 ● online
                                             </span>
                                         )}

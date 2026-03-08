@@ -467,6 +467,11 @@ function App() {
         {screen === "friends" && (
           <FriendsScreen
             auth={auth}
+            onOpenChat={(peerNodeId, peerName) => {
+              console.log(`[P2P] Opening chat with peer: ${peerName} (${peerNodeId})`);
+              setScreen("chat");
+              setActiveSidebar("chat");
+            }}
           />
         )}
 
