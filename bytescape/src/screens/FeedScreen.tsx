@@ -19,9 +19,10 @@ interface FeedScreenProps {
     auth: AuthStatus | null;
     activeTab: FeedTab;
     setActiveTab: (tab: FeedTab) => void;
+    isImporting?: boolean;
 }
 
-export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
+export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
     const autoRefreshFeeds = true;
@@ -65,6 +66,16 @@ export function FeedScreen({ auth, activeTab, setActiveTab }: FeedScreenProps) {
     useEffect(() => {
         appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
     }, []);
+
+    // Refresh feed after boot import finishes (isImporting: true → false)
+    const wasImportingRef = useRef(false);
+    useEffect(() => {
+        if (wasImportingRef.current && !isImporting) {
+            // Import just finished — refresh the feed to pick up new vault data (including reposts)
+            fetchFeed(activeTabRef.current, true);
+        }
+        wasImportingRef.current = !!isImporting;
+    }, [isImporting, fetchFeed]);
 
     useEffect(() => {
         // Only run reset if we actually have feeds loaded and current selection is invalid

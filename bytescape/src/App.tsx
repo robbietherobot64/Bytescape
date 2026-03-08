@@ -405,6 +405,7 @@ function App() {
             auth={auth}
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
+            isImporting={isImporting}
           />
         )}
 

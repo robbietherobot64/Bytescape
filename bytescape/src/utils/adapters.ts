@@ -179,7 +179,9 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         original_url: item.url,
         syndicated_uri: item.syndicated_uri,
 
-        // Repost metadata — vault items with reposted_by_did are the user's own reposts
+        // Repost metadata
+        reposted_by: item.reposted_by_did,
+        reposted_by_handle: item.reposted_by_handle,
         viewer_repost: item.reposted_by_did ? 'repost' : undefined,
 
         // Reply context
