@@ -9,7 +9,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenProps) {
-    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'import-only'>('welcome');
+    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'import-only' | 'local-vault'>('welcome');
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [importOnLogin, setImportOnLogin] = useState(true);
@@ -31,6 +31,19 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
             onLoginSuccess(status, importOnLogin);
         } catch (e: any) {
             setError(typeof e === "string" ? e : e.message || "Login failed");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleCreateLocalVault() {
+        setLoading(true);
+        setError("");
+        try {
+            const status = await invoke<AuthStatus>("create_local_identity");
+            onLoginSuccess(status, false);
+        } catch (e: any) {
+            setError(typeof e === "string" ? e : e.message || "Failed to create local vault");
         } finally {
             setLoading(false);
         }
@@ -64,6 +77,14 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                         <div className="login-option-text">
                                             <strong>Import an Archive</strong>
                                             <span className="text-muted">Facebook, Instagram, Twitter exports</span>
+                                        </div>
+                                    </Win98Box>
+
+                                    <Win98Box variant="raised" className="login-option-card" onClick={() => setMode('local-vault')}>
+                                        <span className="login-option-icon">🔒</span>
+                                        <div className="login-option-text">
+                                            <strong>Create Local Vault</strong>
+                                            <span className="text-muted">Offline-only identity, no accounts needed</span>
                                         </div>
                                     </Win98Box>
                                 </div>
@@ -146,6 +167,34 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
 
                                 <p className="login-hint">
                                     You can connect accounts later to get live feeds.
+                                </p>
+                            </div>
+                        )}
+
+                        {mode === 'local-vault' && (
+                            <div className="login-form">
+                                <div className="login-form-header">
+                                    <button className="btn btn-ghost login-back-btn" onClick={() => { setMode('welcome'); setError(''); }}>
+                                        ← Back
+                                    </button>
+                                    <span className="login-form-title">🔒 Create Local Vault</span>
+                                </div>
+
+                                <p className="login-description">
+                                    Generate a standalone local identity. Your data stays entirely on this device — no external accounts needed.
+                                </p>
+
+                                <button
+                                    className="btn btn-primary btn-block"
+                                    onClick={handleCreateLocalVault}
+                                    disabled={loading}
+                                >
+                                    {loading ? "Generating identity..." : "Create My Vault"}
+                                </button>
+                                {error && <p className="login-error">{error}</p>}
+
+                                <p className="login-hint">
+                                    You'll choose a username next. Connect external accounts anytime in Settings.
                                 </p>
                             </div>
                         )}

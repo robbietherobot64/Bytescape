@@ -38,6 +38,8 @@ pub struct AuthData {
     pub local_identity_did: Option<String>,
     /// Stable node public key for local identity.
     pub local_identity_public_key: Option<String>,
+    /// User-chosen Bytescape local username (universal overarching ID).
+    pub local_identity_username: Option<String>,
     /// Local escrow bundle copy (encrypted blob payload + metadata).
     pub recovery_escrow_bundle: Option<String>,
     /// Escrow creation timestamp.
@@ -547,6 +549,31 @@ impl EncryptedKeychain {
             did: recovered_did,
             public_key: recovered_public_key,
         })
+    }
+
+    /// Get the user's Bytescape-local username.
+    pub fn get_local_username(&self) -> Result<Option<String>, BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.local_identity_username.clone());
+        }
+        let data = self.load_encrypted()?.unwrap_or_default();
+        let username = data.local_identity_username.clone();
+        *cache = Some(data);
+        Ok(username)
+    }
+
+    /// Set the user's Bytescape-local username.
+    pub fn set_local_username(&self, username: &str) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        let mut data = cache.clone().unwrap_or_default();
+        data.local_identity_username = Some(username.to_string());
+        self.save_encrypted(&data)?;
+        *cache = Some(data);
+        println!("EncryptedKeychain: Saved local username '{}'", username);
+        Ok(())
     }
 
     /// Save Iroh secret key

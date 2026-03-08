@@ -6,6 +6,12 @@ import { FeedTab } from '../hooks/useUnifiedFeed';
 interface AuthInfo {
     handle: string;
     did: string;
+    /** "bluesky" | "local" */
+    source: string;
+    /** Bytescape-local username */
+    local_username?: string | null;
+    /** Whether the identity setup is complete */
+    identity_ready: boolean;
 }
 
 interface AuthState {

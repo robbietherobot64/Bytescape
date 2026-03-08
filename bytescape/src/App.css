@@ -4086,3 +4086,85 @@ textarea::placeholder {
     .post-media-grid.items-1 .media-item { max-height: 350px; }
     .post-media-grid.items-1 .media-item img { max-height: 350px; }
 }
+
+/* ─── 30. IDENTITY SETUP MODAL ─── */
+.identity-setup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: identity-fade-in 0.2s ease-out;
+}
+
+@keyframes identity-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.identity-setup-modal {
+    width: 420px;
+    max-width: 90vw;
+}
+
+.identity-setup-content {
+    padding: 8px 16px 16px;
+    text-align: center;
+}
+
+.identity-setup-icon {
+    font-size: 2.5rem;
+    margin-bottom: 4px;
+}
+
+.identity-setup-heading {
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    margin: 0 0 8px;
+    color: var(--text-primary);
+}
+
+.identity-setup-description {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+    line-height: 1.4;
+}
+
+.identity-setup-hint {
+    font-size: 0.82rem;
+    color: var(--accent-teal);
+    margin: 0 0 12px;
+}
+
+.identity-setup-input-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.identity-setup-at {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--text-muted);
+}
+
+.identity-setup-input {
+    flex: 1;
+    font-size: 1rem;
+}
+
+.identity-setup-error {
+    color: var(--accent-red);
+    font-size: 0.82rem;
+    margin: 0 0 8px;
+}
+
+.identity-setup-fine-print {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    margin: 10px 0 0;
+}

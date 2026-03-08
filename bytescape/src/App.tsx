@@ -53,6 +53,7 @@ import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
+import { IdentitySetupModal } from "./components/IdentitySetupModal";
 
 function App() {
   // ─── Stores ───
@@ -71,6 +72,7 @@ function App() {
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
+  const [showIdentitySetup, setShowIdentitySetup] = useState(false);
 
   // Import / Audit
   const [progress, setProgress] = useState<ParseProgress | null>(null);
@@ -154,6 +156,10 @@ function App() {
         setAuth(status);
         setScreen("feed");
         await loadArchiveStats();
+        // Show identity setup if the user hasn't chosen a username yet
+        if (!status.identity_ready) {
+          setShowIdentitySetup(true);
+        }
         // Auto-sync Bluesky feed on every boot
         importBluesky();
       }
@@ -165,6 +171,11 @@ function App() {
     setAuth(status);
     setScreen("feed");
     await loadArchiveStats();
+
+    // Show identity setup if the user hasn't chosen a username yet
+    if (!status.identity_ready) {
+      setShowIdentitySetup(true);
+    }
 
     if (shouldImport) {
       importBluesky();
@@ -185,6 +196,11 @@ function App() {
     setProgress(null);
     setImportStatus("");
     setError("");
+  }
+
+  function handleIdentitySetupComplete(updatedAuth: AuthStatus) {
+    setAuth(updatedAuth);
+    setShowIdentitySetup(false);
   }
 
   // === Data Loading ===
@@ -467,6 +483,14 @@ function App() {
 
         {/* Application End */}
       </ErrorBoundary>
+
+      {/* Identity setup modal — shown when user hasn't chosen a username yet */}
+      {showIdentitySetup && auth && (
+        <IdentitySetupModal
+          auth={auth}
+          onComplete={handleIdentitySetupComplete}
+        />
+      )}
     </AppLayout>
   );
 }

@@ -156,6 +156,8 @@ pub fn run() {
             commands::auth::check_auth_status,
             commands::auth::login,
             commands::auth::logout,
+            commands::auth::create_local_identity,
+            commands::auth::set_local_username,
             commands::auth::identity_init_full_recovery,
             commands::auth::identity_get_recovery_status,
             commands::auth::identity_start_recovery,

@@ -1,6 +1,12 @@
 export interface AuthStatus {
     handle: string;
     did: string;
+    /** "bluesky" | "local" — how the user authenticated */
+    source: string;
+    /** The user's chosen Bytescape-local username */
+    local_username?: string | null;
+    /** Whether the local identity setup step has been completed */
+    identity_ready: boolean;
 }
 
 export interface IdentityInitResult {
