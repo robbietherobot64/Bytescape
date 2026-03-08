@@ -231,13 +231,21 @@ impl DbManager {
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
-        // 1. Collect all syndicated URIs from all items' share_history
+        // 1. Collect syndicated URIs ONLY from locally-created items (non-bluesky source)
+        //    that were syndicated TO Bluesky. These are the canonical copies.
+        //    We want to delete API-imported duplicates of these items, not ALL bluesky items.
         let mut syndicated_uris = std::collections::HashSet::new();
         for row in table.iter().map_err(|e| e.to_string())? {
             let (_, value) = row.map_err(|e| e.to_string())?;
             if let Ok(item) = serde_json::from_str::<BytescapeItem>(value.value()) {
-                for event in item.share_history {
-                    syndicated_uris.insert(event.uri);
+                // Only collect URIs from items NOT imported from bluesky —
+                // these are locally-created posts that were later syndicated.
+                if item.source != "bluesky" {
+                    for event in item.share_history {
+                        if event.platform == "bluesky" {
+                            syndicated_uris.insert(event.uri);
+                        }
+                    }
                 }
             }
         }
