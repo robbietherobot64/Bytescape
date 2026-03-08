@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::peers::PeerInfo;
-use crate::protocol::{PeerProfile, BYTESCAPE_ALPN};
+use crate::protocol::{PeerProfile, ProtocolRequest, BYTESCAPE_ALPN};
 use crate::AppState;
 
 /// Summary of the local user's P2P identity, returned to the frontend.
@@ -140,8 +140,9 @@ pub struct PeerConnectResult {
 ///
 /// Uses Iroh's address lookup (mDNS for LAN, Pkarr DHT for internet)
 /// to resolve the peer and establish a QUIC connection. On success,
-/// sends a PROFILE_REQUEST and parses the response, updating the peer's
-/// display name, DID, and last_seen timestamp in the local database.
+/// sends a PROFILE_EXCHANGE with our own profile, reads the remote's
+/// profile, and updates the peer's display name, DID, and last_seen
+/// timestamp in the local database.
 #[tauri::command]
 pub async fn check_peer_connectivity(
     node_id: String,
@@ -160,19 +161,38 @@ pub async fn check_peer_connectivity(
             .clone()
     };
 
+    // Build our profile to send to the remote peer
+    let my_username = state.keychain.get_local_username()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_did = state.keychain.get_did()
+        .unwrap_or_else(|_| None)
+        .unwrap_or_else(|| "local".to_string());
+    let my_profile = PeerProfile {
+        node_id: endpoint.secret_key().public().to_string(),
+        username: my_username,
+        did: my_did,
+    };
+
     let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
 
-    // Try to connect and exchange profiles
+    // Try to connect and exchange profiles (15s timeout for mobile NAT traversal)
     let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(15),
         async {
             let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
                 .map_err(|e| format!("Connection failed: {}", e))?;
             let (mut send, mut recv) = connection.open_bi().await
                 .map_err(|e| format!("Failed to open stream: {}", e))?;
 
-            // Send PROFILE_REQUEST
-            send.write_all(b"PROFILE_REQUEST").await
+            // Send PROFILE_EXCHANGE with our profile (bidirectional)
+            let request = ProtocolRequest {
+                request: "PROFILE_EXCHANGE".to_string(),
+                profile: Some(my_profile),
+            };
+            let request_json = serde_json::to_vec(&request)
+                .map_err(|e| format!("Failed to serialize request: {}", e))?;
+            send.write_all(&request_json).await
                 .map_err(|e| format!("Failed to send request: {}", e))?;
             let _ = send.finish();
 
@@ -196,8 +216,36 @@ pub async fn check_peer_connectivity(
             PeerConnectResult { online: false, profile: None }
         }
         Err(_) => {
-            println!("Peer {} connectivity check timed out", &node_id[..8.min(node_id.len())]);
-            PeerConnectResult { online: false, profile: None }
+            // Even though we couldn't connect outbound, the peer may have
+            // connected TO us recently. Check last_seen.
+            let db_guard = state.db_manager.lock().await;
+            let recently_seen = if let Some(db) = db_guard.as_ref() {
+                if let Ok(Some(peer)) = db.get_peer(&node_id).await {
+                    if let Some(last_seen) = peer.last_seen {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        // If we saw them within the last 60 seconds, they're online
+                        now.saturating_sub(last_seen) < 60
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            drop(db_guard);
+
+            if recently_seen {
+                println!("Peer {} timed out but was recently seen (inbound connection)", &node_id[..8.min(node_id.len())]);
+                PeerConnectResult { online: true, profile: None }
+            } else {
+                println!("Peer {} connectivity check timed out", &node_id[..8.min(node_id.len())]);
+                PeerConnectResult { online: false, profile: None }
+            }
         }
     };
 

@@ -47,6 +47,17 @@ pub struct PeerProfile {
     pub did: String,
 }
 
+/// A request envelope sent over the bytescape/1.0 protocol.
+/// The requester includes their own profile so both sides learn about each other.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProtocolRequest {
+    /// The request type: "PING", "PROFILE_EXCHANGE"
+    pub request: String,
+    /// The requester's profile (included so the responder learns who we are)
+    #[serde(default)]
+    pub profile: Option<PeerProfile>,
+}
+
 // ---------------------------------------------------------------------------
 // BytescapeProtocol — handles incoming `bytescape/1.0` connections
 // ---------------------------------------------------------------------------
@@ -54,8 +65,10 @@ pub struct PeerProfile {
 /// Protocol handler for the Bytescape custom protocol (`bytescape/1.0`).
 ///
 /// Supports:
-/// - `PING`             → responds `PONG`
-/// - `PROFILE_REQUEST`  → responds with JSON [`PeerProfile`]
+/// - `PING`              → responds `PONG`
+/// - `PROFILE_REQUEST`   → responds with JSON [`PeerProfile`] (legacy)
+/// - `PROFILE_EXCHANGE`  → bidirectional: requester sends their profile,
+///                         responder sends theirs back. Both sides update.
 #[derive(Clone)]
 pub struct BytescapeProtocol {
     my_profile: PeerProfile,
@@ -95,17 +108,25 @@ impl ProtocolHandler for BytescapeProtocol {
 
         let (mut send, mut recv) = connection.accept_bi().await.map_err(to_accept_err)?;
 
-        // Read request (max 4 KiB)
-        let request = recv.read_to_end(4096).await.map_err(to_accept_err)?;
+        // Read request (max 8 KiB)
+        let request = recv.read_to_end(8192).await.map_err(to_accept_err)?;
         let request_str = String::from_utf8_lossy(&request);
 
-        match request_str.as_ref() {
+        // Try to parse as JSON ProtocolRequest first (new format),
+        // fall back to legacy plaintext commands.
+        let (command, remote_profile) = match serde_json::from_slice::<ProtocolRequest>(&request) {
+            Ok(req) => (req.request, req.profile),
+            Err(_) => (request_str.trim().to_string(), None),
+        };
+
+        match command.as_str() {
             "PING" => {
                 send.write_all(b"PONG").await.map_err(to_accept_err)?;
                 let _ = send.finish();
                 println!("BytescapeProtocol: PONG → {}", remote_id);
             }
-            "PROFILE_REQUEST" => {
+            "PROFILE_EXCHANGE" | "PROFILE_REQUEST" => {
+                // Send our profile back
                 let profile_json =
                     serde_json::to_vec(&self.my_profile).map_err(to_accept_err)?;
                 send.write_all(&profile_json)
@@ -113,33 +134,22 @@ impl ProtocolHandler for BytescapeProtocol {
                     .map_err(to_accept_err)?;
                 let _ = send.finish();
 
-                // Update peer's last_seen in our database
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
+                // Save the remote peer's info
+                self.update_peer_from_incoming(
+                    &remote_id.to_string(),
+                    remote_profile.as_ref(),
+                ).await;
 
-                let db_guard = self.db_manager.lock().await;
-                if let Some(db) = db_guard.as_ref() {
-                    let node_id_str = remote_id.to_string();
-                    if let Ok(Some(mut peer)) = db.get_peer(&node_id_str).await {
-                        peer.last_seen = Some(now);
-                        let _ = db.save_peer(&peer).await;
-                    }
-                }
-
-                // Notify frontend
-                let _ = self.app_handle.emit(
-                    "peer-connected",
-                    serde_json::json!({ "node_id": remote_id.to_string() }),
+                println!(
+                    "BytescapeProtocol: Profile exchange with {} (username: {})",
+                    remote_id,
+                    remote_profile.as_ref().map(|p| p.username.as_str()).unwrap_or("unknown"),
                 );
-
-                println!("BytescapeProtocol: Sent profile to {}", remote_id);
             }
             _ => {
                 println!(
                     "BytescapeProtocol: Unknown request from {}: {}",
-                    remote_id, request_str
+                    remote_id, command
                 );
                 send.write_all(b"ERROR: Unknown request")
                     .await
@@ -149,6 +159,76 @@ impl ProtocolHandler for BytescapeProtocol {
         }
 
         Ok(())
+    }
+}
+
+impl BytescapeProtocol {
+    /// Update the peer record in the database from an incoming connection.
+    /// If the remote sent their profile, save their username/DID.
+    /// Always updates last_seen and emits a frontend event.
+    async fn update_peer_from_incoming(
+        &self,
+        remote_node_id: &str,
+        remote_profile: Option<&PeerProfile>,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let db_guard = self.db_manager.lock().await;
+        if let Some(db) = db_guard.as_ref() {
+            // Try to find an existing peer record, or create one if we don't have one
+            let mut peer = match db.get_peer(remote_node_id).await {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    // Peer connected to us but we don't have them saved yet.
+                    // Auto-add them so we can show them in the UI.
+                    crate::db::peers::PeerInfo {
+                        node_id: remote_node_id.to_string(),
+                        display_name: None,
+                        did: None,
+                        added_at: now,
+                        last_seen: None,
+                        is_following: false,
+                    }
+                }
+                Err(_) => return,
+            };
+
+            peer.last_seen = Some(now);
+
+            // Update display name and DID from the remote profile if provided
+            if let Some(profile) = remote_profile {
+                if !profile.username.is_empty() && profile.username != "Anonymous" {
+                    peer.display_name = Some(profile.username.clone());
+                }
+                if !profile.did.is_empty() && profile.did != "local" {
+                    peer.did = Some(profile.did.clone());
+                }
+            }
+
+            let _ = db.save_peer(&peer).await;
+        }
+        drop(db_guard);
+
+        // Build the event payload with profile info if available
+        let event_payload = if let Some(profile) = remote_profile {
+            serde_json::json!({
+                "node_id": remote_node_id,
+                "username": profile.username,
+                "did": profile.did,
+                "online": true,
+            })
+        } else {
+            serde_json::json!({
+                "node_id": remote_node_id,
+                "online": true,
+            })
+        };
+
+        // Notify frontend that a peer connected to us
+        let _ = self.app_handle.emit("peer-connected", event_payload);
     }
 }
 

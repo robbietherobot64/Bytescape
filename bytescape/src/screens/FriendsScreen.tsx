@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
 
 interface FriendsScreenProps {
@@ -83,6 +84,24 @@ function PeersView() {
 
     useEffect(() => {
         loadData();
+    }, [loadData]);
+
+    // Listen for inbound peer connections (e.g. mobile connecting to desktop).
+    // When the remote peer connects TO us, the backend emits "peer-connected"
+    // with their node_id and profile. We update the status map immediately
+    // and refresh the peer list to pick up their display_name/DID.
+    useEffect(() => {
+        const unlisten = listen<{ node_id: string; username?: string; online?: boolean }>(
+            'peer-connected',
+            (event) => {
+                const { node_id } = event.payload;
+                console.log('[P2P] Inbound connection from peer:', node_id, event.payload);
+                setPeerStatuses(prev => ({ ...prev, [node_id]: 'online' }));
+                // Refresh peer list to pick up updated display_name/DID/last_seen
+                loadData();
+            }
+        );
+        return () => { unlisten.then(fn => fn()); };
     }, [loadData]);
 
     const handleCopyNodeId = async () => {
