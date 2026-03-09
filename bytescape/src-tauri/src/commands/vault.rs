@@ -400,7 +400,7 @@ pub async fn clear_vault(state: State<'_, AppState>) -> std::result::Result<usiz
 /// List vault messages
 #[tauri::command]
 pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Result<Vec<crate::db::VaultMessage>, String> {
-    let owner_did = state.keychain.get_did()
+    let owner_did = state.keychain.get_owner_did()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 

@@ -9,7 +9,7 @@ use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_docs::engine::Engine as DocsEngine;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 /// ALPN identifier for the Bytescape custom protocol.
@@ -115,34 +115,42 @@ impl BytescapeProtocol {
 impl ProtocolHandler for BytescapeProtocol {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         let remote_id = connection.remote_id();
-        println!(
-            "BytescapeProtocol: Incoming connection from {}",
-            remote_id
-        );
+        println!("[P2P-PROTO] Incoming connection from {}", remote_id);
 
         let (mut send, mut recv) = connection.accept_bi().await.map_err(to_accept_err)?;
 
         // Read request (max 8 KiB)
-        let request = recv.read_to_end(8192).await.map_err(to_accept_err)?;
-        let request_str = String::from_utf8_lossy(&request);
+        let request_bytes = recv.read_to_end(8192).await.map_err(to_accept_err)?;
+        println!("[P2P-PROTO] Received {} bytes from {}", request_bytes.len(), remote_id);
 
-        // Try to parse as JSON ProtocolRequest first (new format),
-        // fall back to legacy plaintext commands.
-        let (command, remote_profile) = match serde_json::from_slice::<ProtocolRequest>(&request) {
-            Ok(req) => (req.request, req.profile),
-            Err(_) => (request_str.trim().to_string(), None),
+        // Single parse — extract all fields at once.
+        // Fall back to legacy plaintext commands.
+        let (command, remote_profile, chat_message) = match serde_json::from_slice::<ProtocolRequest>(&request_bytes) {
+            Ok(req) => {
+                println!("[P2P-PROTO] Parsed: command={}, has_profile={}, has_message={}",
+                    req.request, req.profile.is_some(), req.message.is_some());
+                (req.request, req.profile, req.message)
+            }
+            Err(_) => {
+                let raw = String::from_utf8_lossy(&request_bytes).trim().to_string();
+                println!("[P2P-PROTO] Legacy plaintext command: {}", raw);
+                (raw, None, None)
+            }
         };
+
+        // Get fresh profile from keychain (DID may have changed since node init)
+        let fresh_profile = self.get_fresh_profile();
 
         match command.as_str() {
             "PING" => {
                 send.write_all(b"PONG").await.map_err(to_accept_err)?;
                 let _ = send.finish();
-                println!("BytescapeProtocol: PONG → {}", remote_id);
+                println!("[P2P-PROTO] PONG → {}", remote_id);
             }
             "PROFILE_EXCHANGE" | "PROFILE_REQUEST" => {
-                // Send our profile back
+                // Send our fresh profile back
                 let profile_json =
-                    serde_json::to_vec(&self.my_profile).map_err(to_accept_err)?;
+                    serde_json::to_vec(&fresh_profile).map_err(to_accept_err)?;
                 send.write_all(&profile_json)
                     .await
                     .map_err(to_accept_err)?;
@@ -155,17 +163,19 @@ impl ProtocolHandler for BytescapeProtocol {
                 ).await;
 
                 println!(
-                    "BytescapeProtocol: Profile exchange with {} (username: {})",
+                    "[P2P-PROTO] Profile exchange with {} (username: {})",
                     remote_id,
                     remote_profile.as_ref().map(|p| p.username.as_str()).unwrap_or("unknown"),
                 );
             }
             "CHAT_MESSAGE" => {
-                // Receive a chat message from a peer
-                if let Some(ref msg_payload) = serde_json::from_slice::<ProtocolRequest>(&request)
-                    .ok()
-                    .and_then(|r| r.message)
-                {
+                // Use already-parsed chat_message (no double-parse)
+                if let Some(ref msg_payload) = chat_message {
+                    println!(
+                        "[P2P-PROTO] Chat message from {}: id={}, text_len={}",
+                        remote_id, msg_payload.id, msg_payload.text.len()
+                    );
+
                     // Save the incoming message to our VaultMessage table
                     self.save_incoming_chat_message(
                         &remote_id.to_string(),
@@ -175,12 +185,9 @@ impl ProtocolHandler for BytescapeProtocol {
 
                     send.write_all(b"ACK").await.map_err(to_accept_err)?;
                     let _ = send.finish();
-
-                    println!(
-                        "BytescapeProtocol: Chat message from {} saved (id: {})",
-                        remote_id, msg_payload.id,
-                    );
+                    println!("[P2P-PROTO] ACK sent to {} (id: {})", remote_id, msg_payload.id);
                 } else {
+                    println!("[P2P-PROTO] CHAT_MESSAGE from {} missing payload!", remote_id);
                     send.write_all(b"ERROR: Missing message payload")
                         .await
                         .map_err(to_accept_err)?;
@@ -188,10 +195,7 @@ impl ProtocolHandler for BytescapeProtocol {
                 }
             }
             _ => {
-                println!(
-                    "BytescapeProtocol: Unknown request from {}: {}",
-                    remote_id, command
-                );
+                println!("[P2P-PROTO] Unknown request from {}: {}", remote_id, command);
                 send.write_all(b"ERROR: Unknown request")
                     .await
                     .map_err(to_accept_err)?;
@@ -204,6 +208,36 @@ impl ProtocolHandler for BytescapeProtocol {
 }
 
 impl BytescapeProtocol {
+    /// Get a fresh profile with the live DID from the keychain.
+    ///
+    /// The protocol's `my_profile` is frozen at node init time, which may
+    /// be before the user authenticates. This reads the current DID from
+    /// the keychain so profile exchanges always return the real identity.
+    fn get_fresh_profile(&self) -> PeerProfile {
+        let app_state = self.app_handle.state::<crate::AppState>();
+        let live_did = app_state.keychain.get_owner_did()
+            .unwrap_or(None)
+            .unwrap_or_else(|| self.my_profile.did.clone());
+        let live_username = app_state.keychain.get_local_username()
+            .unwrap_or(None)
+            .unwrap_or_else(|| self.my_profile.username.clone());
+        PeerProfile {
+            node_id: self.my_profile.node_id.clone(),
+            username: live_username,
+            did: live_did,
+        }
+    }
+
+    /// Get the live owner DID from the keychain.
+    ///
+    /// Falls back to the protocol's cached DID if the keychain is unavailable.
+    fn get_live_owner_did(&self) -> String {
+        let app_state = self.app_handle.state::<crate::AppState>();
+        app_state.keychain.get_owner_did()
+            .unwrap_or(None)
+            .unwrap_or_else(|| self.my_profile.did.clone())
+    }
+
     /// Update the peer record in the database from an incoming connection.
     /// If the remote sent their profile, save their username/DID.
     /// Always updates last_seen and emits a frontend event.
@@ -285,6 +319,13 @@ impl BytescapeProtocol {
             .unwrap_or_default()
             .as_secs();
 
+        // Use the LIVE owner DID from the keychain — not the stale protocol profile.
+        // The protocol's my_profile.did is frozen at node init time (before auth),
+        // so it would be "local" for Bluesky users, causing messages to be invisible
+        // when list_vault_messages filters by the real DID.
+        let owner_did = self.get_live_owner_did();
+        println!("[P2P-CHAT] Saving incoming message: owner_did={}, from={}", owner_did, remote_node_id);
+
         // Determine sender info from profile or fallback to node_id
         let sender_handle = remote_profile
             .map(|p| p.username.clone())
@@ -299,7 +340,7 @@ impl BytescapeProtocol {
         // Build VaultMessage
         let vault_msg = crate::db::VaultMessage {
             id: msg.id.clone(),
-            owner_did: Some(self.my_profile.did.clone()),
+            owner_did: Some(owner_did.clone()),
             convo_id: convo_id.clone(),
             sender_did: sender_did.clone(),
             sender_handle: sender_handle.clone(),
@@ -314,7 +355,12 @@ impl BytescapeProtocol {
         // Save to DB
         let db_guard = self.db_manager.lock().await;
         if let Some(db) = db_guard.as_ref() {
-            let _ = db.save_vault_message(&vault_msg).await;
+            match db.save_vault_message(&vault_msg).await {
+                Ok(is_new) => println!("[P2P-CHAT] Message saved: id={}, is_new={}, convo_id={}", msg.id, is_new, convo_id),
+                Err(e) => println!("[P2P-CHAT] ERROR saving message: {}", e),
+            }
+        } else {
+            println!("[P2P-CHAT] ERROR: Database not initialized, message lost!");
         }
         drop(db_guard);
 
@@ -322,7 +368,7 @@ impl BytescapeProtocol {
         self.update_peer_from_incoming(remote_node_id, remote_profile).await;
 
         // Emit event to frontend for live update
-        let _ = self.app_handle.emit("p2p-message", serde_json::json!({
+        let emit_result = self.app_handle.emit("p2p-message", serde_json::json!({
             "convo_id": convo_id,
             "message": {
                 "id": msg.id,
@@ -333,6 +379,7 @@ impl BytescapeProtocol {
                 "source": "p2p",
             }
         }));
+        println!("[P2P-CHAT] Event emitted: p2p-message, convo_id={}, emit_ok={}", convo_id, emit_result.is_ok());
     }
 }
 

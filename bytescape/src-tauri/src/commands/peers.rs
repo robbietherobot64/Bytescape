@@ -308,7 +308,7 @@ pub async fn list_p2p_conversations(
         .ok_or("Database not initialized")?;
 
     let peers = db.list_peers().await.unwrap_or_default();
-    let owner_did = state.keychain.get_did()
+    let owner_did = state.keychain.get_owner_did()
         .map_err(|e| e.to_string())?;
 
     // Count messages per P2P convo
@@ -365,14 +365,15 @@ pub async fn send_p2p_chat_message(
             .clone()
     };
 
-    // Build sender info
+    // Build sender info — use get_owner_did to get the real DID (Bluesky or local)
     let my_username = state.keychain.get_local_username()
         .unwrap_or_else(|_| None)
         .unwrap_or_else(|| "Anonymous".to_string());
-    let my_did = state.keychain.get_did()
-        .unwrap_or_else(|_| None)
+    let my_did = state.keychain.get_owner_did()
+        .unwrap_or(None)
         .unwrap_or_else(|| "local".to_string());
     let my_node_id = endpoint.secret_key().public().to_string();
+    println!("[P2P-CHAT] Sending message to {}: my_did={}, my_username={}", &node_id[..8.min(node_id.len())], my_did, my_username);
 
     let my_profile = PeerProfile {
         node_id: my_node_id.clone(),
@@ -424,13 +425,16 @@ pub async fn send_p2p_chat_message(
     ).await;
 
     let delivered = match send_result {
-        Ok(Ok(())) => true,
+        Ok(Ok(())) => {
+            println!("[P2P-CHAT] Message delivered to {}", &node_id[..8.min(node_id.len())]);
+            true
+        }
         Ok(Err(e)) => {
-            println!("P2P chat send failed: {}", e);
+            println!("[P2P-CHAT] Send failed to {}: {}", &node_id[..8.min(node_id.len())], e);
             false
         }
         Err(_) => {
-            println!("P2P chat send timed out to {}", &node_id[..8.min(node_id.len())]);
+            println!("[P2P-CHAT] Send timed out to {}", &node_id[..8.min(node_id.len())]);
             false
         }
     };
@@ -455,7 +459,10 @@ pub async fn send_p2p_chat_message(
 
     let db_guard = state.db_manager.lock().await;
     if let Some(db) = db_guard.as_ref() {
-        let _ = db.save_vault_message(&vault_msg).await;
+        match db.save_vault_message(&vault_msg).await {
+            Ok(is_new) => println!("[P2P-CHAT] Outgoing message saved: id={}, is_new={}, convo_id={}", msg_id, is_new, convo_id),
+            Err(e) => println!("[P2P-CHAT] ERROR saving outgoing message: {}", e),
+        }
     }
 
     Ok(serde_json::json!({

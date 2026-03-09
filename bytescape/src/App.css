@@ -3904,6 +3904,7 @@ textarea::placeholder {
         bottom: 0;
         z-index: 10;
         background: var(--bg-content);
+        padding-bottom: var(--safe-bottom);
     }
 
     .chat-back-btn {
@@ -3920,7 +3921,10 @@ textarea::placeholder {
         font-size: 13px;
     }
 
-    .chat-input-bar { padding: 6px 8px; }
+    .chat-input-bar {
+        padding: 6px 8px;
+        padding-bottom: calc(6px + var(--safe-bottom));
+    }
     .chat-input { font-size: 14px; }
 
     /* ── FRIENDS SCREEN ── */
