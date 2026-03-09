@@ -95,10 +95,23 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 ### Connectors
 - [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
 - [ ] **Connector: Threads**: `connectors/threads.rs` — Separate parser for Threads data export ZIP.
-- [ ] **Connector: ActivityPub**: Add `megalodon` crate, create `connectors/activitypub.rs` for Mastodon/Lemmy.
+- [ ] **Connector: ActivityPub**: `connectors/activitypub.rs` — Federation with the wider fediverse. Protocol implementation informed by the [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte) projects ([FEDERATION.md](https://codeberg.org/fortified/forte/raw/branch/dev/FEDERATION.md), [FEATURES.md](https://codeberg.org/streams/streams/raw/branch/dev/FEATURES.md)).
+  - [ ] **Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via `megalodon` crate or custom AP C2S client (Forte's C2S is spec-compliant AP, not Mastodon REST — evaluate `megalodon` vs. thin `reqwest`+`serde_json` client).
+  - [ ] **Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate. Verify inbound proofs. Required foundation for Conversation Containers and trusted federation.
+  - [ ] **Conversation Containers (FEP-171b / FEP-400e / FEP-7888)**: Thread creator owns a `Collection` object; replies are `Add`ed by the owner after moderation. Emit `target: {type: Collection, attributedTo: author}` on outbound posts. Maps to Bytescape's group threading model.
+  - [ ] **Comment Permissions (`canReply` + `endDate`)**: Emit `canReply` (array of permitted actor IDs/collections) and optional `endDate` (reply deadline) on outbound posts. Enforce in compose UI for inbound restricted posts.
+  - [ ] **Expiring Content (`expires`)**: Add `expires_at` field to `BytescapeItem`. Background task auto-deletes expired items and emits federated `Delete`.
+  - [ ] **Direct Message Routing (`nomad:directMessage`)**: Boolean flag distinguishing DMs from other private messages. Route inbound `directMessage: true` notes to ChatScreen, others to feed.
+  - [ ] **Quote Posts (FEP-e232)**: Structured quote-post support via `tag` with `type: Link`. Add `quote_uri` field to `BytescapeItem`; render quoted post inline in `FeedEntryCard`.
+  - [ ] **Federated Search (`canSearch`)**: Discover `searchContent`/`searchTags` endpoints from AP actor records. Add `search_remote_channel` command returning `BytescapeItem[]`.
+  - [ ] **Groups (AP `Group` Actor)**: Public/private groups via `Group` actor type with `Follow/Join/Leave` support. Initial posts DM'd to group; group re-broadcasts to members. Bang-tag (`!groupname`) support for private groups.
+  - [ ] **Private Media (Bearcaps/OCAP)**: Generate capability URIs for private media syndication; resolve Bearcap/OCAP links on inbound media.
+  - [ ] **Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
+  - [ ] **Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
+  - [ ] **Multibox Delivery (FEP-0499)**: Batch deliveries to multiple inboxes on the same server via `multibox` endpoint.
 - [ ] **Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions.
 - [ ] **Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs.
-- [ ] **Add `Instagram`, `Threads`, `Rss` variants to Source enum**: In `connectors/mod.rs`.
+- [ ] **Add `Instagram`, `Threads`, `Rss`, `ActivityPub` variants to Source enum**: In `connectors/mod.rs`.
 
 ## Phase 4: P2P Sync & Identity 🔗
 **Goal:** Prove the core differentiator—two devices syncing via Iroh. This is the next active phase.
@@ -134,6 +147,8 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 ### Future
 - [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
 - [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain.
+- [ ] **Nomadic Identity Federation (FEP-ef61 / FEP-c390)**: AP-native multi-device presence inspired by [Forte's](https://codeberg.org/fortified/forte) approach — emit `copiedTo` in AP actor record listing all device endpoints, handle `Sync` activity type to mirror profile changes across devices when federated. Dual-path: Iroh doc sync for local P2P, `copiedTo`/`Sync` for AP-federated identity portability. Identity Proofs (FEP-c390) link Bytescape's local DID to the AP actor for cross-platform verification.
+- [ ] **OpenWebAuth (FEP-61cf)**: Federated SSO — authenticate to remote fediverse servers via home endpoint to access permission-gated content (private posts, search results, media) without creating new accounts.
 
 ## Phase 5: Profile Builder, Spatial Discovery & UI Polish 🗺️🎨
 **Goal:** Build the sovereign profile system, spatial graph-based discovery, the Aero-Skeuomorphic visual language, and MySpace-style profile personalization. The profile is the product.
@@ -192,6 +207,23 @@ Habitat is an open-source hyperlocal social platform where posts are linked to m
 - [ ] **Geohash Routing**: Community Stations (Phase 6) index groups by geohash prefix, enabling efficient spatial queries without a central server.
 - [ ] **Cross-Group "Nearby" Feed**: Aggregate recent posts from all groups within a geohash radius into a single "Nearby" feed tab, ordered by distance then recency.
 
+### Events & RSVP (inspired by [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte))
+Events follow the ActivityStreams vocabulary as implemented by Streams/Forte: `Invite(Event)` for distribution, RSVP via `Accept/Reject/TentativeAccept/TentativeReject(Invite)`, timezone-aware UTC dates, and location-aware rendering.
+
+- [ ] **`Event` BytescapeType**: Add `Event` as a fourth variant to `BytescapeType` in `db.rs` with structured fields: `start_time`, `end_time`, `timezone`, `location` (reuses `GeoPoint`), `rsvp_status`, `rsvp_collection` (list of attendee DIDs + response status).
+- [ ] **Event Creation UI**: Date/time picker, location picker (reuses map component from Local Groups), description, optional recurrence. Emits `Invite(Event)` when syndicated via AP.
+- [ ] **RSVP Flow**: Accept/Reject/Tentative buttons on received events. Emits corresponding AP RSVP activities. Tracks attendee responses in local `rsvp_collection`.
+- [ ] **Calendar View**: New lens/view rendering `Event`-type `BytescapeItem` entries in a calendar layout. Integrates with group events and birthday notifications.
+- [ ] **Map Integration**: Events with `location` coordinates appear as pins on MapScreen alongside geotagged posts. Tap → event detail card with RSVP action.
+- [ ] **Event Updates & Cancellation**: `Update(Event)` and `Delete(Event)` propagate changes to all invited attendees via AP federation.
+
+### AP-Federated Group Threading (Conversation Containers)
+When groups federate via ActivityPub, they use the Conversation Container model (FEP-171b) as implemented by Streams/Forte. The group owner's node acts as the `attributedTo` authority for the container `Collection`, gating replies via `Add/Remove` activities. Locally this maps to Iroh doc ownership; over AP it uses standard `Add(Create(Note))` mechanics with Data Integrity Proofs (FEP-8b32) for authorship verification.
+
+- [ ] **ConversationContainer Record**: Add `ConversationContainer` record type in `db.rs` — `container_id`, `owner_did`, `context_url`, `member_dids`, `created_at`. Each group thread is a container.
+- [ ] **Container Moderation**: Owner approves/rejects replies before `Add`ing to the collection. Rejected replies are not forwarded. `Remove` activity for post-hoc moderation.
+- [ ] **Friend Zoom (inspired by Streams)**: Per-connection closeness slider that filters feed by relationship strength — zoom in for close friends, out for acquaintances. Stored as a weight on the local contact record.
+
 ### Network State Feed
 - [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).
 - [ ] **Feed Injection**: Bridge emits network state events for followed contacts; rendered inline in the feed with distinct visual treatment.
@@ -212,6 +244,7 @@ Habitat is an open-source hyperlocal social platform where posts are linked to m
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
 - [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.
 - [ ] **Stealth Mode**: Toggle to sever all Station connections for pure device-to-device Iroh operation.
+- [ ] **Paired Streams/Forte Server**: Optionally pair Bytescape with a self-hosted [Streams](https://codeberg.org/streams/streams) instance (Docker/YunoHost) as an always-on ActivityPub relay. Bytescape auto-configures OAuth2; the Streams server acts as the user's public AP endpoint while Bytescape remains the local-first client. Bridges P2P identity with fediverse presence — the server handles AP S2S delivery, group hosting, and federated search on behalf of the user's offline devices.
 
 ---
 
