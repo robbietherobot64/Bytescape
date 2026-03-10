@@ -16,6 +16,7 @@ pub struct MyPeerInfo {
     pub node_id: String,
     pub username: Option<String>,
     pub did: Option<String>,
+    pub also_known_as: Vec<String>,
 }
 
 /// Return the current user's P2P identity (node ID, username, DID).
@@ -32,6 +33,15 @@ pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, 
         .get_owner_did()
         .map_err(|e| e.to_string())?;
 
+    // Build alsoKnownAs linked identities
+    let mut also_known_as = Vec::new();
+    if let Ok(Some(bsky_did)) = state.keychain.get_bluesky_did() {
+        also_known_as.push(bsky_did);
+    }
+    if let Ok(Some(handle)) = state.keychain.get_handle() {
+        also_known_as.push(format!("at://{}", handle));
+    }
+
     let node_id = {
         let guard = state.endpoint.lock().await;
         guard
@@ -46,6 +56,7 @@ pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, 
         node_id,
         username,
         did,
+        also_known_as,
     })
 }
 
@@ -172,6 +183,7 @@ pub async fn check_peer_connectivity(
         node_id: endpoint.secret_key().public().to_string(),
         username: my_username,
         did: my_did,
+        also_known_as: vec![],
     };
 
     let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
@@ -190,6 +202,7 @@ pub async fn check_peer_connectivity(
                 request: "PROFILE_EXCHANGE".to_string(),
                 profile: Some(my_profile),
                 message: None,
+                feed_params: None,
             };
             let request_json = serde_json::to_vec(&request)
                 .map_err(|e| format!("Failed to serialize request: {}", e))?;
@@ -379,6 +392,7 @@ pub async fn send_p2p_chat_message(
         node_id: my_node_id.clone(),
         username: my_username.clone(),
         did: my_did.clone(),
+        also_known_as: vec![],
     };
 
     // Build message payload
@@ -396,6 +410,7 @@ pub async fn send_p2p_chat_message(
         request: "CHAT_MESSAGE".to_string(),
         profile: Some(my_profile),
         message: Some(msg_payload),
+        feed_params: None,
     };
 
     // Try to send over the network (10s timeout)
@@ -471,4 +486,116 @@ pub async fn send_p2p_chat_message(
         "delivered": delivered,
         "sent_at": sent_at,
     }))
+}
+
+/// Request a peer's feed (posts/profile) over P2P.
+///
+/// Connects to the peer's Iroh node, sends a FEED_REQUEST, and returns
+/// their profile + a page of BytescapeItems.
+#[tauri::command]
+pub async fn request_peer_feed(
+    node_id: String,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    source_filter: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let node_id = node_id.trim().to_string();
+    let node_id_parsed: iroh::PublicKey = node_id
+        .parse()
+        .map_err(|e| format!("Invalid Node ID: {}", e))?;
+
+    let endpoint = {
+        let guard = state.endpoint.lock().await;
+        guard
+            .as_ref()
+            .ok_or("Iroh node not initialized")?
+            .clone()
+    };
+
+    // Build our profile to include in the request
+    let my_username = state.keychain.get_local_username()
+        .unwrap_or(None)
+        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_did = state.keychain.get_owner_did()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "local".to_string());
+    let my_node_id = endpoint.secret_key().public().to_string();
+
+    let mut also_known_as = Vec::new();
+    if let Ok(Some(bsky_did)) = state.keychain.get_bluesky_did() {
+        also_known_as.push(bsky_did);
+    }
+    if let Ok(Some(handle)) = state.keychain.get_handle() {
+        also_known_as.push(format!("at://{}", handle));
+    }
+
+    let my_profile = PeerProfile {
+        node_id: my_node_id,
+        username: my_username,
+        did: my_did,
+        also_known_as,
+    };
+
+    let feed_params = crate::protocol::FeedRequestParams {
+        limit: limit.unwrap_or(20),
+        offset: offset.unwrap_or(0),
+        source_filter,
+    };
+
+    let request = ProtocolRequest {
+        request: "FEED_REQUEST".to_string(),
+        profile: Some(my_profile),
+        message: None,
+        feed_params: Some(feed_params),
+    };
+
+    println!("[P2P-FEED] Requesting feed from {}", &node_id[..8.min(node_id.len())]);
+
+    // Connect and request feed (15s timeout — feed data may be larger)
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        async {
+            let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
+            let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
+                .map_err(|e| format!("Connection failed: {}", e))?;
+            let (mut send, mut recv) = connection.open_bi().await
+                .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+            let request_json = serde_json::to_vec(&request)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            send.write_all(&request_json).await
+                .map_err(|e| format!("Send error: {}", e))?;
+            let _ = send.finish();
+
+            // Read feed response (up to 2 MiB for large feeds)
+            let response_bytes = recv.read_to_end(2 * 1024 * 1024).await
+                .map_err(|e| format!("Read error: {}", e))?;
+
+            let feed_response: crate::protocol::FeedResponse = serde_json::from_slice(&response_bytes)
+                .map_err(|e| format!("Parse error: {}", e))?;
+
+            Ok::<_, String>(feed_response)
+        }
+    ).await;
+
+    match result {
+        Ok(Ok(feed)) => {
+            println!(
+                "[P2P-FEED] Received feed from {}: {} items, total={}",
+                &node_id[..8.min(node_id.len())],
+                feed.items.len(),
+                feed.total_count
+            );
+            Ok(serde_json::to_value(&feed).map_err(|e| e.to_string())?)
+        }
+        Ok(Err(e)) => {
+            println!("[P2P-FEED] Feed request failed for {}: {}", &node_id[..8.min(node_id.len())], e);
+            Err(format!("Feed request failed: {}", e))
+        }
+        Err(_) => {
+            println!("[P2P-FEED] Feed request timed out for {}", &node_id[..8.min(node_id.len())]);
+            Err("Feed request timed out (peer may be offline)".to_string())
+        }
+    }
 }

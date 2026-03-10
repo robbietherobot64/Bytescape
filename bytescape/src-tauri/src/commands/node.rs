@@ -57,6 +57,13 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     let node_id = endpoint.secret_key().public();
     *endpoint_guard = Some(endpoint.clone());
 
+    // Ensure the master DID (did:key) is computed and persisted from the Iroh keypair
+    match state.keychain.ensure_master_did() {
+        Ok(Some(did)) => println!("P2P Node: Master DID = {}", did),
+        Ok(None) => println!("P2P Node: WARNING — no master DID computed (missing Iroh key?)"),
+        Err(e) => println!("P2P Node: WARNING — failed to compute master DID: {}", e),
+    }
+
     // Initialize SyncManager (creates DocsEngine, blobs, gossip)
     let app_data_dir = state.app_handle.path()
         .app_data_dir()
@@ -84,13 +91,14 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     let my_username = state.keychain.get_local_username()
         .unwrap_or_else(|_| None)
         .unwrap_or_else(|| "Anonymous".to_string());
-    let my_did = state.keychain.get_did()
+    let my_did = state.keychain.get_owner_did()
         .unwrap_or_else(|_| None)
         .unwrap_or_else(|| "local".to_string());
     let my_profile = PeerProfile {
         node_id: node_id.to_string(),
         username: my_username,
         did: my_did,
+        also_known_as: vec![],
     };
     let bytescape_handler = BytescapeProtocol::new(
         my_profile,

@@ -132,17 +132,21 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **P2P Chat UI**: ChatScreen has P2P section in sidebar (purple dot), P2P send routing, `p2p-message` event listener, empty-state prompt. FriendsScreen peer names are clickable with 💬 icon → navigates to `p2p:{node_id}` conversation.
 - [x] **Android APK**: Built with full P2P chat code (77MB, March 2026).
 
-### Next Steps: P2P Chat Debugging & Local-Only Login (Active)
-**Current blocker:** P2P chat UI opens correctly but messages do not appear to send/receive between devices. The protocol plumbing is in place but needs debugging — likely an issue with message serialization, delivery confirmation, or the frontend not loading/displaying `VaultMessage` entries for P2P conversations.
+### Completed: P2P Chat Bug Fixes
+- [x] **🐛 P2P Chat Messages Not Delivering** *(commit `11de2b7`)*: Root cause was 4 bugs: (1) **DID staleness** — `setup_iroh_node` ran before `checkAuth()` so DID defaulted to `"local"`, incoming P2P messages saved with wrong `owner_did`, invisible to `list_vault_messages`. Fixed with `get_fresh_profile()` and `get_live_owner_did()` that read live keychain. (2) **Double-parse** — `CHAT_MESSAGE` handler parsed request bytes twice. Fixed with single-parse tuple extraction. (3) **`get_did()` vs `get_owner_did()` inconsistency** — chat commands used cache-only `get_did()`. Fixed to use `get_owner_did()` everywhere. (4) **Mobile CSS** — chat input hidden behind nav bar. Fixed with `--safe-bottom` padding preservation.
+- [x] **🐛 Mobile Chat Input Hidden Behind Nav** *(commit `11de2b7`)*: Fixed in same commit — preserved `--safe-bottom` CSS variable in `.chat-input-bar` so compose box stays above mobile bottom nav.
+- [x] **Cross-Network P2P Verified**: P2P connectivity confirmed working across different WiFi networks via Pkarr DHT relay. No code changes needed — `address-lookup-pkarr-dht` feature was already enabled.
 
-- [ ] **🐛 P2P Chat Messages Not Delivering**: Chat window opens for a peer but sent messages don't appear on the other device and received messages don't render. Debug the full pipeline: `send_p2p_chat_message` → QUIC connect → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen render. Check: Is the QUIC connection actually established? Is the message serialized/deserialized correctly? Are `VaultMessage` entries being written and read back? Is the `p2p-message` event reaching the frontend?
-- [ ] **🐛 Mobile Chat Input Hidden Behind Nav**: The chat compose text box renders below the bottom navigation bar on mobile, making it impossible to type. Needs CSS fix to ensure the chat input stays above the mobile nav (similar to prior `Feed Compose Layout Spillover` fix).
-- [ ] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + DID) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
+### Next Steps: Master Identity & P2P Content (Active)
+
+- [ ] **`did:key` Master Identity**: Generate a `did:key:z6Mk...` from each user's Iroh Ed25519 keypair as the universal umbrella identity. Store as `master_did` in keychain. Link Bluesky `did:plc:...` via `alsoKnownAs` at app layer. All users get a `did:key` regardless of signup method (local vault, Bluesky, future connectors). Uses W3C standard — zero infrastructure, deterministic from existing keypair.
+- [ ] **P2P Profile/Post Viewing**: New protocol commands (`PROFILE_REQUEST`, `FEED_REQUEST`) allowing peers to browse each other's profiles and posts over the `bytescape/1.0` ALPN. Peer's `BytescapeItem` posts served on request, rendered in a read-only profile view.
+- [ ] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + `did:key`) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
   - Backend: New `create_local_identity` Tauri command that generates keypair, stores in keychain, returns an `AuthStatus` with `source: "local"`.
   - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
 - [ ] **Two-Device Sync Test**: Verify end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
-- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
+- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Blugh, uesky profile metadata for users who have both identities.
 
 ### Future
 - [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
@@ -225,7 +229,7 @@ When groups federate via ActivityPub, they use the Conversation Container model 
 - [ ] **Friend Zoom (inspired by Streams)**: Per-connection closeness slider that filters feed by relationship strength — zoom in for close friends, out for acquaintances. Stored as a weight on the local contact record.
 
 ### Network State Feed
-- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).
+- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).ugh, 
 - [ ] **Feed Injection**: Bridge emits network state events for followed contacts; rendered inline in the feed with distinct visual treatment.
 
 ### Interface & Lenses

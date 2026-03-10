@@ -34,6 +34,9 @@ pub struct AuthData {
     pub refresh_jwt: Option<String>,
     /// Timestamp when tokens were last refreshed
     pub last_refresh: Option<u64>,
+    /// Master DID (did:key:z6Mk...) derived from the Iroh Ed25519 keypair.
+    /// This is the universal umbrella identity for all users regardless of signup method.
+    pub master_did: Option<String>,
     /// Local identity DID used for P2P identity/recovery flows.
     pub local_identity_did: Option<String>,
     /// Stable node public key for local identity.
@@ -276,8 +279,77 @@ impl EncryptedKeychain {
         Ok(key_material)
     }
 
+    /// Generate a `did:key:z6Mk...` from raw Ed25519 public key bytes (32 bytes).
+    ///
+    /// Format: multicodec(0xed01) + pubkey_bytes → base58btc → prepend 'z' → `did:key:z...`
+    /// See: https://w3c-ccg.github.io/did-method-key/
+    pub fn did_key_from_ed25519_bytes(pubkey_bytes: &[u8; 32]) -> String {
+        // Multicodec prefix for Ed25519 public key: 0xed, 0x01
+        let mut multicodec = Vec::with_capacity(34);
+        multicodec.push(0xed);
+        multicodec.push(0x01);
+        multicodec.extend_from_slice(pubkey_bytes);
+        // base58btc encode with 'z' multibase prefix
+        let encoded = bs58::encode(&multicodec).into_string();
+        format!("did:key:z{}", encoded)
+    }
+
+    /// Generate a `did:key` from the stored Iroh secret key hex.
+    /// Returns None if no Iroh key is stored.
+    pub fn compute_master_did(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        let secret_hex = match cache.as_ref().and_then(|d| d.iroh_secret_key.clone()) {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+        drop(cache);
+        let bytes = hex::decode(&secret_hex)
+            .map_err(|e| BytescapeError::Keychain(format!("Invalid iroh key hex: {}", e)))?;
+        let secret = iroh::SecretKey::try_from(bytes.as_slice())
+            .map_err(|e| BytescapeError::Keychain(format!("Invalid iroh secret: {}", e)))?;
+        let pubkey = secret.public();
+        Ok(Some(Self::did_key_from_ed25519_bytes(pubkey.as_bytes())))
+    }
+
+    /// Ensure the master_did is computed and persisted in the keychain.
+    /// Returns the master DID string.
+    pub fn ensure_master_did(&self) -> Result<Option<String>, BytescapeError> {
+        // Check if already cached
+        {
+            let cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            if let Some(ref data) = *cache {
+                if data.master_did.is_some() {
+                    return Ok(data.master_did.clone());
+                }
+            }
+        }
+        // Compute from stored Iroh key
+        let did = self.compute_master_did()?;
+        if let Some(ref did_str) = did {
+            let mut cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            let mut data = match cache.clone() {
+                Some(d) => d,
+                None => self.load_encrypted()?.unwrap_or_default(),
+            };
+            data.master_did = Some(did_str.clone());
+            self.save_encrypted(&data)?;
+            *cache = Some(data);
+        }
+        Ok(did)
+    }
+
+    /// Legacy helper: generate a local DID from a public key string.
+    /// Now delegates to did:key format.
     fn local_did_for_public_key(public_key: &str) -> String {
-        format!("did:bytescape:{}", public_key.to_lowercase())
+        // Try to parse as an Iroh PublicKey and use did:key format
+        if let Ok(pk) = public_key.parse::<iroh::PublicKey>() {
+            return Self::did_key_from_ed25519_bytes(pk.as_bytes());
+        }
+        // Fallback for truly unparseable keys
+        format!("did:key:z{}", public_key.to_lowercase())
     }
 
     fn parse_escrow_bundle(bundle_json: &str) -> Result<RecoveryEscrowBundle, BytescapeError> {
@@ -736,7 +808,8 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the owner DID — returns Bluesky DID if available, otherwise local identity DID.
+    /// Get the owner DID — priority: Bluesky DID > master_did (did:key) > local_identity_did.
+    /// Bluesky DID comes first because existing vault items are keyed by did:plc:...
     /// Use this for operations that need *any* valid DID (vault writes, archive imports).
     pub fn get_owner_did(&self) -> Result<Option<String>, BytescapeError> {
         let mut cache = self.cache.lock()
@@ -744,6 +817,9 @@ impl EncryptedKeychain {
 
         if let Some(ref data) = *cache {
             if let Some(ref did) = data.did {
+                return Ok(Some(did.clone()));
+            }
+            if let Some(ref did) = data.master_did {
                 return Ok(Some(did.clone()));
             }
             if let Some(ref did) = data.local_identity_did {
@@ -754,11 +830,44 @@ impl EncryptedKeychain {
 
         // Load from disk
         if let Some(data) = self.load_encrypted()? {
-            let result = data.did.clone().or_else(|| data.local_identity_did.clone());
+            let result = data.did.clone()
+                .or_else(|| data.master_did.clone())
+                .or_else(|| data.local_identity_did.clone());
             *cache = Some(data);
             return Ok(result);
         }
 
+        Ok(None)
+    }
+
+    /// Get the Bluesky DID specifically (for AT Protocol API calls).
+    /// This returns the did:plc:... used for Bluesky authentication.
+    pub fn get_bluesky_did(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.did.clone());
+        }
+        Ok(None)
+    }
+
+    /// Get the master DID (did:key:...) if already computed.
+    pub fn get_master_did(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.master_did.clone());
+        }
+        Ok(None)
+    }
+
+    /// Get the Bluesky handle (e.g., "alice.bsky.social") if available.
+    pub fn get_handle(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.handle.clone());
+        }
         Ok(None)
     }
 

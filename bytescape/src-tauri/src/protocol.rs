@@ -45,13 +45,16 @@ pub struct PeerProfile {
     pub node_id: String,
     pub username: String,
     pub did: String,
+    /// Linked identities (e.g., Bluesky did:plc, AT Protocol handle)
+    #[serde(default)]
+    pub also_known_as: Vec<String>,
 }
 
 /// A request envelope sent over the bytescape/1.0 protocol.
 /// The requester includes their own profile so both sides learn about each other.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProtocolRequest {
-    /// The request type: "PING", "PROFILE_EXCHANGE", "CHAT_MESSAGE"
+    /// The request type: "PING", "PROFILE_EXCHANGE", "CHAT_MESSAGE", "FEED_REQUEST"
     pub request: String,
     /// The requester's profile (included so the responder learns who we are)
     #[serde(default)]
@@ -59,6 +62,33 @@ pub struct ProtocolRequest {
     /// Chat message payload (for CHAT_MESSAGE requests)
     #[serde(default)]
     pub message: Option<ChatMessagePayload>,
+    /// Feed request parameters (for FEED_REQUEST)
+    #[serde(default)]
+    pub feed_params: Option<FeedRequestParams>,
+}
+
+/// Parameters for a FEED_REQUEST — ask a peer for their posts.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FeedRequestParams {
+    /// Maximum number of items to return
+    #[serde(default = "default_feed_limit")]
+    pub limit: usize,
+    /// Offset for pagination
+    #[serde(default)]
+    pub offset: usize,
+    /// Optional source filter (e.g., "bluesky", "facebook")
+    #[serde(default)]
+    pub source_filter: Option<String>,
+}
+
+fn default_feed_limit() -> usize { 20 }
+
+/// A peer's feed response — their profile + posts.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FeedResponse {
+    pub profile: PeerProfile,
+    pub items: Vec<crate::models::BytescapeItem>,
+    pub total_count: usize,
 }
 
 /// A chat message sent between peers.
@@ -119,22 +149,22 @@ impl ProtocolHandler for BytescapeProtocol {
 
         let (mut send, mut recv) = connection.accept_bi().await.map_err(to_accept_err)?;
 
-        // Read request (max 8 KiB)
-        let request_bytes = recv.read_to_end(8192).await.map_err(to_accept_err)?;
+        // Read request (max 16 KiB for feed params etc.)
+        let request_bytes = recv.read_to_end(16384).await.map_err(to_accept_err)?;
         println!("[P2P-PROTO] Received {} bytes from {}", request_bytes.len(), remote_id);
 
         // Single parse — extract all fields at once.
         // Fall back to legacy plaintext commands.
-        let (command, remote_profile, chat_message) = match serde_json::from_slice::<ProtocolRequest>(&request_bytes) {
+        let (command, remote_profile, chat_message, feed_params) = match serde_json::from_slice::<ProtocolRequest>(&request_bytes) {
             Ok(req) => {
-                println!("[P2P-PROTO] Parsed: command={}, has_profile={}, has_message={}",
-                    req.request, req.profile.is_some(), req.message.is_some());
-                (req.request, req.profile, req.message)
+                println!("[P2P-PROTO] Parsed: command={}, has_profile={}, has_message={}, has_feed_params={}",
+                    req.request, req.profile.is_some(), req.message.is_some(), req.feed_params.is_some());
+                (req.request, req.profile, req.message, req.feed_params)
             }
             Err(_) => {
                 let raw = String::from_utf8_lossy(&request_bytes).trim().to_string();
                 println!("[P2P-PROTO] Legacy plaintext command: {}", raw);
-                (raw, None, None)
+                (raw, None, None, None)
             }
         };
 
@@ -194,6 +224,35 @@ impl ProtocolHandler for BytescapeProtocol {
                     let _ = send.finish();
                 }
             }
+            "FEED_REQUEST" => {
+                let params = feed_params.unwrap_or(FeedRequestParams {
+                    limit: 20,
+                    offset: 0,
+                    source_filter: None,
+                });
+
+                println!(
+                    "[P2P-PROTO] Feed request from {}: limit={}, offset={}, source={:?}",
+                    remote_id, params.limit, params.offset, params.source_filter
+                );
+
+                // Serve our posts from the vault
+                let feed_response = self.serve_feed(&fresh_profile, &params).await;
+                let response_bytes = serde_json::to_vec(&feed_response).map_err(to_accept_err)?;
+                send.write_all(&response_bytes).await.map_err(to_accept_err)?;
+                let _ = send.finish();
+
+                // Also update peer info from requester
+                self.update_peer_from_incoming(
+                    &remote_id.to_string(),
+                    remote_profile.as_ref(),
+                ).await;
+
+                println!(
+                    "[P2P-PROTO] Feed served to {}: {} items (total: {})",
+                    remote_id, feed_response.items.len(), feed_response.total_count
+                );
+            }
             _ => {
                 println!("[P2P-PROTO] Unknown request from {}: {}", remote_id, command);
                 send.write_all(b"ERROR: Unknown request")
@@ -221,10 +280,21 @@ impl BytescapeProtocol {
         let live_username = app_state.keychain.get_local_username()
             .unwrap_or(None)
             .unwrap_or_else(|| self.my_profile.username.clone());
+
+        // Build alsoKnownAs: include Bluesky DID and handle if available
+        let mut also_known_as = Vec::new();
+        if let Ok(Some(bsky_did)) = app_state.keychain.get_bluesky_did() {
+            also_known_as.push(bsky_did);
+        }
+        if let Ok(Some(handle)) = app_state.keychain.get_handle() {
+            also_known_as.push(format!("at://{}", handle));
+        }
+
         PeerProfile {
             node_id: self.my_profile.node_id.clone(),
             username: live_username,
             did: live_did,
+            also_known_as,
         }
     }
 
@@ -236,6 +306,45 @@ impl BytescapeProtocol {
         app_state.keychain.get_owner_did()
             .unwrap_or(None)
             .unwrap_or_else(|| self.my_profile.did.clone())
+    }
+
+    /// Serve our vault feed to a requesting peer.
+    ///
+    /// Returns our profile + a page of BytescapeItems from the local vault.
+    /// Strips sensitive fields (media_paths with local filesystem paths) before serving.
+    async fn serve_feed(&self, my_profile: &PeerProfile, params: &FeedRequestParams) -> FeedResponse {
+        let owner_did = self.get_live_owner_did();
+        let db_guard = self.db_manager.lock().await;
+
+        let (items, total_count) = if let Some(db) = db_guard.as_ref() {
+            match db.list_my_items_paged(
+                &owner_did,
+                params.source_filter.as_deref(),
+                params.limit.min(50), // Cap at 50 per request
+                params.offset,
+            ).await {
+                Ok((mut items, total)) => {
+                    // Strip local filesystem paths — peers don't need them
+                    for item in &mut items {
+                        item.media_paths.clear();
+                    }
+                    (items, total)
+                }
+                Err(e) => {
+                    println!("[P2P-PROTO] Error reading feed for serve: {}", e);
+                    (vec![], 0)
+                }
+            }
+        } else {
+            (vec![], 0)
+        };
+        drop(db_guard);
+
+        FeedResponse {
+            profile: my_profile.clone(),
+            items,
+            total_count,
+        }
     }
 
     /// Update the peer record in the database from an incoming connection.
