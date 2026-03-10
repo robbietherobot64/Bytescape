@@ -184,7 +184,7 @@ impl ProtocolHandler for BytescapeProtocol {
                 send.write_all(&profile_json)
                     .await
                     .map_err(to_accept_err)?;
-                send.finish().map_err(to_accept_err)?;
+                let _ = send.finish();
 
                 // Save the remote peer's info
                 self.update_peer_from_incoming(
@@ -197,15 +197,6 @@ impl ProtocolHandler for BytescapeProtocol {
                     remote_id,
                     remote_profile.as_ref().map(|p| p.username.as_str()).unwrap_or("unknown"),
                 );
-
-                // Keep connection alive briefly for data to flush
-                drop(send);
-                drop(recv);
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    connection.closed(),
-                ).await;
-                return Ok(());
             }
             "CHAT_MESSAGE" => {
                 // Use already-parsed chat_message (no double-parse)
@@ -245,36 +236,42 @@ impl ProtocolHandler for BytescapeProtocol {
                     remote_id, params.limit, params.offset, params.source_filter
                 );
 
-                // Serve our posts from the vault
-                let feed_response = self.serve_feed(&fresh_profile, &params).await;
-                let response_bytes = serde_json::to_vec(&feed_response).map_err(to_accept_err)?;
-                let response_len = response_bytes.len();
-                send.write_all(&response_bytes).await.map_err(to_accept_err)?;
-                send.finish().map_err(to_accept_err)?;
-
-                println!(
-                    "[P2P-PROTO] Feed served to {}: {} items (total: {}), {} bytes",
-                    remote_id, feed_response.items.len(), feed_response.total_count, response_len
-                );
-
-                // Also update peer info from requester
+                // Update peer info from requester first (before response)
                 self.update_peer_from_incoming(
                     &remote_id.to_string(),
                     remote_profile.as_ref(),
                 ).await;
 
-                // IMPORTANT: Keep connection alive so the response data is fully
-                // transmitted to the client before we drop the Connection handle.
-                // Dropping Connection sends an immediate CONNECTION_CLOSE which can
-                // race with large response data on the wire.
-                drop(send);
-                drop(recv);
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    connection.closed(),
-                ).await;
-                // connection is consumed here — won't be dropped again
-                return Ok(());
+                // Serve our posts from the vault
+                let feed_response = self.serve_feed(&fresh_profile, &params).await;
+                match serde_json::to_vec(&feed_response) {
+                    Ok(response_bytes) => {
+                        let response_len = response_bytes.len();
+                        println!(
+                            "[P2P-PROTO] Sending feed to {}: {} items (total: {}), {} bytes",
+                            remote_id, feed_response.items.len(), feed_response.total_count, response_len
+                        );
+                        match send.write_all(&response_bytes).await {
+                            Ok(()) => {
+                                let _ = send.finish();
+                                println!("[P2P-PROTO] Feed sent successfully to {}", remote_id);
+                            }
+                            Err(e) => {
+                                println!("[P2P-PROTO] Feed write_all failed for {}: {}", remote_id, e);
+                                let _ = send.finish();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("[P2P-PROTO] Feed serialize failed: {}", e);
+                        let _ = send.write_all(b"ERROR: Internal serialization error").await;
+                        let _ = send.finish();
+                    }
+                }
+
+                // Brief sleep to let QUIC flush the response data before
+                // the Connection handle is dropped (which sends CONNECTION_CLOSE).
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
             _ => {
                 println!("[P2P-PROTO] Unknown request from {}: {}", remote_id, command);
@@ -345,9 +342,19 @@ impl BytescapeProtocol {
                 params.offset,
             ).await {
                 Ok((mut items, total)) => {
-                    // Strip local filesystem paths — peers don't need them
+                    // Sanitize media for P2P sharing:
+                    // - media_blobs contain local vault blob hashes that peers can't access
+                    // - media_paths may contain local filesystem paths
+                    // Keep only HTTP/HTTPS URLs that peers can actually load (e.g. CDN URLs).
+                    // preview_img (often a CDN URL for link cards) is preserved as-is.
                     for item in &mut items {
-                        item.media_paths.clear();
+                        // Keep only HTTP URLs in media_paths
+                        item.media_paths.retain(|p| {
+                            p.starts_with("http://") || p.starts_with("https://")
+                        });
+                        // Clear blob refs — peers don't have our local blob store
+                        item.media_blobs.clear();
+                        item.thumbnail_blobs.clear();
                     }
                     (items, total)
                 }

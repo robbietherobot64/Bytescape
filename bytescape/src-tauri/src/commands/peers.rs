@@ -595,7 +595,7 @@ pub async fn request_peer_feed(
                 println!("[P2P-FEED] Sending {} bytes request...", request_json.len());
                 send.write_all(&request_json).await
                     .map_err(|e| format!("Send error: {}", e))?;
-                send.finish().map_err(|e| format!("Finish error: {}", e))?;
+                let _ = send.finish(); // Non-fatal: data is already queued
 
                 println!("[P2P-FEED] Waiting for response...");
                 // Read feed response (up to 2 MiB for large feeds)

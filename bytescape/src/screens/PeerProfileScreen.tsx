@@ -353,9 +353,26 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                 )}
 
                 {/* Feed items */}
-                {!loading && items.map(item => (
-                    <FeedEntryCard key={item.id} entry={adaptBytescapeItem(item)} />
-                ))}
+                {!loading && items.map(item => {
+                    const entry = adaptBytescapeItem(item);
+                    const hasContent = !!(entry.content || entry.media_urls.length > 0 || entry.link_url);
+                    return (
+                        <div key={item.id}>
+                            <FeedEntryCard entry={entry} />
+                            {!hasContent && (
+                                <div style={{
+                                    padding: '8px 16px 12px',
+                                    fontSize: '0.8rem',
+                                    color: 'var(--text-muted)',
+                                    fontStyle: 'italic',
+                                    marginTop: -8,
+                                }}>
+                                    📷 Media-only post — images not yet available over P2P
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
 
                 {/* Load more */}
                 {!loading && hasMore && (
