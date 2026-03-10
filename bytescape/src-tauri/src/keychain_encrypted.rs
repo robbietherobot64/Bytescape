@@ -871,6 +871,18 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
+    /// Get the best display name for the user.
+    /// Priority: local_username > Bluesky handle > "Anonymous"
+    pub fn get_display_name(&self) -> String {
+        if let Ok(Some(username)) = self.get_local_username() {
+            return username;
+        }
+        if let Ok(Some(handle)) = self.get_handle() {
+            return handle;
+        }
+        "Anonymous".to_string()
+    }
+
     /// Check if session needs refresh (tokens older than 1 hour)
     pub fn session_needs_refresh(&self) -> Result<bool, BytescapeError> {
         let cache = self.cache.lock()

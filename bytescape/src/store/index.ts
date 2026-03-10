@@ -80,6 +80,24 @@ export const useNavStore = create<NavState>((set) => ({
 }));
 
 // ─── Chat Store ───
+
+// ─── Peer Store (global P2P status tracking) ───
+interface PeerState {
+    /** Map of node_id → online status */
+    peerStatuses: Record<string, 'online' | 'offline'>;
+    setPeerStatus: (nodeId: string, status: 'online' | 'offline') => void;
+    setPeerStatuses: (statuses: Record<string, 'online' | 'offline'>) => void;
+}
+
+export const usePeerStore = create<PeerState>((set) => ({
+    peerStatuses: {},
+    setPeerStatus: (nodeId, status) => set((state) => ({
+        peerStatuses: { ...state.peerStatuses, [nodeId]: status },
+    })),
+    setPeerStatuses: (statuses) => set({ peerStatuses: statuses }),
+}));
+
+// ─── Chat Store ───
 interface ChatState {
     messages: VaultMessage[];
     setMessages: (msgs: VaultMessage[] | ((prev: VaultMessage[]) => VaultMessage[])) => void;

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useAuthStore, useAppStore, useNavStore, useChatStore } from "./store";
+import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore } from "./store";
 import { FeedTab, FEED_TAB_LABELS } from "./hooks/useUnifiedFeed";
 
 import "./App.css";
@@ -144,6 +144,48 @@ function App() {
       setImportStatus(`${event.payload.current_item} (${event.payload.posts_imported} posts)`);
     });
     return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // ── Global P2P peer-connected listener ──
+  // Lives at App level so it works regardless of which screen is active.
+  // When a remote peer connects TO us, the backend emits "peer-connected".
+  useEffect(() => {
+    const { setPeerStatus } = usePeerStore.getState();
+    const unlisten = listen<{ node_id: string; username?: string; online?: boolean }>(
+      'peer-connected',
+      (event) => {
+        const { node_id } = event.payload;
+        console.log('[P2P] Global: inbound peer connection from', node_id);
+        setPeerStatus(node_id, 'online');
+      }
+    );
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // ── Background P2P keepalive ──
+  // Every 90 seconds, check connectivity to all known peers so the status
+  // stays fresh even when the user isn't on the Social screen.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const peers = await invoke<import('./types').PeerInfo[]>('list_peers');
+        const { setPeerStatus } = usePeerStore.getState();
+        for (const peer of peers) {
+          try {
+            const result = await invoke<import('./types').PeerConnectResult>(
+              'check_peer_connectivity',
+              { nodeId: peer.node_id }
+            );
+            setPeerStatus(peer.node_id, result.online ? 'online' : 'offline');
+          } catch {
+            setPeerStatus(peer.node_id, 'offline');
+          }
+        }
+      } catch {
+        // list_peers failed — node not initialized yet, skip
+      }
+    }, 90_000);
+    return () => clearInterval(interval);
   }, []);
 
   const addLog = useCallback((msg: string) => {

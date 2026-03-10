@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
+import { usePeerStore } from '../store';
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
@@ -53,9 +54,10 @@ export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreen
 // ─── P2P Peers View ───
 
 function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: string, peerName: string) => void; onViewProfile?: (peerNodeId: string) => void }) {
+    const globalStatuses = usePeerStore(s => s.peerStatuses);
     const [myInfo, setMyInfo] = useState<MyPeerInfo | null>(null);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
-    const [peerStatuses, setPeerStatuses] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
+    const [localStatuses, setLocalStatuses] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +100,8 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
             (event) => {
                 const { node_id } = event.payload;
                 console.log('[P2P] Inbound connection from peer:', node_id, event.payload);
-                setPeerStatuses(prev => ({ ...prev, [node_id]: 'online' }));
+                setLocalStatuses(prev => ({ ...prev, [node_id]: 'online' }));
+                usePeerStore.getState().setPeerStatus(node_id, 'online');
                 // Refresh peer list to pick up updated display_name/DID/last_seen
                 loadData();
             }
@@ -152,7 +155,7 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
         try {
             await invoke('remove_peer', { nodeId });
             setPeers(prev => prev.filter(p => p.node_id !== nodeId));
-            setPeerStatuses(prev => {
+            setLocalStatuses(prev => {
                 const next = { ...prev };
                 delete next[nodeId];
                 return next;
@@ -163,16 +166,19 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
     };
 
     const handleCheckConnectivity = async (nodeId: string) => {
-        setPeerStatuses(prev => ({ ...prev, [nodeId]: 'checking' }));
+        setLocalStatuses(prev => ({ ...prev, [nodeId]: 'checking' }));
         try {
             const result = await invoke<PeerConnectResult>('check_peer_connectivity', { nodeId });
-            setPeerStatuses(prev => ({ ...prev, [nodeId]: result.online ? 'online' : 'offline' }));
+            const s = result.online ? 'online' as const : 'offline' as const;
+            setLocalStatuses(prev => ({ ...prev, [nodeId]: s }));
+            usePeerStore.getState().setPeerStatus(nodeId, s);
             if (result.online) {
                 // Refresh data to pick up updated display_name, DID, and last_seen
                 await loadData();
             }
         } catch {
-            setPeerStatuses(prev => ({ ...prev, [nodeId]: 'offline' }));
+            setLocalStatuses(prev => ({ ...prev, [nodeId]: 'offline' }));
+            usePeerStore.getState().setPeerStatus(nodeId, 'offline');
         }
     };
 
@@ -181,6 +187,10 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
             await handleCheckConnectivity(peer.node_id);
         }
     };
+
+    // Merge global background statuses with local interactive statuses.
+    // Local statuses take priority (they include 'checking' state).
+    const peerStatuses: Record<string, 'checking' | 'online' | 'offline'> = { ...globalStatuses, ...localStatuses };
 
     const truncateId = (id: string, len = 12) =>
         id.length > len * 2 ? `${id.slice(0, len)}…${id.slice(-len)}` : id;

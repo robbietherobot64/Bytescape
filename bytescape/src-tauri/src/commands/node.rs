@@ -88,9 +88,7 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     let blobs_proto = iroh_blobs::BlobsProtocol::new(sync_manager.blobs(), None);
 
     // 4. Bytescape handler: custom protocol for profile exchange & peer comms
-    let my_username = state.keychain.get_local_username()
-        .unwrap_or_else(|_| None)
-        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_username = state.keychain.get_display_name();
     let my_did = state.keychain.get_owner_did()
         .unwrap_or_else(|_| None)
         .unwrap_or_else(|| "local".to_string());

@@ -24,10 +24,7 @@ pub struct MyPeerInfo {
 /// Requires the Iroh node to be initialised via `setup_iroh_node`.
 #[tauri::command]
 pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, String> {
-    let username = state
-        .keychain
-        .get_local_username()
-        .map_err(|e| e.to_string())?;
+    let username = Some(state.keychain.get_display_name());
     let did = state
         .keychain
         .get_owner_did()
@@ -173,17 +170,24 @@ pub async fn check_peer_connectivity(
     };
 
     // Build our profile to send to the remote peer
-    let my_username = state.keychain.get_local_username()
-        .unwrap_or_else(|_| None)
-        .unwrap_or_else(|| "Anonymous".to_string());
-    let my_did = state.keychain.get_did()
+    let my_username = state.keychain.get_display_name();
+    let my_did = state.keychain.get_owner_did()
         .unwrap_or_else(|_| None)
         .unwrap_or_else(|| "local".to_string());
+
+    let mut also_known_as = Vec::new();
+    if let Ok(Some(bsky_did)) = state.keychain.get_bluesky_did() {
+        also_known_as.push(bsky_did);
+    }
+    if let Ok(Some(handle)) = state.keychain.get_handle() {
+        also_known_as.push(format!("at://{}", handle));
+    }
+
     let my_profile = PeerProfile {
         node_id: endpoint.secret_key().public().to_string(),
         username: my_username,
         did: my_did,
-        also_known_as: vec![],
+        also_known_as,
     };
 
     let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
@@ -379,20 +383,26 @@ pub async fn send_p2p_chat_message(
     };
 
     // Build sender info — use get_owner_did to get the real DID (Bluesky or local)
-    let my_username = state.keychain.get_local_username()
-        .unwrap_or_else(|_| None)
-        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_username = state.keychain.get_display_name();
     let my_did = state.keychain.get_owner_did()
         .unwrap_or(None)
         .unwrap_or_else(|| "local".to_string());
     let my_node_id = endpoint.secret_key().public().to_string();
     println!("[P2P-CHAT] Sending message to {}: my_did={}, my_username={}", &node_id[..8.min(node_id.len())], my_did, my_username);
 
+    let mut chat_also_known_as = Vec::new();
+    if let Ok(Some(bsky_did)) = state.keychain.get_bluesky_did() {
+        chat_also_known_as.push(bsky_did);
+    }
+    if let Ok(Some(handle)) = state.keychain.get_handle() {
+        chat_also_known_as.push(format!("at://{}", handle));
+    }
+
     let my_profile = PeerProfile {
         node_id: my_node_id.clone(),
         username: my_username.clone(),
         did: my_did.clone(),
-        also_known_as: vec![],
+        also_known_as: chat_also_known_as,
     };
 
     // Build message payload
@@ -514,9 +524,7 @@ pub async fn request_peer_feed(
     };
 
     // Build our profile to include in the request
-    let my_username = state.keychain.get_local_username()
-        .unwrap_or(None)
-        .unwrap_or_else(|| "Anonymous".to_string());
+    let my_username = state.keychain.get_display_name();
     let my_did = state.keychain.get_owner_did()
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "local".to_string());

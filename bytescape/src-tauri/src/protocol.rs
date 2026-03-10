@@ -277,9 +277,7 @@ impl BytescapeProtocol {
         let live_did = app_state.keychain.get_owner_did()
             .unwrap_or(None)
             .unwrap_or_else(|| self.my_profile.did.clone());
-        let live_username = app_state.keychain.get_local_username()
-            .unwrap_or(None)
-            .unwrap_or_else(|| self.my_profile.username.clone());
+        let live_username = app_state.keychain.get_display_name();
 
         // Build alsoKnownAs: include Bluesky DID and handle if available
         let mut also_known_as = Vec::new();
