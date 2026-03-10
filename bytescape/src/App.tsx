@@ -68,7 +68,8 @@ function App() {
     screen, setScreen,
     activeSidebar, setActiveSidebar,
     feedActiveTab, setFeedActiveTab,
-    peerProfileNodeId, setPeerProfileNodeId
+    peerProfileNodeId, setPeerProfileNodeId,
+    peerProfileName, setPeerProfileName
   } = useNavStore();
   const chatStore = useChatStore();
 
@@ -518,8 +519,9 @@ function App() {
               setScreen("chat");
               setActiveSidebar("chat");
             }}
-            onViewProfile={(peerNodeId) => {
+            onViewProfile={(peerNodeId, peerName) => {
               setPeerProfileNodeId(peerNodeId);
+              setPeerProfileName(peerName || null);
               setScreen("peer-profile");
               setActiveSidebar("social");
             }}
@@ -527,7 +529,7 @@ function App() {
         )}
 
         {screen === "peer-profile" && peerProfileNodeId && (
-          <PeerProfileScreen nodeId={peerProfileNodeId} />
+          <PeerProfileScreen nodeId={peerProfileNodeId} initialPeerName={peerProfileName || undefined} />
         )}
 
         {screen === "vault" && (

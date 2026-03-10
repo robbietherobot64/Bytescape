@@ -558,52 +558,111 @@ pub async fn request_peer_feed(
         feed_params: Some(feed_params),
     };
 
-    println!("[P2P-FEED] Requesting feed from {}", &node_id[..8.min(node_id.len())]);
-
-    // Connect and request feed (15s timeout — feed data may be larger)
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        async {
-            let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
-            let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
-                .map_err(|e| format!("Connection failed: {}", e))?;
-            let (mut send, mut recv) = connection.open_bi().await
-                .map_err(|e| format!("Failed to open stream: {}", e))?;
-
-            let request_json = serde_json::to_vec(&request)
-                .map_err(|e| format!("Serialize error: {}", e))?;
-            send.write_all(&request_json).await
-                .map_err(|e| format!("Send error: {}", e))?;
-            let _ = send.finish();
-
-            // Read feed response (up to 2 MiB for large feeds)
-            let response_bytes = recv.read_to_end(2 * 1024 * 1024).await
-                .map_err(|e| format!("Read error: {}", e))?;
-
-            let feed_response: crate::protocol::FeedResponse = serde_json::from_slice(&response_bytes)
-                .map_err(|e| format!("Parse error: {}", e))?;
-
-            Ok::<_, String>(feed_response)
+    // Fetch cached peer info from DB for fallback profile
+    let cached_peer = {
+        let db_guard = state.db_manager.lock().await;
+        if let Some(db) = db_guard.as_ref() {
+            db.get_peer(&node_id).await.ok().flatten()
+        } else {
+            None
         }
-    ).await;
+    };
 
-    match result {
-        Ok(Ok(feed)) => {
-            println!(
-                "[P2P-FEED] Received feed from {}: {} items, total={}",
-                &node_id[..8.min(node_id.len())],
-                feed.items.len(),
-                feed.total_count
-            );
-            Ok(serde_json::to_value(&feed).map_err(|e| e.to_string())?)
+    println!("[P2P-FEED] Requesting feed from {} (cached_name: {:?})",
+        &node_id[..8.min(node_id.len())],
+        cached_peer.as_ref().and_then(|p| p.display_name.as_ref()));
+
+    // Retry once on timeout — first attempt uses longer timeout since
+    // NAT traversal may take time on first connection
+    let mut last_error = String::new();
+    for attempt in 0..2u32 {
+        let timeout_secs = if attempt == 0 { 20 } else { 15 };
+        println!("[P2P-FEED] Attempt {} (timeout: {}s)", attempt + 1, timeout_secs);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            async {
+                let endpoint_addr = iroh::EndpointAddr::from(node_id_parsed);
+                println!("[P2P-FEED] Connecting to {}...", &node_id[..8.min(node_id.len())]);
+                let connection = endpoint.connect(endpoint_addr, BYTESCAPE_ALPN).await
+                    .map_err(|e| format!("Connection failed: {}", e))?;
+                println!("[P2P-FEED] Connected, opening bi-stream...");
+                let (mut send, mut recv) = connection.open_bi().await
+                    .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+                let request_json = serde_json::to_vec(&request)
+                    .map_err(|e| format!("Serialize error: {}", e))?;
+                println!("[P2P-FEED] Sending {} bytes request...", request_json.len());
+                send.write_all(&request_json).await
+                    .map_err(|e| format!("Send error: {}", e))?;
+                send.finish().map_err(|e| format!("Finish error: {}", e))?;
+
+                println!("[P2P-FEED] Waiting for response...");
+                // Read feed response (up to 2 MiB for large feeds)
+                let response_bytes = recv.read_to_end(2 * 1024 * 1024).await
+                    .map_err(|e| format!("Read error: {}", e))?;
+
+                println!("[P2P-FEED] Received {} bytes response", response_bytes.len());
+                let feed_response: crate::protocol::FeedResponse = serde_json::from_slice(&response_bytes)
+                    .map_err(|e| format!("Parse error: {}", e))?;
+
+                Ok::<_, String>(feed_response)
+            }
+        ).await;
+
+        match result {
+            Ok(Ok(feed)) => {
+                println!(
+                    "[P2P-FEED] Received feed from {}: {} items, total={} (attempt {})",
+                    &node_id[..8.min(node_id.len())],
+                    feed.items.len(),
+                    feed.total_count,
+                    attempt + 1
+                );
+                return Ok(serde_json::to_value(&feed).map_err(|e| e.to_string())?);
+            }
+            Ok(Err(e)) => {
+                println!("[P2P-FEED] Feed request failed for {} (attempt {}): {}",
+                    &node_id[..8.min(node_id.len())], attempt + 1, e);
+                last_error = e;
+                // Don't retry on non-timeout errors (parse, serialize, connection refused)
+                if !last_error.contains("Connection failed") {
+                    break;
+                }
+            }
+            Err(_) => {
+                println!("[P2P-FEED] Feed request timed out for {} (attempt {})",
+                    &node_id[..8.min(node_id.len())], attempt + 1);
+                last_error = "Feed request timed out (peer may be offline)".to_string();
+                // Retry on timeout
+            }
         }
-        Ok(Err(e)) => {
-            println!("[P2P-FEED] Feed request failed for {}: {}", &node_id[..8.min(node_id.len())], e);
-            Err(format!("Feed request failed: {}", e))
-        }
-        Err(_) => {
-            println!("[P2P-FEED] Feed request timed out for {}", &node_id[..8.min(node_id.len())]);
-            Err("Feed request timed out (peer may be offline)".to_string())
+
+        // Brief pause before retry
+        if attempt < 1 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
+
+    // If we have a cached peer profile, return it with empty items so the UI
+    // at least shows the peer's name instead of "Anonymous"
+    if let Some(peer) = &cached_peer {
+        let fallback = crate::protocol::FeedResponse {
+            profile: PeerProfile {
+                node_id: node_id.clone(),
+                username: peer.display_name.clone().unwrap_or_else(|| "Anonymous".to_string()),
+                did: peer.did.clone().unwrap_or_else(|| "unknown".to_string()),
+                also_known_as: vec![],
+            },
+            items: vec![],
+            total_count: 0,
+        };
+        // Return the error alongside the cached profile info
+        // Use a special structure the frontend can detect
+        let mut val = serde_json::to_value(&fallback).map_err(|e| e.to_string())?;
+        val["_error"] = serde_json::Value::String(last_error);
+        return Ok(val);
+    }
+
+    Err(last_error)
 }

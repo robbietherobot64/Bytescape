@@ -149,8 +149,8 @@ impl ProtocolHandler for BytescapeProtocol {
 
         let (mut send, mut recv) = connection.accept_bi().await.map_err(to_accept_err)?;
 
-        // Read request (max 16 KiB for feed params etc.)
-        let request_bytes = recv.read_to_end(16384).await.map_err(to_accept_err)?;
+        // Read request (max 64 KiB for feed params etc.)
+        let request_bytes = recv.read_to_end(65536).await.map_err(to_accept_err)?;
         println!("[P2P-PROTO] Received {} bytes from {}", request_bytes.len(), remote_id);
 
         // Single parse — extract all fields at once.
@@ -184,7 +184,7 @@ impl ProtocolHandler for BytescapeProtocol {
                 send.write_all(&profile_json)
                     .await
                     .map_err(to_accept_err)?;
-                let _ = send.finish();
+                send.finish().map_err(to_accept_err)?;
 
                 // Save the remote peer's info
                 self.update_peer_from_incoming(
@@ -197,6 +197,15 @@ impl ProtocolHandler for BytescapeProtocol {
                     remote_id,
                     remote_profile.as_ref().map(|p| p.username.as_str()).unwrap_or("unknown"),
                 );
+
+                // Keep connection alive briefly for data to flush
+                drop(send);
+                drop(recv);
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    connection.closed(),
+                ).await;
+                return Ok(());
             }
             "CHAT_MESSAGE" => {
                 // Use already-parsed chat_message (no double-parse)
@@ -239,8 +248,14 @@ impl ProtocolHandler for BytescapeProtocol {
                 // Serve our posts from the vault
                 let feed_response = self.serve_feed(&fresh_profile, &params).await;
                 let response_bytes = serde_json::to_vec(&feed_response).map_err(to_accept_err)?;
+                let response_len = response_bytes.len();
                 send.write_all(&response_bytes).await.map_err(to_accept_err)?;
-                let _ = send.finish();
+                send.finish().map_err(to_accept_err)?;
+
+                println!(
+                    "[P2P-PROTO] Feed served to {}: {} items (total: {}), {} bytes",
+                    remote_id, feed_response.items.len(), feed_response.total_count, response_len
+                );
 
                 // Also update peer info from requester
                 self.update_peer_from_incoming(
@@ -248,10 +263,18 @@ impl ProtocolHandler for BytescapeProtocol {
                     remote_profile.as_ref(),
                 ).await;
 
-                println!(
-                    "[P2P-PROTO] Feed served to {}: {} items (total: {})",
-                    remote_id, feed_response.items.len(), feed_response.total_count
-                );
+                // IMPORTANT: Keep connection alive so the response data is fully
+                // transmitted to the client before we drop the Connection handle.
+                // Dropping Connection sends an immediate CONNECTION_CLOSE which can
+                // race with large response data on the wire.
+                drop(send);
+                drop(recv);
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    connection.closed(),
+                ).await;
+                // connection is consumed here — won't be dropped again
+                return Ok(());
             }
             _ => {
                 println!("[P2P-PROTO] Unknown request from {}: {}", remote_id, command);

@@ -7,7 +7,7 @@ import { usePeerStore } from '../store';
 interface FriendsScreenProps {
     auth: AuthStatus | null;
     onOpenChat?: (peerNodeId: string, peerName: string) => void;
-    onViewProfile?: (peerNodeId: string) => void;
+    onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
 export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreenProps) {
@@ -53,7 +53,7 @@ export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreen
 
 // ─── P2P Peers View ───
 
-function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: string, peerName: string) => void; onViewProfile?: (peerNodeId: string) => void }) {
+function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: string, peerName: string) => void; onViewProfile?: (peerNodeId: string, peerName?: string) => void }) {
     const globalStatuses = usePeerStore(s => s.peerStatuses);
     const [myInfo, setMyInfo] = useState<MyPeerInfo | null>(null);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
@@ -447,7 +447,7 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                                     {onViewProfile && status === 'online' && (
                                         <button
-                                            onClick={() => onViewProfile(peer.node_id)}
+                                            onClick={() => onViewProfile(peer.node_id, peer.display_name || undefined)}
                                             title="View profile & posts"
                                             style={{
                                                 padding: '4px 8px',

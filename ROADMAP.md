@@ -146,7 +146,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
   - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
 - [ ] **Two-Device Sync Test**: Verify end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
-- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Blugh, uesky profile metadata for users who have both identities.
+- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
 
 ### Future
 - [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).

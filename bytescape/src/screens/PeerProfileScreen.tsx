@@ -9,15 +9,17 @@ const PAGE_SIZE = 20;
 
 interface PeerProfileScreenProps {
     nodeId: string;
+    initialPeerName?: string;
 }
 
-export function PeerProfileScreen({ nodeId }: PeerProfileScreenProps) {
+export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreenProps) {
     const { setScreen, setActiveSidebar } = useNavStore();
 
     // Profile state
-    const [peerUsername, setPeerUsername] = useState<string>('');
+    const [peerUsername, setPeerUsername] = useState<string>(initialPeerName || '');
     const [peerDid, setPeerDid] = useState<string>('');
     const [alsoKnownAs, setAlsoKnownAs] = useState<string[]>([]);
+    const [feedConnected, setFeedConnected] = useState(false);
 
     // Feed state
     const [items, setItems] = useState<BytescapeItem[]>([]);
@@ -37,34 +39,47 @@ export function PeerProfileScreen({ nodeId }: PeerProfileScreenProps) {
         setError(null);
 
         try {
-            const response = await invoke<PeerFeedResponse>('request_peer_feed', {
+            const response = await invoke<PeerFeedResponse & { _error?: string }>('request_peer_feed', {
                 nodeId,
                 limit: PAGE_SIZE,
                 offset,
                 sourceFilter,
             });
 
-            setPeerUsername(response.profile.username);
-            setPeerDid(response.profile.did);
-            setAlsoKnownAs(response.profile.also_known_as || []);
-            setTotalCount(response.total_count);
-
-            if (append) {
-                setItems(prev => [...prev, ...response.items]);
+            // The backend may return cached peer info with an _error field
+            // when the P2P connection failed but we have cached peer data
+            if (response._error) {
+                // We still got profile info from cache
+                setPeerUsername(response.profile.username);
+                setPeerDid(response.profile.did);
+                setAlsoKnownAs(response.profile.also_known_as || []);
+                setFeedConnected(false);
+                setError(response._error);
             } else {
-                setItems(response.items);
-                // Derive unique sources from items for the filter
-                const uniqueSources = [...new Set(response.items.map(i => i.source))].filter(Boolean);
-                setSources(prev => {
-                    const merged = new Set([...prev, ...uniqueSources]);
-                    return [...merged];
-                });
-            }
+                setPeerUsername(response.profile.username);
+                setPeerDid(response.profile.did);
+                setAlsoKnownAs(response.profile.also_known_as || []);
+                setTotalCount(response.total_count);
+                setFeedConnected(true);
 
-            offsetRef.current = offset + response.items.length;
+                if (append) {
+                    setItems(prev => [...prev, ...response.items]);
+                } else {
+                    setItems(response.items);
+                    // Derive unique sources from items for the filter
+                    const uniqueSources = [...new Set(response.items.map(i => i.source))].filter(Boolean);
+                    setSources(prev => {
+                        const merged = new Set([...prev, ...uniqueSources]);
+                        return [...merged];
+                    });
+                }
+
+                offsetRef.current = offset + response.items.length;
+            }
         } catch (e: any) {
             const msg = typeof e === 'string' ? e : e?.message || 'Failed to load peer feed';
             setError(msg);
+            setFeedConnected(false);
         } finally {
             setLoading(false);
             setLoadingMore(false);
@@ -237,11 +252,13 @@ export function PeerProfileScreen({ nodeId }: PeerProfileScreenProps) {
                                     width: 8,
                                     height: 8,
                                     borderRadius: '50%',
-                                    background: '#50fa7b',
+                                    background: feedConnected ? '#50fa7b' : '#ff6b6b',
                                     display: 'inline-block',
-                                    boxShadow: '0 0 4px #50fa7b',
+                                    boxShadow: feedConnected ? '0 0 4px #50fa7b' : '0 0 4px #ff6b6b',
                                 }} />
-                                <span style={{ color: '#50fa7b', fontSize: '0.8rem' }}>P2P Connected</span>
+                                <span style={{ color: feedConnected ? '#50fa7b' : '#ff6b6b', fontSize: '0.8rem' }}>
+                                    {feedConnected ? 'P2P Connected' : 'Disconnected'}
+                                </span>
                             </div>
                         </div>
                     )}

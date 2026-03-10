@@ -63,6 +63,10 @@ interface NavState {
     /** Node ID of the peer whose profile is being viewed */
     peerProfileNodeId: string | null;
     setPeerProfileNodeId: (id: string | null) => void;
+
+    /** Cached display name for the peer profile being viewed */
+    peerProfileName: string | null;
+    setPeerProfileName: (name: string | null) => void;
 }
 
 export const useNavStore = create<NavState>((set) => ({
@@ -77,6 +81,9 @@ export const useNavStore = create<NavState>((set) => ({
 
     peerProfileNodeId: null,
     setPeerProfileNodeId: (id) => set({ peerProfileNodeId: id }),
+
+    peerProfileName: null,
+    setPeerProfileName: (name) => set({ peerProfileName: name }),
 }));
 
 // ─── Chat Store ───
