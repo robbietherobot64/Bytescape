@@ -122,6 +122,73 @@ pub async fn store_media_blob(
     }
 }
 
+/// Download a media blob from a remote peer via the iroh-blobs protocol.
+///
+/// Creates an ephemeral [`Downloader`] from the local blob store + endpoint,
+/// then fetches the blob identified by `hash_str` from the peer at `node_id`.
+/// Once complete the blob lives in the local blob store and can be read by
+/// [`get_media_blob`] as if it were a local blob.
+///
+/// Returns `true` when the blob was successfully downloaded (or already present).
+#[tauri::command]
+pub async fn download_peer_blob(
+    hash_str: String,
+    node_id: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<bool, String> {
+    use crate::sync::Downloader;
+
+    let normalized = normalize_blob_hash_input(&hash_str);
+    let hash = parse_hash_safe(&normalized)?;
+
+    // Fast path: blob already in local store
+    {
+        let sync_guard = state.sync_manager.lock().await;
+        if let Some(sync) = sync_guard.as_ref() {
+            if sync.has_media(hash).await {
+                println!("[BLOB-DL] Already have blob {} locally", &normalized[..12.min(normalized.len())]);
+                return Ok(true);
+            }
+        }
+    }
+
+    // Parse remote node ID
+    let remote_node: iroh::PublicKey = node_id
+        .parse()
+        .map_err(|e| format!("Invalid node ID: {}", e))?;
+
+    println!(
+        "[BLOB-DL] Downloading blob {} from peer {}",
+        &normalized[..12.min(normalized.len())],
+        &node_id[..12.min(node_id.len())]
+    );
+
+    // Build a fresh Downloader from store + endpoint
+    let downloader = {
+        let sync_guard = state.sync_manager.lock().await;
+        let sync = sync_guard.as_ref()
+            .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+        Downloader::new(sync.blobs(), sync.endpoint())
+    };
+
+    // Request the blob from the remote peer (BlobsProtocol on their Router serves it)
+    let progress = downloader.download(hash, vec![remote_node]);
+
+    // Await completion with a timeout (30 s per blob is generous)
+    tokio::time::timeout(std::time::Duration::from_secs(30), progress)
+        .await
+        .map_err(|_| format!("Timeout downloading blob {}", &normalized[..12.min(normalized.len())]))?
+        .map_err(|e| format!("Blob download failed: {}", e))?;
+
+    println!(
+        "[BLOB-DL] Successfully downloaded blob {} from peer {}",
+        &normalized[..12.min(normalized.len())],
+        &node_id[..12.min(node_id.len())]
+    );
+
+    Ok(true)
+}
+
 /// Retrieve a media blob by hash, caching it to disk.
 /// 
 /// The blob is fetched from Iroh and written to the blob cache directory.

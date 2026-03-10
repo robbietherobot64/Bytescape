@@ -343,18 +343,18 @@ impl BytescapeProtocol {
             ).await {
                 Ok((mut items, total)) => {
                     // Sanitize media for P2P sharing:
-                    // - media_blobs contain local vault blob hashes that peers can't access
-                    // - media_paths may contain local filesystem paths
-                    // Keep only HTTP/HTTPS URLs that peers can actually load (e.g. CDN URLs).
+                    // - media_blobs contain vault blob hashes — peers download these
+                    //   via iroh-blobs protocol (BlobsProtocol on our Router)
+                    // - media_paths may contain local filesystem paths — strip those
+                    // Keep HTTP/HTTPS URLs + blob hashes; strip local FS paths.
                     // preview_img (often a CDN URL for link cards) is preserved as-is.
                     for item in &mut items {
-                        // Keep only HTTP URLs in media_paths
+                        // Keep only HTTP URLs in media_paths (strip local FS paths)
                         item.media_paths.retain(|p| {
                             p.starts_with("http://") || p.starts_with("https://")
                         });
-                        // Clear blob refs — peers don't have our local blob store
-                        item.media_blobs.clear();
-                        item.thumbnail_blobs.clear();
+                        // media_blobs & thumbnail_blobs are KEPT — the peer will
+                        // download them via the iroh-blobs Downloader + our BlobsProtocol.
                     }
                     (items, total)
                 }

@@ -190,6 +190,7 @@ pub fn run() {
             commands::media::store_media_blob,
             commands::media::get_media_blob,
             commands::media::get_media_blob_bytes,
+            commands::media::download_peer_blob,
             commands::media::resolve_hls_video,
             commands::media::get_media_dir,
             commands::media::diagnose_media_ref,

@@ -7,6 +7,45 @@ import { useNavStore } from '../store';
 
 const PAGE_SIZE = 20;
 
+/**
+ * Download all media blobs from a peer's feed items via iroh-blobs.
+ *
+ * Fires download_peer_blob for every unique blob hash found in media_blobs
+ * and thumbnail_blobs. Downloads run in parallel with a concurrency limit.
+ * Failures are logged but non-fatal — the BlobImage component shows a
+ * placeholder for any blob that couldn't be fetched.
+ */
+async function downloadPeerBlobs(items: BytescapeItem[], peerNodeId: string): Promise<void> {
+    const hashes = new Set<string>();
+    for (const item of items) {
+        for (const h of item.media_blobs ?? []) {
+            if (h) hashes.add(h);
+        }
+        for (const h of item.thumbnail_blobs ?? []) {
+            if (h) hashes.add(h);
+        }
+    }
+    if (hashes.size === 0) return;
+
+    console.log(`[P2P-MEDIA] Downloading ${hashes.size} blobs from peer ${peerNodeId.slice(0, 12)}…`);
+
+    // Download in batches of 4 to avoid overloading the QUIC connection
+    const hashArr = [...hashes];
+    const BATCH = 4;
+    for (let i = 0; i < hashArr.length; i += BATCH) {
+        const batch = hashArr.slice(i, i + BATCH);
+        await Promise.allSettled(
+            batch.map(hashStr =>
+                invoke<boolean>('download_peer_blob', { hashStr, nodeId: peerNodeId })
+                    .then(() => console.log(`[P2P-MEDIA] ✓ blob ${hashStr.slice(0, 12)}…`))
+                    .catch(e => console.warn(`[P2P-MEDIA] ✗ blob ${hashStr.slice(0, 12)}…:`, e))
+            )
+        );
+    }
+
+    console.log(`[P2P-MEDIA] Blob download round complete`);
+}
+
 interface PeerProfileScreenProps {
     nodeId: string;
     initialPeerName?: string;
@@ -61,6 +100,15 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                 setAlsoKnownAs(response.profile.also_known_as || []);
                 setTotalCount(response.total_count);
                 setFeedConnected(true);
+
+                // Download media blobs from the peer BEFORE rendering items.
+                // This uses the iroh-blobs protocol — BlobsProtocol on the
+                // peer's Router serves the data; our Downloader fetches it
+                // into the local blob store. Once present, the existing
+                // BlobImage → useLazyBlobUrl → get_media_blob pipeline works.
+                if (response.items.length > 0) {
+                    await downloadPeerBlobs(response.items, nodeId);
+                }
 
                 if (append) {
                     setItems(prev => [...prev, ...response.items]);
@@ -355,21 +403,9 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                 {/* Feed items */}
                 {!loading && items.map(item => {
                     const entry = adaptBytescapeItem(item);
-                    const hasContent = !!(entry.content || entry.media_urls.length > 0 || entry.link_url);
                     return (
                         <div key={item.id}>
                             <FeedEntryCard entry={entry} />
-                            {!hasContent && (
-                                <div style={{
-                                    padding: '8px 16px 12px',
-                                    fontSize: '0.8rem',
-                                    color: 'var(--text-muted)',
-                                    fontStyle: 'italic',
-                                    marginTop: -8,
-                                }}>
-                                    📷 Media-only post — images not yet available over P2P
-                                </div>
-                            )}
                         </div>
                     );
                 })}
