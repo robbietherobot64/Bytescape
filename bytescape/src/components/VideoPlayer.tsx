@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
+import { getMediaPort } from '../utils/mediaServer';
 
 interface VideoPlayerProps {
     src: string;
@@ -12,13 +13,6 @@ interface VideoPlayerProps {
 }
 
 const videoUrlCache = new Map<string, string>();
-let globalMediaPort: number | null = null;
-
-async function getMediaPort(): Promise<number> {
-    if (globalMediaPort) return globalMediaPort;
-    globalMediaPort = await invoke<number>('get_media_server_port');
-    return globalMediaPort;
-}
 
 /**
  * Standard, native VideoPlayer component for Bytescape.

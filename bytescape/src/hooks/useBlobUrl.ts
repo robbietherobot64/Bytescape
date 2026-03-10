@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { blobCacheUrl } from '../utils/mediaServer';
 
 /**
  * In-memory cache of hash → asset URL to avoid re-invoking for already-resolved blobs.
@@ -67,12 +68,12 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
 
             // Backend writes blob to disk cache and returns the file path
             invoke<string>('get_media_blob', { hashStr: hash })
-                .then((filePath) => {
+                .then(async (filePath) => {
                     if (cancelled) return;
-                    // Convert filesystem path to Tauri asset URL
-                    const assetUrl = convertFileSrc(filePath);
-                    resolvedUrlCache.set(hash, assetUrl);
-                    setUrl(assetUrl);
+                    // Use local HTTP server to bypass WebKitGTK asset:// bugs
+                    const httpUrl = await blobCacheUrl(filePath);
+                    resolvedUrlCache.set(hash, httpUrl);
+                    setUrl(httpUrl);
                 })
                 .catch((e) => {
                     if (cancelled) return;

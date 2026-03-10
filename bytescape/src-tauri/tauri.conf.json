@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: asset://localhost https: data: blob:; media-src 'self' asset: asset://localhost blob: https: http://127.0.0.1:*; connect-src 'self' https: wss: ws: http://127.0.0.1:*; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: asset://localhost https: data: blob: http://127.0.0.1:*; media-src 'self' asset: asset://localhost blob: https: http://127.0.0.1:*; connect-src 'self' https: wss: ws: http://127.0.0.1:*; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
       "assetProtocol": {
         "enable": true,
         "scope": [
