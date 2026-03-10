@@ -6,9 +6,10 @@ import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from
 interface FriendsScreenProps {
     auth: AuthStatus | null;
     onOpenChat?: (peerNodeId: string, peerName: string) => void;
+    onViewProfile?: (peerNodeId: string) => void;
 }
 
-export function FriendsScreen({ auth, onOpenChat }: FriendsScreenProps) {
+export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreenProps) {
     const [subview, setSubview] = useState<'peers' | 'following' | 'followers'>('peers');
 
     return (
@@ -40,7 +41,7 @@ export function FriendsScreen({ auth, onOpenChat }: FriendsScreenProps) {
             </div>
 
             <div className="friends-content">
-                {subview === 'peers' && <PeersView onOpenChat={onOpenChat} />}
+                {subview === 'peers' && <PeersView onOpenChat={onOpenChat} onViewProfile={onViewProfile} />}
                 {(subview === 'following' || subview === 'followers') && (
                     <BlueskyFollowsView auth={auth} subview={subview} />
                 )}
@@ -51,7 +52,7 @@ export function FriendsScreen({ auth, onOpenChat }: FriendsScreenProps) {
 
 // ─── P2P Peers View ───
 
-function PeersView({ onOpenChat }: { onOpenChat?: (peerNodeId: string, peerName: string) => void }) {
+function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: string, peerName: string) => void; onViewProfile?: (peerNodeId: string) => void }) {
     const [myInfo, setMyInfo] = useState<MyPeerInfo | null>(null);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
     const [peerStatuses, setPeerStatuses] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
@@ -434,6 +435,23 @@ function PeersView({ onOpenChat }: { onOpenChat?: (peerNodeId: string, peerName:
 
                                 {/* Actions */}
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                    {onViewProfile && status === 'online' && (
+                                        <button
+                                            onClick={() => onViewProfile(peer.node_id)}
+                                            title="View profile & posts"
+                                            style={{
+                                                padding: '4px 8px',
+                                                fontSize: '0.8rem',
+                                                background: 'var(--accent-purple)',
+                                                color: '#fff',
+                                                border: 'none',
+                                                borderRadius: 4,
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            👤 Profile
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => handleCheckConnectivity(peer.node_id)}
                                         disabled={status === 'checking'}

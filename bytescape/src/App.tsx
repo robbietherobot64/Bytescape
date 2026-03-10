@@ -53,6 +53,7 @@ import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
+import { PeerProfileScreen } from "./screens/PeerProfileScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 
 function App() {
@@ -66,7 +67,8 @@ function App() {
   const {
     screen, setScreen,
     activeSidebar, setActiveSidebar,
-    feedActiveTab, setFeedActiveTab
+    feedActiveTab, setFeedActiveTab,
+    peerProfileNodeId, setPeerProfileNodeId
   } = useNavStore();
   const chatStore = useChatStore();
 
@@ -406,7 +408,7 @@ function App() {
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
       feedTabSlot={feedTabSlot}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends") ? {
+      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile") ? {
         padding: 0,
         height: '100%',
         overflow: 'hidden',
@@ -474,7 +476,16 @@ function App() {
               setScreen("chat");
               setActiveSidebar("chat");
             }}
+            onViewProfile={(peerNodeId) => {
+              setPeerProfileNodeId(peerNodeId);
+              setScreen("peer-profile");
+              setActiveSidebar("social");
+            }}
           />
+        )}
+
+        {screen === "peer-profile" && peerProfileNodeId && (
+          <PeerProfileScreen nodeId={peerProfileNodeId} />
         )}
 
         {screen === "vault" && (

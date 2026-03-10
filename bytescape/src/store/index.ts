@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 // ─── Navigation Store ───
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
 interface NavState {
     screen: Screen;
@@ -59,6 +59,10 @@ interface NavState {
 
     feedActiveTab: FeedTab;
     setFeedActiveTab: (tab: FeedTab) => void;
+
+    /** Node ID of the peer whose profile is being viewed */
+    peerProfileNodeId: string | null;
+    setPeerProfileNodeId: (id: string | null) => void;
 }
 
 export const useNavStore = create<NavState>((set) => ({
@@ -70,6 +74,9 @@ export const useNavStore = create<NavState>((set) => ({
 
     feedActiveTab: 'all',
     setFeedActiveTab: (tab) => set({ feedActiveTab: tab }),
+
+    peerProfileNodeId: null,
+    setPeerProfileNodeId: (id) => set({ peerProfileNodeId: id }),
 }));
 
 // ─── Chat Store ───

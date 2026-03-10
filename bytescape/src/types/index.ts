@@ -30,6 +30,13 @@ export interface PeerProfile {
     node_id: string;
     username: string;
     did: string;
+    also_known_as?: string[];
+}
+
+export interface PeerFeedResponse {
+    profile: PeerProfile;
+    items: BytescapeItem[];
+    total_count: number;
 }
 
 export interface PeerConnectResult {
@@ -362,7 +369,7 @@ export const PROTOCOLS: ProtocolOption[] = [
 ];
 
 /** @deprecated - use Screen from store/index.ts */
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
 
 export interface BlueskyPost {
