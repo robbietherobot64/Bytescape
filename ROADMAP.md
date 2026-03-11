@@ -12,7 +12,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ---
 
-## Phase 1: The Universal Translator & Media Vault 📦🌐
+## ✅ Phase 1: The Universal Translator & Media Vault 📦🌐 ✅
 **Goal:** Complete the local data layer—the core technology is normalization across sources, with a Profile Wall to display imported content.
 
 ### Completed
@@ -46,10 +46,9 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Video Support**: `VideoPlayer` handles blob-stored videos.
 - [x] **Vault Viewer UX**: Fullscreen media-first viewer, left/right navigation, optional file-data panel.
 
-## Phase 1.5: Mobile App & UX Polish 📱
+## ✅ Phase 1.5: Mobile App & UX Polish 📱 ✅
 **Goal:** Ship a functional Android build with a responsive, mobile-first interface.
 
-### Completed
 - [x] **Android Build Pipeline**: Tauri v2 Android target compiling for aarch64, armv7, i686, x86_64. APK + AAB output.
 - [x] **GeoCities "Old Web" Theme**: Win98 beveled edges, navy sidebar, beige content, Verdana typography, tiled star backgrounds.
 - [x] **Mobile Top Bar Navigation**: Nav bar moved from bottom to top of screen (mobile only). All 8 nav icons behind hamburger dropdown menu. Feed tabs (All/Following/Archives) render inline in the top bar next to hamburger.
@@ -58,102 +57,99 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **CSS Cascade Fixes**: Desktop override rules moved inside `@media (min-width: 769px)` to prevent global `display: none` from breaking mobile elements.
 - [x] **TypeScript csstype Fixes**: Cast inline styles as `React.CSSProperties` to resolve strict type-checking errors in ChatLayout, ComposeBox, SettingsScreen.
 
-## Phase 2: Willow Data Model Migration 🌳
-**Goal:** Restructure vault storage to be Willow-compatible for future P2P sync. Do this now while only FB + Bluesky data exists—simpler migration.
+## ✅ Phase 2: Willow Data Model Migration 🌳 ✅
+**Goal:** Restructure vault storage to be Willow-compatible for future P2P sync.
 
 - [x] **Add `willow_25` crate**: Import Willow types from `earthstar-project/willow-rs`.
 - [x] **Add `path` field to BytescapeItem**: Hierarchical addressing (`/{source}/{type}/{year}/{month}/{id}`).
 - [x] **Migration script**: Backfill paths for existing items based on source + timestamp (auto-run via startup migration command).
 - [x] **Evaluate full Willow store**: Considered `willow_store_simple_sled` as redb replacement; selected hybrid staged migration path (see `bytescape/src-tauri/WILLOW_STORE_EVALUATION.md`).
-
-## Phase 2.5: Hybrid Migration Bridge 🌉
-**Goal:** Introduce Willow-native access patterns on top of current redb storage before full store replacement.
-
 - [x] **Path-indexed read API (bridge start)**: Added paginated path-prefix query + command-layer routing/fallback for vault feed reads.
 - [x] **Shadow write parity hooks**: Capture and compare canonical item writes across legacy and Willow-compatible paths (`save_item`/`upsert_item`) with `get_willow_write_parity_report` summary command.
 - [x] **Parity verification tooling**: Added consistency report metrics for total items, path coverage ratio, and canonical path mismatches.
 - [x] **Canary read rollout**: Added `BYTESCAPE_WILLOW_PATH_ONLY_READS` flag for source-filtered vault feed reads to run path-prefix-only without legacy fallback.
 
-## Phase 3: Syndication & Connectors 📤🌐
-**Goal:** Safe posting to external networks + remaining connectors. Connectors matter once sharing exists.
+---
 
-### Syndication
-- [x] **Syndication Backend**: `syndicate_vault_item` command posts to Bluesky via `createRecord`.
-- [x] **Syndication History & Rollback**: `share_history` event log with `active` flags, background `verify_syndications` rollback on upstream deletion.
-- [x] **Syndication Vault Dedup**: Timeline importers skip re-importing already syndicated items to prevent ghost duplicates.
-- [x] **Archive Sorting**: Archive feed uses `effective_timestamp` to bump recently syndicated items to the top of the feed.
-- [ ] **Full Post Box UI**:
-  - Text composition area.
-  - Media upload support (Images, Video).
-  - Pre-population logic for Vault items.
-- [ ] **Video Upload Support**: Implement video blob uploading to Bluesky PDS.
-- [ ] **"Post to Wall" UX**: 
-  - In vault: "Syndicate" button triggers Post Box.
-- [ ] **Background Syndication Job**: Rate-limited processing of `PendingSyndication` items.
-- [ ] **"Memory" Post Type**: Research AT Protocol lexicon for archive/throwback semantics.
+## ✅ Phase 3: P2P Sync & Identity 🔗 ✅
+**Goal:** Prove the core differentiator—two devices syncing via Iroh. Sovereign identity without dependence on any external service.
 
-### Connectors
-- [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
-- [ ] **Connector: Threads**: `connectors/threads.rs` — Separate parser for Threads data export ZIP.
-- [ ] **Connector: ActivityPub**: `connectors/activitypub.rs` — Federation with the wider fediverse. Protocol implementation informed by the [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte) projects ([FEDERATION.md](https://codeberg.org/fortified/forte/raw/branch/dev/FEDERATION.md), [FEATURES.md](https://codeberg.org/streams/streams/raw/branch/dev/FEATURES.md)).
-  - [ ] **Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via `megalodon` crate or custom AP C2S client (Forte's C2S is spec-compliant AP, not Mastodon REST — evaluate `megalodon` vs. thin `reqwest`+`serde_json` client).
-  - [ ] **Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate. Verify inbound proofs. Required foundation for Conversation Containers and trusted federation.
-  - [ ] **Conversation Containers (FEP-171b / FEP-400e / FEP-7888)**: Thread creator owns a `Collection` object; replies are `Add`ed by the owner after moderation. Emit `target: {type: Collection, attributedTo: author}` on outbound posts. Maps to Bytescape's group threading model.
-  - [ ] **Comment Permissions (`canReply` + `endDate`)**: Emit `canReply` (array of permitted actor IDs/collections) and optional `endDate` (reply deadline) on outbound posts. Enforce in compose UI for inbound restricted posts.
-  - [ ] **Expiring Content (`expires`)**: Add `expires_at` field to `BytescapeItem`. Background task auto-deletes expired items and emits federated `Delete`.
-  - [ ] **Direct Message Routing (`nomad:directMessage`)**: Boolean flag distinguishing DMs from other private messages. Route inbound `directMessage: true` notes to ChatScreen, others to feed.
-  - [ ] **Quote Posts (FEP-e232)**: Structured quote-post support via `tag` with `type: Link`. Add `quote_uri` field to `BytescapeItem`; render quoted post inline in `FeedEntryCard`.
-  - [ ] **Federated Search (`canSearch`)**: Discover `searchContent`/`searchTags` endpoints from AP actor records. Add `search_remote_channel` command returning `BytescapeItem[]`.
-  - [ ] **Groups (AP `Group` Actor)**: Public/private groups via `Group` actor type with `Follow/Join/Leave` support. Initial posts DM'd to group; group re-broadcasts to members. Bang-tag (`!groupname`) support for private groups.
-  - [ ] **Private Media (Bearcaps/OCAP)**: Generate capability URIs for private media syndication; resolve Bearcap/OCAP links on inbound media.
-  - [ ] **Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
-  - [ ] **Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
-  - [ ] **Multibox Delivery (FEP-0499)**: Batch deliveries to multiple inboxes on the same server via `multibox` endpoint.
-- [ ] **Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions.
-- [ ] **Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs.
-- [ ] **Add `Instagram`, `Threads`, `Rss`, `ActivityPub` variants to Source enum**: In `connectors/mod.rs`.
+*Previously Phase 4. Renumbered to reflect actual build order — this was completed before Syndication & Connectors.*
 
-## Phase 4: P2P Sync & Identity 🔗
-**Goal:** Prove the core differentiator—two devices syncing via Iroh. This is the next active phase.
-
-### Current Infrastructure (already built)
+### Infrastructure
 - [x] **Expose SyncManager**: Tauri commands for `create_doc`, `join_doc`, `send_message`.
 - [x] **Iroh Node Init**: `setup_iroh_node` initializes Iroh endpoint, SyncManager, secret key from keychain.
 - [x] **P2P Doc Operations**: `create_sync_doc`, `join_sync_doc`, `send_p2p_message` commands registered.
 - [x] **Gossip Presence**: `SyncManager::broadcast_presence` via `iroh-gossip`.
 - [x] **Identity Recovery**: 5 identity commands for local DID lifecycle (`identity_init_full_recovery`, `identity_get_recovery_status`, `identity_start_recovery`, `identity_verify_recovery`, `identity_finalize_recovery`).
 
-### Completed: P2P Connectivity & Protocol
+### P2P Connectivity & Protocol
 - [x] **Iroh Router Architecture**: Replaced broken manual accept loop with `iroh::protocol::Router` dispatching 4 ALPN handlers: docs (`/iroh-sync/1`), gossip (`/iroh-gossip/1`), blobs (`/iroh-bytes/4`), and custom `bytescape/1.0`. Commits: `28bc93b`, `b957cb4`.
 - [x] **Bidirectional Profile Exchange**: `PROFILE_EXCHANGE` protocol sends requester's profile to responder and vice versa, with `last_seen` fallback for asymmetric NAT. Desktop↔Mobile connectivity verified.
 - [x] **Peer Management Commands**: `get_my_peer_info`, `add_peer`, `list_peers`, `remove_peer`, `check_peer_connectivity` — all registered and functional.
 - [x] **P2P Chat Protocol**: `CHAT_MESSAGE` handler in `BytescapeProtocol` saves incoming messages to `VaultMessage` via `save_incoming_chat_message()`, emits `p2p-message` frontend event.
 - [x] **P2P Chat Commands**: `send_p2p_chat_message` (QUIC connect → send → save locally) and `list_p2p_conversations` (peer list with message counts and online status).
-- [x] **P2P Chat UI**: ChatScreen has P2P section in sidebar (purple dot), P2P send routing, `p2p-message` event listener, empty-state prompt. FriendsScreen peer names are clickable with 💬 icon → navigates to `p2p:{node_id}` conversation.
+- [x] **P2P Chat UI**: ChatScreen has P2P tab with send routing, `p2p-message` event listener, empty-state prompt. FriendsScreen peer names are clickable with 💬 icon → navigates to `p2p:{node_id}` conversation.
+- [x] **Cross-Network P2P Verified**: P2P connectivity confirmed working across different WiFi networks via Pkarr DHT relay.
 - [x] **Android APK**: Built with full P2P chat code (77MB, March 2026).
 
-### Completed: P2P Chat Bug Fixes
-- [x] **🐛 P2P Chat Messages Not Delivering** *(commit `11de2b7`)*: Root cause was 4 bugs: (1) **DID staleness** — `setup_iroh_node` ran before `checkAuth()` so DID defaulted to `"local"`, incoming P2P messages saved with wrong `owner_did`, invisible to `list_vault_messages`. Fixed with `get_fresh_profile()` and `get_live_owner_did()` that read live keychain. (2) **Double-parse** — `CHAT_MESSAGE` handler parsed request bytes twice. Fixed with single-parse tuple extraction. (3) **`get_did()` vs `get_owner_did()` inconsistency** — chat commands used cache-only `get_did()`. Fixed to use `get_owner_did()` everywhere. (4) **Mobile CSS** — chat input hidden behind nav bar. Fixed with `--safe-bottom` padding preservation.
-- [x] **🐛 Mobile Chat Input Hidden Behind Nav** *(commit `11de2b7`)*: Fixed in same commit — preserved `--safe-bottom` CSS variable in `.chat-input-bar` so compose box stays above mobile bottom nav.
-- [x] **Cross-Network P2P Verified**: P2P connectivity confirmed working across different WiFi networks via Pkarr DHT relay. No code changes needed — `address-lookup-pkarr-dht` feature was already enabled.
+### Master Identity & P2P Content
+- [x] **`did:key` Master Identity**: Generate a `did:key:z6Mk...` from each user's Iroh Ed25519 keypair as the universal umbrella identity. Store as `master_did` in keychain. Link Bluesky `did:plc:...` via `alsoKnownAs` at app layer.
+- [x] **P2P Profile/Post Viewing**: `PROFILE_REQUEST` and `FEED_REQUEST` protocol commands allowing peers to browse each other's profiles and posts over the `bytescape/1.0` ALPN.
+- [x] **Local-Only Login Flow**: "Local Vault" login option generates a local identity (Iroh keypair + `did:key`) without requiring any remote API. Backend: `create_local_identity` Tauri command. Frontend: "Create Local Vault" button on LoginScreen.
+- [x] **Two-Device Sync Test**: Verified end-to-end: Device A sends P2P chat message → Device B receives and displays it.
+- [x] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata.
+- [x] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs.
 
-### Next Steps: Master Identity & P2P Content (Active)
+### Remaining
+- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX). Show escrow bundle after identity creation, let user set own recovery code, add "Recover Identity" flow on LoginScreen.
+- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code).
 
-- [x] **`did:key` Master Identity**: Generate a `did:key:z6Mk...` from each user's Iroh Ed25519 keypair as the universal umbrella identity. Store as `master_did` in keychain. Link Bluesky `did:plc:...` via `alsoKnownAs` at app layer. All users get a `did:key` regardless of signup method (local vault, Bluesky, future connectors). Uses W3C standard — zero infrastructure, deterministic from existing keypair.
-- [x] **P2P Profile/Post Viewing**: New protocol commands (`PROFILE_REQUEST`, `FEED_REQUEST`) allowing peers to browse each other's profiles and posts over the `bytescape/1.0` ALPN. Peer's `BytescapeItem` posts served on request, rendered in a read-only profile view.
-- [x] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + `did:key`) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
-  - Backend: New `create_local_identity` Tauri command that generates keypair, stores in keychain, returns an `AuthStatus` with `source: "local"`.
-  - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
-  - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
-- [x] **Two-Device Sync Test**: Verified end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
-- [x] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
-- [x] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs. P2P tab shows conversations where at least one user is P2P-only. Bluesky tab shows conversations that exist on Bluesky. Archives tab shows imported legacy chats (Facebook, Instagram).
+---
 
-### Future
-- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
-- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain.
-- [ ] **Nomadic Identity Federation (FEP-ef61 / FEP-c390)**: AP-native multi-device presence inspired by [Forte's](https://codeberg.org/fortified/forte) approach — emit `copiedTo` in AP actor record listing all device endpoints, handle `Sync` activity type to mirror profile changes across devices when federated. Dual-path: Iroh doc sync for local P2P, `copiedTo`/`Sync` for AP-federated identity portability. Identity Proofs (FEP-c390) link Bytescape's local DID to the AP actor for cross-platform verification.
-- [ ] **OpenWebAuth (FEP-61cf)**: Federated SSO — authenticate to remote fediverse servers via home endpoint to access permission-gated content (private posts, search results, media) without creating new accounts.
+## Phase 4: Syndication & Connectors 📤🌐
+**Goal:** Safe posting to external networks + remaining connectors. Federation with the wider fediverse.
+
+*Previously Phase 3. Renumbered — syndication backend is done but most connector work (AP, Threads, RSS) is still ahead.*
+
+### Syndication (partially complete)
+- [x] **Syndication Backend**: `syndicate_vault_item` command posts to Bluesky via `createRecord`.
+- [x] **Syndication History & Rollback**: `share_history` event log with `active` flags, background `verify_syndications` rollback on upstream deletion.
+- [x] **Syndication Vault Dedup**: Timeline importers skip re-importing already syndicated items to prevent ghost duplicates.
+- [x] **Archive Sorting**: Archive feed uses `effective_timestamp` to bump recently syndicated items to the top of the feed.
+- [ ] **Full Post Box UI**: Text composition area, media upload support (Images, Video), pre-population logic for Vault items.
+- [ ] **Video Upload Support**: Implement video blob uploading to Bluesky PDS.
+- [ ] **"Post to Wall" UX**: In vault: "Syndicate" button triggers Post Box.
+- [ ] **Background Syndication Job**: Rate-limited processing of `PendingSyndication` items.
+- [ ] **"Memory" Post Type**: Research AT Protocol lexicon for archive/throwback semantics.
+
+### Connectors
+- [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
+- [ ] **Connector: Threads**: `connectors/threads.rs` — Separate parser for Threads data export ZIP.
+- [ ] **Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions.
+- [ ] **Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs.
+- [ ] **Add `Threads`, `Rss`, `ActivityPub` variants to Source enum**: In `connectors/mod.rs`.
+
+### Connector: ActivityPub
+Federation with the wider fediverse. Protocol implementation informed by the [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte) projects.
+
+- [ ] **Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via `megalodon` crate or custom AP C2S client.
+- [ ] **Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate.
+- [ ] **Conversation Containers (FEP-171b / FEP-400e / FEP-7888)**: Thread creator owns a `Collection` object; replies `Add`ed by owner after moderation.
+- [ ] **Comment Permissions (`canReply` + `endDate`)**: Emit `canReply` and optional `endDate` on outbound posts.
+- [ ] **Expiring Content (`expires`)**: Add `expires_at` field to `BytescapeItem`. Background task auto-deletes expired items and emits federated `Delete`.
+- [ ] **Direct Message Routing (`nomad:directMessage`)**: Route inbound `directMessage: true` notes to ChatScreen, others to feed.
+- [ ] **Quote Posts (FEP-e232)**: Structured quote-post support via `tag` with `type: Link`. Add `quote_uri` field to `BytescapeItem`.
+- [ ] **Federated Search (`canSearch`)**: Discover `searchContent`/`searchTags` endpoints from AP actor records.
+- [ ] **Groups (AP `Group` Actor)**: Public/private groups via `Group` actor type with `Follow/Join/Leave` support.
+- [ ] **Private Media (Bearcaps/OCAP)**: Generate capability URIs for private media syndication.
+- [ ] **Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
+- [ ] **Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
+- [ ] **Multibox Delivery (FEP-0499)**: Batch deliveries to multiple inboxes on the same server.
+- [ ] **Nomadic Identity Federation (FEP-ef61 / FEP-c390)**: AP-native multi-device presence — emit `copiedTo` in AP actor record listing all device endpoints, handle `Sync` activity type to mirror profile changes across devices. Identity Proofs (FEP-c390) link Bytescape's `did:key` to the AP actor.
+- [ ] **OpenWebAuth (FEP-61cf)**: Federated SSO — authenticate to remote fediverse servers via home endpoint to access permission-gated content without creating new accounts.
+
+---
 
 ## Phase 5: Profile Builder, Spatial Discovery & UI Polish 🗺️🎨
 **Goal:** Build the sovereign profile system, spatial graph-based discovery, the Aero-Skeuomorphic visual language, and MySpace-style profile personalization. The profile is the product.
@@ -182,55 +178,53 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 Habitat is an open-source hyperlocal social platform where posts are linked to map coordinates, giving communities a sense of *place*. We adapt its core ideas to Bytescape's P2P/local-first architecture.
 
 #### Location-Tagged Content
-- [ ] **Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema. Posts, vault files, and marketplace listings can be pinned to a location.
-- [ ] **Location Picker UI**: Map-based coordinate picker (Leaflet or Maplibre GL) in the compose flow. Users tap a point on the map or enter an address; result stored as `GeoPoint`. Privacy-first: coarsen to ~1 km geohash by default.
+- [ ] **Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema.
+- [ ] **Location Picker UI**: Map-based coordinate picker (Leaflet or Maplibre GL) in the compose flow. Privacy-first: coarsen to ~1 km geohash by default.
 - [ ] **"Pin to Map" Action**: Existing vault items can be retroactively geotagged via a context-menu action.
 
 #### Local Groups
-- [ ] **Group Data Model**: `LocalGroup` record in redb — `group_id`, `name`, `description`, `geohash_prefix` (defines the geographic boundary), `category`, `owner_did`, `created_at`. Backed by an Iroh doc namespace for P2P replication.
-- [ ] **Group Creation Flow**: "Create Local Group" UI with name, description, category selector, and map-drawn boundary (circle or polygon → geohash prefix).
-- [ ] **Group Feed**: Dedicated feed view showing `BytescapeItem` entries tagged to a group, ordered chronologically. Filter by category (e.g., Events, For Sale, Landmarks, Q&A, General).
-- [ ] **Group Discovery (Nearby)**: Automatically surface groups whose geohash prefix overlaps the user's current approximate location. Sort by distance. Inspired by Habitat's "Nearby" feed concept — visitors see relevant local groups without subscribing.
-- [ ] **Group Membership**: Join/leave groups. Members' posts to the group replicate via Iroh doc sync. Non-members see a read-only preview.
-- [ ] **Group Categories**: Admins define per-group categories (Landmarks, Events, Buy/Sell, Discussion, etc.). Categories control visibility: some may be "Home only" (members) vs. "Nearby visible" (visitors), mirroring Habitat's category scoping.
+- [ ] **Group Data Model**: `LocalGroup` record in redb — `group_id`, `name`, `description`, `geohash_prefix`, `category`, `owner_did`, `created_at`. Backed by an Iroh doc namespace for P2P replication.
+- [ ] **Group Creation Flow**: "Create Local Group" UI with name, description, category selector, and map-drawn boundary.
+- [ ] **Group Feed**: Dedicated feed view showing `BytescapeItem` entries tagged to a group, ordered chronologically.
+- [ ] **Group Discovery (Nearby)**: Automatically surface groups whose geohash prefix overlaps the user's current approximate location.
+- [ ] **Group Membership**: Join/leave groups. Members' posts replicate via Iroh doc sync. Non-members see a read-only preview.
+- [ ] **Group Categories**: Admins define per-group categories (Landmarks, Events, Buy/Sell, Discussion, etc.).
 - [ ] **Group Moderation**: Group owner can pin posts, remove content, and delegate moderator roles to other DIDs.
 
 #### Spatial Map View
-- [ ] **MapScreen**: New top-level screen rendering a Leaflet/Maplibre map. Clusters of geotagged `BytescapeItem` markers, colored by category or source. Tap a cluster → expand; tap a pin → preview card.
-- [ ] **Heatmap Layer**: Toggle overlay showing content density by geohash tile — reveals where conversations are happening.
+- [ ] **MapScreen**: New top-level screen rendering a Leaflet/Maplibre map with clustered `BytescapeItem` markers.
+- [ ] **Heatmap Layer**: Toggle overlay showing content density by geohash tile.
 - [ ] **"Around Me" Mode**: Uses device location (with permission) to center the map and auto-load nearby groups + posts. Radius slider (500 m → 50 km).
-- [ ] **Map Embed in Group Feed**: Inline mini-map at the top of each group feed showing the spatial distribution of recent posts.
+- [ ] **Map Embed in Group Feed**: Inline mini-map at the top of each group feed.
 
 #### Local Marketplace
-- [ ] **Marketplace Category**: Special group category type `ForSale` / `Wanted` with structured fields: price, condition, pickup location (geohash).
-- [ ] **Marketplace Browse View**: Grid layout with thumbnail, price badge, distance indicator. Filter by category, price range, distance.
+- [ ] **Marketplace Category**: Special group category type `ForSale` / `Wanted` with structured fields: price, condition, pickup location.
+- [ ] **Marketplace Browse View**: Grid layout with thumbnail, price badge, distance indicator.
 - [ ] **Listing Detail**: Full item view with media carousel, seller profile link, "Message Seller" button (routes to P2P chat).
 - [ ] **Sold/Expired State**: Seller marks listing as sold; item grays out in feed but remains in vault history.
 
-#### P2P Group Sync (ties into Phase 4 & 6)
-- [ ] **Gossip-Based Group Discovery**: Leverage `iroh-gossip` to propagate group metadata (name, geohash, member count) across nearby peers — similar to Habitat's gossip protocol for instance discovery.
+#### P2P Group Sync
+- [ ] **Gossip-Based Group Discovery**: Leverage `iroh-gossip` to propagate group metadata across nearby peers.
 - [ ] **Geohash Routing**: Community Stations (Phase 6) index groups by geohash prefix, enabling efficient spatial queries without a central server.
-- [ ] **Cross-Group "Nearby" Feed**: Aggregate recent posts from all groups within a geohash radius into a single "Nearby" feed tab, ordered by distance then recency.
+- [ ] **Cross-Group "Nearby" Feed**: Aggregate recent posts from all groups within a geohash radius into a single "Nearby" feed tab.
 
-### Events & RSVP (inspired by [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte))
-Events follow the ActivityStreams vocabulary as implemented by Streams/Forte: `Invite(Event)` for distribution, RSVP via `Accept/Reject/TentativeAccept/TentativeReject(Invite)`, timezone-aware UTC dates, and location-aware rendering.
+### Events & RSVP *(requires AP connector from Phase 4)*
+Events follow the ActivityStreams vocabulary as implemented by Streams/Forte.
 
-- [ ] **`Event` BytescapeType**: Add `Event` as a fourth variant to `BytescapeType` in `db.rs` with structured fields: `start_time`, `end_time`, `timezone`, `location` (reuses `GeoPoint`), `rsvp_status`, `rsvp_collection` (list of attendee DIDs + response status).
-- [ ] **Event Creation UI**: Date/time picker, location picker (reuses map component from Local Groups), description, optional recurrence. Emits `Invite(Event)` when syndicated via AP.
-- [ ] **RSVP Flow**: Accept/Reject/Tentative buttons on received events. Emits corresponding AP RSVP activities. Tracks attendee responses in local `rsvp_collection`.
-- [ ] **Calendar View**: New lens/view rendering `Event`-type `BytescapeItem` entries in a calendar layout. Integrates with group events and birthday notifications.
-- [ ] **Map Integration**: Events with `location` coordinates appear as pins on MapScreen alongside geotagged posts. Tap → event detail card with RSVP action.
-- [ ] **Event Updates & Cancellation**: `Update(Event)` and `Delete(Event)` propagate changes to all invited attendees via AP federation.
+- [ ] **`Event` BytescapeType**: Add `Event` as a fourth variant to `BytescapeType` in `db.rs` with structured fields: `start_time`, `end_time`, `timezone`, `location`, `rsvp_status`, `rsvp_collection`.
+- [ ] **Event Creation UI**: Date/time picker, location picker, description, optional recurrence. Emits `Invite(Event)` when syndicated via AP.
+- [ ] **RSVP Flow**: Accept/Reject/Tentative buttons on received events. Emits corresponding AP RSVP activities.
+- [ ] **Calendar View**: New lens/view rendering `Event`-type `BytescapeItem` entries in a calendar layout.
+- [ ] **Map Integration**: Events with `location` coordinates appear as pins on MapScreen.
+- [ ] **Event Updates & Cancellation**: `Update(Event)` and `Delete(Event)` propagate changes via AP federation.
 
-### AP-Federated Group Threading (Conversation Containers)
-When groups federate via ActivityPub, they use the Conversation Container model (FEP-171b) as implemented by Streams/Forte. The group owner's node acts as the `attributedTo` authority for the container `Collection`, gating replies via `Add/Remove` activities. Locally this maps to Iroh doc ownership; over AP it uses standard `Add(Create(Note))` mechanics with Data Integrity Proofs (FEP-8b32) for authorship verification.
-
-- [ ] **ConversationContainer Record**: Add `ConversationContainer` record type in `db.rs` — `container_id`, `owner_did`, `context_url`, `member_dids`, `created_at`. Each group thread is a container.
-- [ ] **Container Moderation**: Owner approves/rejects replies before `Add`ing to the collection. Rejected replies are not forwarded. `Remove` activity for post-hoc moderation.
-- [ ] **Friend Zoom (inspired by Streams)**: Per-connection closeness slider that filters feed by relationship strength — zoom in for close friends, out for acquaintances. Stored as a weight on the local contact record.
+### AP-Federated Group Threading *(requires AP connector from Phase 4)*
+- [ ] **ConversationContainer Record**: Add `ConversationContainer` record type — `container_id`, `owner_did`, `context_url`, `member_dids`, `created_at`.
+- [ ] **Container Moderation**: Owner approves/rejects replies before `Add`ing to the collection. `Remove` for post-hoc moderation.
+- [ ] **Friend Zoom**: Per-connection closeness slider that filters feed by relationship strength.
 
 ### Network State Feed
-- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).ugh, 
+- [ ] **Network Event Schema**: Add `NetworkStateEntry` event type (profile updated, webring joined, archive import completed, group created/joined).
 - [ ] **Feed Injection**: Bridge emits network state events for followed contacts; rendered inline in the feed with distinct visual treatment.
 
 ### Interface & Lenses
@@ -241,6 +235,8 @@ When groups federate via ActivityPub, they use the Conversation Container model 
 - [ ] **Theme Engine**: Cozy Mode (default), Desktop Mode (Win98), custom theme editor via CSS-like syntax.
 - [ ] **Haptics & Audio**: "Mechanical" (crisp clicks) and "Organic" (wood taps, paper) sound profiles via `tauri-plugin-haptics`.
 
+---
+
 ## Phase 6: The Sovereign Cloud ☁️
 **Goal:** Enable robust P2P infrastructure for always-on sync. Research existing Iroh public relays first.
 
@@ -249,38 +245,44 @@ When groups federate via ActivityPub, they use the Conversation Container model 
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
 - [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.
 - [ ] **Stealth Mode**: Toggle to sever all Station connections for pure device-to-device Iroh operation.
-- [ ] **Paired Streams/Forte Server**: Optionally pair Bytescape with a self-hosted [Streams](https://codeberg.org/streams/streams) instance (Docker/YunoHost) as an always-on ActivityPub relay. Bytescape auto-configures OAuth2; the Streams server acts as the user's public AP endpoint while Bytescape remains the local-first client. Bridges P2P identity with fediverse presence — the server handles AP S2S delivery, group hosting, and federated search on behalf of the user's offline devices.
+- [ ] **Paired Streams/Forte Server**: Optionally pair Bytescape with a self-hosted [Streams](https://codeberg.org/streams/streams) instance as an always-on ActivityPub relay. Bridges P2P identity with fediverse presence.
 
 ---
 
-## 🐛 Current Issues & Tasks
-- [x] **Rename Project**: Migrated from `dipper` to `bytescape`.
-- [x] **Stabilize Bridge**: Token refresh and timezone fixes.
-- [x] **Refactor Schemas**: Aligned `redb` tables with `BytescapeItem` spec.
-- [x] **SyncManager Underutilized**: Commands now exposed to frontend.
-- [x] **VaultScreen**: Full file manager implemented with upload, delete, search, filters.
-- [x] **Facebook HTML Import**: HTML format detection, scraper-based parsing, media extraction, tracker audit.
-- [x] **Media Pipeline Fixes**: Tokio runtime handle in spawn_blocking, path resolution for HTML src attributes, data:/https URI filtering.
-- [x] **Feed Tab Restructure**: Tabs are now All / Following / Feeds / #Hashtags / RSS / Archives. "All" merges live Bluesky timeline + vault items chronologically. Archives shows imported vault content with source filter.
+## 🐛 Open Issues
 - [ ] **Type Duplication**: `BlueskyPost` vs `BytescapeItem` in frontend—normalize into shared `FeedEntry` adapter (currently handled per-tab in `FeedScreen`).
 - [ ] **Syndication Safety**: Need explicit controls to prevent spamming networks with old posts.
-- [x] **Cross-Account Message Leakage**: Fixed by owner-scoping vault messages and clearing user data on logout.
-- [x] **Deletion Path Coverage**: `clear_vault` + `logout` now wipe local user-scoped tables and synced vault file entries.
-- [x] **Live Feed Semantics**: Feed tabs now aligned as Following / Feeds / All with live Bluesky subscribed-feed fetching.
-- [x] **Feed Subscription Fetch Reliability**: Saved-feed URI parsing hardened; custom feed URI requests are properly encoded.
-- [x] **Message Import Triggering**: Bluesky message import now runs during import flow and when entering chat.
-- [x] **Chat Source Partitioning**: Live (Bluesky/Mastodon) and Archived (walled-garden) sections with archived read-only composer.
-- [x] **Archive Chat Coverage (Facebook + Instagram)**: Archive chat import now covers Instagram JSON and Facebook HTML thread formats; messages appear in Archived chat section.
-- [x] **Feed Compose Layout Spillover**: Fixed create-post/feed column stacking.
-- [x] **Facebook: Metadata Leaking into Post Content**: Fixed: selectively exclude footer/tag/timestamp elements from body text; strip GPS coordinates.
-- [x] **Facebook: Duplicate Photos**: Fixed: within-post media dedup via HashSet, cross-file dedup by normalized filenames.
-- [x] **Syndication Rollback Bug**: Fixed: `useUnifiedFeed` now explicitly clears its `verifiedIdsRef` cache on manual refresh, forcing `verify_syndications` to re-check stale posts accurately instead of locking them "active" forever.
-- [x] **Syndication Image Extraction Duplication Bug**: Fixed: When actively sharing an image to Bluesky, solving an edge case where the background timeline importer would subsequently see the new AT Post, download its photos over the network as a new post, and stash duplicates in the `media` folder. `known_uris` is now passed to `import_bluesky_feed` to halt media processing for AT URIs already in the local vault.
-- [x] **Mobile CSS Cascade Bug**: Global `display: none` rules for mobile elements overriding `@media` rules. Fixed by scoping all desktop hide rules inside `@media (min-width: 769px)`.
-- [x] **Android Build TypeScript Errors**: `csstype` version mismatch rejecting valid CSS properties (`bottom`, `paddingBottom`). Fixed with `as React.CSSProperties` casts.
-- [x] **Repost Dedup Pipeline**: Fixed 3-layer dedup (Rust `get_unified_feed`, Rust `get_timeline_unified`, TS `deduplicateFeedEntries`) to use composite keys (`repost:<did>:<uri>`) so reposts are distinct feed events that aren't collapsed with originals. Commits: 421efa9, 76a71ec.
-- [x] **Repost Timestamp Sorting**: Reposts now use the repost's `indexed_at` (when the repost appeared on the feed) instead of the original post's `created_at`, so they sort chronologically to when the user actually saw them.
-- [x] **Repost Display & Reply Nesting**: Fixed end-to-end repost rendering and owner reply merging. Reposts now display the correct original post content with a "X reposted" banner. `import_bluesky_feed()` no longer skips reposts due to `post.author.did != did` filtering. Owner replies to reposted posts are nested inline under the parent card as fully interactive `FeedEntryCard` components (with engagement bar, thread toggle, reply compose, reactions). Added `reply_parent_uri` field through the full Rust→TS pipeline (`FeedReplyPost` → `BlueskyImportedPost` → `BytescapeItem` → `FeedEntry`) and `nestOwnerReplies()` grouping in `useUnifiedFeed`. Also introduced `resolveAtUri()` helper in `FeedEntryCard` to correctly resolve AT-URIs for vault items (where `entry.id` is a CID), fixing thread loading, likes, reposts, and reply compose for imported posts.
-- [x] **P2P Chat Messages Not Delivering**: Chat window opens for peers but messages don't send/receive. Full pipeline needs debugging: `send_p2p_chat_message` → QUIC → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen.
-- [x] **Mobile Chat Input Hidden Behind Nav Bar**: Chat compose text box renders below the mobile bottom navigation, making it unusable. Needs CSS viewport/layout fix.
 - [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
+
+<details>
+<summary>✅ Resolved Issues (click to expand)</summary>
+
+- [x] Rename Project: Migrated from `dipper` to `bytescape`.
+- [x] Stabilize Bridge: Token refresh and timezone fixes.
+- [x] Refactor Schemas: Aligned `redb` tables with `BytescapeItem` spec.
+- [x] SyncManager Underutilized: Commands now exposed to frontend.
+- [x] VaultScreen: Full file manager implemented.
+- [x] Facebook HTML Import: HTML format detection, scraper-based parsing, media extraction, tracker audit.
+- [x] Media Pipeline Fixes: Tokio runtime handle, path resolution, data:/https URI filtering.
+- [x] Feed Tab Restructure: Tabs aligned as All / Following / Feeds / #Hashtags / RSS / Archives.
+- [x] Cross-Account Message Leakage: Fixed by owner-scoping vault messages.
+- [x] Deletion Path Coverage: `clear_vault` + `logout` wipe local user-scoped tables.
+- [x] Live Feed Semantics: Feed tabs aligned with live Bluesky subscribed-feed fetching.
+- [x] Feed Subscription Fetch Reliability: Saved-feed URI parsing hardened.
+- [x] Message Import Triggering: Bluesky message import runs during import flow.
+- [x] Chat Source Partitioning: Live and Archived sections with archived read-only composer.
+- [x] Archive Chat Coverage: Instagram JSON + Facebook HTML thread formats.
+- [x] Feed Compose Layout Spillover: Fixed create-post/feed column stacking.
+- [x] Facebook: Metadata Leaking into Post Content: Selective exclusion of footer/tag/timestamp elements.
+- [x] Facebook: Duplicate Photos: Within-post + cross-file dedup.
+- [x] Syndication Rollback Bug: `verifiedIdsRef` cache clear on manual refresh.
+- [x] Syndication Image Extraction Duplication Bug: `known_uris` passed to `import_bluesky_feed`.
+- [x] Mobile CSS Cascade Bug: Desktop hide rules scoped inside `@media (min-width: 769px)`.
+- [x] Android Build TypeScript Errors: `as React.CSSProperties` casts.
+- [x] Repost Dedup Pipeline: Composite keys (`repost:<did>:<uri>`).
+- [x] Repost Timestamp Sorting: Use repost's `indexed_at` instead of original `created_at`.
+- [x] Repost Display & Reply Nesting: Full end-to-end repost rendering + `reply_parent_uri` field.
+- [x] P2P Chat Messages Not Delivering: 4-bug fix in commit `11de2b7`.
+- [x] Mobile Chat Input Hidden Behind Nav Bar: `--safe-bottom` CSS fix.
+
+</details>
