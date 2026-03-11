@@ -86,6 +86,18 @@ export interface IdentityRecoveryFinalizeResult {
     public_key: string;
 }
 
+/** The portable encrypted blob the user saves for identity recovery. */
+export interface RecoveryEscrowBundle {
+    version: number;
+    created_at: number;
+    did: string;
+    public_key: string;
+    salt_b64: string;
+    nonce_b64: string;
+    ciphertext_b64: string;
+    integrity_md5: string;
+}
+
 export interface ParseProgress {
     stage: string;
     posts_found: number;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { invoke } from "@tauri-apps/api/core";
-import { AuthStatus } from '../types';
+import { AuthStatus, IdentityRecoveryStartResult, IdentityRecoveryVerifyResult, IdentityRecoveryFinalizeResult } from '../types';
 import { Win98Box } from '../components/Win98Box';
 
 interface LoginScreenProps {
@@ -9,12 +9,21 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenProps) {
-    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'import-only' | 'local-vault'>('welcome');
+    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'import-only' | 'local-vault' | 'recover'>('welcome');
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [importOnLogin, setImportOnLogin] = useState(true);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+
+    // Recovery flow state
+    const [recoveryStep, setRecoveryStep] = useState<'paste' | 'code' | 'confirm'>('paste');
+    const [bundleInput, setBundleInput] = useState('');
+    const [challengeId, setChallengeId] = useState('');
+    const [didHint, setDidHint] = useState('');
+    const [recoveryCode, setRecoveryCode] = useState('');
+    const [verifiedDid, setVerifiedDid] = useState('');
+    const [verifiedPubkey, setVerifiedPubkey] = useState('');
 
     async function handleBlueskyLogin() {
         if (!identifier.trim() || !password.trim()) {
@@ -47,6 +56,91 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         } finally {
             setLoading(false);
         }
+    }
+
+    async function handleRecoveryStart() {
+        const trimmed = bundleInput.trim();
+        if (!trimmed) {
+            setError("Paste your recovery bundle JSON.");
+            return;
+        }
+        // Quick JSON validation
+        try { JSON.parse(trimmed); } catch {
+            setError("Invalid JSON. Paste the full escrow bundle.");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const result = await invoke<IdentityRecoveryStartResult>('identity_start_recovery', {
+                escrowBundleJson: trimmed,
+            });
+            setChallengeId(result.challenge_id);
+            setDidHint(result.did_hint);
+            setRecoveryStep('code');
+        } catch (e: any) {
+            setError(typeof e === 'string' ? e : e.message || 'Failed to parse bundle');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleRecoveryVerify() {
+        if (!recoveryCode.trim()) {
+            setError("Enter your recovery code.");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const result = await invoke<IdentityRecoveryVerifyResult>('identity_verify_recovery', {
+                challengeId,
+                recoveryCode: recoveryCode.trim(),
+            });
+            if (result.verified) {
+                setVerifiedDid(result.did);
+                setVerifiedPubkey(result.public_key);
+                setRecoveryStep('confirm');
+            } else {
+                setError("Verification failed — wrong recovery code.");
+            }
+        } catch (e: any) {
+            setError(typeof e === 'string' ? e : e.message || 'Verification failed — check your recovery code');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleRecoveryFinalize() {
+        setLoading(true);
+        setError("");
+        try {
+            const result = await invoke<IdentityRecoveryFinalizeResult>('identity_finalize_recovery');
+            if (result.restored) {
+                // Re-check auth to get full status
+                const status = await invoke<AuthStatus | null>('check_auth_status');
+                if (status) {
+                    onLoginSuccess(status, false);
+                }
+            } else {
+                setError("Restore failed unexpectedly.");
+            }
+        } catch (e: any) {
+            setError(typeof e === 'string' ? e : e.message || 'Failed to finalize recovery');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    function resetRecovery() {
+        setRecoveryStep('paste');
+        setBundleInput('');
+        setChallengeId('');
+        setDidHint('');
+        setRecoveryCode('');
+        setVerifiedDid('');
+        setVerifiedPubkey('');
+        setError('');
     }
 
     return (
@@ -85,6 +179,14 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                         <div className="login-option-text">
                                             <strong>Create Local Vault</strong>
                                             <span className="text-muted">Offline-only identity, no accounts needed</span>
+                                        </div>
+                                    </Win98Box>
+
+                                    <Win98Box variant="raised" className="login-option-card" onClick={() => { setMode('recover'); resetRecovery(); }}>
+                                        <span className="login-option-icon">🔑</span>
+                                        <div className="login-option-text">
+                                            <strong>Recover Identity</strong>
+                                            <span className="text-muted">Restore from a recovery bundle</span>
                                         </div>
                                     </Win98Box>
                                 </div>
@@ -195,6 +297,117 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
 
                                 <p className="login-hint">
                                     You'll choose a username next. Connect external accounts anytime in Settings.
+                                </p>
+                            </div>
+                        )}
+
+                        {mode === 'recover' && (
+                            <div className="login-form">
+                                <div className="login-form-header">
+                                    <button className="btn btn-ghost login-back-btn" onClick={() => { setMode('welcome'); resetRecovery(); }}>
+                                        ← Back
+                                    </button>
+                                    <span className="login-form-title">🔑 Recover Identity</span>
+                                </div>
+
+                                {/* Step indicator */}
+                                <div className="recovery-steps-bar">
+                                    <span className={`recovery-step-dot ${recoveryStep === 'paste' ? 'active' : 'done'}`}>1</span>
+                                    <span className="recovery-step-line" />
+                                    <span className={`recovery-step-dot ${recoveryStep === 'code' ? 'active' : recoveryStep === 'confirm' ? 'done' : ''}`}>2</span>
+                                    <span className="recovery-step-line" />
+                                    <span className={`recovery-step-dot ${recoveryStep === 'confirm' ? 'active' : ''}`}>3</span>
+                                </div>
+
+                                {recoveryStep === 'paste' && (
+                                    <>
+                                        <p className="login-description">
+                                            Paste the recovery bundle you saved when you set up your identity.
+                                        </p>
+                                        <textarea
+                                            className="input-field recovery-bundle-input"
+                                            placeholder='{"version":1,"created_at":...,"did":"did:key:z6Mk...",...}'
+                                            value={bundleInput}
+                                            onChange={(e) => { setBundleInput(e.target.value); setError(''); }}
+                                            rows={5}
+                                        />
+                                        <button
+                                            className="btn btn-primary btn-block"
+                                            onClick={handleRecoveryStart}
+                                            disabled={loading || !bundleInput.trim()}
+                                        >
+                                            {loading ? 'Validating...' : 'Validate Bundle'}
+                                        </button>
+                                    </>
+                                )}
+
+                                {recoveryStep === 'code' && (
+                                    <>
+                                        <p className="login-description">
+                                            Bundle verified! This will restore the identity:
+                                        </p>
+                                        <div className="recovery-did-hint">
+                                            <span className="recovery-did-label">DID</span>
+                                            <span className="recovery-did-value" title={didHint}>
+                                                {didHint.slice(0, 20)}...{didHint.slice(-8)}
+                                            </span>
+                                        </div>
+                                        <p className="login-description">
+                                            Enter the recovery code you used when creating this bundle.
+                                        </p>
+                                        <input
+                                            className="input-field"
+                                            type="password"
+                                            placeholder="Your recovery code"
+                                            value={recoveryCode}
+                                            onChange={(e) => { setRecoveryCode(e.target.value); setError(''); }}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleRecoveryVerify()}
+                                            autoFocus
+                                        />
+                                        <button
+                                            className="btn btn-primary btn-block"
+                                            onClick={handleRecoveryVerify}
+                                            disabled={loading || !recoveryCode.trim()}
+                                        >
+                                            {loading ? 'Decrypting...' : 'Verify Code'}
+                                        </button>
+                                    </>
+                                )}
+
+                                {recoveryStep === 'confirm' && (
+                                    <>
+                                        <div className="recovery-success-icon">✅</div>
+                                        <p className="login-description">
+                                            Recovery code verified! Ready to restore your identity.
+                                        </p>
+                                        <div className="recovery-did-hint">
+                                            <span className="recovery-did-label">DID</span>
+                                            <span className="recovery-did-value" title={verifiedDid}>
+                                                {verifiedDid.slice(0, 20)}...{verifiedDid.slice(-8)}
+                                            </span>
+                                        </div>
+                                        <div className="recovery-did-hint">
+                                            <span className="recovery-did-label">Key</span>
+                                            <span className="recovery-did-value" title={verifiedPubkey}>
+                                                {verifiedPubkey.slice(0, 16)}...{verifiedPubkey.slice(-8)}
+                                            </span>
+                                        </div>
+                                        <button
+                                            className="btn btn-primary btn-block"
+                                            onClick={handleRecoveryFinalize}
+                                            disabled={loading}
+                                        >
+                                            {loading ? 'Restoring...' : '🔓 Restore My Identity'}
+                                        </button>
+                                    </>
+                                )}
+
+                                {error && <p className="login-error">{error}</p>}
+
+                                <p className="login-hint">
+                                    {recoveryStep === 'paste' && "Don't have a bundle? You'll need to create a new identity instead."}
+                                    {recoveryStep === 'code' && "The recovery code decrypts the escrow bundle to recover your private key."}
+                                    {recoveryStep === 'confirm' && "This will replace any existing identity on this device."}
                                 </p>
                             </div>
                         )}

@@ -55,6 +55,7 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
+import { RecoverySetupModal } from "./components/RecoverySetupModal";
 
 function App() {
   // ─── Stores ───
@@ -76,6 +77,7 @@ function App() {
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
   const [showIdentitySetup, setShowIdentitySetup] = useState(false);
+  const [showRecoverySetup, setShowRecoverySetup] = useState(false);
 
   // Import / Audit
   const [progress, setProgress] = useState<ParseProgress | null>(null);
@@ -248,6 +250,12 @@ function App() {
   function handleIdentitySetupComplete(updatedAuth: AuthStatus) {
     setAuth(updatedAuth);
     setShowIdentitySetup(false);
+    // After username is set, prompt user to create a real recovery code
+    setShowRecoverySetup(true);
+  }
+
+  function handleRecoverySetupComplete() {
+    setShowRecoverySetup(false);
   }
 
   // === Data Loading ===
@@ -558,6 +566,13 @@ function App() {
         <IdentitySetupModal
           auth={auth}
           onComplete={handleIdentitySetupComplete}
+        />
+      )}
+
+      {/* Recovery setup modal — shown after username setup to create real recovery code */}
+      {showRecoverySetup && !showIdentitySetup && (
+        <RecoverySetupModal
+          onComplete={handleRecoverySetupComplete}
         />
       )}
     </AppLayout>

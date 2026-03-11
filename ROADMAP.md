@@ -5,7 +5,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ## ✅ Completed: Foundation ✅
 - [x] **Core P2P Identity**: Generates Iroh Node IDs.
-- [x] **Basic Bluesky Bridge**: `getTimeline`, `getAuthorFeed`, and OAuth login.
+- [x] **Basic Bluesky Bridge**: `getTimeline`, `getAuthorFeed`, etc
 - [x] **Frontend Basics**: Chat & Feed UI foundation.
 - [x] **Data Normalization**: `BytescapeItem` schema with 3 Universal Types (Status, Gallery, Article).
 - [x] **Multi-Feed Selection**: Unified hashtags + custom feeds via `get_unified_feed`.
@@ -109,8 +109,6 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ## Phase 4: Syndication & Connectors 📤🌐
 **Goal:** Safe posting to external networks + remaining connectors. Federation with the wider fediverse.
-
-*Previously Phase 3. Renumbered — syndication backend is done but most connector work (AP, Threads, RSS) is still ahead.*
 
 ### Syndication (partially complete)
 - [x] **Syndication Backend**: `syndicate_vault_item` command posts to Bluesky via `createRecord`.

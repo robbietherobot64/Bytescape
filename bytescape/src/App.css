@@ -4242,3 +4242,217 @@ textarea::placeholder {
     color: var(--text-light);
     margin: 10px 0 0;
 }
+
+/* ─── Recovery Setup Modal ─── */
+
+.recovery-setup-modal {
+    width: 460px;
+    max-width: 92vw;
+}
+
+.recovery-setup-content {
+    padding: 8px 16px 16px;
+    text-align: center;
+}
+
+.recovery-setup-icon {
+    font-size: 2.5rem;
+    margin-bottom: 4px;
+}
+
+.recovery-setup-heading {
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    margin: 0 0 8px;
+    color: var(--text-primary);
+}
+
+.recovery-setup-description {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+    line-height: 1.4;
+}
+
+.recovery-input-group {
+    text-align: left;
+    margin-bottom: 10px;
+}
+
+.recovery-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.recovery-strength {
+    min-height: 22px;
+    margin-bottom: 8px;
+    text-align: left;
+}
+
+.recovery-strength-badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 8px;
+}
+
+.recovery-strength-badge.strong { background: rgba(0, 200, 100, 0.15); color: #4caf50; }
+.recovery-strength-badge.ok     { background: rgba(255, 200, 0, 0.15); color: #e6a700; }
+.recovery-strength-badge.weak   { background: rgba(255, 80, 80, 0.15); color: #f44336; }
+
+.recovery-error {
+    color: var(--accent-red);
+    font-size: 0.82rem;
+    margin: 0 0 8px;
+}
+
+.recovery-skip-btn {
+    margin-top: 4px;
+    font-size: 0.82rem !important;
+    opacity: 0.7;
+}
+
+.recovery-fine-print {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    margin: 10px 0 0;
+    line-height: 1.4;
+}
+
+/* Bundle display */
+.recovery-bundle-meta {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    text-align: left;
+}
+
+.recovery-meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+}
+
+.recovery-meta-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.recovery-meta-value {
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    font-family: monospace;
+}
+
+.recovery-bundle-text {
+    width: 100%;
+    font-family: monospace;
+    font-size: 0.72rem;
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    resize: none;
+    margin-bottom: 10px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+/* ─── Login Recovery Flow ─── */
+
+.recovery-steps-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 14px;
+}
+
+.recovery-step-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    border: 2px solid var(--border-color);
+    transition: all 0.2s;
+}
+
+.recovery-step-dot.active {
+    background: var(--accent-purple);
+    color: #fff;
+    border-color: var(--accent-purple);
+}
+
+.recovery-step-dot.done {
+    background: #4caf50;
+    color: #fff;
+    border-color: #4caf50;
+}
+
+.recovery-step-line {
+    width: 32px;
+    height: 2px;
+    background: var(--border-color);
+}
+
+.recovery-bundle-input {
+    font-family: monospace;
+    font-size: 0.78rem;
+    resize: none;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.recovery-did-hint {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.recovery-did-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.recovery-did-value {
+    font-size: 0.8rem;
+    font-family: monospace;
+    color: var(--accent-teal);
+}
+
+.recovery-success-icon {
+    font-size: 2.5rem;
+    margin-bottom: 8px;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    .recovery-setup-modal {
+        width: 95vw;
+    }
+    .recovery-step-line {
+        width: 20px;
+    }
+}
