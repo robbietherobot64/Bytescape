@@ -11,7 +11,7 @@ impl DbManager {
         } else {
             item.id.clone()
         };
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
         let already_exists = table.get(key.as_str()).map_err(|e| e.to_string())?.is_some();
@@ -84,7 +84,7 @@ impl DbManager {
         let parity_key = Self::willow_parity_storage_key(&parity);
         let parity_serialized = serde_json::to_string(&parity).map_err(|e| e.to_string())?;
 
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
@@ -99,7 +99,7 @@ impl DbManager {
     }
 
     pub async fn get_willow_write_parity_report(&self) -> Result<WillowWriteParityReport, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
         let items_table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
@@ -183,7 +183,7 @@ impl DbManager {
     }
 
     pub async fn get_item_by_id(&self, item_id: &str) -> Result<Option<BytescapeItem>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
@@ -206,7 +206,7 @@ impl DbManager {
     }
 
     pub async fn get_all_known_uris(&self) -> Result<std::collections::HashSet<String>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
@@ -227,7 +227,7 @@ impl DbManager {
     }
 
     pub async fn cleanup_syndication_duplicates(&self) -> Result<usize, String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
@@ -285,7 +285,7 @@ impl DbManager {
     }
 
     pub async fn list_all_item_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
@@ -337,7 +337,7 @@ impl DbManager {
     ///  - author_did is None (archive imports like Facebook that don't have a DID)
     ///  - is_liked is true (posts the user explicitly liked/saved)
     pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
 
@@ -384,7 +384,7 @@ impl DbManager {
     }
 
     pub async fn count_items(&self) -> Result<usize, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
         let count = table.len().map_err(|e: redb::StorageError| e.to_string())?;
@@ -431,28 +431,21 @@ impl DbManager {
             format!("/{}", path_prefix)
         };
 
-        // We can't strictly filter by path in the header since header doesn't have path yet?
-        // Wait, did I add path to header? Let me check models/mod.rs
-        // Ah, I DID NOT add path to header. I probably should.
-        
-        // If I haven't added path to header, I'll need to fetch items to check path.
-        // OR I add path to header. Let's add path to header.
-        
-        // Actually, for now, I'll fetch and filter, but it's still better than fetching ALL.
-        // Wait, list_my_items(owner_did) used to be a thing. I replaced it with headers.
-        
-        let mut matching_headers = Vec::new();
-        for h in all_headers {
-            // Fetch partially or fully? We have to fetch fully if we don't have path in header.
-            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
-                if item.path.starts_with(&normalized_prefix) {
-                    matching_headers.push(item);
-                }
-            }
-        }
+        // Filter using the path field already present on BytescapeItemHeader
+        let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
+            .filter(|h| h.path.starts_with(&normalized_prefix))
+            .collect();
 
         let total = matching_headers.len();
-        let page: Vec<BytescapeItem> = matching_headers.into_iter().skip(offset).take(limit).collect();
+        let page_headers: Vec<BytescapeItemHeader> = matching_headers.into_iter().skip(offset).take(limit).collect();
+
+        // Fetch full items only for the current page
+        let mut page = Vec::new();
+        for h in page_headers {
+            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
+                page.push(item);
+            }
+        }
         Ok((page, total))
     }
 

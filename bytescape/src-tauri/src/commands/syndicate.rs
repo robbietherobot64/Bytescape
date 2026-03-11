@@ -15,7 +15,7 @@ pub async fn syndicate_vault_item(
     println!("syndicate: starting for item {}", item_id);
 
     // 1. Load item from database
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     let mut item = db.get_item_by_id(&item_id).await?
         .ok_or_else(|| format!("Item not found: {}", item_id))?;
@@ -160,7 +160,7 @@ pub async fn syndicate_vault_item(
         active: true,
     });
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     db.upsert_item(&item).await?;
 
@@ -180,7 +180,7 @@ pub async fn verify_syndications(
 ) -> Result<bool, String> {
     println!("sync: verifying syndications for item {}", item_id);
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     let mut item = db.get_item_by_id(&item_id).await?.ok_or("Item not found")?;
     drop(db_guard);
@@ -211,7 +211,7 @@ pub async fn verify_syndications(
     if bsky_uris_to_check.is_empty() {
         if changed {
             // Save the migrated history even if nothing to check
-            let db_guard = state.db_manager.lock().await;
+            let db_guard = state.db_manager.read().await;
             if let Some(db) = db_guard.as_ref() {
                 let _ = db.upsert_item(&item).await;
             }
@@ -256,7 +256,7 @@ pub async fn verify_syndications(
     }
 
     if changed {
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             db.upsert_item(&item).await?;
             println!("sync: Rolled back history successfully for {}", item_id);

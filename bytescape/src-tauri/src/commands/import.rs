@@ -107,7 +107,7 @@ pub struct WillowMigrationResult {
 /// Backfill Willow-style paths for existing items and normalize missing paths.
 #[tauri::command]
 pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Result<WillowMigrationResult, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard
         .as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
@@ -150,7 +150,7 @@ pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Re
 
 #[tauri::command]
 pub async fn get_willow_write_parity_report(state: State<'_, AppState>) -> std::result::Result<WillowWriteParityReport, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard
         .as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
@@ -572,7 +572,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
     let pending = pending_guard.as_ref()
         .ok_or_else(|| BytescapeError::Import("No pending import. Call import_facebook_zip first.".to_string()))?;
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
@@ -725,7 +725,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         current_item: "Fetching your feed...".to_string(),
     });
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let known_uris = if let Some(db) = db_guard.as_ref() {
         db.get_all_known_uris().await.unwrap_or_default()
     } else {
@@ -753,7 +753,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     };
 
     // Save to database
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
@@ -1107,7 +1107,7 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
     let convos = chat_client.list_convos(&access_jwt, &user_did).await
         .map_err(|e| BytescapeError::BlueskyApi(e))?;
     
-    let db_guard = db_manager.lock().await;
+    let db_guard = db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -1282,7 +1282,7 @@ pub async fn import_archive_messages(
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     let db_manager = state.db_manager.clone();
-    let db_guard = db_manager.lock().await;
+    let db_guard = db_manager.read().await;
     let db = db_guard
         .as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
@@ -1469,7 +1469,7 @@ pub async fn send_bsky_dm(
         .map_err(|e| BytescapeError::BlueskyApi(e))?;
     
     // Save to local DB
-    let db_guard = db_manager.lock().await;
+    let db_guard = db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -1582,7 +1582,7 @@ pub async fn publish_post(
 
     // Local/P2P-first save
     if publish_local {
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             let item_id = uuid::Uuid::new_v4().to_string();
             let item = BytescapeItem {
@@ -1664,7 +1664,7 @@ pub async fn publish_post(
                         result.bluesky_uri = Some(uri.clone());
 
                         // Save a local copy as syndicated
-                        let db_guard = state.db_manager.lock().await;
+                        let db_guard = state.db_manager.read().await;
                         if let Some(db) = db_guard.as_ref() {
                             let item_id = cid.clone();
                             let item = BytescapeItem {

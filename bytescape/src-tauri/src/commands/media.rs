@@ -471,7 +471,7 @@ pub async fn diagnose_media_ref(
 /// items that already have the correct `media_mimes` length are skipped.
 #[tauri::command]
 pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Result<usize, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| crate::error::BytescapeError::DatabaseNotInitialized)?;
     let sync_guard = state.sync_manager.lock().await;

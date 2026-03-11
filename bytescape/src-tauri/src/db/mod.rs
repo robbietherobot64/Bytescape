@@ -1,7 +1,7 @@
 use redb::{Database, TableDefinition, ReadableTable, ReadableDatabase, ReadableTableMetadata};
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use std::path::PathBuf;
 
 pub(crate) const POSTS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("posts");
@@ -23,7 +23,7 @@ pub mod peers;
 
 #[derive(Clone)]
 pub struct DbManager {
-    pub(crate) db: Arc<Mutex<Database>>,
+    pub(crate) db: Arc<RwLock<Database>>,
 }
 
 impl DbManager {
@@ -46,7 +46,7 @@ impl DbManager {
         write_txn.commit().map_err(|e| e.to_string())?;
 
         Ok(Self {
-            db: Arc::new(Mutex::new(db)),
+            db: Arc::new(RwLock::new(db)),
         })
     }
 
@@ -66,7 +66,7 @@ impl DbManager {
 
         let serialized = serde_json::to_string(&post).map_err(|e| e.to_string())?;
         
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?;
@@ -78,7 +78,7 @@ impl DbManager {
     }
 
     pub async fn list_posts(&self) -> Result<Vec<Post>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?;
         
@@ -97,7 +97,7 @@ impl DbManager {
     }
 
     pub async fn clear_items(&self) -> Result<usize, String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
         let count = table.len().map_err(|e: redb::StorageError| e.to_string())? as usize;
@@ -115,7 +115,7 @@ impl DbManager {
     }
 
     pub async fn clear_all_user_data(&self) -> Result<usize, String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
 
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let posts = read_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?
@@ -166,14 +166,14 @@ impl DbManager {
     }
 
     pub async fn count_archive_posts(&self) -> Result<u64, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?;
         Ok(table.len().unwrap_or(0))
     }
 
     pub async fn save_hashtag(&self, tag: String) -> Result<(), String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
@@ -185,7 +185,7 @@ impl DbManager {
     }
 
     pub async fn delete_hashtag(&self, tag: String) -> Result<(), String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
@@ -196,7 +196,7 @@ impl DbManager {
     }
 
     pub async fn list_followed_hashtags(&self) -> Result<Vec<String>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
         

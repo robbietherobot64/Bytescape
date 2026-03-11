@@ -190,7 +190,7 @@ pub async fn set_local_username(
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), String> {
     {
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             let _cleared = db.clear_all_user_data().await
                 .map_err(BytescapeError::DatabaseTransaction)?;

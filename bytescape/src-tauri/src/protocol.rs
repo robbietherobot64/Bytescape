@@ -10,7 +10,6 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_docs::engine::Engine as DocsEngine;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
-use tokio::sync::Mutex;
 
 /// ALPN identifier for the Bytescape custom protocol.
 pub const BYTESCAPE_ALPN: &[u8] = b"bytescape/1.0";
@@ -116,7 +115,7 @@ pub struct ChatMessagePayload {
 #[derive(Clone)]
 pub struct BytescapeProtocol {
     my_profile: PeerProfile,
-    db_manager: Arc<Mutex<Option<crate::db::DbManager>>>,
+    db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
     app_handle: tauri::AppHandle,
 }
 
@@ -131,7 +130,7 @@ impl std::fmt::Debug for BytescapeProtocol {
 impl BytescapeProtocol {
     pub fn new(
         my_profile: PeerProfile,
-        db_manager: Arc<Mutex<Option<crate::db::DbManager>>>,
+        db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
         app_handle: tauri::AppHandle,
     ) -> Self {
         Self {
@@ -332,7 +331,7 @@ impl BytescapeProtocol {
     /// Strips sensitive fields (media_paths with local filesystem paths) before serving.
     async fn serve_feed(&self, my_profile: &PeerProfile, params: &FeedRequestParams) -> FeedResponse {
         let owner_did = self.get_live_owner_did();
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
 
         let (items, total_count) = if let Some(db) = db_guard.as_ref() {
             match db.list_my_items_paged(
@@ -388,7 +387,7 @@ impl BytescapeProtocol {
             .unwrap_or_default()
             .as_secs();
 
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             // Try to find an existing peer record, or create one if we don't have one
             let mut peer = match db.get_peer(remote_node_id).await {
@@ -490,7 +489,7 @@ impl BytescapeProtocol {
         };
 
         // Save to DB
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             match db.save_vault_message(&vault_msg).await {
                 Ok(is_new) => println!("[P2P-CHAT] Message saved: id={}, is_new={}, convo_id={}", msg.id, is_new, convo_id),

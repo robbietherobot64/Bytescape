@@ -100,7 +100,7 @@ pub async fn publish_post_v2(
     // 2. Local publish (Social Vault)
     let mut local_item_id = None;
     if publish_local {
-         let db_guard = state.db_manager.lock().await;
+         let db_guard = state.db_manager.read().await;
          if let Some(db) = db_guard.as_ref() {
             let item_id = uuid::Uuid::new_v4().to_string();
             local_item_id = Some(item_id.clone());
@@ -268,7 +268,7 @@ pub async fn publish_post_v2(
 
                     // Update local item if created
                     if let Some(id) = local_item_id {
-                         let db_guard = state.db_manager.lock().await;
+                         let db_guard = state.db_manager.read().await;
                          if let Some(db) = db_guard.as_ref() {
                              if let Ok(Some(mut item)) = db.get_item_by_id(&id).await {
                                  item.syndication_status = SyndicationStatus::Syndicated;

@@ -25,7 +25,7 @@ impl DbManager {
     /// Save or update a peer record, keyed by `node_id`.
     pub async fn save_peer(&self, peer: &PeerInfo) -> Result<(), String> {
         let serialized = serde_json::to_string(peer).map_err(|e| e.to_string())?;
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
@@ -39,7 +39,7 @@ impl DbManager {
 
     /// Look up a peer by node_id.
     pub async fn get_peer(&self, node_id: &str) -> Result<Option<PeerInfo>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
         match table.get(node_id).map_err(|e| e.to_string())? {
@@ -54,7 +54,7 @@ impl DbManager {
 
     /// List all known peers, sorted by most-recently-added first.
     pub async fn list_peers(&self) -> Result<Vec<PeerInfo>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
         let mut peers = Vec::new();
@@ -70,7 +70,7 @@ impl DbManager {
 
     /// Remove a peer by node_id.
     pub async fn remove_peer(&self, node_id: &str) -> Result<(), String> {
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;

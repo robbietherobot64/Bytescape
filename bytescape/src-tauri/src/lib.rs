@@ -33,7 +33,7 @@ pub struct AppState {
     pub endpoint: Mutex<Option<Endpoint>>,
     pub keychain: keychain_encrypted::EncryptedKeychain,
     pub auth_manager: AuthManager,
-    pub db_manager: Arc<Mutex<Option<db::DbManager>>>,
+    pub db_manager: Arc<tokio::sync::RwLock<Option<db::DbManager>>>,
     pub chat_client: Arc<ChatClient>,
     pub sync_manager: Mutex<Option<Arc<sync::SyncManager>>>,
     pub router: Mutex<Option<iroh::protocol::Router>>,
@@ -247,7 +247,7 @@ pub fn run() {
 
             // Initialize database
             let db_path = app_data_dir.join("bytescape.redb");
-            let db_manager = Arc::new(Mutex::new(
+            let db_manager = Arc::new(tokio::sync::RwLock::new(
                 Some(db::DbManager::new(db_path)
                     .map_err(|e| format!("Failed to initialize database: {}", e))?)
             ));
@@ -287,90 +287,92 @@ pub fn run() {
                 // Short delay to let the rest of setup complete
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 let state = backfill_handle.state::<AppState>();
-                let db_guard = state.db_manager.lock().await;
-                let sync_guard = state.sync_manager.lock().await;
-                if db_guard.is_some() && sync_guard.is_some() {
-                    drop(db_guard);
-                    drop(sync_guard);
-                    // Use the same logic as the command but directly
-                    let db_guard = state.db_manager.lock().await;
-                    let db = match db_guard.as_ref() {
-                        Some(d) => d,
+
+                // Clone DbManager and SyncManager out of the locks so we don't
+                // hold them during the (potentially long) backfill loop.
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
                         None => return,
-                    };
-                    let sync_guard2 = state.sync_manager.lock().await;
-                    let sync = match sync_guard2.as_ref() {
+                    }
+                };
+                let sync = {
+                    let guard = state.sync_manager.lock().await;
+                    match guard.as_ref() {
                         Some(s) => s.clone(),
                         None => return,
+                    }
+                };
+
+                let item_headers = match db.list_all_item_headers().await {
+                    Ok(headers) => headers,
+                    Err(_) => return,
+                };
+                let mut updated = 0usize;
+                for h in item_headers {
+                    // Lightweight check before full fetch
+                    if h.media_blob_count == 0 { continue; }
+                    if h.media_blob_count == h.media_mimes_count { continue; }
+
+                    // Fetch full item only if it needs backfill
+                    let mut item = match db.get_item_by_id(&h.id).await {
+                        Ok(Some(item)) => item,
+                        _ => continue,
                     };
-                    drop(sync_guard2);
 
-                    let item_headers = match db.list_all_item_headers().await {
-                        Ok(headers) => headers,
-                        Err(_) => return,
-                    };
-                    let mut updated = 0usize;
-                    for h in item_headers {
-                        // Lightweight check before full fetch
-                        if h.media_blob_count == 0 { continue; }
-                        if h.media_blob_count == h.media_mimes_count { continue; }
-
-                        // Fetch full item only if it needs backfill
-                        let mut item = match db.get_item_by_id(&h.id).await {
-                            Ok(Some(item)) => item,
-                            _ => continue,
-                        };
-
-                        let mut mimes = Vec::with_capacity(item.media_blobs.len());
-                        for blob_ref in &item.media_blobs {
-                            let mut hash_str = blob_ref.trim().to_string();
-                            while let Some(rest) = hash_str.strip_prefix("blob:") {
-                                hash_str = rest.trim().to_string();
-                            }
-                            if let Some(pos) = hash_str.find(':') {
-                                hash_str = hash_str[..pos].to_string();
-                            }
-                            if hash_str.is_empty() {
-                                mimes.push("application/octet-stream".to_string());
-                                continue;
-                            }
-                            // Try to parse hash and detect MIME
-                            let uppercase = hash_str.to_ascii_uppercase();
-                            let decoded = data_encoding::BASE32_NOPAD.decode(uppercase.as_bytes());
-                            if let Ok(bytes) = decoded {
-                                if bytes.len() >= 32 {
-                                    let mut arr = [0u8; 32];
-                                    arr.copy_from_slice(&bytes[bytes.len()-32..]);
-                                    let hash = crate::sync::Hash::from_bytes(arr);
-                                    match sync.get_media(hash).await {
-                                        Ok(data) => {
-                                            let mime = if data.starts_with(&[0xFF, 0xD8, 0xFF]) { "image/jpeg" }
-                                                else if data.starts_with(b"\x89PNG\r\n\x1a\n") { "image/png" }
-                                                else if data.starts_with(b"GIF8") { "image/gif" }
-                                                else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" { "image/webp" }
-                                                else if data.len() > 12 && &data[4..8] == b"ftyp" { "video/mp4" }
-                                                else if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) { "video/webm" }
-                                                else if data.starts_with(b"OggS") { "video/ogg" }
-                                                else { "application/octet-stream" };
-                                            mimes.push(mime.to_string());
-                                        }
-                                        Err(_) => mimes.push("application/octet-stream".to_string()),
+                    let mut mimes = Vec::with_capacity(item.media_blobs.len());
+                    for blob_ref in &item.media_blobs {
+                        let mut hash_str = blob_ref.trim().to_string();
+                        while let Some(rest) = hash_str.strip_prefix("blob:") {
+                            hash_str = rest.trim().to_string();
+                        }
+                        if let Some(pos) = hash_str.find(':') {
+                            hash_str = hash_str[..pos].to_string();
+                        }
+                        if hash_str.is_empty() {
+                            mimes.push("application/octet-stream".to_string());
+                            continue;
+                        }
+                        // Try to parse hash and detect MIME
+                        let uppercase = hash_str.to_ascii_uppercase();
+                        let decoded = data_encoding::BASE32_NOPAD.decode(uppercase.as_bytes());
+                        if let Ok(bytes) = decoded {
+                            if bytes.len() >= 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes[bytes.len()-32..]);
+                                let hash = crate::sync::Hash::from_bytes(arr);
+                                match sync.get_media(hash).await {
+                                    Ok(data) => {
+                                        let mime = if data.starts_with(&[0xFF, 0xD8, 0xFF]) { "image/jpeg" }
+                                            else if data.starts_with(b"\x89PNG\r\n\x1a\n") { "image/png" }
+                                            else if data.starts_with(b"GIF8") { "image/gif" }
+                                            else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" { "image/webp" }
+                                            else if data.len() > 12 && &data[4..8] == b"ftyp" { "video/mp4" }
+                                            else if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) { "video/webm" }
+                                            else if data.starts_with(b"OggS") { "video/ogg" }
+                                            else { "application/octet-stream" };
+                                        mimes.push(mime.to_string());
                                     }
-                                } else {
-                                    mimes.push("application/octet-stream".to_string());
+                                    Err(_) => mimes.push("application/octet-stream".to_string()),
                                 }
                             } else {
                                 mimes.push("application/octet-stream".to_string());
                             }
-                        }
-                        item.media_mimes = mimes;
-                        if db.upsert_item(&item).await.is_ok() {
-                            updated += 1;
+                        } else {
+                            mimes.push("application/octet-stream".to_string());
                         }
                     }
-                    if updated > 0 {
-                        println!("backfill_media_mimes: updated {} items on startup", updated);
+                    item.media_mimes = mimes;
+                    if db.upsert_item(&item).await.is_ok() {
+                        updated += 1;
                     }
+
+                    // Yield between items to avoid starving other tasks
+                    tokio::task::yield_now().await;
+                }
+                if updated > 0 {
+                    println!("backfill_media_mimes: updated {} items on startup", updated);
                 }
             });
 
@@ -380,10 +382,13 @@ pub fn run() {
                 // Short delay to let the rest of setup complete
                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 let state = cleanup_handle.state::<AppState>();
-                let db_guard = state.db_manager.lock().await;
-                let db = match db_guard.as_ref() {
-                    Some(d) => d,
-                    None => return,
+                // Clone DbManager out of the lock so cleanup doesn't hold the outer lock
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
+                        None => return,
+                    }
                 };
                 if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
                     if removed_count > 0 {

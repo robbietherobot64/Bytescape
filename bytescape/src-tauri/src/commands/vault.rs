@@ -254,7 +254,7 @@ pub async fn send_p2p_message(
 /// Get vault statistics (alias for vault_get_stats for frontend compatibility)
 #[tauri::command]
 pub async fn get_vault_stats(state: State<'_, AppState>) -> std::result::Result<crate::db::VaultStats, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -269,7 +269,7 @@ pub async fn get_vault_stats(state: State<'_, AppState>) -> std::result::Result<
 /// List unique sources in the vault
 #[tauri::command]
 pub async fn list_vault_sources(state: State<'_, AppState>) -> std::result::Result<Vec<String>, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -290,7 +290,7 @@ pub async fn list_vault_posts_paged(
     source: Option<String>,
     path_prefix: Option<String>,
 ) -> std::result::Result<serde_json::Value, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -337,7 +337,7 @@ pub async fn list_vault_posts_paged(
 /// Save a followed hashtag
 #[tauri::command]
 pub async fn save_hashtag(state: State<'_, AppState>, tag: String) -> std::result::Result<(), String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -348,7 +348,7 @@ pub async fn save_hashtag(state: State<'_, AppState>, tag: String) -> std::resul
 /// Delete a followed hashtag
 #[tauri::command]
 pub async fn delete_hashtag(state: State<'_, AppState>, tag: String) -> std::result::Result<(), String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -359,7 +359,7 @@ pub async fn delete_hashtag(state: State<'_, AppState>, tag: String) -> std::res
 /// List followed hashtags
 #[tauri::command]
 pub async fn list_followed_hashtags(state: State<'_, AppState>) -> std::result::Result<Vec<String>, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -377,7 +377,7 @@ pub async fn list_hashtags(state: State<'_, AppState>) -> std::result::Result<Ve
 #[tauri::command]
 pub async fn clear_vault(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let cleared_db = {
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         let db = db_guard.as_ref()
             .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
@@ -404,7 +404,7 @@ pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Res
         .map_err(|e| e.to_string())?
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
@@ -415,7 +415,7 @@ pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Res
 /// Legacy archive post count used by fallback UI.
 #[tauri::command]
 pub async fn count_archive_posts(state: State<'_, AppState>) -> std::result::Result<u64, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
@@ -426,7 +426,7 @@ pub async fn count_archive_posts(state: State<'_, AppState>) -> std::result::Res
 /// List cached contacts from local DB.
 #[tauri::command]
 pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Vec<crate::db::Contact>, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 

@@ -21,17 +21,18 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
     let route = warp::fs::dir(cache_dir.clone())
         .with(cors);
 
-    // Find a free port using standard library
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+    // Reserve a random port by binding a TcpListener, then immediately start
+    // the warp server on that port. The TOCTOU window is negligible since this
+    // is localhost-only and the listener is dropped right before warp binds.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("Failed to bind a random port for media server");
     let port = listener.local_addr().unwrap().port();
-    drop(listener); // Free it so warp can bind it
+    drop(listener);
 
-    println!("[Warp Media Server] Successfully bound to http://127.0.0.1:{} serving {:?}", port, cache_dir);
+    println!("[Warp Media Server] Starting on http://127.0.0.1:{} serving {:?}", port, cache_dir);
 
     // Run the server completely independently in the Tokio background runtime
-    tokio::spawn(async move {
-        warp::serve(route).run(([127, 0, 0, 1], port)).await;
-    });
+    tokio::spawn(warp::serve(route).run(([127, 0, 0, 1], port)));
 
     port
 }
