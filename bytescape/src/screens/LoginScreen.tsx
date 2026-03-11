@@ -19,7 +19,6 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     // Recovery flow state
     const [recoveryStep, setRecoveryStep] = useState<'paste' | 'code' | 'confirm'>('paste');
     const [bundleInput, setBundleInput] = useState('');
-    const [challengeId, setChallengeId] = useState('');
     const [didHint, setDidHint] = useState('');
     const [recoveryCode, setRecoveryCode] = useState('');
     const [verifiedDid, setVerifiedDid] = useState('');
@@ -73,9 +72,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         setError("");
         try {
             const result = await invoke<IdentityRecoveryStartResult>('identity_start_recovery', {
-                escrowBundleJson: trimmed,
+                escrowBundle: trimmed,
             });
-            setChallengeId(result.challenge_id);
             setDidHint(result.did_hint);
             setRecoveryStep('code');
         } catch (e: any) {
@@ -94,7 +92,6 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         setError("");
         try {
             const result = await invoke<IdentityRecoveryVerifyResult>('identity_verify_recovery', {
-                challengeId,
                 recoveryCode: recoveryCode.trim(),
             });
             if (result.verified) {
@@ -135,7 +132,6 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     function resetRecovery() {
         setRecoveryStep('paste');
         setBundleInput('');
-        setChallengeId('');
         setDidHint('');
         setRecoveryCode('');
         setVerifiedDid('');
