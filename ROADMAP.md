@@ -147,7 +147,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
 - [x] **Two-Device Sync Test**: Verified end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
 - [x] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
-- [ ] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs. P2P tab shows conversations where at least one user is P2P-only. Bluesky tab shows conversations that exist on Bluesky. Archives tab shows imported legacy chats (Facebook, Instagram).
+- [x] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs. P2P tab shows conversations where at least one user is P2P-only. Bluesky tab shows conversations that exist on Bluesky. Archives tab shows imported legacy chats (Facebook, Instagram).
 
 ### Future
 - [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
