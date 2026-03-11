@@ -102,7 +102,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs.
 
 ### Remaining
-- [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX). Show escrow bundle after identity creation, let user set own recovery code, add "Recover Identity" flow on LoginScreen.
+- [x] **Identity "Door 1"**: Local DID generation with blind escrow recovery. RecoverySetupModal prompts user for real recovery code after identity creation, generates encrypted escrow bundle. LoginScreen has 4th "Recover Identity" option with 3-step restore flow (paste bundle → enter code → finalize).
 - [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code).
 
 ---
