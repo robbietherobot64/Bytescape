@@ -103,7 +103,6 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ### Remaining
 - [x] **Identity "Door 1"**: Local DID generation with blind escrow recovery. RecoverySetupModal prompts user for real recovery code after identity creation, generates encrypted escrow bundle. LoginScreen has 4th "Recover Identity" option with 3-step restore flow (paste bundle → enter code → finalize).
-- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code).
 
 ---
 
@@ -146,6 +145,22 @@ Federation with the wider fediverse. Protocol implementation informed by the [St
 - [ ] **Multibox Delivery (FEP-0499)**: Batch deliveries to multiple inboxes on the same server.
 - [ ] **Nomadic Identity Federation (FEP-ef61 / FEP-c390)**: AP-native multi-device presence — emit `copiedTo` in AP actor record listing all device endpoints, handle `Sync` activity type to mirror profile changes across devices. Identity Proofs (FEP-c390) link Bytescape's `did:key` to the AP actor.
 - [ ] **OpenWebAuth (FEP-61cf)**: Federated SSO — authenticate to remote fediverse servers via home endpoint to access permission-gated content without creating new accounts.
+
+### Identity Consolidation & Recovery
+*Deferred to end of Phase 4 so all connected identity sources (Bluesky, AP, etc.) are in place before building unified recovery.*
+
+- [ ] **2FA / Email Recovery**: Replace the paste-a-JSON-bundle flow with a user-friendly recovery method — email-based one-time code, TOTP authenticator app, or SMS fallback. The escrow bundle is stored server-side keyed by email; user proves ownership to retrieve it.
+- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code).
+
+> **🖥️ Hosting Milestone — `bytescape.social`**
+>
+> This is the first point in the project that requires server infrastructure. The 2FA/email recovery flow needs a lightweight relay service to hold encrypted escrow bundles and send verification emails. The AP connector also needs a publicly-reachable inbox endpoint.
+>
+> **Options:**
+> - **Under-desk NAS**: Sufficient for AP inbox + escrow relay. Run behind Cloudflare Tunnel or Tailscale Funnel pointed at `bytescape.social`.
+> - **Cloud VPS**: Small Hetzner/Fly.io instance for higher availability. Caddy reverse proxy + the relay service.
+>
+> Either way, `bytescape.social` goes live here — initially serving the escrow relay API and the AP actor endpoint. A public-facing web portal comes later in Phase 5 (WASM Web Portal).
 
 ---
 
@@ -236,9 +251,9 @@ Events follow the ActivityStreams vocabulary as implemented by Streams/Forte.
 ---
 
 ## Phase 6: The Sovereign Cloud ☁️
-**Goal:** Enable robust P2P infrastructure for always-on sync. Research existing Iroh public relays first.
+**Goal:** Scale the `bytescape.social` infrastructure from the Phase 4 relay into a full P2P mesh. Research existing Iroh public relays first.
 
-- [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward.
+- [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward (extends the escrow relay from Phase 4).
 - [ ] **Auto-Docking**: Geohash-based discovery of nearest Community Station on account creation.
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
 - [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.
