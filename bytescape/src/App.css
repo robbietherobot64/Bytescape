@@ -2320,7 +2320,7 @@ textarea::placeholder {
 
 /* ── Left: Conversation List ── */
 .chat-convo-list {
-    width: 220px;
+    width: 240px;
     background: var(--bg-panel);
     border-right: 2px solid #999;
     display: flex;
@@ -2341,6 +2341,68 @@ textarea::placeholder {
 }
 
 .chat-convo-list-title { font-size: 12px; }
+
+/* ── Chat Tab Bar ── */
+.chat-tab-bar {
+    display: flex;
+    background: var(--bg-toolbar);
+    border-bottom: 2px solid #999;
+    flex-shrink: 0;
+}
+
+.chat-tab-btn {
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+}
+
+.chat-tab-btn:hover {
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.3);
+}
+
+.chat-tab-btn.active {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+.chat-tab-count {
+    font-size: 0.6rem;
+    background: rgba(0,0,0,0.15);
+    color: var(--text-muted);
+    padding: 0 4px;
+    border-radius: 8px;
+    min-width: 14px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.chat-tab-btn.active .chat-tab-count {
+    background: rgba(0,0,0,0.25);
+    color: var(--text-primary);
+}
+
+.chat-tab-badge {
+    font-size: 0.6rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
 
 .chat-convo-search {
     display: flex;
@@ -3916,6 +3978,14 @@ textarea::placeholder {
     .chat-convo-item { padding: 10px 12px; }
     .chat-convo-name { font-size: 13px; }
     .chat-convo-preview { font-size: 12px; }
+
+    .chat-tab-bar {
+        padding: 0 2px;
+    }
+    .chat-tab-btn {
+        font-size: 0.75rem;
+        padding: 8px 4px;
+    }
 
     .chat-msg {
         font-size: 13px;

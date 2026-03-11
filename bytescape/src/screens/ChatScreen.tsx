@@ -5,15 +5,17 @@ import { useChatStore, useAuthStore } from '../store';
 import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
-import { BsPersonFill, BsCircleFill, BsSearch, BsArrowDown } from 'react-icons/bs';
+import { BsPersonFill, BsSearch, BsArrowDown } from 'react-icons/bs';
 
 /* ────────────────────────────────────────────────────────
-   ChatScreen — Discord-meets-AIM hybrid
-   Layout: [Convo List 220px] [Chat Area flex-1] [Buddy List 200px]
+   ChatScreen — Tabbed chat with Bluesky / P2P / Archives
+   Layout: [Tabs + Convo List 240px] [Chat Area flex-1] [Buddy List 200px]
    ──────────────────────────────────────────────────────── */
 
-const LIVE_SOURCES = new Set(['bluesky', 'mastodon', 'p2p']);
+type ChatTab = 'bluesky' | 'p2p' | 'archives';
+
 const P2P_PREFIX = 'p2p:';
+const BLUESKY_SOURCES = new Set(['bluesky']);
 
 interface BuddyInfo {
     handle: string;
@@ -34,6 +36,7 @@ export function ChatScreen() {
     const [showScrollBtn, setShowScrollBtn] = useState(false);
     const [buddies, setBuddies] = useState<BuddyInfo[]>([]);
     const [p2pConvos, setP2pConvos] = useState<P2pConversation[]>([]);
+    const [activeTab, setActiveTab] = useState<ChatTab>('bluesky');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -117,15 +120,18 @@ export function ChatScreen() {
                peerHandles.includes(searchFilter.toLowerCase());
     });
 
-    // Split into P2P, Live (Bluesky/Mastodon), and Archived
+    // Classify conversations by tab:
+    // P2P: convo_id starts with "p2p:" (at least one user is P2P-only)
+    // Bluesky: source is "bluesky" and NOT p2p
+    // Archives: everything else (Facebook, Instagram, etc.)
     const p2pConvoIds = filteredConvoIds.filter(cid => cid.startsWith(P2P_PREFIX));
-    const liveConvoIds = filteredConvoIds.filter(cid => {
+    const blueskyConvoIds = filteredConvoIds.filter(cid => {
         if (cid.startsWith(P2P_PREFIX)) return false;
         const src = (byConvo[cid]?.[0]?.source || '').toLowerCase();
-        return LIVE_SOURCES.has(src);
+        return BLUESKY_SOURCES.has(src);
     });
     const archivedConvoIds = filteredConvoIds.filter(cid =>
-        !cid.startsWith(P2P_PREFIX) && !liveConvoIds.includes(cid)
+        !cid.startsWith(P2P_PREFIX) && !blueskyConvoIds.includes(cid)
     );
 
     // P2P peers that have no messages yet — show them as empty convos
@@ -134,10 +140,22 @@ export function ChatScreen() {
         (!searchFilter.trim() || pc.display_name.toLowerCase().includes(searchFilter.toLowerCase()))
     );
 
+    // Get the convo list for the active tab
+    const tabConvoIds = activeTab === 'p2p' ? p2pConvoIds
+        : activeTab === 'bluesky' ? blueskyConvoIds
+        : archivedConvoIds;
+
+    // Tab counts for badges
+    const tabCounts: Record<ChatTab, number> = {
+        bluesky: blueskyConvoIds.length,
+        p2p: p2pConvoIds.length + emptyP2pConvos.length,
+        archives: archivedConvoIds.length,
+    };
+
     const activeConvoMsgs = selectedConvoId ? byConvo[selectedConvoId] : null;
-    const activeSource = (activeConvoMsgs?.[0]?.source || '').toLowerCase();
     const activeIsP2p = selectedConvoId?.startsWith(P2P_PREFIX) ?? false;
-    const activeIsLive = activeIsP2p || (activeSource ? LIVE_SOURCES.has(activeSource) : true);
+    const activeSource = (activeConvoMsgs?.[0]?.source || '').toLowerCase();
+    const activeIsLive = activeIsP2p || BLUESKY_SOURCES.has(activeSource);
 
     // Derive title from participants
     let activeTitle = 'Chat';
@@ -276,11 +294,33 @@ export function ChatScreen() {
 
     return (
         <div className="chat-discord-layout">
-            {/* ═══ Left Column: Conversation List ═══ */}
+            {/* ═══ Left Column: Tabs + Conversation List ═══ */}
             <div className="chat-convo-list">
                 <div className="chat-convo-list-header">
                     <span className="chat-convo-list-title">Messages</span>
                 </div>
+
+                {/* ── Tab Bar ── */}
+                <div className="chat-tab-bar">
+                    {([
+                        { key: 'bluesky' as ChatTab, label: '🦋 Bluesky', color: '#1185fe' },
+                        { key: 'p2p' as ChatTab,     label: '🔗 P2P',     color: '#a78bfa' },
+                        { key: 'archives' as ChatTab, label: '📚 Archives', color: '#f59e0b' },
+                    ]).map(tab => (
+                        <button
+                            key={tab.key}
+                            className={`chat-tab-btn ${activeTab === tab.key ? 'active' : ''}`}
+                            onClick={() => setActiveTab(tab.key)}
+                            style={activeTab === tab.key ? { borderBottomColor: tab.color } : undefined}
+                        >
+                            {tab.label}
+                            {tabCounts[tab.key] > 0 && (
+                                <span className="chat-tab-count">{tabCounts[tab.key]}</span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+
                 <div className="chat-convo-search">
                     <BsSearch size={10} />
                     <input
@@ -292,58 +332,56 @@ export function ChatScreen() {
                     />
                 </div>
                 <div className="chat-convo-scroll">
-                    {filteredConvoIds.length === 0 && emptyP2pConvos.length === 0 ? (
-                        <div className="chat-convo-empty">No conversations found.</div>
+                    {tabConvoIds.length === 0 && (activeTab !== 'p2p' || emptyP2pConvos.length === 0) ? (
+                        <div className="chat-convo-empty">
+                            {activeTab === 'bluesky' && 'No Bluesky conversations yet.'}
+                            {activeTab === 'p2p' && 'No P2P conversations yet.'}
+                            {activeTab === 'archives' && 'No archived conversations.'}
+                        </div>
                     ) : (
                         <>
-                            {/* P2P Peers */}
-                            {(p2pConvoIds.length > 0 || emptyP2pConvos.length > 0) && (
-                                <div className="chat-convo-section-label">
-                                    <BsCircleFill size={6} color="#a78bfa" /> P2P
-                                </div>
-                            )}
-                            {p2pConvoIds.map(cid => {
-                                const nodeId = cid.slice(P2P_PREFIX.length);
-                                const p2pMatch = p2pConvos.find(pc => pc.node_id === nodeId);
-                                const title = p2pMatch?.display_name || getConvoTitle(cid);
-                                return (
-                                    <ConvoItem
-                                        key={cid}
-                                        cid={cid}
-                                        title={title}
-                                        initial={title.charAt(0).toUpperCase()}
-                                        lastMsg={byConvo[cid][0]}
-                                        isActive={selectedConvoId === cid}
-                                        isMine={byConvo[cid][0]?.sender_did === auth?.did}
-                                        onClick={() => setSelectedConvoId(cid)}
-                                        online={p2pMatch?.online}
-                                    />
-                                );
-                            })}
-                            {emptyP2pConvos.map(pc => (
-                                <div
-                                    key={pc.convo_id}
-                                    className={`chat-convo-item ${selectedConvoId === pc.convo_id ? 'active' : ''}`}
-                                    onClick={() => setSelectedConvoId(pc.convo_id)}
-                                >
-                                    <div className="chat-convo-avatar">{pc.display_name.charAt(0).toUpperCase()}</div>
-                                    <div className="chat-convo-info">
-                                        <div className="chat-convo-name">
-                                            {pc.display_name}
-                                            {pc.online && <span style={{ marginLeft: 6, color: '#50fa7b', fontSize: '0.7rem' }}>●</span>}
+                            {/* P2P tab: show peers with messages + empty peers */}
+                            {activeTab === 'p2p' && (
+                                <>
+                                    {p2pConvoIds.map(cid => {
+                                        const nodeId = cid.slice(P2P_PREFIX.length);
+                                        const p2pMatch = p2pConvos.find(pc => pc.node_id === nodeId);
+                                        const title = p2pMatch?.display_name || getConvoTitle(cid);
+                                        return (
+                                            <ConvoItem
+                                                key={cid}
+                                                cid={cid}
+                                                title={title}
+                                                initial={title.charAt(0).toUpperCase()}
+                                                lastMsg={byConvo[cid][0]}
+                                                isActive={selectedConvoId === cid}
+                                                isMine={byConvo[cid][0]?.sender_did === auth?.did}
+                                                onClick={() => setSelectedConvoId(cid)}
+                                                online={p2pMatch?.online}
+                                            />
+                                        );
+                                    })}
+                                    {emptyP2pConvos.map(pc => (
+                                        <div
+                                            key={pc.convo_id}
+                                            className={`chat-convo-item ${selectedConvoId === pc.convo_id ? 'active' : ''}`}
+                                            onClick={() => setSelectedConvoId(pc.convo_id)}
+                                        >
+                                            <div className="chat-convo-avatar">{pc.display_name.charAt(0).toUpperCase()}</div>
+                                            <div className="chat-convo-info">
+                                                <div className="chat-convo-name">
+                                                    {pc.display_name}
+                                                    {pc.online && <span style={{ marginLeft: 6, color: '#50fa7b', fontSize: '0.7rem' }}>●</span>}
+                                                </div>
+                                                <div className="chat-convo-preview" style={{ fontStyle: 'italic', opacity: 0.5 }}>No messages yet</div>
+                                            </div>
                                         </div>
-                                        <div className="chat-convo-preview" style={{ fontStyle: 'italic', opacity: 0.5 }}>No messages yet</div>
-                                    </div>
-                                </div>
-                            ))}
-
-                            {/* Live (Bluesky/Mastodon) */}
-                            {liveConvoIds.length > 0 && (
-                                <div className="chat-convo-section-label">
-                                    <BsCircleFill size={6} color="#22c55e" /> Live
-                                </div>
+                                    ))}
+                                </>
                             )}
-                            {liveConvoIds.map(cid => (
+
+                            {/* Bluesky tab */}
+                            {activeTab === 'bluesky' && blueskyConvoIds.map(cid => (
                                 <ConvoItem
                                     key={cid}
                                     cid={cid}
@@ -355,10 +393,9 @@ export function ChatScreen() {
                                     onClick={() => setSelectedConvoId(cid)}
                                 />
                             ))}
-                            {archivedConvoIds.length > 0 && (
-                                <div className="chat-convo-section-label">📚 Archived</div>
-                            )}
-                            {archivedConvoIds.map(cid => (
+
+                            {/* Archives tab */}
+                            {activeTab === 'archives' && archivedConvoIds.map(cid => (
                                 <ConvoItem
                                     key={cid}
                                     cid={cid}
@@ -383,8 +420,9 @@ export function ChatScreen() {
                         <Win98Box variant="raised" className="chat-main-header">
                             <button className="chat-back-btn" onClick={() => setSelectedConvoId(null)}>←</button>
                             <span className="chat-main-title">{activeTitle}</span>
-                            {activeIsP2p && <span className="chat-archived-badge" style={{ background: '#a78bfa', color: '#fff' }}>P2P</span>}
-                            {!activeIsLive && !activeIsP2p && <span className="chat-archived-badge">archived</span>}
+                            {activeIsP2p && <span className="chat-tab-badge" style={{ background: '#a78bfa', color: '#fff' }}>P2P</span>}
+                            {!activeIsLive && !activeIsP2p && <span className="chat-tab-badge" style={{ background: '#f59e0b', color: '#fff' }}>Archive</span>}
+                            {!activeIsP2p && BLUESKY_SOURCES.has(activeSource) && <span className="chat-tab-badge" style={{ background: '#1185fe', color: '#fff' }}>Bluesky</span>}
                         </Win98Box>
 
                         <div className="chat-msg-scroll" ref={chatContainerRef} onScroll={handleChatScroll}>

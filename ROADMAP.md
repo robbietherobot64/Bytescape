@@ -139,14 +139,15 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 
 ### Next Steps: Master Identity & P2P Content (Active)
 
-- [ ] **`did:key` Master Identity**: Generate a `did:key:z6Mk...` from each user's Iroh Ed25519 keypair as the universal umbrella identity. Store as `master_did` in keychain. Link Bluesky `did:plc:...` via `alsoKnownAs` at app layer. All users get a `did:key` regardless of signup method (local vault, Bluesky, future connectors). Uses W3C standard — zero infrastructure, deterministic from existing keypair.
-- [ ] **P2P Profile/Post Viewing**: New protocol commands (`PROFILE_REQUEST`, `FEED_REQUEST`) allowing peers to browse each other's profiles and posts over the `bytescape/1.0` ALPN. Peer's `BytescapeItem` posts served on request, rendered in a read-only profile view.
-- [ ] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + `did:key`) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
+- [x] **`did:key` Master Identity**: Generate a `did:key:z6Mk...` from each user's Iroh Ed25519 keypair as the universal umbrella identity. Store as `master_did` in keychain. Link Bluesky `did:plc:...` via `alsoKnownAs` at app layer. All users get a `did:key` regardless of signup method (local vault, Bluesky, future connectors). Uses W3C standard — zero infrastructure, deterministic from existing keypair.
+- [x] **P2P Profile/Post Viewing**: New protocol commands (`PROFILE_REQUEST`, `FEED_REQUEST`) allowing peers to browse each other's profiles and posts over the `bytescape/1.0` ALPN. Peer's `BytescapeItem` posts served on request, rendered in a read-only profile view.
+- [x] **Local-Only Login Flow**: Create a "Local Vault" login option that generates a local identity (Iroh keypair + `did:key`) without requiring any remote API. User gets a handle like `local:<node-id-short>` and can access all vault features.
   - Backend: New `create_local_identity` Tauri command that generates keypair, stores in keychain, returns an `AuthStatus` with `source: "local"`.
   - Frontend: Add "Create Local Vault" button to `LoginScreen` as an alternative to Bluesky login.
   - Session persistence: `check_auth_status` must also detect and restore local-only sessions from keychain.
-- [ ] **Two-Device Sync Test**: Verify end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
-- [ ] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
+- [x] **Two-Device Sync Test**: Verified end-to-end: Device A sends P2P chat message → Device B receives and displays it. Use `test-peer/` for automated verification.
+- [x] **Contact P2P Discovery**: Exchange Iroh node IDs via QR code, manual ticket paste, or Bluesky profile metadata for users who have both identities.
+- [ ] **Chat Tab Cleanup**: Tabbed chat UI separating Bluesky, P2P, and Archives into distinct tabs. P2P tab shows conversations where at least one user is P2P-only. Bluesky tab shows conversations that exist on Bluesky. Archives tab shows imported legacy chats (Facebook, Instagram).
 
 ### Future
 - [ ] **Identity "Door 1"**: Local DID generation with blind escrow recovery (backend commands exist, need frontend UX).
@@ -280,6 +281,6 @@ When groups federate via ActivityPub, they use the Conversation Container model 
 - [x] **Repost Dedup Pipeline**: Fixed 3-layer dedup (Rust `get_unified_feed`, Rust `get_timeline_unified`, TS `deduplicateFeedEntries`) to use composite keys (`repost:<did>:<uri>`) so reposts are distinct feed events that aren't collapsed with originals. Commits: 421efa9, 76a71ec.
 - [x] **Repost Timestamp Sorting**: Reposts now use the repost's `indexed_at` (when the repost appeared on the feed) instead of the original post's `created_at`, so they sort chronologically to when the user actually saw them.
 - [x] **Repost Display & Reply Nesting**: Fixed end-to-end repost rendering and owner reply merging. Reposts now display the correct original post content with a "X reposted" banner. `import_bluesky_feed()` no longer skips reposts due to `post.author.did != did` filtering. Owner replies to reposted posts are nested inline under the parent card as fully interactive `FeedEntryCard` components (with engagement bar, thread toggle, reply compose, reactions). Added `reply_parent_uri` field through the full Rust→TS pipeline (`FeedReplyPost` → `BlueskyImportedPost` → `BytescapeItem` → `FeedEntry`) and `nestOwnerReplies()` grouping in `useUnifiedFeed`. Also introduced `resolveAtUri()` helper in `FeedEntryCard` to correctly resolve AT-URIs for vault items (where `entry.id` is a CID), fixing thread loading, likes, reposts, and reply compose for imported posts.
-- [ ] **P2P Chat Messages Not Delivering**: Chat window opens for peers but messages don't send/receive. Full pipeline needs debugging: `send_p2p_chat_message` → QUIC → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen.
-- [ ] **Mobile Chat Input Hidden Behind Nav Bar**: Chat compose text box renders below the mobile bottom navigation, making it unusable. Needs CSS viewport/layout fix.
+- [x] **P2P Chat Messages Not Delivering**: Chat window opens for peers but messages don't send/receive. Full pipeline needs debugging: `send_p2p_chat_message` → QUIC → `CHAT_MESSAGE` handler → `save_incoming_chat_message` → `p2p-message` event → ChatScreen.
+- [x] **Mobile Chat Input Hidden Behind Nav Bar**: Chat compose text box renders below the mobile bottom navigation, making it unusable. Needs CSS viewport/layout fix.
 - [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
