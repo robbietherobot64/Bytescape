@@ -11,9 +11,15 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
         let _ = std::fs::create_dir_all(&cache_dir);
     }
 
-    // Serve files natively out of the blob cache, injecting CORS headers automatically
+    // Serve files natively out of the blob cache, injecting CORS headers automatically.
+    // CRIT-5: Restrict CORS to Tauri origins only — prevents arbitrary browser
+    // tabs/extensions from reading cached media via the localhost server.
     let cors = warp::cors()
-        .allow_any_origin()
+        .allow_origins(vec![
+            "tauri://localhost",         // Desktop (Linux/macOS/Windows)
+            "https://tauri.localhost",    // Android WebView
+            "http://localhost:1420",      // Dev mode (Vite HMR)
+        ])
         .allow_methods(vec!["GET", "OPTIONS", "HEAD"])
         .allow_headers(vec!["range", "content-type", "accept"])
         .max_age(std::time::Duration::from_secs(86400)); // 24 hours
