@@ -36,10 +36,26 @@ You are an autonomous full-stack engineer specializing in content creation UX, r
 ## ⚠️ Security Obligations
 
 Read [security-addendum.md](security-addendum.md) — it contains audit findings assigned to your track:
-- **HIGH-5**: Centralize blob hash parsing — fragile inline parsing across multiple functions risks panics
-- **MED-5**: Expand MIME magic byte detection (TIFF, BMP, HEIC, AVI, FLAC, WAV) or use `infer` crate
+- **HIGH-5**: Centralize blob hash parsing — fragile inline parsing across multiple functions risks panics ✅ *Done*
+- **MED-5**: Expand MIME magic byte detection (TIFF, BMP, HEIC, AVI, FLAC, WAV) or use `infer` crate ✅ *Done*
 
-Address these when working on related files. They are blocking issues.
+## ⚠️ PM Advisory — Cross-Track Integration Notes (2026-03-11)
+
+Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for full context.
+
+### C3.2 → C1.1b: Facet Rendering in ArticleReader
+`ArticleReader` renders content as sanitized HTML. When you implement **C1.1b** (facet rendering frontend), ensure `ArticleReader` uses the same facet-rendering pipeline as `FeedEntryCard` so articles with `@mentions` and `#hashtags` render them as interactive links.
+
+### C3.2 → C6.1: CRDT Storage Layer Now Unblocked
+Tiptap collaboration extensions (`@tiptap/extension-collaboration`, `@tiptap/extension-collaboration-cursor`) are **installed but not wired**. C6.1 (CRDT Storage Layer) is now the next major milestone for collaborative editing. When starting C6.1:
+1. Add `yrs` (Rust Yjs port) crate to `Cargo.toml`
+2. Create `src-tauri/src/collab.rs` — Yjs doc CRUD, state vector management
+3. Add `COLLAB_DOCS` redb table
+4. Add optional `collab_doc_id: Option<String>` to `BytescapeItem`
+5. Wire `@tiptap/extension-collaboration` in `ArticleEditor.tsx`
+
+### Completed Work Reference
+C3.2 shipped as commit `8610577` — 11 files, +1859/-56 lines, 34 tests. The `ArticleEditor`, `ArticleReader`, and `utils/markdown.ts` are your foundation for all subsequent article/editing work.
 
 ## Prime Directive
 

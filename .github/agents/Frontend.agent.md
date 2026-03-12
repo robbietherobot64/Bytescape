@@ -36,10 +36,22 @@ You are an autonomous React/TypeScript UI engineer with deep CSS expertise. You 
 ## ⚠️ Security Obligations
 
 Read [security-addendum.md](security-addendum.md) — it contains audit findings assigned to your track:
-- **HIGH-3**: Never use `dangerouslySetInnerHTML` on user content — sanitize with `dompurify` first
-- **MED-4**: Add input length validation (max 10K chars for local posts, max 20 attachments, 100MB file limit)
+- **HIGH-3**: Never use `dangerouslySetInnerHTML` on user content — sanitize with `dompurify` first ✅ *Done*
+- **MED-4**: Add input length validation (max 10K chars for local posts, max 20 attachments, 100MB file limit) ✅ *Done*
 
-Address these when working on related components. They are blocking issues.
+## ⚠️ PM Advisory — Completed Work & Next Steps (2026-03-11)
+
+Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for full context.
+
+### ✅ Completed Deliverables
+- **B1.1 Gallery Lens**, **B1.2 Reader Lens**, **B1.3 FeedItemRenderer** — all on `main`
+- **B2.5 Theme Engine** — 3 themes (Cozy/Desktop/Midnight), `useTheme` hook, `ThemePicker`, 5 tests — on `main`
+
+### OAuth UI Note
+The Backend agent modified `LoginScreen.tsx` (+143 lines) on the `track-a/a0-bluesky-oauth` branch to add OAuth login UI. If that branch has been merged, `LoginScreen` now has an "OAuth Login" flow with `listen('oauth-complete')` event handling and a 5-minute timeout. Be aware of this when working on LoginScreen for any reason.
+
+### Next Recommended Task
+**B2.1 GrapesJS Integration** — embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Independent of other tracks. Requires `grapesjs` npm package.
 
 ## Prime Directive
 

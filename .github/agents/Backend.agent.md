@@ -36,11 +36,27 @@ You are an autonomous Rust systems engineer. You write idiomatic, safe Rust. You
 ## ⚠️ Security Obligations
 
 Read [security-addendum.md](security-addendum.md) — it contains audit findings assigned to your track:
-- **CRIT-4**: Add P2P rate limiting to `protocol.rs` (per-peer connection + request limits)
-- **CRIT-5**: Restrict media server CORS to Tauri origins only (replace `allow_any_origin()`)
-- **CRIT-6**: Replace MD5 with BLAKE3 for escrow integrity in `keychain_encrypted.rs`
+- **CRIT-4**: Add P2P rate limiting to `protocol.rs` (per-peer connection + request limits) ✅ *Done*
+- **CRIT-5**: Restrict media server CORS to Tauri origins only (replace `allow_any_origin()`) ✅ *Done*
+- **CRIT-6**: Replace MD5 with BLAKE3 for escrow integrity in `keychain_encrypted.rs` ✅ *Done*
 
-Address these when working on related files. They are blocking issues.
+## ⚠️ PM Advisory — A0 OAuth Follow-Ups (2026-03-11)
+
+Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for full context. The PM audit of A0 identified these gaps **assigned to you**:
+
+- **A0-GAP-1**: `MemorySessionStore` — OAuth sessions lost on app restart. Migrate to persistent storage.
+- **A0-GAP-2**: Fixed callback port `28457` — will fail if port is in use. Add dynamic port fallback.
+- **A0-GAP-3**: `oauth.rs` is 601 lines with **zero test coverage**. Add unit tests.
+- **A0-GAP-4**: `publish_post_v2` and `syndicate_vault_item` not wired for OAuth — users can read but **cannot post**. Apply the same `is_oauth_session()` pattern from `import.rs`.
+- **A0-GAP-5**: DMs skipped for OAuth sessions (separate scope needed).
+- **A0-GAP-6**: Saved feeds / unified feed return empty for OAuth sessions.
+- **A0-GAP-7**: Verify `p256` and `urlencoding` are transitive deps from `atrium-oauth`, or add explicit `Cargo.toml` entries.
+
+These are documented in `ROADMAP.md` → Open Issues. Address them before starting A1.1.
+
+### ⚠️ MERGE NOTE: `track-a/a0-bluesky-oauth` branch
+
+If `track-a/a0-bluesky-oauth` has not yet been merged to `main`, **expect a conflict in `ROADMAP.md`** at the B2.5 Theme Engine entry. Your branch has the old `[ ]` version; `main` has the completed `[x]` version. **Keep main's B2.5 entry.** See the PM advisory for exact merge instructions.
 
 ## Prime Directive
 

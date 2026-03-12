@@ -329,6 +329,17 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **Type Duplication**: `BlueskyPost` vs `BytescapeItem` in frontend—normalize into shared `FeedEntry` adapter (currently handled per-tab in `FeedScreen`).
 - [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
 
+### A0 OAuth — Known Gaps (post-merge follow-ups)
+*Identified by PM audit of Track A delivery. These are not bugs — they are documented scope gaps in the initial OAuth implementation that need follow-up work.*
+
+- [ ] **A0-GAP-1 Ephemeral OAuth Sessions**: `OAuthManager` uses `MemorySessionStore` — if the app restarts, the OAuth session is lost and the user must re-authenticate. Migrate to persistent storage (redb or encrypted keychain) so OAuth sessions survive app restarts. *(Backend agent — `oauth.rs`)*
+- [ ] **A0-GAP-2 Fixed Callback Port**: `OAUTH_CALLBACK_PORT` is hardcoded to `28457`. If the port is in use, the OAuth flow fails silently. Consider falling back to OS-assigned port (`127.0.0.1:0`) and constructing the redirect URI dynamically. Verify that `AtprotoLocalhostClientMetadata` supports dynamic ports. *(Backend agent — `oauth.rs`)*
+- [ ] **A0-GAP-3 No OAuth Rust Tests**: `oauth.rs` is 601 lines with zero test coverage. Add unit tests for at minimum: `OAuthManager::new()` construction, callback URL parsing (`OAuthCallbackQuery`), `process_callback` error paths, `is_oauth_session()` sentinel detection. *(Backend agent — `oauth.rs`, `src-tauri/tests/`)*
+- [ ] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` still use the old Bearer token path. They need the same `is_oauth_session()` branching pattern already applied in `import.rs`. Without this, OAuth users can read but not post. *(Backend agent — `commands/posting.rs`, `commands/syndicate.rs`)*
+- [ ] **A0-GAP-5 DMs Skipped for OAuth Sessions**: Bluesky DM APIs have separate OAuth scopes. The backend agent correctly documented this as out-of-scope for A0, but it means OAuth users cannot access DMs until scope is expanded. *(Backend agent — `commands/import.rs`)*
+- [ ] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: The backend agent reported that saved feeds and unified feed return empty results for OAuth sessions. Likely a PDS URL vs AppView routing issue similar to the one fixed in commit `3b01559`. *(Backend agent — `connectors/bluesky.rs`)*
+- [ ] **A0-GAP-7 Verify Transitive Crate Dependencies**: `oauth.rs` uses `p256` (ECDSA DPoP proofs) and `urlencoding` — confirm these come transitively from `atrium-oauth` or add explicit Cargo.toml entries. Missing deps would cause builds to fail on clean machines. *(Backend agent — `Cargo.toml`)*
+
 <details>
 <summary>✅ Resolved Issues (click to expand)</summary>
 
