@@ -10,6 +10,7 @@ import { ReplyCompose } from './ReplyCompose';
 import { ReactionPicker } from './ReactionPicker';
 import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
+import { stripHtml } from '../utils/sanitize';
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
@@ -109,7 +110,9 @@ function formatCount(n?: number): string {
 }
 
 function sanitizeDisplayContent(raw: string): string {
-    return raw.replace(/https?:\/\/[^\s]+/g, (match) => {
+    // Strip all HTML to prevent XSS from imported archive content (HIGH-3)
+    const cleaned = stripHtml(raw);
+    return cleaned.replace(/https?:\/\/[^\s]+/g, (match) => {
         if (match.length > 50) return match.substring(0, 47) + '...';
         return match;
     });

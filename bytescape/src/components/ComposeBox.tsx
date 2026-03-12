@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { INPUT_LIMITS, formatFileSize } from '../utils/sanitize';
 
 export interface Attachment {
     path?: string;
     blob_hash?: string;
     mime_type?: string;
     preview?: string;
+    file_size?: number;
 }
 
 interface ComposeBoxProps {
@@ -21,15 +23,25 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [composeText, setComposeText] = useState(initialText);
     const [postTarget, setPostTarget] = useState<'local' | 'bluesky' | 'activitypub' | 'all'>('local');
     const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
+    const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
+
+    // Input validation (MED-4)
+    const charCount = composeText.length;
+    const isOverCharLimit = charCount > INPUT_LIMITS.MAX_LOCAL_CHARS;
+    const isNearCharLimit = charCount > INPUT_LIMITS.WARN_CHARS;
+    const isAtAttachmentLimit = attachments.length >= INPUT_LIMITS.MAX_ATTACHMENTS;
+    const canPost = !isPosting && !isOverCharLimit && (composeText.trim().length > 0 || attachments.length > 0);
 
     const handlePublish = async () => {
-        if (!composeText.trim() && attachments.length === 0) return;
+        if (!canPost) return;
         await onPublish(composeText, postTarget, attachments);
         setComposeText('');
         setAttachments([]);
+        setFileSizeWarnings([]);
     };
 
     const handleAddMedia = async () => {
+        if (isAtAttachmentLimit) return;
         try {
             const selected = await open({
                 multiple: true,
@@ -39,20 +51,48 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                 }]
             });
 
+            const paths: string[] = [];
             if (selected && Array.isArray(selected)) {
-                const newAttachments: Attachment[] = selected.map(path => ({
-                    path,
-                    preview: convertFileSrc(path),
-                    mime_type: path.toLowerCase().endsWith('.mp4') || path.toLowerCase().endsWith('.mov') ? 'video/mp4' : 'image/jpeg'
-                }));
-                setAttachments([...attachments, ...newAttachments]);
+                paths.push(...selected);
             } else if (selected) {
-                const path = selected as string;
-                setAttachments([...attachments, {
+                paths.push(selected as string);
+            }
+            if (paths.length === 0) return;
+
+            // Enforce max attachment count
+            const slotsLeft = INPUT_LIMITS.MAX_ATTACHMENTS - attachments.length;
+            const accepted = paths.slice(0, slotsLeft);
+
+            // Check file sizes via Tauri
+            const warnings: string[] = [];
+            const validated: Attachment[] = [];
+            for (const path of accepted) {
+                let fileSize = 0;
+                try {
+                    fileSize = await invoke<number>('get_file_size', { path });
+                } catch {
+                    // If command not available, accept without size check
+                }
+
+                if (fileSize > INPUT_LIMITS.FILE_MAX_BYTES) {
+                    warnings.push(`${path.split('/').pop() || path}: ${formatFileSize(fileSize)} exceeds 100 MB limit — skipped`);
+                    continue;
+                }
+                if (fileSize > INPUT_LIMITS.FILE_WARN_BYTES) {
+                    warnings.push(`${path.split('/').pop() || path}: ${formatFileSize(fileSize)} — large file`);
+                }
+                validated.push({
                     path,
                     preview: convertFileSrc(path),
-                    mime_type: path.toLowerCase().endsWith('.mp4') || path.toLowerCase().endsWith('.mov') ? 'video/mp4' : 'image/jpeg'
-                }]);
+                    mime_type: path.toLowerCase().endsWith('.mp4') || path.toLowerCase().endsWith('.mov') ? 'video/mp4' : 'image/jpeg',
+                    file_size: fileSize || undefined,
+                });
+            }
+            if (warnings.length > 0) setFileSizeWarnings(warnings);
+            if (validated.length > 0) setAttachments([...attachments, ...validated]);
+
+            if (paths.length > slotsLeft) {
+                setFileSizeWarnings(prev => [...prev, `Only ${slotsLeft} of ${paths.length} files added (max ${INPUT_LIMITS.MAX_ATTACHMENTS})`]);
             }
         } catch (err) {
             console.error('Failed to open file dialog:', err);
@@ -74,16 +114,32 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                     rows={3}
                     style={{
                         resize: 'vertical',
-                        marginBottom: 10,
+                        marginBottom: 4,
                         width: '100%',
                         background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
                         borderRadius: 8,
                         padding: 10,
                         color: 'inherit',
                         fontSize: '0.9rem'
                     }}
                 />
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                    fontSize: '0.72rem',
+                    color: isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'var(--text-muted)',
+                }}>
+                    <span>
+                        {charCount > 0 && `${charCount.toLocaleString()} / ${INPUT_LIMITS.MAX_LOCAL_CHARS.toLocaleString()}`}
+                        {isOverCharLimit && ' — over limit'}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                        {attachments.length > 0 && `${attachments.length} / ${INPUT_LIMITS.MAX_ATTACHMENTS} attachments`}
+                    </span>
+                </div>
 
                 {attachments.length > 0 && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 8 } as React.CSSProperties}>
@@ -121,6 +177,22 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                                 >
                                     ✕
                                 </button>
+                                {att.file_size && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        bottom: 2,
+                                        left: 2,
+                                        right: 2,
+                                        background: att.file_size > INPUT_LIMITS.FILE_WARN_BYTES ? 'rgba(243,156,18,0.9)' : 'rgba(0,0,0,0.65)',
+                                        color: '#fff',
+                                        fontSize: 9,
+                                        textAlign: 'center',
+                                        borderRadius: 3,
+                                        padding: '1px 0',
+                                    } as React.CSSProperties}>
+                                        {formatFileSize(att.file_size)}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -131,8 +203,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                         <button
                             className="btn btn-ghost btn-sm"
                             onClick={handleAddMedia}
-                            title="Add Images/Video"
-                            style={{ padding: '4px 8px' }}
+                            disabled={isAtAttachmentLimit}
+                            title={isAtAttachmentLimit ? `Max ${INPUT_LIMITS.MAX_ATTACHMENTS} attachments` : 'Add Images/Video'}
+                            style={{ padding: '4px 8px', opacity: isAtAttachmentLimit ? 0.4 : 1 }}
                         >
                             🖼️ Media
                         </button>
@@ -156,7 +229,8 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                     <button
                         className="btn btn-primary"
                         onClick={handlePublish}
-                        disabled={isPosting || (!composeText.trim() && attachments.length === 0)}
+                        disabled={!canPost}
+                        title={isOverCharLimit ? 'Post exceeds character limit' : ''}
                         style={{ padding: '6px 16px' }}
                     >
                         {isPosting ? 'Posting...' : 'Post'}
@@ -165,6 +239,17 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                 {postStatus && (
                     <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: 4 }}>
                         {postStatus}
+                    </div>
+                )}
+                {fileSizeWarnings.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: '0.75rem', color: '#f39c12', background: 'rgba(243,156,18,0.08)', padding: '6px 8px', borderRadius: 4 }}>
+                        {fileSizeWarnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
+                        <button
+                            onClick={() => setFileSizeWarnings([])}
+                            style={{ marginTop: 4, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.7rem', padding: 0 }}
+                        >
+                            Dismiss
+                        </button>
                     </div>
                 )}
             </div>
