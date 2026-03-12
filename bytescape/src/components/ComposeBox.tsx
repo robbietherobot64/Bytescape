@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { INPUT_LIMITS, formatFileSize } from '../utils/sanitize';
+import { ArticleEditor } from './ArticleEditor';
+import type { ArticleEditorData } from './ArticleEditor';
 
 export interface Attachment {
     path?: string;
@@ -11,8 +13,16 @@ export interface Attachment {
     file_size?: number;
 }
 
+export type PostTarget = 'local' | 'bluesky' | 'activitypub' | 'all';
+
+export interface PublishOptions {
+    itemType?: 'Status' | 'Article';
+    title?: string;
+    contentJson?: object;
+}
+
 interface ComposeBoxProps {
-    onPublish: (text: string, target: 'local' | 'bluesky' | 'activitypub' | 'all', attachments: Attachment[]) => Promise<void>;
+    onPublish: (text: string, target: PostTarget, attachments: Attachment[], options?: PublishOptions) => Promise<void>;
     isPosting: boolean;
     postStatus: string | null;
     initialText?: string;
@@ -21,20 +31,36 @@ interface ComposeBoxProps {
 
 export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '', initialAttachments = [] }: ComposeBoxProps) {
     const [composeText, setComposeText] = useState(initialText);
-    const [postTarget, setPostTarget] = useState<'local' | 'bluesky' | 'activitypub' | 'all'>('local');
+    const [postTarget, setPostTarget] = useState<PostTarget>('local');
     const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
     const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
+    const [articleMode, setArticleMode] = useState(false);
+    const articleDataRef = useRef<ArticleEditorData | null>(null);
 
     // Input validation (MED-4)
-    const charCount = composeText.length;
-    const isOverCharLimit = charCount > INPUT_LIMITS.MAX_LOCAL_CHARS;
-    const isNearCharLimit = charCount > INPUT_LIMITS.WARN_CHARS;
+    const charCount = articleMode ? (articleDataRef.current?.wordCount ?? 0) : composeText.length;
+    const isOverCharLimit = !articleMode && charCount > INPUT_LIMITS.MAX_LOCAL_CHARS;
+    const isNearCharLimit = !articleMode && charCount > INPUT_LIMITS.WARN_CHARS;
     const isAtAttachmentLimit = attachments.length >= INPUT_LIMITS.MAX_ATTACHMENTS;
-    const canPost = !isPosting && !isOverCharLimit && (composeText.trim().length > 0 || attachments.length > 0);
+
+    const hasContent = articleMode
+        ? (articleDataRef.current?.content?.trim().length ?? 0) > 0 || (articleDataRef.current?.title?.trim().length ?? 0) > 0
+        : composeText.trim().length > 0;
+    const canPost = !isPosting && !isOverCharLimit && (hasContent || attachments.length > 0);
 
     const handlePublish = async () => {
         if (!canPost) return;
-        await onPublish(composeText, postTarget, attachments);
+        if (articleMode && articleDataRef.current) {
+            const { content, title, contentJson } = articleDataRef.current;
+            await onPublish(content, postTarget, attachments, {
+                itemType: 'Article',
+                title,
+                contentJson,
+            });
+            articleDataRef.current = null;
+        } else {
+            await onPublish(composeText, postTarget, attachments);
+        }
         setComposeText('');
         setAttachments([]);
         setFileSizeWarnings([]);
@@ -106,40 +132,60 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     return (
         <div className="feed-compose" style={{ marginBottom: 12 }}>
             <div className="card" style={{ marginBottom: 12, padding: 12 }}>
-                <h3 style={{ marginBottom: 8, fontSize: '0.95rem', fontWeight: 600 }}>Create Post</h3>
-                <textarea
-                    value={composeText}
-                    onChange={e => setComposeText(e.target.value)}
-                    placeholder="Share something..."
-                    rows={3}
-                    style={{
-                        resize: 'vertical',
-                        marginBottom: 4,
-                        width: '100%',
-                        background: 'rgba(255,255,255,0.05)',
-                        border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
-                        borderRadius: 8,
-                        padding: 10,
-                        color: 'inherit',
-                        fontSize: '0.9rem'
-                    }}
-                />
-                <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 8,
-                    fontSize: '0.72rem',
-                    color: isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'var(--text-muted)',
-                }}>
-                    <span>
-                        {charCount > 0 && `${charCount.toLocaleString()} / ${INPUT_LIMITS.MAX_LOCAL_CHARS.toLocaleString()}`}
-                        {isOverCharLimit && ' — over limit'}
-                    </span>
-                    <span style={{ color: 'var(--text-muted)' }}>
-                        {attachments.length > 0 && `${attachments.length} / ${INPUT_LIMITS.MAX_ATTACHMENTS} attachments`}
-                    </span>
-                </div>
+                <h3 style={{ marginBottom: 8, fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    Create Post
+                    <button
+                        className={`btn btn-ghost btn-sm ${articleMode ? 'active' : ''}`}
+                        onClick={() => setArticleMode(!articleMode)}
+                        title={articleMode ? 'Switch to short post' : 'Switch to article editor'}
+                        style={{ padding: '2px 8px', fontSize: '0.72rem' } as React.CSSProperties}
+                        type="button"
+                    >
+                        {articleMode ? '📝 Article' : '📄 Article Mode'}
+                    </button>
+                </h3>
+
+                {articleMode ? (
+                    <ArticleEditor
+                        onChange={(data) => { articleDataRef.current = data; }}
+                    />
+                ) : (
+                    <>
+                        <textarea
+                            value={composeText}
+                            onChange={e => setComposeText(e.target.value)}
+                            placeholder="Share something..."
+                            rows={3}
+                            style={{
+                                resize: 'vertical',
+                                marginBottom: 4,
+                                width: '100%',
+                                background: 'rgba(255,255,255,0.05)',
+                                border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
+                                borderRadius: 8,
+                                padding: 10,
+                                color: 'inherit',
+                                fontSize: '0.9rem'
+                            }}
+                        />
+                        <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: 8,
+                            fontSize: '0.72rem',
+                            color: isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'var(--text-muted)',
+                        }}>
+                            <span>
+                                {charCount > 0 && `${charCount.toLocaleString()} / ${INPUT_LIMITS.MAX_LOCAL_CHARS.toLocaleString()}`}
+                                {isOverCharLimit && ' — over limit'}
+                            </span>
+                            <span style={{ color: 'var(--text-muted)' }}>
+                                {attachments.length > 0 && `${attachments.length} / ${INPUT_LIMITS.MAX_ATTACHMENTS} attachments`}
+                            </span>
+                        </div>
+                    </>
+                )}
 
                 {attachments.length > 0 && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 8 } as React.CSSProperties}>

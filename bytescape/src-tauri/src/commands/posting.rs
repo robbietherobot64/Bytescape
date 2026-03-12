@@ -23,6 +23,8 @@ pub async fn publish_post_v2(
     text: String,
     attachments: Vec<Attachment>,
     destination: String,
+    item_type: Option<String>,
+    title: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<PublishResult, String> {
     let content = text.trim();
@@ -105,14 +107,20 @@ pub async fn publish_post_v2(
             let item_id = uuid::Uuid::new_v4().to_string();
             local_item_id = Some(item_id.clone());
             
-            // Determine item type
-            let has_video = media_mimes.iter().any(|m| m.starts_with("video/"));
-            let item_type = if has_video {
-                BytescapeType::Status // Or should it be Gallery?
-            } else if media_blobs.len() > 1 {
-                BytescapeType::Gallery
-            } else {
-                BytescapeType::Status
+            // Determine item type (allow override from frontend)
+            let resolved_item_type = match item_type.as_deref() {
+                Some("Article") => BytescapeType::Article,
+                Some("Gallery") => BytescapeType::Gallery,
+                _ => {
+                    let has_video = media_mimes.iter().any(|m| m.starts_with("video/"));
+                    if has_video {
+                        BytescapeType::Status
+                    } else if media_blobs.len() > 1 {
+                        BytescapeType::Gallery
+                    } else {
+                        BytescapeType::Status
+                    }
+                }
             };
             
             let item = BytescapeItem {
@@ -121,9 +129,9 @@ pub async fn publish_post_v2(
                 content: content.to_string(),
                 media_paths: vec![],
                 source: Source::Manual.as_str().to_string(),
-                path: willow_path_for_item(Source::Manual.as_str(), item_type, now as i64, &item_id),
+                path: willow_path_for_item(Source::Manual.as_str(), resolved_item_type, now as i64, &item_id),
                 imported_at: now,
-                title: None,
+                title: title.clone(),
                 original_id: None,
                 syndicated_uris: std::collections::HashMap::new(),
                 syndicated_at: std::collections::HashMap::new(),
@@ -137,7 +145,7 @@ pub async fn publish_post_v2(
                 reply_count: None,
                 repost_count: None,
                 quote_count: None,
-                item_type,
+                item_type: resolved_item_type,
                 url: None,
                 link_url: None,
                 content_html: None,

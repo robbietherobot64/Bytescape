@@ -5226,3 +5226,218 @@ textarea::placeholder {
     text-decoration: underline;
     color: var(--link-hover);
 }
+
+/* ─── ARTICLE EDITOR (Tiptap) ─── */
+.article-editor-container {
+    border: var(--border-default);
+    background: var(--bg-card);
+    box-shadow: var(--bevel-sunken);
+    margin-bottom: 8px;
+}
+
+.article-title-input {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 22px;
+    font-weight: bold;
+    background: transparent;
+    border: none;
+    border-bottom: var(--border-subtle);
+    color: var(--text-primary);
+    outline: none;
+    font-family: var(--font-serif);
+    box-sizing: border-box;
+}
+
+.article-title-input::placeholder {
+    color: var(--text-light);
+}
+
+.article-toolbar {
+    display: flex;
+    gap: 2px;
+    padding: 6px;
+    border-bottom: var(--border-subtle);
+    flex-wrap: wrap;
+    background: var(--bg-toolbar);
+}
+
+.article-toolbar button {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color, #999);
+    color: var(--text-secondary);
+    padding: 3px 7px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    box-shadow: var(--bevel-button);
+    min-width: 24px;
+}
+
+.article-toolbar button:hover {
+    background: var(--bg-panel);
+    color: var(--text-primary);
+}
+
+.article-toolbar button:active {
+    box-shadow: var(--bevel-pressed);
+}
+
+.article-toolbar button.is-active {
+    background: var(--bg-sidebar);
+    color: var(--text-on-navy);
+    box-shadow: var(--bevel-pressed);
+    border-color: var(--bg-sidebar);
+}
+
+.article-editor-footer {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: var(--border-subtle);
+    background: var(--bg-toolbar);
+    font-family: var(--font-sans);
+}
+
+/* Tiptap ProseMirror core */
+.ProseMirror {
+    padding: 16px;
+    min-height: 250px;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 15px;
+    line-height: 1.7;
+    font-family: var(--font-serif);
+}
+
+.ProseMirror:focus {
+    outline: none;
+}
+
+.ProseMirror h1 { font-size: 26px; margin: 20px 0 10px; font-family: var(--font-sans); }
+.ProseMirror h2 { font-size: 21px; margin: 18px 0 8px; font-family: var(--font-sans); }
+.ProseMirror h3 { font-size: 17px; margin: 14px 0 6px; font-family: var(--font-sans); }
+
+.ProseMirror blockquote {
+    border-left: 3px solid var(--accent-teal);
+    padding-left: 14px;
+    margin: 12px 0 12px 0;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.ProseMirror code {
+    background: var(--bg-panel);
+    padding: 1px 4px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    border: 1px solid var(--border-color, #ccc);
+}
+
+.ProseMirror pre {
+    background: var(--bg-panel);
+    padding: 10px 12px;
+    overflow-x: auto;
+    border: var(--border-default);
+    box-shadow: var(--bevel-sunken);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    margin: 12px 0;
+}
+
+.ProseMirror pre code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.ProseMirror hr {
+    border: none;
+    border-top: var(--border-strong);
+    margin: 20px 0;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+    padding-left: 24px;
+    margin: 8px 0;
+}
+
+.ProseMirror li {
+    margin-bottom: 4px;
+}
+
+.ProseMirror p {
+    margin: 0 0 8px 0;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--text-light);
+    pointer-events: none;
+    float: left;
+    height: 0;
+}
+
+/* ─── ARTICLE READER ─── */
+.article-reader {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+.article-reader-meta {
+    display: flex;
+    gap: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    font-family: var(--font-sans);
+}
+
+.article-reader-content {
+    font-family: var(--font-serif);
+}
+
+.article-reader-content h1,
+.article-reader-content h2,
+.article-reader-content h3 {
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    margin-top: 24px;
+}
+
+.article-reader-content blockquote {
+    border-left: 3px solid var(--accent-teal);
+    padding-left: 14px;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: 12px 0;
+}
+
+.article-reader-content pre {
+    background: var(--bg-panel);
+    padding: 10px 12px;
+    overflow-x: auto;
+    border: var(--border-default);
+    box-shadow: var(--bevel-sunken);
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.article-reader-content code {
+    background: var(--bg-panel);
+    padding: 1px 4px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.article-scroll-progress {
+    position: sticky;
+    top: 0;
+    height: 3px;
+    background: var(--accent-teal);
+    transition: width 0.1s linear;
+    z-index: 10;
+}

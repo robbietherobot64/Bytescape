@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
-import { ComposeBox, Attachment } from '../components/ComposeBox';
+import { ComposeBox, Attachment, PublishOptions, PostTarget } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { GalleryLens } from '../components/lenses/GalleryLens';
 import { ReaderLens } from '../components/lenses/ReaderLens';
@@ -119,7 +119,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
 
 
 
-    const handlePublishPost = async (text: string, target: 'local' | 'bluesky' | 'activitypub' | 'all', attachments: Attachment[]) => {
+    const handlePublishPost = async (text: string, target: PostTarget, attachments: Attachment[], options?: PublishOptions) => {
         setIsPosting(true);
         setPostStatus('Publishing...');
         try {
@@ -131,6 +131,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                     mime_type: a.mime_type
                 })),
                 destination: target,
+                itemType: options?.itemType || 'Status',
+                title: options?.title || null,
             });
 
             const okTargets = [
