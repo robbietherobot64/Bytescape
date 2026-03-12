@@ -118,6 +118,17 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Archive Sorting**: Archive feed uses `effective_timestamp` to bump recently syndicated items to the top of the feed.
 - [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
 
+### Security Hardening 🔒
+*Cross-cutting audit findings addressed across all tracks.*
+
+- [x] **CRIT-4 P2P Rate Limiting**: `PeerRateLimiter` on `BytescapeProtocol` — max 3 concurrent connections per peer, 60 req/min sliding window, 64KB payload enforcement, stale entry eviction.
+- [x] **CRIT-5 CORS Restriction**: Warp media server restricted to `tauri://localhost`, `https://tauri.localhost`, `http://localhost:1420` (no more `allow_any_origin`).
+- [x] **CRIT-6 BLAKE3 Escrow Integrity**: Replaced MD5 with BLAKE3 for identity escrow bundle integrity hashes.
+- [x] **HIGH-3 XSS Sanitization**: DOMPurify-based `sanitizeHtml()` (safe tags only) and `stripHtml()` utilities. Applied in `FeedEntryCard`, `QuoteRepostModal`. Codebase audited for `dangerouslySetInnerHTML` — none found.
+- [x] **HIGH-5 Blob Hash Centralization**: `blob_hash.rs` with `parse_blob_hash()` and `normalize_blob_ref()`. Replaced all inline hash parsing across 5 files. 19 unit tests.
+- [x] **MED-4 Input Length Validation**: ComposeBox hardened — 10K char limit (8K warning), 20 attachment cap, 100MB file size limit (50MB warning), color-coded counters, Post button disabled when over limits.
+- [x] **MED-5 MIME Detection Expansion**: `infer` crate (0.16) replacing hand-rolled `mime_from_magic_bytes()` — 100+ file types. Extended `mime_from_path_hint()` with AVIF, SVG, ICO, audio formats.
+
 ---
 
 ### Track A — Federation & Connectors 🌐
@@ -158,9 +169,9 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 *Agent focus: Frontend React components, UI screens, CSS, map integration. No AP dependency for most items — build against local data and P2P peers.*
 
 #### B1. Lenses & Content Views
-- [ ] **B1.1 Lens: Gallery**: Grid-based media browser for `Gallery`-type items. Masonry layout, lightbox expand, source filter.
-- [ ] **B1.2 Lens: Reader**: Article view with sanitized HTML rendering. Clean typography, reading-time estimate, scroll progress.
-- [ ] **B1.3 Item-Type Rendering**: Feed UI switches view component based on `BytescapeType` — Status cards, Gallery grids, Article previews.
+- [x] **B1.1 Lens: Gallery**: Masonry grid with column count by viewport. `GalleryLens` component with source filter dropdown, `Lightbox` overlay with prev/next navigation, keyboard controls (arrows, Escape), full metadata display. Source filter persisted across lightbox open/close.
+- [x] **B1.2 Lens: Reader**: `ReaderLens` with clean serif typography, reading-time estimate, scroll progress bar, source/date header. Full article content rendered in sanitized HTML with `sanitizeHtml()` from DOMPurify. Empty-state messaging.
+- [x] **B1.3 Item-Type Rendering**: `FeedItemRenderer` dispatches to `GalleryLens`, `ReaderLens`, or default `FeedEntryCard` based on `BytescapeType`. `FeedScreen` has lens toggle button (grid/list/book icons) cycling through Feed → Gallery → Reader views.
 
 #### B2. Profile Builder & Theming
 - [ ] **B2.1 GrapesJS Integration**: Embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Outputs clean HTML/CSS stored locally in user's Willow store. Requires `grapesjs` npm package.
