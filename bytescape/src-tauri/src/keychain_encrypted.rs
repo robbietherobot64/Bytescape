@@ -365,8 +365,19 @@ impl EncryptedKeychain {
 
         let ciphertext = STANDARD.decode(&bundle.ciphertext_b64)
             .map_err(|e| BytescapeError::InvalidInput(format!("Invalid escrow ciphertext encoding: {}", e)))?;
-        let expected_md5 = format!("{:x}", md5::compute(&ciphertext));
-        if bundle.integrity_md5 != expected_md5 {
+
+        // CRIT-6: Support both legacy MD5 (32 hex chars) and new BLAKE3 (64 hex chars)
+        // integrity hashes for backward compatibility with existing escrow bundles.
+        let integrity_ok = if bundle.integrity_md5.len() == 64 {
+            // New BLAKE3 format
+            let expected = blake3::hash(&ciphertext).to_hex().to_string();
+            bundle.integrity_md5 == expected
+        } else {
+            // Legacy MD5 format (32 hex chars)
+            let expected = format!("{:x}", md5::compute(&ciphertext));
+            bundle.integrity_md5 == expected
+        };
+        if !integrity_ok {
             return Err(BytescapeError::InvalidInput("Escrow integrity check failed".to_string()));
         }
 
@@ -467,7 +478,8 @@ impl EncryptedKeychain {
             salt_b64: STANDARD.encode(&salt),
             nonce_b64: STANDARD.encode(nonce),
             ciphertext_b64: STANDARD.encode(&ciphertext),
-            integrity_md5: format!("{:x}", md5::compute(&ciphertext)),
+            // CRIT-6: Use BLAKE3 for new escrow bundles (field name kept for serde compat)
+            integrity_md5: blake3::hash(&ciphertext).to_hex().to_string(),
         };
 
         let bundle_json = serde_json::to_string(&bundle)

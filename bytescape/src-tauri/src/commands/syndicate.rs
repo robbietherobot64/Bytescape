@@ -4,8 +4,8 @@ use serde_json::json;
 use crate::AppState;
 use crate::models::{SyndicationStatus, Audience};
 use crate::connectors::bluesky::{BlueskyClient, authenticated_xrpc_candidates};
-use crate::sync::Hash;
-use data_encoding::BASE32_NOPAD;
+use crate::richtext;
+use crate::blob_hash;
 
 #[tauri::command]
 pub async fn syndicate_vault_item(
@@ -51,31 +51,14 @@ pub async fn syndicate_vault_item(
             }
         }
 
-        // Parse hash
-        let mut normalized = blob_hash_str.trim().to_string();
-        while let Some(rest) = normalized.strip_prefix("blob:") {
-            normalized = rest.trim().to_string();
-        }
-        if let Some(pos) = normalized.find(':') {
-            normalized = normalized[..pos].to_string();
-        }
-
-        let hash_bytes = if normalized.len() == 64 {
-            // Hex
-            hex::decode(&normalized).map_err(|e| format!("Invalid hex hash: {}", e))?
-        } else {
-            // Base32
-            BASE32_NOPAD.decode(normalized.to_ascii_uppercase().as_bytes())
-                .map_err(|e| format!("Invalid base32 hash: {}", e))?
+        // Parse hash (centralized)
+        let hash = match blob_hash::parse_blob_hash(blob_hash_str) {
+            Ok(h) => h,
+            Err(e) => {
+                println!("syndicate: invalid blob hash '{}': {}", blob_hash_str, e);
+                continue;
+            }
         };
-
-        if hash_bytes.len() != 32 {
-            return Err(format!("Invalid hash length: {} (expected 32)", hash_bytes.len()));
-        }
-
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&hash_bytes);
-        let hash = Hash::from_bytes(arr);
 
         // Fetch from Iroh
         let data = sync.get_media(hash).await
@@ -109,7 +92,10 @@ pub async fn syndicate_vault_item(
     }
     drop(sync_guard);
 
-    // 4. Construct and publish post record
+    // 4. Parse rich text facets (mentions → DID resolution, hashtags, links)
+    let facets = richtext::parse_facets_for_bluesky(&item.content, &access_jwt).await;
+
+    // 5. Construct and publish post record
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     
     let mut record = json!({
@@ -117,6 +103,10 @@ pub async fn syndicate_vault_item(
         "text": item.content,
         "createdAt": now,
     });
+
+    if !facets.is_empty() {
+        record["facets"] = serde_json::to_value(&facets).unwrap_or_default();
+    }
 
     if !images_embed.is_empty() {
         record["embed"] = json!({

@@ -4,9 +4,9 @@ use serde_json::json;
 use crate::AppState;
 use crate::models::{BytescapeItem, SyndicationStatus, BytescapeType, Audience};
 use crate::connectors::{Source, bluesky::{BlueskyClient, authenticated_xrpc_candidates}};
-use crate::sync::Hash;
-use data_encoding::BASE32_NOPAD;
 use crate::commands::import::{PublishResult, willow_path_for_item};
+use crate::richtext;
+use crate::blob_hash;
 use std::path::Path;
 use bytes::Bytes;
 
@@ -189,25 +189,13 @@ pub async fn publish_post_v2(
         for (i, blob_hash_str) in media_blobs.iter().enumerate() {
             let mime = media_mimes.get(i).cloned().unwrap_or_else(|| "image/jpeg".to_string());
             
-            // Normalize hash
-            let mut normalized = blob_hash_str.trim().to_string();
-            while let Some(rest) = normalized.strip_prefix("blob:") {
-                normalized = rest.trim().to_string();
-            }
-            if let Some(pos) = normalized.find(':') {
-                normalized = normalized[..pos].to_string();
-            }
-
-            let hash_bytes = if normalized.len() == 64 {
-                hex::decode(&normalized).map_err(|e| e.to_string())?
-            } else {
-                BASE32_NOPAD.decode(normalized.to_ascii_uppercase().as_bytes()).map_err(|e| e.to_string())?
+            let hash = match blob_hash::parse_blob_hash(blob_hash_str) {
+                Ok(h) => h,
+                Err(e) => {
+                    println!("posting: invalid blob hash '{}': {}", blob_hash_str, e);
+                    continue;
+                }
             };
-            
-            if hash_bytes.len() != 32 { continue; }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&hash_bytes);
-            let hash = Hash::from_bytes(arr);
 
             if let Ok(data) = sync.get_media(hash).await {
                 let upload_url = format!("{}/com.atproto.repo.uploadBlob", pds_base);
@@ -238,11 +226,18 @@ pub async fn publish_post_v2(
         }
         drop(sync_guard);
 
+        // Parse rich text facets (mentions → DID resolution, hashtags, links)
+        let facets = richtext::parse_facets_for_bluesky(content, &access_jwt).await;
+
         let mut record = json!({
             "$type": "app.bsky.feed.post",
             "text": content,
             "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         });
+
+        if !facets.is_empty() {
+            record["facets"] = serde_json::to_value(&facets).unwrap_or_default();
+        }
 
         if let Some(video) = video_embed {
             record["embed"] = video;
@@ -298,4 +293,77 @@ pub async fn publish_post_v2(
     }
 
     Ok(result)
+}
+
+// ── Autocomplete Commands ────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+pub struct MentionSuggestion {
+    pub handle: String,
+    pub display_name: Option<String>,
+    pub did: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+/// Search for mention suggestions — queries local contacts + Bluesky follows.
+#[tauri::command]
+pub async fn search_mentions(
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<MentionSuggestion>, String> {
+    let q = query.to_lowercase();
+    let mut results: Vec<MentionSuggestion> = Vec::new();
+
+    // Search local contacts
+    let db_guard = state.db_manager.read().await;
+    if let Some(db) = db_guard.as_ref() {
+        if let Ok(contacts) = db.list_contacts().await {
+            for c in contacts {
+                let handle_lower = c.handle.to_lowercase();
+                if handle_lower.contains(&q) {
+                    results.push(MentionSuggestion {
+                        handle: c.handle.clone(),
+                        display_name: None,
+                        did: Some(c.did.clone()),
+                        avatar_url: None,
+                    });
+                }
+            }
+        }
+    }
+    drop(db_guard);
+
+    // De-duplicate by handle
+    results.sort_by(|a, b| a.handle.cmp(&b.handle));
+    results.dedup_by(|a, b| a.handle == b.handle);
+
+    // Limit results
+    results.truncate(10);
+
+    Ok(results)
+}
+
+/// Search for hashtag suggestions from followed hashtags.
+#[tauri::command]
+pub async fn search_hashtags_autocomplete(
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let q = query.to_lowercase().replace('#', "");
+    let mut results: Vec<String> = Vec::new();
+
+    let db_guard = state.db_manager.read().await;
+    if let Some(db) = db_guard.as_ref() {
+        if let Ok(hashtags) = db.list_followed_hashtags().await {
+            for tag in hashtags {
+                if tag.to_lowercase().contains(&q) {
+                    results.push(tag);
+                }
+            }
+        }
+    }
+    drop(db_guard);
+
+    results.truncate(10);
+    Ok(results)
 }

@@ -3,12 +3,12 @@
 //! Commands for importing data from external sources (Facebook, Bluesky).
 
 use serde::{Deserialize, Serialize};
-use data_encoding::BASE32_NOPAD;
 use tauri::{State, Emitter, Manager};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use chrono::Datelike;
+use crate::blob_hash;
 
 #[cfg(feature = "willow")]
 use willow_25::{MCC25, MCL25, MPL25};
@@ -878,74 +878,11 @@ fn mime_from_path(path: &Path) -> String {
 }
 
 fn mime_from_bytes(data: &[u8]) -> String {
-    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        "image/jpeg".to_string()
-    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "image/png".to_string()
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        "image/gif".to_string()
-    } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
-        "image/webp".to_string()
-    } else if data.starts_with(b"%PDF-") {
-        "application/pdf".to_string()
-    } else if data.len() > 12 && &data[4..8] == b"ftyp" {
-        // ISO BMFF family (mp4/mov/m4v/heic/avif).
-        // For import playback we prioritize video when ingesting timeline/archive media.
-        "video/mp4".to_string()
-    } else if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-        // EBML container (commonly WebM/Matroska)
-        "video/webm".to_string()
-    } else if data.starts_with(b"OggS") {
-        "video/ogg".to_string()
-    } else {
-        "application/octet-stream".to_string()
-    }
+    super::media::mime_from_magic_bytes(data)
 }
 
 fn parse_blob_hash_path(media_path: &str) -> Option<Hash> {
-    let mut normalized = media_path.trim().to_string();
-    while let Some(rest) = normalized.strip_prefix("blob:") {
-        normalized = rest.trim().to_string();
-    }
-    if normalized.is_empty() {
-        return None;
-    }
-
-    if normalized.len() == 64 && normalized.chars().all(|c| c.is_ascii_hexdigit()) {
-        return match std::panic::catch_unwind(|| normalized.parse::<Hash>()) {
-            Ok(Ok(hash)) => Some(hash),
-            _ => None,
-        };
-    }
-
-    let mut candidates = vec![normalized.trim().to_string()];
-    if let Some(stripped) = normalized.strip_prefix('b') {
-        candidates.push(stripped.trim().to_string());
-    }
-
-    for candidate in candidates {
-        if candidate.is_empty() {
-            continue;
-        }
-        let uppercase = candidate.to_ascii_uppercase();
-        let Ok(decoded) = BASE32_NOPAD.decode(uppercase.as_bytes()) else {
-            continue;
-        };
-
-        if decoded.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&decoded);
-            return Some(Hash::from_bytes(arr));
-        }
-
-        if decoded.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&decoded[decoded.len() - 32..]);
-            return Some(Hash::from_bytes(arr));
-        }
-    }
-
-    None
+    blob_hash::parse_blob_hash(media_path).ok()
 }
 
 /// Returns Vec<(index, blob_hash, mime_type)> for each successfully imported media.
