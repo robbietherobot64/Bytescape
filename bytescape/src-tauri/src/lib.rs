@@ -26,6 +26,7 @@ use auth::AuthManager;
 mod chat;
 use chat::ChatClient;
 mod contacts;
+pub mod oauth;
 mod traffic;
 use traffic::TrafficController;
 
@@ -42,17 +43,53 @@ pub struct AppState {
     pub traffic_controller: Arc<TrafficController>,
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
     pub media_port: u16,
+    pub oauth_manager: oauth::OAuthManager,
 }
 
+/// Sentinel value stored in keychain when using OAuth instead of app-password.
+/// OAuth sessions manage their own DPoP-bound tokens via `OAuthManager::session`.
+pub const OAUTH_SESSION_SENTINEL: &str = "oauth_session";
+
 impl AppState {
+    /// Check whether the current session was established via OAuth.
+    ///
+    /// Returns `true` if the keychain contains the OAuth sentinel value
+    /// instead of a real app-password JWT.
+    pub fn is_oauth_session(&self) -> bool {
+        self.keychain
+            .get_access_jwt()
+            .ok()
+            .flatten()
+            .map(|jwt| jwt == OAUTH_SESSION_SENTINEL)
+            .unwrap_or(false)
+    }
+
     /// Get a valid (non-expired) access JWT, automatically refreshing if needed.
     ///
-    /// Checks the `exp` claim in the current JWT. If expired or within 60 seconds
-    /// of expiring, uses the refresh token to obtain a new session and persists it.
+    /// For **app-password** sessions: checks the `exp` claim in the current JWT.
+    /// If expired or within 60 seconds of expiring, uses the refresh token to
+    /// obtain a new session and persists it.
+    ///
+    /// For **OAuth** sessions: returns an error because OAuth uses DPoP-bound
+    /// tokens that cannot be used as raw Bearer tokens. Callers that need to
+    /// make authenticated Bluesky API calls during an OAuth session should use
+    /// `oauth_manager.session` with atrium's Agent instead.
     pub async fn get_fresh_access_jwt(&self) -> Result<String, String> {
         let access_jwt = self.keychain.get_access_jwt()
             .map_err(|e| format!("Keychain error: {}", e))?
             .ok_or_else(|| "No access token available".to_string())?;
+
+        // OAuth sessions use DPoP-bound tokens managed by OAuthManager.
+        // Raw JWT Bearer tokens are not available — API calls must go through
+        // the OAuthSession's HTTP client for proper DPoP header generation.
+        if access_jwt == OAUTH_SESSION_SENTINEL {
+            return Err(
+                "This feature requires an App Password login. \
+                 OAuth sessions use DPoP-bound tokens that cannot be used as raw Bearer tokens. \
+                 Please log out and sign in with an App Password, or wait for full OAuth API support."
+                    .to_string(),
+            );
+        }
 
         if !Self::is_jwt_expired(&access_jwt, 60) {
             return Ok(access_jwt);
@@ -160,6 +197,8 @@ pub fn run() {
             commands::auth::check_auth_status,
             commands::auth::login,
             commands::auth::logout,
+            commands::auth::start_bluesky_oauth,
+            commands::auth::cancel_bluesky_oauth,
             commands::auth::create_local_identity,
             commands::auth::set_local_username,
             commands::auth::identity_init_full_recovery,
@@ -259,6 +298,10 @@ pub fn run() {
             // Initialize auth manager
             let auth_manager = AuthManager::new();
 
+            // Initialize OAuth manager for Bluesky OAuth login
+            let oauth_manager = oauth::OAuthManager::new()
+                .map_err(|e| format!("OAuth manager init failed: {}", e))?;
+
             // Initialize chat client
             let chat_client = Arc::new(ChatClient::new());
 
@@ -281,6 +324,7 @@ pub fn run() {
                 traffic_controller,
                 pending_import: Mutex::new(None),
                 media_port,
+                oauth_manager,
             };
 
             app.manage(state);

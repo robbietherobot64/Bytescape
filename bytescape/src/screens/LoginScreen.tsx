@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { AuthStatus, IdentityRecoveryStartResult, IdentityRecoveryVerifyResult, IdentityRecoveryFinalizeResult } from '../types';
 import { Win98Box } from '../components/Win98Box';
 
@@ -15,6 +17,7 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     const [importOnLogin, setImportOnLogin] = useState(true);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [oauthPending, setOauthPending] = useState(false);
 
     // Recovery flow state
     const [recoveryStep, setRecoveryStep] = useState<'paste' | 'code' | 'confirm'>('paste');
@@ -23,6 +26,72 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     const [recoveryCode, setRecoveryCode] = useState('');
     const [verifiedDid, setVerifiedDid] = useState('');
     const [verifiedPubkey, setVerifiedPubkey] = useState('');
+
+    // Listen for OAuth completion/error events from the backend
+    useEffect(() => {
+        let unlistenComplete: UnlistenFn | undefined;
+        let unlistenError: UnlistenFn | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        if (oauthPending) {
+            // Set a 5-minute timeout for the OAuth flow
+            timeoutId = setTimeout(() => {
+                setOauthPending(false);
+                setLoading(false);
+                setError("OAuth login timed out. Please try again.");
+                invoke('cancel_bluesky_oauth').catch(() => {});
+            }, 5 * 60 * 1000);
+
+            listen<AuthStatus>('oauth-complete', (event) => {
+                setOauthPending(false);
+                setLoading(false);
+                if (timeoutId) clearTimeout(timeoutId);
+                onLoginSuccess(event.payload, importOnLogin);
+            }).then(fn => { unlistenComplete = fn; });
+
+            listen<string>('oauth-error', (event) => {
+                setOauthPending(false);
+                setLoading(false);
+                if (timeoutId) clearTimeout(timeoutId);
+                setError(typeof event.payload === 'string' ? event.payload : 'OAuth login failed');
+            }).then(fn => { unlistenError = fn; });
+        }
+
+        return () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            unlistenComplete?.();
+            unlistenError?.();
+        };
+    }, [oauthPending, importOnLogin, onLoginSuccess]);
+
+    async function handleBlueskyOAuth() {
+        if (!identifier.trim()) {
+            setError("Enter your Bluesky handle (e.g. user.bsky.social)");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const authUrl = await invoke<string>("start_bluesky_oauth", {
+                handle: identifier.trim(),
+            });
+            setOauthPending(true);
+            // Open the auth URL in the system browser
+            await openUrl(authUrl);
+        } catch (e: any) {
+            setLoading(false);
+            setError(typeof e === "string" ? e : e.message || "Failed to start OAuth");
+        }
+    }
+
+    async function cancelOAuth() {
+        setOauthPending(false);
+        setLoading(false);
+        setError("");
+        try {
+            await invoke('cancel_bluesky_oauth');
+        } catch (_) {}
+    }
 
     async function handleBlueskyLogin() {
         if (!identifier.trim() || !password.trim()) {
@@ -196,7 +265,7 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                         {mode === 'connect-bluesky' && (
                             <div className="login-form">
                                 <div className="login-form-header">
-                                    <button className="btn btn-ghost login-back-btn" onClick={() => { setMode('welcome'); setError(''); }}>
+                                    <button className="btn btn-ghost login-back-btn" onClick={() => { setMode('welcome'); setError(''); setOauthPending(false); cancelOAuth(); }}>
                                         ← Back
                                     </button>
                                     <span className="login-form-title">🦋 Connect Bluesky</span>
@@ -208,15 +277,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                     placeholder="Handle (e.g. user.bsky.social)"
                                     value={identifier}
                                     onChange={(e) => setIdentifier(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && handleBlueskyLogin()}
-                                />
-                                <input
-                                    className="input-field"
-                                    type="password"
-                                    placeholder="App Password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && handleBlueskyLogin()}
+                                    onKeyDown={(e) => e.key === "Enter" && !oauthPending && handleBlueskyOAuth()}
+                                    disabled={oauthPending}
                                 />
 
                                 <label className="import-checkbox">
@@ -224,17 +286,62 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                         type="checkbox"
                                         checked={importOnLogin}
                                         onChange={(e) => setImportOnLogin(e.target.checked)}
+                                        disabled={oauthPending}
                                     />
                                     <span>Import data on login</span>
                                 </label>
 
-                                <button
-                                    className="btn btn-primary btn-block"
-                                    onClick={handleBlueskyLogin}
-                                    disabled={loading}
-                                >
-                                    {loading ? "Connecting..." : "Connect & Sign In"}
-                                </button>
+                                {!oauthPending ? (
+                                    <>
+                                        <button
+                                            className="btn btn-primary btn-block"
+                                            onClick={handleBlueskyOAuth}
+                                            disabled={loading}
+                                        >
+                                            {loading ? "Connecting..." : "Login with Bluesky"}
+                                        </button>
+
+                                        <details className="login-app-password-fallback" style={{ marginTop: '12px' }}>
+                                            <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: '13px' }}>
+                                                Use App Password instead
+                                            </summary>
+                                            <div style={{ marginTop: '8px' }}>
+                                                <input
+                                                    className="input-field"
+                                                    type="password"
+                                                    placeholder="App Password"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                    onKeyDown={(e) => e.key === "Enter" && handleBlueskyLogin()}
+                                                />
+                                                <button
+                                                    className="btn btn-block"
+                                                    onClick={handleBlueskyLogin}
+                                                    disabled={loading}
+                                                    style={{ marginTop: '8px', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                                                >
+                                                    {loading ? "Connecting..." : "Sign In with App Password"}
+                                                </button>
+                                            </div>
+                                        </details>
+                                    </>
+                                ) : (
+                                    <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                                        <p style={{ color: 'var(--accent-purple)', marginBottom: '8px' }}>
+                                            ⏳ Waiting for authentication...
+                                        </p>
+                                        <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '16px' }}>
+                                            Complete the login in your browser, then return here.
+                                        </p>
+                                        <button
+                                            className="btn btn-ghost"
+                                            onClick={cancelOAuth}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                )}
+
                                 {error && <p className="login-error">{error}</p>}
 
                                 <p className="login-hint">
