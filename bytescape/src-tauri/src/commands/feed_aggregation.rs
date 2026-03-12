@@ -214,7 +214,7 @@ pub async fn get_timeline_unified(
     let mut vault_entries: Vec<FeedEntry> = Vec::new();
     {
         let db_manager = state.db_manager.clone();
-        let db_guard = db_manager.lock().await;
+        let db_guard = db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             let offset = vault_offset.unwrap_or(0);
             if let Ok(Some((did, _))) = state.keychain.load_session() {

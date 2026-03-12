@@ -6,7 +6,7 @@ impl DbManager {
     pub async fn save_message(&self, msg: &Message) -> Result<(), String> {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
 
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(MESSAGES_TABLE).map_err(|e| e.to_string())?;
@@ -20,7 +20,7 @@ impl DbManager {
     pub fn blocking_save_message(&self, msg: &Message) -> Result<(), String> {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
 
-        let db = self.db.blocking_lock();
+        let db = self.db.blocking_write();
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(MESSAGES_TABLE).map_err(|e| e.to_string())?;
@@ -31,7 +31,7 @@ impl DbManager {
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(MESSAGES_TABLE).map_err(|e| e.to_string())?;
         
@@ -54,7 +54,7 @@ impl DbManager {
 
     pub async fn save_conversation(&self, convo: &Conversation) -> Result<(), String> {
         let serialized = serde_json::to_string(convo).map_err(|e| e.to_string())?;
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(CONVERSATIONS_TABLE).map_err(|e| e.to_string())?;
@@ -65,7 +65,7 @@ impl DbManager {
     }
 
     pub async fn get_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(CONVERSATIONS_TABLE).map_err(|e| e.to_string())?;
         
@@ -82,7 +82,7 @@ impl DbManager {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
         let owner_key = msg.owner_did.clone().unwrap_or_else(|| "unknown".to_string());
         let key = format!("{}:{}:{}", owner_key, msg.source, msg.id);
-        let db = self.db.lock().await;
+        let db = self.db.write().await;
 
         // Check if exists and if needs update
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -119,7 +119,7 @@ impl DbManager {
     }
 
     pub async fn list_vault_messages(&self, owner_did: Option<&str>) -> Result<Vec<VaultMessage>, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
         let mut messages = Vec::new();
@@ -137,8 +137,41 @@ impl DbManager {
         Ok(messages)
     }
 
+    /// Paginated version of list_vault_messages. Returns (messages, total_count).
+    pub async fn list_vault_messages_paged(
+        &self,
+        owner_did: Option<&str>,
+        convo_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<VaultMessage>, usize), String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
+        let mut messages = Vec::new();
+        for item in table.iter().map_err(|e| e.to_string())? {
+            let (_key, value) = item.map_err(|e| e.to_string())?;
+            let msg: VaultMessage = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+            if let Some(owner) = owner_did {
+                if msg.owner_did.as_deref() != Some(owner) {
+                    continue;
+                }
+            }
+            if let Some(cid) = convo_id {
+                if msg.convo_id != cid {
+                    continue;
+                }
+            }
+            messages.push(msg);
+        }
+        messages.sort_by(|a, b| b.sent_at.cmp(&a.sent_at));
+        let total = messages.len();
+        let page: Vec<VaultMessage> = messages.into_iter().skip(offset).take(limit).collect();
+        Ok((page, total))
+    }
+
     pub async fn count_vault_messages(&self) -> Result<usize, String> {
-        let db = self.db.lock().await;
+        let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
         Ok(table.len().map_err(|e: redb::StorageError| e.to_string())? as usize)

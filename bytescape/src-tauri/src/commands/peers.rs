@@ -94,7 +94,7 @@ pub async fn add_peer(
         .as_secs();
 
     // If the peer already exists, preserve existing fields and update
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
     let peer = match db.get_peer(&node_id).await? {
@@ -123,7 +123,7 @@ pub async fn add_peer(
 /// List all known peers from the local database.
 #[tauri::command]
 pub async fn list_peers(state: State<'_, AppState>) -> Result<Vec<PeerInfo>, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     db.list_peers().await
 }
@@ -131,7 +131,7 @@ pub async fn list_peers(state: State<'_, AppState>) -> Result<Vec<PeerInfo>, Str
 /// Remove a peer from the local directory.
 #[tauri::command]
 pub async fn remove_peer(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     db.remove_peer(&node_id).await
 }
@@ -236,7 +236,7 @@ pub async fn check_peer_connectivity(
         Err(_) => {
             // Even though we couldn't connect outbound, the peer may have
             // connected TO us recently. Check last_seen.
-            let db_guard = state.db_manager.lock().await;
+            let db_guard = state.db_manager.read().await;
             let recently_seen = if let Some(db) = db_guard.as_ref() {
                 if let Ok(Some(peer)) = db.get_peer(&node_id).await {
                     if let Some(last_seen) = peer.last_seen {
@@ -274,7 +274,7 @@ pub async fn check_peer_connectivity(
             .unwrap_or_default()
             .as_secs();
 
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             if let Ok(Some(mut peer)) = db.get_peer(&node_id).await {
                 peer.last_seen = Some(now);
@@ -320,7 +320,7 @@ pub struct P2pConversation {
 pub async fn list_p2p_conversations(
     state: State<'_, AppState>,
 ) -> Result<Vec<P2pConversation>, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or("Database not initialized")?;
 
@@ -482,7 +482,7 @@ pub async fn send_p2p_chat_message(
         peer_handle: None,
     };
 
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     if let Some(db) = db_guard.as_ref() {
         match db.save_vault_message(&vault_msg).await {
             Ok(is_new) => println!("[P2P-CHAT] Outgoing message saved: id={}, is_new={}, convo_id={}", msg_id, is_new, convo_id),
@@ -560,7 +560,7 @@ pub async fn request_peer_feed(
 
     // Fetch cached peer info from DB for fallback profile
     let cached_peer = {
-        let db_guard = state.db_manager.lock().await;
+        let db_guard = state.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             db.get_peer(&node_id).await.ok().flatten()
         } else {

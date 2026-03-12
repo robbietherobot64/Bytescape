@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { VaultMessage, SidebarItem } from '../types';
+import { VaultMessage, SidebarItem, ThemeId } from '../types';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
 // ─── Auth Store ───
@@ -133,4 +133,15 @@ export const useChatStore = create<ChatState>((set) => ({
 
     isSending: false,
     setIsSending: (sending) => set({ isSending: sending }),
+}));
+
+// ─── Theme Store ───
+interface ThemeState {
+    activeTheme: ThemeId;
+    setTheme: (theme: ThemeId) => void;
+}
+
+export const useThemeStore = create<ThemeState>((set) => ({
+    activeTheme: 'geocities',
+    setTheme: (theme) => set({ activeTheme: theme }),
 }));

@@ -18,15 +18,14 @@ pub struct SystemMessage {
     pub payload: Option<String>,
 }
 
-use tokio::sync::Mutex;
 
 pub struct TrafficController {
-    db: Arc<Mutex<Option<DbManager>>>,
+    db: Arc<tokio::sync::RwLock<Option<DbManager>>>,
     chat: Arc<ChatClient>,
 }
 
 impl TrafficController {
-    pub fn new(db: Arc<Mutex<Option<DbManager>>>, chat: Arc<ChatClient>) -> Self {
+    pub fn new(db: Arc<tokio::sync::RwLock<Option<DbManager>>>, chat: Arc<ChatClient>) -> Self {
         Self { db, chat }
     }
 
@@ -63,7 +62,7 @@ impl TrafficController {
     }
 
     pub async fn get_or_create_convo(&self, peer_did: &str) -> Result<Conversation, String> {
-        let db_guard = self.db.lock().await;
+        let db_guard = self.db.read().await;
         let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
         if let Some(convo) = db.get_conversation(peer_did).await? {
@@ -97,7 +96,7 @@ impl TrafficController {
             transport_layer: transport,
             synced_with_bsky: transport == TransportLayer::Bluesky,
         };
-        let db_guard = self.db.lock().await;
+        let db_guard = self.db.read().await;
         let db = db_guard.as_ref().ok_or("Database not initialized")?;
         db.save_message(&msg).await?;
         Ok(msg)

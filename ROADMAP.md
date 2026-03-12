@@ -118,6 +118,17 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 - [x] **Archive Sorting**: Archive feed uses `effective_timestamp` to bump recently syndicated items to the top of the feed.
 - [x] **Connector: Instagram**: `connectors/instagram.rs` — Separate parser for Instagram data export ZIP.
 
+### Security Hardening 🔒
+*Cross-cutting audit findings addressed across all tracks.*
+
+- [x] **CRIT-4 P2P Rate Limiting**: `PeerRateLimiter` on `BytescapeProtocol` — max 3 concurrent connections per peer, 60 req/min sliding window, 64KB payload enforcement, stale entry eviction.
+- [x] **CRIT-5 CORS Restriction**: Warp media server restricted to `tauri://localhost`, `https://tauri.localhost`, `http://localhost:1420` (no more `allow_any_origin`).
+- [x] **CRIT-6 BLAKE3 Escrow Integrity**: Replaced MD5 with BLAKE3 for identity escrow bundle integrity hashes.
+- [x] **HIGH-3 XSS Sanitization**: DOMPurify-based `sanitizeHtml()` (safe tags only) and `stripHtml()` utilities. Applied in `FeedEntryCard`, `QuoteRepostModal`. Codebase audited for `dangerouslySetInnerHTML` — none found.
+- [x] **HIGH-5 Blob Hash Centralization**: `blob_hash.rs` with `parse_blob_hash()` and `normalize_blob_ref()`. Replaced all inline hash parsing across 5 files. 19 unit tests.
+- [x] **MED-4 Input Length Validation**: ComposeBox hardened — 10K char limit (8K warning), 20 attachment cap, 100MB file size limit (50MB warning), color-coded counters, Post button disabled when over limits.
+- [x] **MED-5 MIME Detection Expansion**: `infer` crate (0.16) replacing hand-rolled `mime_from_magic_bytes()` — 100+ file types. Extended `mime_from_path_hint()` with AVIF, SVG, ICO, audio formats.
+
 ---
 
 ### Track A — Federation & Connectors 🌐
@@ -158,9 +169,9 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 *Agent focus: Frontend React components, UI screens, CSS, map integration. No AP dependency for most items — build against local data and P2P peers.*
 
 #### B1. Lenses & Content Views
-- [ ] **B1.1 Lens: Gallery**: Grid-based media browser for `Gallery`-type items. Masonry layout, lightbox expand, source filter.
-- [ ] **B1.2 Lens: Reader**: Article view with sanitized HTML rendering. Clean typography, reading-time estimate, scroll progress.
-- [ ] **B1.3 Item-Type Rendering**: Feed UI switches view component based on `BytescapeType` — Status cards, Gallery grids, Article previews.
+- [x] **B1.1 Lens: Gallery**: Masonry grid with column count by viewport. `GalleryLens` component with source filter dropdown, `Lightbox` overlay with prev/next navigation, keyboard controls (arrows, Escape), full metadata display. Source filter persisted across lightbox open/close.
+- [x] **B1.2 Lens: Reader**: `ReaderLens` with clean serif typography, reading-time estimate, scroll progress bar, source/date header. Full article content rendered in sanitized HTML with `sanitizeHtml()` from DOMPurify. Empty-state messaging.
+- [x] **B1.3 Item-Type Rendering**: `FeedItemRenderer` dispatches to `GalleryLens`, `ReaderLens`, or default `FeedEntryCard` based on `BytescapeType`. `FeedScreen` has lens toggle button (grid/list/book icons) cycling through Feed → Gallery → Reader views.
 
 #### B2. Profile Builder & Theming
 - [ ] **B2.1 GrapesJS Integration**: Embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Outputs clean HTML/CSS stored locally in user's Willow store. Requires `grapesjs` npm package.
@@ -231,10 +242,13 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 *Agent focus: ComposeBox enhancement, new content types, rich text processing, media pipeline. The goal is a full-featured posting system that rivals mainstream platforms for expressiveness while syndication targets remain Bluesky, AP, and local vault.*
 
 #### C1. Rich Text & Facets
-- [ ] **C1.1 Rich Text Facet Parsing**: Parse @mentions, #hashtags, and hyperlinks in post text. Emit `app.bsky.richtext.facet` for Bluesky, equivalent markup for AP.
-- [ ] **C1.2 Mention Autocomplete**: Typeahead for @mentions — search local contacts, Bluesky follows, and AP actor cache.
-- [ ] **C1.3 Hashtag Autocomplete**: Suggest trending/recently-used hashtags as user types `#`.
-- [ ] **C1.4 Character Count & Limits**: Live character counter in ComposeBox. Bluesky: 300 graphemes. AP: configurable per-server (default 500). Show which targets will truncate.
+- [x] **C1.1 Rich Text Facet Parsing — Backend**: `richtext.rs` — `detect_facets()`, `parse_facets_for_bluesky()`, `parse_facets_local()` with UTF-8 byte offset calculation. 23 unit tests. Wired into `posting.rs` (publish_post_v2) and `syndicate.rs` (syndicate_vault_item) — facets auto-generated on Bluesky publish.
+- [ ] **C1.1b Rich Text Facet Rendering — Frontend**: Render facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Add facet TypeScript types to `types/index.ts`.
+- [x] **C1.2 Mention Autocomplete — Backend**: `search_mentions` Tauri command registered — searches local contacts by handle prefix, returns `MentionSuggestion { handle, did, avatar_url }`.
+- [ ] **C1.2b Mention Autocomplete — Frontend**: Typeahead dropdown UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle.
+- [x] **C1.3 Hashtag Autocomplete — Backend**: `search_hashtags_autocomplete` Tauri command registered — searches followed hashtags by prefix.
+- [ ] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag.
+- [ ] **C1.4 Character Count & Limits**: Per-target live counter in ComposeBox. Bluesky: 300 graphemes (via `Intl.Segmenter`). AP: configurable per-server (default 500). Show which targets will truncate. *(Basic local-only 10K char counter exists from MED-4.)*
 
 #### C2. Link & Embed System
 - [ ] **C2.1 Link Card Embeds**: URL detection in compose text → fetch Open Graph / Twitter Card metadata → render preview card. Emit `app.bsky.embed.external` for Bluesky, `attachment` with `Link` type for AP.
@@ -244,7 +258,7 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 #### C3. Rich Content Types
 - [ ] **C3.1 Polls**: Poll creation UI in ComposeBox — multiple choice, single/multi-select, expiration timer. Use AP `Question` type for fediverse syndication (compatible with Threads/Mastodon poll UX). Bluesky: not syndicated until platform supports polls natively or hosting is live (then syndicate as link).
-- [ ] **C3.2 Long-Form Articles**: Compose long-form text with Markdown support. Stored as `BytescapeType::Article`. Syndicated as AP `Article` object. Bluesky: not syndicated until hosting is live (then syndicate as link). Displayed in Reader lens format in feeds (title + excerpt + "Read more" expand).
+- [ ] **C3.2 Long-Form Articles**: Compose long-form text using **Tiptap** (ProseMirror wrapper with first-class Yjs bindings). Outputs structured JSON stored as `BytescapeType::Article`. Supports Markdown import/export. Syndicated as AP `Article` object. Bluesky: not syndicated until hosting is live (then syndicate as link). Displayed in Reader lens format in feeds (title + excerpt + "Read more" expand). **⚠️ Tiptap is load-bearing for C6 — do NOT substitute a plain textarea or alternative editor.** Packages: `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-collaboration`, `@tiptap/extension-collaboration-cursor`.
 - [ ] **C3.3 `Event` Post Type**: Quick-create an event from ComposeBox (date/time/location fields). Creates a `BytescapeType::Event` item. *(Complements B8 — B8 builds the calendar view and full CRUD; C3.3 adds the compose shortcut.)*
 
 #### C4. Media Pipeline
@@ -260,6 +274,20 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **C5.3 Background Syndication Job**: Rate-limited processing of `PendingSyndication` items. Retry logic with exponential backoff. Status dashboard in SettingsScreen.
 - [ ] **C5.4 Scheduled Posts**: Compose now, publish later. `scheduled_at` field on `BytescapeItem`, background job checks and publishes at target time.
 - [ ] **C5.5 Syndication Safety Controls**: Explicit rate limits and confirmation prompts to prevent spamming external networks with old/bulk posts.
+
+#### C6. Collaborative Editing 🤝
+*Real-time Google Docs-level co-editing for Articles. Built as an additive layer — zero changes to existing `BytescapeItem` pipeline. Uses [Yjs](https://yjs.dev/) CRDTs (per-character conflict-free merging) with Iroh as the P2P transport.*
+
+> **Architecture:** Yjs Doc ←→ `y-tiptap` (frontend) ←→ `iroh-gossip` (broadcast) ←→ `iroh-blobs` (persist snapshots) ←→ redb `COLLAB_DOCS` table (local state). The `BytescapeItem.content` field is periodically snapshot-updated from the Yjs doc so non-collaborative views work with zero changes.
+
+> **Why not Willow?** Willow uses last-writer-wins per Entry — concurrent edits silently overwrite each other. Yjs merges at the character level with causal ordering, which is what "real-time collaborative editing" actually requires.
+
+- [ ] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: Add `yrs` (Rust Yjs port) crate to backend. New file `collab.rs` — Yjs doc CRUD, state vector management, update encoding/decoding. New redb table `COLLAB_DOCS: TableDefinition<&str, &[u8]>` storing binary Yjs state keyed by doc ID. Add optional `collab_doc_id: Option<String>` field to `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`. **Disruption: one optional field on BytescapeItem, everything else is new files/tables.**
+- [ ] **C6.2 Frontend Yjs Integration**: Wire `yjs` + `y-tiptap` into the Article editor from C3.2. Local-only mode first — single user editing with CRDT doc backing. Verify round-trip: edits → Yjs update → Tauri command → `yrs` merge → redb persist → reload. Packages: `yjs`, `y-prosemirror` (or `@tiptap/extension-collaboration` already added in C3.2).
+- [ ] **C6.3 P2P Real-Time Sync via Gossip** *(prerequisite: working iroh-gossip from existing P2P chat)*: New gossip topic type `CollabUpdate` — Yjs update vectors broadcast to all peers with the doc open. Implement awareness protocol over gossip for cursor positions, selection highlights, and user presence indicators. Frontend shows colored cursors with peer names. **Disruption: adds a gossip topic variant, no breaking changes to existing chat gossip.**
+- [ ] **C6.4 Offline & Async Merge**: When a peer reconnects after editing offline, exchange Yjs state vectors and compute minimal sync updates. Yjs handles conflict resolution automatically (no user-facing merge conflicts). Persist pending updates in redb for crash recovery.
+- [ ] **C6.5 Station Relay for Always-On Collaboration** *(unlocked by Phase 5 — Station Protocol)*: Community Station acts as Yjs awareness relay + document update cache. Peer A edits → gossip update → Station buffers → Peer B comes online → Station forwards. Enables async collaboration without simultaneous presence. **This is what delivers true Google Docs parity.**
+- [ ] **C6.6 Access Control & Permissions**: Per-document permission model — Owner (full control), Editor (read/write), Viewer (read-only). Permissions stored in Iroh doc metadata, enforced in `collab.rs` before applying updates. Invite flow via DID-based sharing links.
 
 ---
 
@@ -288,6 +316,7 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 **Goal:** Scale the `bytescape.social` infrastructure from the Phase 4 relay into a full P2P mesh. Research existing Iroh public relays first.
 
 - [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward (extends the escrow relay from Phase 4).
+- [ ] **Collab Relay Extension**: Extend Station Protocol with Yjs document awareness relay and update buffering (enables C6.5 — always-on collaborative editing without simultaneous peer presence).
 - [ ] **Auto-Docking**: Geohash-based discovery of nearest Community Station on account creation.
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
 - [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.

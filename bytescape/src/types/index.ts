@@ -441,6 +441,9 @@ export interface DocTicketInfo {
 
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
+// ─── Theme ───
+export type ThemeId = 'geocities' | 'win98' | 'midnight';
+
 export interface LikeResult {
     uri: string;
     cid: string;

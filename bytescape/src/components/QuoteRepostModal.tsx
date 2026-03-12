@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Win98Box } from './Win98Box';
 import { FeedEntry, PublishResult } from '../types';
+import { stripHtml } from '../utils/sanitize';
 
 interface QuoteRepostModalProps {
     /** The post being quoted */
@@ -170,9 +171,10 @@ export function QuoteRepostModal({ originalEntry, onClose, onQuoted }: QuoteRepo
                         </div>
                         {originalEntry.content && (
                             <div className="quote-original-text">
-                                {originalEntry.content.length > 200
-                                    ? originalEntry.content.substring(0, 200) + '…'
-                                    : originalEntry.content}
+                                {(() => {
+                                    const clean = stripHtml(originalEntry.content);
+                                    return clean.length > 200 ? clean.substring(0, 200) + '…' : clean;
+                                })()}
                             </div>
                         )}
                         {originalEntry.media_urls.length > 0 && (

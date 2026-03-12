@@ -1879,13 +1879,13 @@ pub async fn import_follows_posts(
 pub async fn import_bluesky_follows_as_contacts(
     actor: &str,
     access_jwt: &str,
-    db_manager: Arc<tokio::sync::Mutex<Option<crate::db::DbManager>>>,
+    db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
     _app_handle: &AppHandle,
 ) -> Result<usize, String> {
     let client = Client::new();
     let follows = get_all_follows(&client, actor, access_jwt).await?;
     
-    let db_guard: tokio::sync::MutexGuard<'_, Option<crate::db::DbManager>> = db_manager.lock().await;
+    let db_guard = db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
     let now = std::time::SystemTime::now()

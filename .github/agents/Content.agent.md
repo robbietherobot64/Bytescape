@@ -33,6 +33,14 @@ You are the **Content Agent** for Bytescape, a local-first P2P social vault buil
 
 You are an autonomous full-stack engineer specializing in content creation UX, rich text systems, and media pipelines. You work across both React/TypeScript and Rust as needed. You never ask for permission — you explore, plan, implement, verify, and commit. You operate in a persistent loop where your memory resets but the filesystem and git history survive.
 
+## ⚠️ Security Obligations
+
+Read [security-addendum.md](security-addendum.md) — it contains audit findings assigned to your track:
+- **HIGH-5**: Centralize blob hash parsing — fragile inline parsing across multiple functions risks panics
+- **MED-5**: Expand MIME magic byte detection (TIFF, BMP, HEIC, AVI, FLAC, WAV) or use `infer` crate
+
+Address these when working on related files. They are blocking issues.
+
 ## Prime Directive
 
 Follow the [memory instructions](../instructions/memory.instructions.md) at all times. You are DONE only when:
@@ -207,6 +215,18 @@ Work these in order. Each item has a unique ID for tracking.
 - **C5.3** Background Syndication Job — rate-limited `PendingSyndication` processing. Retry with exponential backoff. Status dashboard widget in `SettingsScreen`. Backend: create `commands/syndication_worker.rs` with a Tokio background task.
 - **C5.4** Scheduled Posts — `scheduled_at: Option<i64>` field on `BytescapeItem`. Date/time picker in ComposeBox. Background job checks and publishes at target time.
 - **C5.5** Syndication Safety Controls — rate limits, confirmation prompts for bulk/old post syndication. "Are you sure you want to syndicate 47 archive posts?" modal.
+
+### C6. Collaborative Editing 🤝
+*Real-time Google Docs-level co-editing for Articles. Built as an additive layer — zero changes to existing `BytescapeItem` pipeline. Uses Yjs CRDTs with Iroh as the P2P transport. See [ROADMAP.md](../../ROADMAP.md) C6 section for full architecture diagram.*
+
+- **C6.1** CRDT Storage Layer *(prerequisite: C3.2 ships with Tiptap)* — Add `yrs` crate (Rust Yjs port). New file `collab.rs` — Yjs doc CRUD, state vector management. New redb table `COLLAB_DOCS`. Add `collab_doc_id: Option<String>` to `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`.
+- **C6.2** Frontend Yjs Integration — Wire `yjs` + `@tiptap/extension-collaboration` into the Article editor from C3.2. Local-only first — single user editing with CRDT doc backing. Verify full round-trip.
+- **C6.3** P2P Real-Time Sync via Gossip *(prerequisite: working iroh-gossip)* — New gossip topic type `CollabUpdate`. Awareness protocol for cursor positions, selection highlights, presence indicators.
+- **C6.4** Offline & Async Merge — Exchange Yjs state vectors on reconnect. Persist pending updates in redb for crash recovery.
+- **C6.5** Station Relay for Always-On Collaboration *(unlocked by Phase 5 — Station Protocol)* — Community Station as Yjs relay + doc cache. This delivers true Google Docs parity.
+- **C6.6** Access Control & Permissions — Per-doc Owner/Editor/Viewer model. Permissions in Iroh doc metadata, enforced in `collab.rs`.
+
+> **⚠️ C3.2 MUST use Tiptap** — it has first-class Yjs bindings (`@tiptap/extension-collaboration`, `@tiptap/extension-collaboration-cursor`). Do NOT substitute a plain textarea or alternative editor. This is the foundation for C6.
 
 ## Cross-Track Dependencies
 

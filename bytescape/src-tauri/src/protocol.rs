@@ -3,6 +3,7 @@
 //! Implements [`ProtocolHandler`] for the custom Bytescape protocol
 //! and a thin wrapper for forwarding iroh-docs connections.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use iroh::endpoint::Connection;
@@ -10,10 +11,110 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_docs::engine::Engine as DocsEngine;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
-use tokio::sync::Mutex;
 
 /// ALPN identifier for the Bytescape custom protocol.
 pub const BYTESCAPE_ALPN: &[u8] = b"bytescape/1.0";
+
+// ---------------------------------------------------------------------------
+// CRIT-4: Per-peer rate limiter
+// ---------------------------------------------------------------------------
+
+/// Maximum concurrent connections per peer.
+const MAX_CONNECTIONS_PER_PEER: u32 = 3;
+/// Maximum requests per peer per sliding window.
+const MAX_REQUESTS_PER_WINDOW: u32 = 60;
+/// Sliding window duration for request rate limiting.
+const RATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+/// Maximum incoming request payload size (64 KiB).
+const MAX_REQUEST_BYTES: usize = 65_536;
+/// Stale entry eviction threshold — peers not seen in this long are removed.
+const STALE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Tracks per-peer connection and request counts for rate limiting.
+#[derive(Debug, Clone)]
+struct PeerRateState {
+    request_count: u32,
+    window_start: std::time::Instant,
+    active_connections: u32,
+}
+
+impl PeerRateState {
+    fn new() -> Self {
+        Self {
+            request_count: 0,
+            window_start: std::time::Instant::now(),
+            active_connections: 0,
+        }
+    }
+
+    /// Check if the request rate window has expired and reset if needed.
+    /// Returns `true` if the peer is within rate limits and may proceed.
+    fn check_request_rate(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.window_start) >= RATE_WINDOW {
+            // Window expired — reset counter
+            self.request_count = 0;
+            self.window_start = now;
+        }
+        if self.request_count >= MAX_REQUESTS_PER_WINDOW {
+            return false;
+        }
+        self.request_count += 1;
+        true
+    }
+}
+
+/// Clone + Send + Sync rate limiter shared across BytescapeProtocol clones.
+#[derive(Debug, Clone)]
+pub struct PeerRateLimiter {
+    peers: Arc<tokio::sync::Mutex<HashMap<iroh::PublicKey, PeerRateState>>>,
+}
+
+impl PeerRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            peers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Try to acquire a connection slot for `peer`. Returns `false` if the
+    /// peer already has too many active connections.
+    async fn try_acquire_connection(&self, peer: iroh::PublicKey) -> bool {
+        let mut map = self.peers.lock().await;
+        let state = map.entry(peer).or_insert_with(PeerRateState::new);
+        if state.active_connections >= MAX_CONNECTIONS_PER_PEER {
+            return false;
+        }
+        state.active_connections += 1;
+        true
+    }
+
+    /// Release a connection slot for `peer`.
+    async fn release_connection(&self, peer: iroh::PublicKey) {
+        let mut map = self.peers.lock().await;
+        if let Some(state) = map.get_mut(&peer) {
+            state.active_connections = state.active_connections.saturating_sub(1);
+        }
+    }
+
+    /// Check whether the peer's request rate is within limits.
+    /// Returns `false` if the peer has exceeded the per-window limit.
+    async fn check_request_rate(&self, peer: iroh::PublicKey) -> bool {
+        let mut map = self.peers.lock().await;
+        let state = map.entry(peer).or_insert_with(PeerRateState::new);
+        state.check_request_rate()
+    }
+
+    /// Remove stale entries that haven't been seen for `STALE_PEER_TIMEOUT`.
+    async fn evict_stale(&self) {
+        let mut map = self.peers.lock().await;
+        let cutoff = std::time::Instant::now() - STALE_PEER_TIMEOUT;
+        map.retain(|_, state| {
+            // Keep entries that are either active or were recently active
+            state.active_connections > 0 || state.window_start > cutoff
+        });
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Trivial Error wrapper (needed because AcceptError::from_err requires
@@ -116,8 +217,9 @@ pub struct ChatMessagePayload {
 #[derive(Clone)]
 pub struct BytescapeProtocol {
     my_profile: PeerProfile,
-    db_manager: Arc<Mutex<Option<crate::db::DbManager>>>,
+    db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
     app_handle: tauri::AppHandle,
+    rate_limiter: PeerRateLimiter,
 }
 
 impl std::fmt::Debug for BytescapeProtocol {
@@ -131,13 +233,25 @@ impl std::fmt::Debug for BytescapeProtocol {
 impl BytescapeProtocol {
     pub fn new(
         my_profile: PeerProfile,
-        db_manager: Arc<Mutex<Option<crate::db::DbManager>>>,
+        db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
         app_handle: tauri::AppHandle,
     ) -> Self {
+        let rate_limiter = PeerRateLimiter::new();
+
+        // Spawn a background task to periodically evict stale rate-limit entries
+        let eviction_limiter = rate_limiter.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STALE_PEER_TIMEOUT).await;
+                eviction_limiter.evict_stale().await;
+            }
+        });
+
         Self {
             my_profile,
             db_manager,
             app_handle,
+            rate_limiter,
         }
     }
 }
@@ -147,10 +261,42 @@ impl ProtocolHandler for BytescapeProtocol {
         let remote_id = connection.remote_id();
         println!("[P2P-PROTO] Incoming connection from {}", remote_id);
 
+        // ── CRIT-4: Connection-level rate limiting ──
+        if !self.rate_limiter.try_acquire_connection(remote_id).await {
+            println!("[P2P-PROTO] RATE LIMIT: Too many concurrent connections from {}, rejecting", remote_id);
+            // Close the connection gracefully — peer can retry later
+            connection.close(1u32.into(), b"rate limited");
+            return Ok(());
+        }
+
+        // Ensure the connection slot is released when we return (success or error)
+        let result = self.handle_accepted(connection, remote_id).await;
+
+        self.rate_limiter.release_connection(remote_id).await;
+        result
+    }
+}
+
+impl BytescapeProtocol {
+    /// Inner handler called after connection-level rate limiting passes.
+    async fn handle_accepted(
+        &self,
+        connection: Connection,
+        remote_id: iroh::PublicKey,
+    ) -> Result<(), AcceptError> {
+        // ── CRIT-4: Request-level rate limiting ──
+        if !self.rate_limiter.check_request_rate(remote_id).await {
+            println!("[P2P-PROTO] RATE LIMIT: Request rate exceeded for {}, rejecting", remote_id);
+            let (mut send, _recv) = connection.accept_bi().await.map_err(to_accept_err)?;
+            let _ = send.write_all(b"ERROR: Rate limit exceeded").await;
+            let _ = send.finish();
+            return Ok(());
+        }
+
         let (mut send, mut recv) = connection.accept_bi().await.map_err(to_accept_err)?;
 
-        // Read request (max 64 KiB for feed params etc.)
-        let request_bytes = recv.read_to_end(65536).await.map_err(to_accept_err)?;
+        // Read request (max 64 KiB — CRIT-4 payload size limit)
+        let request_bytes = recv.read_to_end(MAX_REQUEST_BYTES).await.map_err(to_accept_err)?;
         println!("[P2P-PROTO] Received {} bytes from {}", request_bytes.len(), remote_id);
 
         // Single parse — extract all fields at once.
@@ -284,9 +430,7 @@ impl ProtocolHandler for BytescapeProtocol {
 
         Ok(())
     }
-}
 
-impl BytescapeProtocol {
     /// Get a fresh profile with the live DID from the keychain.
     ///
     /// The protocol's `my_profile` is frozen at node init time, which may
@@ -332,7 +476,7 @@ impl BytescapeProtocol {
     /// Strips sensitive fields (media_paths with local filesystem paths) before serving.
     async fn serve_feed(&self, my_profile: &PeerProfile, params: &FeedRequestParams) -> FeedResponse {
         let owner_did = self.get_live_owner_did();
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
 
         let (items, total_count) = if let Some(db) = db_guard.as_ref() {
             match db.list_my_items_paged(
@@ -388,7 +532,7 @@ impl BytescapeProtocol {
             .unwrap_or_default()
             .as_secs();
 
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             // Try to find an existing peer record, or create one if we don't have one
             let mut peer = match db.get_peer(remote_node_id).await {
@@ -490,7 +634,7 @@ impl BytescapeProtocol {
         };
 
         // Save to DB
-        let db_guard = self.db_manager.lock().await;
+        let db_guard = self.db_manager.read().await;
         if let Some(db) = db_guard.as_ref() {
             match db.save_vault_message(&vault_msg).await {
                 Ok(is_new) => println!("[P2P-CHAT] Message saved: id={}, is_new={}, convo_id={}", msg.id, is_new, convo_id),

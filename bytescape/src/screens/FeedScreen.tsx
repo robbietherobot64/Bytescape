@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
-import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ComposeBox, Attachment } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
+import { GalleryLens } from '../components/lenses/GalleryLens';
+import { ReaderLens } from '../components/lenses/ReaderLens';
+import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS, customFeedUris } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
+
+export type FeedLens = 'list' | 'gallery' | 'reader';
 
 const CONTEXT_LABELS: Record<string, string> = {
     all: 'Discovery Tools',
@@ -25,6 +29,7 @@ interface FeedScreenProps {
 export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
+    const [activeLens, setActiveLens] = useState<FeedLens>('list');
     const autoRefreshFeeds = true;
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');
@@ -239,6 +244,29 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                             </button>
                         ))}
                     </div>
+                    <div className="feed-lens-toggle">
+                        <button
+                            className={`lens-btn ${activeLens === 'list' ? 'active' : ''}`}
+                            onClick={() => setActiveLens('list')}
+                            title="List View"
+                        >
+                            ☰
+                        </button>
+                        <button
+                            className={`lens-btn ${activeLens === 'gallery' ? 'active' : ''}`}
+                            onClick={() => setActiveLens('gallery')}
+                            title="Gallery View"
+                        >
+                            ▦
+                        </button>
+                        <button
+                            className={`lens-btn ${activeLens === 'reader' ? 'active' : ''}`}
+                            onClick={() => setActiveLens('reader')}
+                            title="Reader View"
+                        >
+                            📖
+                        </button>
+                    </div>
                     {isLoading && <div className="status-pill"><div className="dot online"></div> Syncing</div>}
                 </div>
 
@@ -329,14 +357,28 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                             </div>
                         )}
 
-                        {filterFacebookDuplicateImagePosts(feedEntries).map(entry => (
-                            <FeedEntryCard
-                                key={entry.reposted_by ? `repost:${entry.reposted_by}:${entry.id}` : entry.id}
-                                entry={entry}
-                                resolveMediaPath={resolveMediaPath}
+                        {activeLens === 'gallery' ? (
+                            <GalleryLens
+                                entries={filterFacebookDuplicateImagePosts(feedEntries)}
                                 mediaDir={mediaDir}
+                                resolveMediaPath={resolveMediaPath}
                             />
-                        ))}
+                        ) : activeLens === 'reader' ? (
+                            <ReaderLens
+                                entries={filterFacebookDuplicateImagePosts(feedEntries)}
+                                mediaDir={mediaDir}
+                                resolveMediaPath={resolveMediaPath}
+                            />
+                        ) : (
+                            filterFacebookDuplicateImagePosts(feedEntries).map(entry => (
+                                <FeedItemRenderer
+                                    key={entry.reposted_by ? `repost:${entry.reposted_by}:${entry.id}` : entry.id}
+                                    entry={entry}
+                                    resolveMediaPath={resolveMediaPath}
+                                    mediaDir={mediaDir}
+                                />
+                            ))
+                        )}
 
                         {isFetchingMore && (
                             <div style={{ textAlign: 'center', padding: 20, opacity: 0.6 }}>Loading more archives...</div>

@@ -3,12 +3,12 @@
 //! Commands for storing and retrieving media blobs in Iroh.
 
 use bytes::Bytes;
-use data_encoding::BASE32_NOPAD;
 use serde::Serialize;
 use tauri::{State, Manager};
 
 use crate::error::BytescapeError;
 use crate::sync::Hash;
+use crate::blob_hash;
 use crate::AppState;
 
 #[derive(Debug, Serialize)]
@@ -26,71 +26,15 @@ pub struct MediaRefDiagnostic {
 }
 
 fn normalize_blob_hash_input(input: &str) -> String {
-    let mut s = input.trim().to_string();
-    while let Some(rest) = s.strip_prefix("blob:") {
-        s = rest.trim().to_string();
-    }
-    // Strip optional ":thumbhash" suffix
-    if let Some(pos) = s.find(':') {
-        s = s[..pos].to_string();
-    }
-    s
+    blob_hash::normalize_blob_ref(input)
 }
 
 fn decode_base32_hash_like(input: &str) -> Option<Hash> {
-    let mut candidates = vec![input.trim()];
-    if let Some(stripped) = input.trim().strip_prefix('b') {
-        candidates.push(stripped.trim());
-    }
-
-    for candidate in candidates {
-        if candidate.is_empty() {
-            continue;
-        }
-
-        let uppercase = candidate.to_ascii_uppercase();
-        let Ok(decoded) = BASE32_NOPAD.decode(uppercase.as_bytes()) else {
-            continue;
-        };
-
-        if decoded.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&decoded);
-            return Some(Hash::from_bytes(arr));
-        }
-
-        // CIDv1/multihash-style payloads are commonly 36 bytes for blake3-256.
-        if decoded.len() >= 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&decoded[decoded.len() - 32..]);
-            return Some(Hash::from_bytes(arr));
-        }
-    }
-
-    None
+    blob_hash::parse_blob_hash(input).ok()
 }
 
 fn parse_hash_safe(input: &str) -> std::result::Result<Hash, String> {
-    let normalized = normalize_blob_hash_input(input);
-    if normalized.is_empty() {
-        return Err("Invalid blob hash format".to_string());
-    }
-
-    // Preferred path: hex/base32 handled by Hash::from_str for valid raw digests.
-    if normalized.len() == 64 && normalized.chars().all(|c| c.is_ascii_hexdigit()) {
-        let parse_result = std::panic::catch_unwind(|| normalized.parse::<Hash>());
-        return match parse_result {
-            Ok(Ok(hash)) => Ok(hash),
-            Ok(Err(e)) => Err(BytescapeError::BlobStorage(e.to_string()).to_string()),
-            Err(_) => Err("Invalid blob hash format".to_string()),
-        };
-    }
-
-    if let Some(hash) = decode_base32_hash_like(&normalized) {
-        return Ok(hash);
-    }
-
-    Err("Invalid blob hash format".to_string())
+    blob_hash::parse_blob_hash(input)
 }
 
 
@@ -471,7 +415,7 @@ pub async fn diagnose_media_ref(
 /// items that already have the correct `media_mimes` length are skipped.
 #[tauri::command]
 pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Result<usize, String> {
-    let db_guard = state.db_manager.lock().await;
+    let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| crate::error::BytescapeError::DatabaseNotInitialized)?;
     let sync_guard = state.sync_manager.lock().await;
@@ -545,34 +489,39 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
     Ok(updated)
 }
 
-/// Detect MIME type from magic bytes (used by backfill)
+/// Detect MIME type from magic bytes using the `infer` crate.
+///
+/// Covers 100+ file types including TIFF, BMP, HEIC, AVI, FLAC, WAV,
+/// and all formats previously handled by the manual implementation.
+/// Falls back to a few manual checks that `infer` doesn't cover.
 pub fn mime_from_magic_bytes(data: &[u8]) -> String {
-    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        "image/jpeg".to_string()
-    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "image/png".to_string()
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        "image/gif".to_string()
-    } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
-        "image/webp".to_string()
-    } else if data.starts_with(b"%PDF-") {
-        "application/pdf".to_string()
-    } else if data.len() > 12 && &data[4..8] == b"ftyp" {
-        "video/mp4".to_string()
-    } else if data.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-        "video/webm".to_string()
-    } else if data.starts_with(b"OggS") {
-        "video/ogg".to_string()
-    } else {
-        "application/octet-stream".to_string()
+    // Primary: use `infer` for broad, battle-tested magic byte detection
+    if let Some(kind) = infer::get(data) {
+        return kind.mime_type().to_string();
     }
+
+    // Fallback: a handful of formats `infer` may not recognise
+    if data.starts_with(b"OggS") {
+        // infer detects Ogg Vorbis/Opus audio but may miss video/ogg containers
+        return "audio/ogg".to_string();
+    }
+    if data.starts_with(b"%PDF-") {
+        return "application/pdf".to_string();
+    }
+
+    "application/octet-stream".to_string()
 }
 
-/// Detect MIME type from file path/URI hint
+/// Detect MIME type from file path/URI hint.
+///
+/// Extended to cover TIFF, BMP, HEIC, AVIF, AVI, FLAC, WAV, SVG,
+/// OGG audio, OPUS, AAC, MP3, M4A, and ICO — matching the expanded
+/// magic-byte coverage from MED-5.
 pub fn mime_from_path_hint(path: &str) -> String {
     let lower = path.to_lowercase();
     let clean = lower.split('?').next().unwrap_or(&lower);
     let clean = clean.split('#').next().unwrap_or(clean);
+    // Images
     if clean.ends_with(".jpg") || clean.ends_with(".jpeg") {
         "image/jpeg".to_string()
     } else if clean.ends_with(".png") {
@@ -581,6 +530,19 @@ pub fn mime_from_path_hint(path: &str) -> String {
         "image/webp".to_string()
     } else if clean.ends_with(".gif") {
         "image/gif".to_string()
+    } else if clean.ends_with(".tiff") || clean.ends_with(".tif") {
+        "image/tiff".to_string()
+    } else if clean.ends_with(".bmp") {
+        "image/bmp".to_string()
+    } else if clean.ends_with(".heic") || clean.ends_with(".heif") {
+        "image/heic".to_string()
+    } else if clean.ends_with(".avif") {
+        "image/avif".to_string()
+    } else if clean.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    } else if clean.ends_with(".ico") {
+        "image/x-icon".to_string()
+    // Video
     } else if clean.ends_with(".mp4") || clean.ends_with(".m4v") {
         "video/mp4".to_string()
     } else if clean.ends_with(".mov") {
@@ -589,8 +551,26 @@ pub fn mime_from_path_hint(path: &str) -> String {
         "video/webm".to_string()
     } else if clean.ends_with(".mkv") {
         "video/x-matroska".to_string()
+    } else if clean.ends_with(".avi") {
+        "video/x-msvideo".to_string()
     } else if clean.ends_with(".ts") || clean.ends_with(".mpg") {
         "video/mp2t".to_string()
+    // Audio
+    } else if clean.ends_with(".mp3") {
+        "audio/mpeg".to_string()
+    } else if clean.ends_with(".flac") {
+        "audio/flac".to_string()
+    } else if clean.ends_with(".wav") {
+        "audio/wav".to_string()
+    } else if clean.ends_with(".ogg") || clean.ends_with(".oga") {
+        "audio/ogg".to_string()
+    } else if clean.ends_with(".opus") {
+        "audio/opus".to_string()
+    } else if clean.ends_with(".aac") {
+        "audio/aac".to_string()
+    } else if clean.ends_with(".m4a") {
+        "audio/mp4".to_string()
+    // Documents
     } else if clean.ends_with(".pdf") {
         "application/pdf".to_string()
     } else {
