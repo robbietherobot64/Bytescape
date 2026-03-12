@@ -69,6 +69,7 @@ tokio-stream = { version = "0.1.18", features = ["net"] }
 atrium-api = "0.25"
 atrium-oauth = { version = "0.1", features = ["default-client"] }
 atrium-identity = "0.1"
+atrium-xrpc = "0.12"
 
 [dev-dependencies]
 tempfile = "3.10"

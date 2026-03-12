@@ -332,6 +332,22 @@ struct DidService {
 /// internal representation. All feed-fetching functions (timeline, custom feeds)
 /// route through here to ensure consistent handling of:
 ///
+/// Parse raw JSON from a Bluesky feed/timeline API response into posts.
+///
+/// Accepts the JSON body from `getAuthorFeed`, `getTimeline`, or similar
+/// endpoints and returns parsed posts plus the cursor for pagination.
+/// This allows the OAuth code path to reuse the same parsing logic.
+pub fn parse_feed_json(json: &str) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
+    let feed_res: AuthorFeedResponse = serde_json::from_str(json)
+        .map_err(|e| format!("Failed to parse feed JSON: {}", e))?;
+    let posts: Vec<BlueskyImportedPost> = feed_res.feed.into_iter().map(parse_feed_item).collect();
+    Ok((posts, feed_res.cursor))
+}
+
+/// Internal canonical parser for a single feed item.
+///
+/// Handles three post shapes uniformly:
+///
 /// - **Regular post**: `item.post` is the post itself. `item.reason` is `None`.
 /// - **Repost**: `item.post` is the **original** post — its author, text, and media
 ///   all belong to the original author. `item.reason` is `Repost { by, indexed_at }`
@@ -557,8 +573,11 @@ pub async fn import_bluesky_feed(
             url.push_str(&format!("&cursor={}", c));
         }
 
-        let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", _access_jwt))
+        let mut req = client.get(&url);
+        if !_access_jwt.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", _access_jwt));
+        }
+        let response = req
             .send()
             .await
             .map_err(|e| format!("Feed fetch failed: {}", e))?;
@@ -1114,8 +1133,11 @@ pub async fn get_follows(
         url.push_str(&format!("&cursor={}", c));
     }
 
-    let response = client.get(&url)
-        .header("Authorization", format!("Bearer {}", access_jwt))
+    let mut req = client.get(&url);
+    if !access_jwt.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", access_jwt));
+    }
+    let response = req
         .send()
         .await
         .map_err(|e| format!("Follows fetch failed: {}", e))?;

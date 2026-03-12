@@ -47,15 +47,10 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         let local_username = state.keychain.get_local_username()
             .unwrap_or(None);
         let identity_ready = local_username.is_some();
-        let source = if state.is_oauth_session() {
-            "bluesky-oauth".to_string()
-        } else {
-            "bluesky".to_string()
-        };
         return Ok(Some(AuthStatus {
             handle,
             did,
-            source,
+            source: "bluesky".to_string(),
             local_username,
             identity_ready,
         }));

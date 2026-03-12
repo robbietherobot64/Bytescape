@@ -494,6 +494,85 @@ impl OAuthManager {
     pub async fn has_session(&self) -> bool {
         self.session.lock().await.is_some()
     }
+
+    /// Make an authenticated GET request using the OAuth session's DPoP credentials.
+    ///
+    /// The `OAuthSession` implements `atrium_xrpc::HttpClient` which automatically
+    /// adds the `Authorization: DPoP {token}` and `DPoP: {proof}` headers.
+    /// Returns the response body as a UTF-8 string.
+    pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
+        use atrium_xrpc::HttpClient;
+        use atrium_xrpc::http;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(url)
+            .header("Accept", "application/json")
+            .body(Vec::new())
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        let response = session
+            .send_http(request)
+            .await
+            .map_err(|e| format!("OAuth request failed: {}", e))?;
+
+        let status = response.status();
+        let body = String::from_utf8(response.into_body())
+            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+
+        if !status.is_success() {
+            return Err(format!("API returned {}: {}", status, body));
+        }
+
+        Ok(body)
+    }
+
+    /// Make an authenticated POST request using the OAuth session's DPoP credentials.
+    ///
+    /// `content_type` should be `"application/json"` for XRPC calls.
+    /// Returns the response body as a UTF-8 string.
+    pub async fn authenticated_post(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<String, String> {
+        use atrium_xrpc::HttpClient;
+        use atrium_xrpc::http;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(url)
+            .header("Content-Type", content_type)
+            .header("Accept", "application/json")
+            .body(body)
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        let response = session
+            .send_http(request)
+            .await
+            .map_err(|e| format!("OAuth request failed: {}", e))?;
+
+        let status = response.status();
+        let resp_body = String::from_utf8(response.into_body())
+            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+
+        if !status.is_success() {
+            return Err(format!("API returned {}: {}", status, resp_body));
+        }
+
+        Ok(resp_body)
+    }
 }
 
 /// Query parameters from the OAuth callback redirect.

@@ -733,8 +733,15 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     };
     drop(db_guard);
 
-    let access_jwt = state.get_fresh_access_jwt().await
-        .map_err(|e| BytescapeError::AuthFailed(e))?;
+    // For OAuth sessions, use empty JWT — the public API (getAuthorFeed) works
+    // without authentication for public profiles.
+    // For app-password sessions, use the real JWT for full access.
+    let access_jwt = if state.is_oauth_session() {
+        String::new()
+    } else {
+        state.get_fresh_access_jwt().await
+            .map_err(|e| BytescapeError::AuthFailed(e))?
+    };
 
     let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
         &user_did,
@@ -1008,7 +1015,23 @@ pub async fn get_timeline(
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
-    
+
+    if state.is_oauth_session() {
+        // OAuth path: use DPoP-authenticated requests via OAuthManager
+        let limit_val = limit.unwrap_or(50);
+        let mut url = format!(
+            "https://bsky.social/xrpc/app.bsky.feed.getTimeline?limit={}",
+            limit_val
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let json = state.oauth_manager.authenticated_get(&url).await?;
+        let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+        return Ok((posts, next_cursor));
+    }
+
     let access_jwt = state.get_fresh_access_jwt().await
         .map_err(|e| BytescapeError::AuthFailed(e))?;
 
@@ -1034,6 +1057,18 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    // DMs require authenticated access — OAuth DPoP not yet wired for chat API
+    if state.is_oauth_session() {
+        println!("import_vault_messages: Skipping DMs for OAuth session (DPoP chat API not yet supported)");
+        return Ok(serde_json::json!({
+            "conversations": 0,
+            "threads": 0,
+            "parsed": 0,
+            "new": 0
+        }));
+    }
+
     let access_jwt = state.get_fresh_access_jwt().await
         .map_err(|e| BytescapeError::AuthFailed(e))?;
 
@@ -1395,6 +1430,11 @@ pub async fn send_bsky_dm(
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    if state.is_oauth_session() {
+        return Err("Sending DMs requires App Password login. OAuth DPoP chat support is coming soon.".to_string());
+    }
+
     let access_jwt = state.get_fresh_access_jwt().await
         .map_err(|e| BytescapeError::AuthFailed(e))?;
 
@@ -1439,6 +1479,11 @@ pub async fn send_bsky_dm(
 /// List saved Bluesky custom feeds.
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
+    if state.is_oauth_session() {
+        // Saved feeds require getPreferences which needs DPoP auth on the user's PDS.
+        // For now, return an empty list — the timeline still works via get_timeline.
+        return Ok(Vec::new());
+    }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
 }
@@ -1446,7 +1491,12 @@ pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result
 /// List profiles this actor follows.
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
+    // getFollows is a public endpoint — empty JWT works
+    let access_jwt = if state.is_oauth_session() {
+        String::new()
+    } else {
+        state.get_fresh_access_jwt().await?
+    };
     let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
     Ok(profiles)
 }
@@ -1477,6 +1527,11 @@ pub async fn get_unified_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    if state.is_oauth_session() {
+        // Unified feed aggregation requires multiple auth-dependent calls.
+        // Fall back to basic timeline for OAuth sessions.
+        return Err("Unified feed requires App Password login. Use the timeline instead.".to_string());
+    }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
 }
