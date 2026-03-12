@@ -71,6 +71,121 @@
 
     /* Tiled star background via CSS */
     --stars-bg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ctext x='12' y='24' font-size='10' fill='%23ddd8c8' opacity='0.5'%3E✦%3C/text%3E%3C/svg%3E");
+
+    /* Ghost variable defaults — used in inline styles, need defined values */
+    --accent-purple: #8b5cf6;
+    --accent-purple-rgb: 139, 92, 246;
+    --bg-primary: #f5f0e6;
+    --bg-secondary: #e8e0d0;
+    --bg-tertiary: #d4d0c8;
+    --border-color: #999999;
+}
+
+/* ─── 1b. THEME: Desktop Mode (Win98 Classic) ─── */
+[data-theme="win98"] {
+    --bg-page: #c0c0c0;
+    --bg-content: #d4d0c8;
+    --bg-panel: #c0c0c0;
+    --bg-card: #d4d0c8;
+    --bg-card-hover: #d8d4cc;
+    --bg-toolbar: #c0c0c0;
+    --bg-input: #ffffff;
+    --bg-sidebar: #000080;
+    --bg-sidebar-hover: #0000a0;
+    --bg-sidebar-active: #1a1aff;
+
+    --link-blue: #0000ff;
+    --link-visited: #800080;
+    --link-hover: #ff0000;
+    --accent-green: #008000;
+    --accent-red: #cc0000;
+    --accent-orange: #ff8c00;
+    --accent-yellow: #ffcc00;
+    --accent-teal: #008080;
+    --accent-purple: #800080;
+    --accent-purple-rgb: 128, 0, 128;
+
+    --text-primary: #000000;
+    --text-secondary: #222222;
+    --text-muted: #555555;
+    --text-light: #808080;
+    --text-on-dark: #ffffff;
+    --text-on-navy: #ffffff;
+
+    --border-outset-light: #ffffff;
+    --border-outset-dark: #808080;
+    --border-inset-light: #808080;
+    --border-inset-dark: #ffffff;
+    --border-default: 2px solid #808080;
+    --border-strong: 2px solid #404040;
+    --border-subtle: 1px solid #ababab;
+    --border-radius-sm: 0px;
+    --border-radius-md: 0px;
+    --border-radius-lg: 0px;
+    --border-color: #808080;
+
+    --bg-primary: #d4d0c8;
+    --bg-secondary: #c0c0c0;
+    --bg-tertiary: #ababab;
+
+    --font-sans: 'Tahoma', 'MS Sans Serif', 'Verdana', sans-serif;
+
+    --stars-bg: none;
+}
+
+/* ─── 1c. THEME: Midnight Mode (Dark) ─── */
+[data-theme="midnight"] {
+    --bg-page: #0f0f1a;
+    --bg-content: #1a1a2e;
+    --bg-panel: #16213e;
+    --bg-card: #1e1e36;
+    --bg-card-hover: #252542;
+    --bg-toolbar: #16213e;
+    --bg-input: #1e1e36;
+    --bg-sidebar: #0a0a18;
+    --bg-sidebar-hover: #12122a;
+    --bg-sidebar-active: #1a1a3e;
+
+    --link-blue: #60a5fa;
+    --link-visited: #a78bfa;
+    --link-hover: #f472b6;
+    --accent-green: #34d399;
+    --accent-red: #f87171;
+    --accent-orange: #fb923c;
+    --accent-yellow: #fbbf24;
+    --accent-teal: #06b6d4;
+    --accent-purple: #7c3aed;
+    --accent-purple-rgb: 124, 58, 237;
+
+    --text-primary: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --text-light: #64748b;
+    --text-on-dark: #f1f5f9;
+    --text-on-navy: #c7d2fe;
+
+    --border-outset-light: #334155;
+    --border-outset-dark: #0f172a;
+    --border-inset-light: #0f172a;
+    --border-inset-dark: #334155;
+    --border-default: 1px solid #334155;
+    --border-strong: 1px solid #475569;
+    --border-subtle: 1px solid #1e293b;
+    --border-radius-sm: 4px;
+    --border-radius-md: 6px;
+    --border-radius-lg: 8px;
+    --border-color: #334155;
+
+    --bevel-raised: inset -1px -1px 0 #0f172a, inset 1px 1px 0 #334155, inset -2px -2px 0 #020617, inset 2px 2px 0 #1e293b;
+    --bevel-sunken: inset 1px 1px 0 #0f172a, inset -1px -1px 0 #334155, inset 2px 2px 0 #020617, inset -2px -2px 0 #1e293b;
+    --bevel-button: inset -1px -1px 0 #020617, inset 1px 1px 0 #334155, inset -2px -2px 0 #0f172a, inset 2px 2px 0 #1e293b;
+    --bevel-pressed: inset 1px 1px 0 #020617, inset -1px -1px 0 #334155;
+
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-tertiary: #0f172a;
+
+    --stars-bg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ctext x='12' y='24' font-size='10' fill='%234338ca' opacity='0.3'%3E✦%3C/text%3E%3C/svg%3E");
 }
 
 /* ─── 2. RESET & BASE ─── */

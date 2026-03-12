@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { AuthStatus, GeneratorView } from '../types';
+import { ThemePicker } from '../components/ThemePicker';
 
 interface SettingsScreenProps {
     auth: AuthStatus | null;
@@ -147,6 +148,15 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                         Sign Out
                     </button>
                 </div>
+            </div>
+
+            {/* Appearance / Theme */}
+            <div className="card" style={{ marginTop: 16 }}>
+                <h3>🎨 Appearance</h3>
+                <p className="text-muted text-sm" style={{ marginBottom: 12 }}>
+                    Choose a visual theme. Changes apply instantly.
+                </p>
+                <ThemePicker />
             </div>
 
             {/* Connected Accounts */}

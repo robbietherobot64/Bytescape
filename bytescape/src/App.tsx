@@ -56,8 +56,12 @@ import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 import { RecoverySetupModal } from "./components/RecoverySetupModal";
+import { useTheme } from "./hooks/useTheme";
 
 function App() {
+  // ─── Theme (applies data-theme attribute on <html>) ───
+  useTheme();
+
   // ─── Stores ───
   const { auth, setAuth } = useAuthStore();
   const {
