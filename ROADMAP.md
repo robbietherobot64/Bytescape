@@ -244,7 +244,7 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 #### C3. Rich Content Types
 - [ ] **C3.1 Polls**: Poll creation UI in ComposeBox — multiple choice, single/multi-select, expiration timer. Use AP `Question` type for fediverse syndication (compatible with Threads/Mastodon poll UX). Bluesky: not syndicated until platform supports polls natively or hosting is live (then syndicate as link).
-- [ ] **C3.2 Long-Form Articles**: Compose long-form text with Markdown support. Stored as `BytescapeType::Article`. Syndicated as AP `Article` object. Bluesky: not syndicated until hosting is live (then syndicate as link). Displayed in Reader lens format in feeds (title + excerpt + "Read more" expand).
+- [ ] **C3.2 Long-Form Articles**: Compose long-form text using **Tiptap** (ProseMirror wrapper with first-class Yjs bindings). Outputs structured JSON stored as `BytescapeType::Article`. Supports Markdown import/export. Syndicated as AP `Article` object. Bluesky: not syndicated until hosting is live (then syndicate as link). Displayed in Reader lens format in feeds (title + excerpt + "Read more" expand). **⚠️ Tiptap is load-bearing for C6 — do NOT substitute a plain textarea or alternative editor.** Packages: `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-collaboration`, `@tiptap/extension-collaboration-cursor`.
 - [ ] **C3.3 `Event` Post Type**: Quick-create an event from ComposeBox (date/time/location fields). Creates a `BytescapeType::Event` item. *(Complements B8 — B8 builds the calendar view and full CRUD; C3.3 adds the compose shortcut.)*
 
 #### C4. Media Pipeline
@@ -260,6 +260,20 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **C5.3 Background Syndication Job**: Rate-limited processing of `PendingSyndication` items. Retry logic with exponential backoff. Status dashboard in SettingsScreen.
 - [ ] **C5.4 Scheduled Posts**: Compose now, publish later. `scheduled_at` field on `BytescapeItem`, background job checks and publishes at target time.
 - [ ] **C5.5 Syndication Safety Controls**: Explicit rate limits and confirmation prompts to prevent spamming external networks with old/bulk posts.
+
+#### C6. Collaborative Editing 🤝
+*Real-time Google Docs-level co-editing for Articles. Built as an additive layer — zero changes to existing `BytescapeItem` pipeline. Uses [Yjs](https://yjs.dev/) CRDTs (per-character conflict-free merging) with Iroh as the P2P transport.*
+
+> **Architecture:** Yjs Doc ←→ `y-tiptap` (frontend) ←→ `iroh-gossip` (broadcast) ←→ `iroh-blobs` (persist snapshots) ←→ redb `COLLAB_DOCS` table (local state). The `BytescapeItem.content` field is periodically snapshot-updated from the Yjs doc so non-collaborative views work with zero changes.
+
+> **Why not Willow?** Willow uses last-writer-wins per Entry — concurrent edits silently overwrite each other. Yjs merges at the character level with causal ordering, which is what "real-time collaborative editing" actually requires.
+
+- [ ] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: Add `yrs` (Rust Yjs port) crate to backend. New file `collab.rs` — Yjs doc CRUD, state vector management, update encoding/decoding. New redb table `COLLAB_DOCS: TableDefinition<&str, &[u8]>` storing binary Yjs state keyed by doc ID. Add optional `collab_doc_id: Option<String>` field to `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`. **Disruption: one optional field on BytescapeItem, everything else is new files/tables.**
+- [ ] **C6.2 Frontend Yjs Integration**: Wire `yjs` + `y-tiptap` into the Article editor from C3.2. Local-only mode first — single user editing with CRDT doc backing. Verify round-trip: edits → Yjs update → Tauri command → `yrs` merge → redb persist → reload. Packages: `yjs`, `y-prosemirror` (or `@tiptap/extension-collaboration` already added in C3.2).
+- [ ] **C6.3 P2P Real-Time Sync via Gossip** *(prerequisite: working iroh-gossip from existing P2P chat)*: New gossip topic type `CollabUpdate` — Yjs update vectors broadcast to all peers with the doc open. Implement awareness protocol over gossip for cursor positions, selection highlights, and user presence indicators. Frontend shows colored cursors with peer names. **Disruption: adds a gossip topic variant, no breaking changes to existing chat gossip.**
+- [ ] **C6.4 Offline & Async Merge**: When a peer reconnects after editing offline, exchange Yjs state vectors and compute minimal sync updates. Yjs handles conflict resolution automatically (no user-facing merge conflicts). Persist pending updates in redb for crash recovery.
+- [ ] **C6.5 Station Relay for Always-On Collaboration** *(unlocked by Phase 5 — Station Protocol)*: Community Station acts as Yjs awareness relay + document update cache. Peer A edits → gossip update → Station buffers → Peer B comes online → Station forwards. Enables async collaboration without simultaneous presence. **This is what delivers true Google Docs parity.**
+- [ ] **C6.6 Access Control & Permissions**: Per-document permission model — Owner (full control), Editor (read/write), Viewer (read-only). Permissions stored in Iroh doc metadata, enforced in `collab.rs` before applying updates. Invite flow via DID-based sharing links.
 
 ---
 
@@ -288,6 +302,7 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 **Goal:** Scale the `bytescape.social` infrastructure from the Phase 4 relay into a full P2P mesh. Research existing Iroh public relays first.
 
 - [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward (extends the escrow relay from Phase 4).
+- [ ] **Collab Relay Extension**: Extend Station Protocol with Yjs document awareness relay and update buffering (enables C6.5 — always-on collaborative editing without simultaneous peer presence).
 - [ ] **Auto-Docking**: Geohash-based discovery of nearest Community Station on account creation.
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
 - [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.
