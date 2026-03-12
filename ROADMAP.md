@@ -134,6 +134,12 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 ### Track A — Federation & Connectors 🌐
 *Agent focus: Rust backend, protocol implementation, data import/export. AP is the critical path — it unblocks items across all three tracks.*
 
+#### A0. Bluesky OAuth
+- [x] **A0.1 OAuth Login Flow (PKCE + DPoP + PAR)**: Full Bluesky OAuth implementation replacing app-password auth. Pushed Authorization Requests, DPoP proof generation with `p256` ECDSA, PKCE `S256` code challenge, localhost callback server with auto-shutdown. `atrium-oauth` v0.1 integration with `OAuthSession` managing token lifecycle. *(Commits: `538034a`, `abc92fa`)*
+- [x] **A0.2 DPoP-Authenticated Timeline**: OAuth sessions use user's PDS URL (resolved via `OAuthSession::base_uri()`) for authenticated API calls instead of `bsky.social/xrpc`. *(Commit: `3b01559`)*
+- [x] **A0.3 Identity Hijack Prevention**: Fixed auto-generated local identity overwriting OAuth login identity during `check_auth_status`. Local identity creation now requires explicit `local_username` flag. *(Commit: `a45a8d5`)*
+- [x] **A0.4 Public API Migration**: Migrated unauthenticated reads from `bsky.social/xrpc` (now requires auth for all endpoints) to `public.api.bsky.app/xrpc`. Split into `PUBLIC_XRPC` (unauthenticated) and `AUTH_XRPC` (Bearer-auth) constants. *(Commit: `2d970df`)*
+
 #### A1. ActivityPub Core
 Federation with the wider fediverse. Protocol implementation informed by [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte).
 
