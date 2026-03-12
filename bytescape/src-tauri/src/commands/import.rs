@@ -1017,11 +1017,14 @@ pub async fn get_timeline(
     let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     if state.is_oauth_session() {
-        // OAuth path: use DPoP-authenticated requests via OAuthManager
+        // OAuth path: use DPoP-authenticated requests via OAuthManager.
+        // DPoP tokens are audience-bound to the user's PDS, not the public
+        // appview (bsky.social). The PDS proxies reads to the AppView.
+        let pds_url = state.oauth_manager.get_pds_url().await?;
         let limit_val = limit.unwrap_or(50);
         let mut url = format!(
-            "https://bsky.social/xrpc/app.bsky.feed.getTimeline?limit={}",
-            limit_val
+            "{}/xrpc/app.bsky.feed.getTimeline?limit={}",
+            pds_url, limit_val
         );
         if let Some(ref c) = cursor {
             url.push_str(&format!("&cursor={}", urlencoding::encode(c)));

@@ -495,6 +495,22 @@ impl OAuthManager {
         self.session.lock().await.is_some()
     }
 
+    /// Get the user's PDS URL from the active OAuth session.
+    ///
+    /// The `OAuthSession` implements `XrpcClient` whose `base_uri()` returns
+    /// the PDS endpoint that issued the DPoP tokens. All authenticated XRPC
+    /// requests must target this URL, not the public appview (`bsky.social`).
+    pub async fn get_pds_url(&self) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        Ok(session.base_uri())
+    }
+
     /// Make an authenticated GET request using the OAuth session's DPoP credentials.
     ///
     /// The `OAuthSession` implements `atrium_xrpc::HttpClient` which automatically
