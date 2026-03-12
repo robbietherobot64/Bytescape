@@ -242,10 +242,13 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 *Agent focus: ComposeBox enhancement, new content types, rich text processing, media pipeline. The goal is a full-featured posting system that rivals mainstream platforms for expressiveness while syndication targets remain Bluesky, AP, and local vault.*
 
 #### C1. Rich Text & Facets
-- [ ] **C1.1 Rich Text Facet Parsing**: Parse @mentions, #hashtags, and hyperlinks in post text. Emit `app.bsky.richtext.facet` for Bluesky, equivalent markup for AP.
-- [ ] **C1.2 Mention Autocomplete**: Typeahead for @mentions — search local contacts, Bluesky follows, and AP actor cache.
-- [ ] **C1.3 Hashtag Autocomplete**: Suggest trending/recently-used hashtags as user types `#`.
-- [ ] **C1.4 Character Count & Limits**: Live character counter in ComposeBox. Bluesky: 300 graphemes. AP: configurable per-server (default 500). Show which targets will truncate.
+- [x] **C1.1 Rich Text Facet Parsing — Backend**: `richtext.rs` — `detect_facets()`, `parse_facets_for_bluesky()`, `parse_facets_local()` with UTF-8 byte offset calculation. 23 unit tests. Wired into `posting.rs` (publish_post_v2) and `syndicate.rs` (syndicate_vault_item) — facets auto-generated on Bluesky publish.
+- [ ] **C1.1b Rich Text Facet Rendering — Frontend**: Render facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Add facet TypeScript types to `types/index.ts`.
+- [x] **C1.2 Mention Autocomplete — Backend**: `search_mentions` Tauri command registered — searches local contacts by handle prefix, returns `MentionSuggestion { handle, did, avatar_url }`.
+- [ ] **C1.2b Mention Autocomplete — Frontend**: Typeahead dropdown UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle.
+- [x] **C1.3 Hashtag Autocomplete — Backend**: `search_hashtags_autocomplete` Tauri command registered — searches followed hashtags by prefix.
+- [ ] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag.
+- [ ] **C1.4 Character Count & Limits**: Per-target live counter in ComposeBox. Bluesky: 300 graphemes (via `Intl.Segmenter`). AP: configurable per-server (default 500). Show which targets will truncate. *(Basic local-only 10K char counter exists from MED-4.)*
 
 #### C2. Link & Embed System
 - [ ] **C2.1 Link Card Embeds**: URL detection in compose text → fetch Open Graph / Twitter Card metadata → render preview card. Emit `app.bsky.embed.external` for Bluesky, `attachment` with `Link` type for AP.
