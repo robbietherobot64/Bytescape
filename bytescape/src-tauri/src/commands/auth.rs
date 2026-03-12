@@ -57,6 +57,11 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
     }
 
     // 2. Check for local-only identity
+    //
+    // Only treat a local identity as "logged in" if the user has explicitly
+    // confirmed their username. An auto-generated identity (created silently
+    // during a Bluesky login) should not auto-log in — otherwise logging out
+    // of Bluesky and trying OAuth will just bounce back to the local account.
     let recovery_status = state.keychain.get_identity_recovery_status()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
 
@@ -64,15 +69,18 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         if let Some(did) = recovery_status.did {
             let local_username = state.keychain.get_local_username()
                 .unwrap_or(None);
-            let handle = local_username.clone()
-                .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));
-            return Ok(Some(AuthStatus {
-                handle,
-                did,
-                source: "local".to_string(),
-                local_username: local_username.clone(),
-                identity_ready: local_username.is_some(),
-            }));
+            // Only auto-login if the user explicitly set a local username
+            if local_username.is_some() {
+                let handle = local_username.clone()
+                    .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));
+                return Ok(Some(AuthStatus {
+                    handle,
+                    did,
+                    source: "local".to_string(),
+                    local_username: local_username.clone(),
+                    identity_ready: true,
+                }));
+            }
         }
     }
 
