@@ -50,8 +50,20 @@ Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for 
 ### OAuth UI Note
 The Backend agent modified `LoginScreen.tsx` (+143 lines) on the `track-a/a0-bluesky-oauth` branch to add OAuth login UI. If that branch has been merged, `LoginScreen` now has an "OAuth Login" flow with `listen('oauth-complete')` event handling and a 5-minute timeout. Be aware of this when working on LoginScreen for any reason.
 
-### Next Recommended Task
-**B2.1 GrapesJS Integration** — embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Independent of other tracks. Requires `grapesjs` npm package.
+## 🎯 Current Assignment (2026-03-13)
+
+Read your full kickoff prompt: [prompts/frontend-b21-grapesjs.md](prompts/frontend-b21-grapesjs.md)
+
+**Priority 1 — B2.1 GrapesJS Profile Builder**
+- Install `grapesjs` + `grapesjs-preset-webpage`
+- Create `ProfileBuilderScreen.tsx` with drag-and-drop canvas
+- Bytescape-specific blocks (About Me, Post Feed, Media Grid, Friends List, etc.)
+- Save/load profile layouts via Tauri commands (store in redb)
+- Integrate with `ProfileScreen` — render custom layout if one exists
+- Sandboxed rendering (DOMPurify or `<iframe>`) for security
+- Maintain GeoCities/Win98 aesthetic in builder UI
+
+This task is **fully independent** — no cross-track blockers.
 
 ## Prime Directive
 

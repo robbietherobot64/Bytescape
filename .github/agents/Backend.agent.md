@@ -58,6 +58,14 @@ These are documented in `ROADMAP.md` → Open Issues. Address them before starti
 
 If `track-a/a0-bluesky-oauth` has not yet been merged to `main`, **expect a conflict in `ROADMAP.md`** at the B2.5 Theme Engine entry. Your branch has the old `[ ]` version; `main` has the completed `[x]` version. **Keep main's B2.5 entry.** See the PM advisory for exact merge instructions.
 
+## 🎯 Current Assignment (2026-03-13)
+
+Read your full kickoff prompt: [prompts/backend-a0-hardening.md](prompts/backend-a0-hardening.md)
+
+**Priority 0 — Merge `track-a/a0-bluesky-oauth` → `main`** (if not yet done)
+**Priority 1 — A0 OAuth Hardening** (GAP-4 first, then GAP-1, GAP-2, GAP-3, GAP-7, GAP-6)
+**Priority 2 — A1.1 AP Actor & Inbox/Outbox** (begin after A0 gaps are closed)
+
 ## Prime Directive
 
 Follow the [memory instructions](../instructions/memory.instructions.md) at all times. You are DONE only when:
