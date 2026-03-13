@@ -259,6 +259,8 @@ export interface BytescapeItem {
     // Reply context
     reply_parent_uri?: string;
     reply_parent_handle?: string;
+    // Collaborative editing (C6.1)
+    collab_doc_id?: string | null;
 }
 
 export interface VaultStats {
@@ -482,4 +484,22 @@ export interface MentionSuggestion {
     handle: string;
     did: string;
     avatar_url?: string | null;
+}
+
+// ─── Collaborative Editing Types (C6.1) ───
+
+/** Metadata for a collaborative document */
+export interface CollabDocMeta {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    item_id?: string | null;
+    title?: string | null;
+}
+
+/** Response from get_collab_state command */
+export interface CollabStateResponse {
+    state_b64: string;
+    state_vector_b64: string;
+    meta: CollabDocMeta;
 }

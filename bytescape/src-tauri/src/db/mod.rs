@@ -13,6 +13,7 @@ pub(crate) const VAULT_MESSAGES_TABLE: TableDefinition<&str, &str> = TableDefini
 pub(crate) const FOLLOWED_HASHTAGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("followed_hashtags");
 pub(crate) const WILLOW_WRITE_PARITY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("willow_write_parity");
 pub(crate) const PEERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("peers");
+pub(crate) const COLLAB_DOCS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("collab_docs");
 
 pub use crate::models::*;
 
@@ -42,6 +43,7 @@ impl DbManager {
             let _ = write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(COLLAB_DOCS_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 

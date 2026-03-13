@@ -165,6 +165,7 @@ pub async fn publish_post_v2(
                 reposted_by_handle: None,
                 reply_parent_uri: None,
                 reply_parent_handle: None,
+                collab_doc_id: None,
             };
             
             if let Err(e) = db.save_item(&item).await {
