@@ -1,9 +1,14 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { INPUT_LIMITS, formatFileSize } from '../utils/sanitize';
+import { getAutocompleteContext, applyAutocompleteSelection } from '../utils/richtext';
+import type { AutocompleteContext } from '../utils/richtext';
 import { ArticleEditor } from './ArticleEditor';
 import type { ArticleEditorData } from './ArticleEditor';
+import { AutocompleteDropdown, mentionToItem, hashtagToItem } from './AutocompleteDropdown';
+import type { AutocompleteItem } from './AutocompleteDropdown';
+import type { MentionSuggestion } from '../types';
 
 export interface Attachment {
     path?: string;
@@ -36,6 +41,15 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
     const [articleMode, setArticleMode] = useState(false);
     const articleDataRef = useRef<ArticleEditorData | null>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // ─── Autocomplete State (C1.2b / C1.3b) ───
+    const [acContext, setAcContext] = useState<AutocompleteContext | null>(null);
+    const [acItems, setAcItems] = useState<AutocompleteItem[]>([]);
+    const [acSelectedIndex, setAcSelectedIndex] = useState(0);
+    const [acLoading, setAcLoading] = useState(false);
+    const acVisible = acContext !== null && acContext.type !== null;
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Input validation (MED-4)
     const charCount = articleMode ? (articleDataRef.current?.wordCount ?? 0) : composeText.length;
@@ -47,6 +61,103 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         ? (articleDataRef.current?.content?.trim().length ?? 0) > 0 || (articleDataRef.current?.title?.trim().length ?? 0) > 0
         : composeText.trim().length > 0;
     const canPost = !isPosting && !isOverCharLimit && (hasContent || attachments.length > 0);
+
+    // ─── Autocomplete Logic (C1.2b / C1.3b) ───
+
+    const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const newText = e.target.value;
+        setComposeText(newText);
+
+        const cursorPos = e.target.selectionStart ?? newText.length;
+        const ctx = getAutocompleteContext(newText, cursorPos);
+
+        if (ctx.type) {
+            setAcContext(ctx);
+            setAcSelectedIndex(0);
+
+            // Debounce the search
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(() => {
+                fetchAutocompleteSuggestions(ctx);
+            }, 200);
+        } else {
+            closeAutocomplete();
+        }
+    }, []);
+
+    const fetchAutocompleteSuggestions = useCallback(async (ctx: AutocompleteContext) => {
+        if (!ctx.type) return;
+        setAcLoading(true);
+        try {
+            if (ctx.type === 'mention') {
+                const results = await invoke<MentionSuggestion[]>('search_mentions', { query: ctx.query });
+                setAcItems(results.map(mentionToItem));
+            } else {
+                const results = await invoke<string[]>('search_hashtags_autocomplete', { query: ctx.query });
+                setAcItems(results.map(hashtagToItem));
+            }
+        } catch (err) {
+            console.error('Autocomplete fetch failed:', err);
+            setAcItems([]);
+        } finally {
+            setAcLoading(false);
+        }
+    }, []);
+
+    const closeAutocomplete = useCallback(() => {
+        setAcContext(null);
+        setAcItems([]);
+        setAcSelectedIndex(0);
+        setAcLoading(false);
+        if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+        }
+    }, []);
+
+    const handleAcSelect = useCallback((item: AutocompleteItem) => {
+        if (!acContext || !acContext.type) return;
+        const value = item.type === 'mention' ? item.handle : item.tag;
+        const { text: newText, cursorPos } = applyAutocompleteSelection(composeText, acContext, value);
+        setComposeText(newText);
+        closeAutocomplete();
+
+        // Restore cursor position after React re-render
+        requestAnimationFrame(() => {
+            if (textareaRef.current) {
+                textareaRef.current.focus();
+                textareaRef.current.selectionStart = cursorPos;
+                textareaRef.current.selectionEnd = cursorPos;
+            }
+        });
+    }, [acContext, composeText, closeAutocomplete]);
+
+    const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (!acVisible) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setAcSelectedIndex(prev => Math.min(prev + 1, acItems.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setAcSelectedIndex(prev => Math.max(prev - 1, 0));
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            if (acItems.length > 0) {
+                e.preventDefault();
+                handleAcSelect(acItems[acSelectedIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeAutocomplete();
+        }
+    }, [acVisible, acItems, acSelectedIndex, handleAcSelect, closeAutocomplete]);
+
+    // Cleanup debounce on unmount
+    useEffect(() => {
+        return () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+        };
+    }, []);
 
     const handlePublish = async () => {
         if (!canPost) return;
@@ -151,23 +262,35 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                     />
                 ) : (
                     <>
-                        <textarea
-                            value={composeText}
-                            onChange={e => setComposeText(e.target.value)}
-                            placeholder="Share something..."
-                            rows={3}
-                            style={{
-                                resize: 'vertical',
-                                marginBottom: 4,
-                                width: '100%',
-                                background: 'rgba(255,255,255,0.05)',
-                                border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
-                                borderRadius: 8,
-                                padding: 10,
-                                color: 'inherit',
-                                fontSize: '0.9rem'
-                            }}
-                        />
+                        <div style={{ position: 'relative' }}>
+                            <textarea
+                                ref={textareaRef}
+                                value={composeText}
+                                onChange={handleTextChange}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Share something..."
+                                rows={3}
+                                style={{
+                                    resize: 'vertical',
+                                    marginBottom: 4,
+                                    width: '100%',
+                                    background: 'rgba(255,255,255,0.05)',
+                                    border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
+                                    borderRadius: 8,
+                                    padding: 10,
+                                    color: 'inherit',
+                                    fontSize: '0.9rem'
+                                }}
+                            />
+                            <AutocompleteDropdown
+                                items={acItems}
+                                selectedIndex={acSelectedIndex}
+                                onSelect={handleAcSelect}
+                                onClose={closeAutocomplete}
+                                visible={acVisible}
+                                loading={acLoading}
+                            />
+                        </div>
                         <div style={{
                             display: 'flex',
                             justifyContent: 'space-between',

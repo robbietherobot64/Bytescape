@@ -11,6 +11,7 @@ import { ReactionPicker } from './ReactionPicker';
 import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { stripHtml } from '../utils/sanitize';
+import { RichText } from './RichText';
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
@@ -386,7 +387,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             <div className="feed-entry-body">
                 {displayContent && (
                     <div className="post-text">
-                        {displayContent}
+                        <RichText text={displayContent} />
                         {tagLine && <span className="post-context-chip"> — {tagLine}</span>}
                     </div>
                 )}
@@ -564,7 +565,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                                     <span className="author-name">{reply.author_handle}</span>
                                     <span className="post-time">{formatTimestamp(reply.created_at)}</span>
                                 </div>
-                                <div className="thread-reply-body">{reply.text}</div>
+                                <div className="thread-reply-body"><RichText text={reply.text} /></div>
                                 {reply.image_urls.length > 0 && (
                                     <div className="thread-reply-images">
                                         {reply.image_urls.map((url, i) => (

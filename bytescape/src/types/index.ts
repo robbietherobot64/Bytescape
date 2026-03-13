@@ -474,3 +474,12 @@ export interface ThreadReply {
     viewer_repost?: string;
     image_urls: string[];
 }
+
+// ─── Rich Text Facet Types (C1.1b) ───
+
+/** A suggestion returned by the search_mentions Tauri command */
+export interface MentionSuggestion {
+    handle: string;
+    did: string;
+    avatar_url?: string | null;
+}
