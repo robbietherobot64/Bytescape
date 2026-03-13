@@ -313,6 +313,10 @@ pub struct BytescapeItem {
     pub reply_parent_uri: Option<String>,
     #[serde(default)]
     pub reply_parent_handle: Option<String>,
+
+    // Collaborative editing: links to a Yjs CRDT document (C6.1)
+    #[serde(default)]
+    pub collab_doc_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

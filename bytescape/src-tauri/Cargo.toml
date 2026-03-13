@@ -64,6 +64,7 @@ bs58 = "0.5"
 willow_25 = { version = "0.1.1", optional = true }
 warp = { version = "0.4.2", features = ["server"] }
 tokio-stream = { version = "0.1.18", features = ["net"] }
+yrs = "0.25"
 
 # AT Protocol OAuth & API
 atrium-api = "0.25"

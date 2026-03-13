@@ -13,6 +13,7 @@ pub mod syndicate;
 pub mod posting;
 pub mod interactions;
 pub mod peers;
+pub mod collab;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
@@ -24,3 +25,4 @@ pub use syndicate::*;
 pub use posting::*;
 pub use interactions::*;
 pub use peers::*;
+pub use collab::*;

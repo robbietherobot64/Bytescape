@@ -687,6 +687,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             reposted_by_handle: None,
             reply_parent_uri: None,
             reply_parent_handle: None,
+            collab_doc_id: None,
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -855,6 +856,7 @@ async fn save_posts(
             reposted_by_handle: post.reposted_by_handle.clone(),
             reply_parent_uri: post.reply_parent_uri.clone(),
             reply_parent_handle: post.reply_parent_handle.clone(),
+            collab_doc_id: None,
         };
 
         if let Ok(true) = db.save_item(&item).await {
@@ -1618,6 +1620,7 @@ pub async fn publish_post(
                 reposted_by_handle: None,
                 reply_parent_uri: None,
                 reply_parent_handle: None,
+                collab_doc_id: None,
             };
 
             match db.save_item(&item).await {
@@ -1631,30 +1634,28 @@ pub async fn publish_post(
 
     // Bluesky publish
     if publish_bluesky {
-        let session = state.keychain.load_session()
-            .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
-        let (user_did, user_handle) = match session {
-            Some(v) => v,
-            None => {
-                result.errors.push("Bluesky publish failed: not authenticated".to_string());
-                (String::new(), String::new())
-            }
-        };
+        let user_did = state.get_user_did().unwrap_or_default();
+        let user_handle = state.keychain.load_session()
+            .ok().flatten()
+            .map(|(_, h)| h)
+            .unwrap_or_default();
 
         if !user_did.is_empty() {
-            let access_jwt = match state.get_fresh_access_jwt().await {
-                Ok(jwt) => jwt,
-                Err(e) => {
-                    result.errors.push(format!("Bluesky publish failed: {}", e));
-                    String::new()
+            let record_body = serde_json::json!({
+                "repo": user_did,
+                "collection": "app.bsky.feed.post",
+                "record": {
+                    "$type": "app.bsky.feed.post",
+                    "text": content,
+                    "createdAt": chrono::Utc::now().to_rfc3339()
                 }
-            };
+            });
 
-            if access_jwt.is_empty() {
-                // error already pushed above
-            } else {
-                match publish_to_bluesky(&access_jwt, &user_did, content).await {
-                    Ok((uri, cid)) => {
+            match state.xrpc_post_json("com.atproto.repo.createRecord", record_body).await {
+                Ok(res) => {
+                    let uri = res["uri"].as_str().unwrap_or_default().to_string();
+                    let cid = res["cid"].as_str().unwrap_or_default().to_string();
+                    if !uri.is_empty() {
                         result.bluesky = true;
                         result.bluesky_uri = Some(uri.clone());
 
@@ -1707,12 +1708,13 @@ pub async fn publish_post(
                                 reposted_by_handle: None,
                                 reply_parent_uri: None,
                                 reply_parent_handle: None,
+                                collab_doc_id: None,
                             };
                             let _ = db.save_item(&item).await;
                         }
                     }
-                    Err(e) => result.errors.push(format!("Bluesky publish failed: {}", e)),
                 }
+                Err(e) => result.errors.push(format!("Bluesky publish failed: {}", e)),
             }
         }
     }
@@ -1723,55 +1725,4 @@ pub async fn publish_post(
     }
 
     Ok(result)
-}
-
-async fn publish_to_bluesky(access_jwt: &str, did: &str, text: &str) -> Result<(String, String), String> {
-    #[derive(Serialize)]
-    struct Record<'a> {
-        #[serde(rename = "$type")]
-        record_type: &'a str,
-        text: &'a str,
-        #[serde(rename = "createdAt")]
-        created_at: String,
-    }
-
-    #[derive(Serialize)]
-    struct CreateRecordRequest<'a> {
-        repo: &'a str,
-        collection: &'a str,
-        record: Record<'a>,
-    }
-
-    #[derive(Deserialize)]
-    struct CreateRecordResponse {
-        uri: String,
-        cid: String,
-    }
-
-    let body = CreateRecordRequest {
-        repo: did,
-        collection: "app.bsky.feed.post",
-        record: Record {
-            record_type: "app.bsky.feed.post",
-            text,
-            created_at: chrono::Utc::now().to_rfc3339(),
-        },
-    };
-
-    let resp = reqwest::Client::new()
-        .post("https://bsky.social/xrpc/com.atproto.repo.createRecord")
-        .header("Authorization", format!("Bearer {}", access_jwt))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let msg = resp.text().await.unwrap_or_default();
-        return Err(format!("{} {}", status, msg));
-    }
-
-    let created: CreateRecordResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok((created.uri, created.cid))
 }

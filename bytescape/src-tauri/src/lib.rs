@@ -20,6 +20,7 @@ pub mod media_server;
 pub mod protocol;
 pub mod blob_hash;
 pub mod richtext;
+pub mod collab;
 
 mod auth;
 use auth::AuthManager;
@@ -113,6 +114,119 @@ impl AppState {
 
         println!("Auth: Session refreshed successfully");
         Ok(new_session.access_jwt)
+    }
+
+    // ─── Unified XRPC Helpers (OAuth + App-Password) ───────────────────────
+
+    /// Get the user's DID from the keychain. Works for both auth modes.
+    pub fn get_user_did(&self) -> Result<String, String> {
+        let (did, _) = self.keychain.load_session()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or("Not authenticated")?;
+        Ok(did)
+    }
+
+    /// Get the PDS base URL for XRPC calls.
+    ///
+    /// - **App-password**: Extracts PDS from JWT `iss` claim via `authenticated_xrpc_candidates`.
+    /// - **OAuth**: Gets PDS from the live `OAuthSession`'s `base_uri()`.
+    pub async fn get_pds_base(&self) -> Result<String, String> {
+        if self.is_oauth_session() {
+            self.oauth_manager.get_pds_url().await
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let candidates = connectors::bluesky::authenticated_xrpc_candidates(&jwt, true);
+            candidates.into_iter().next().ok_or_else(|| "Could not resolve PDS URL".to_string())
+        }
+    }
+
+    /// Make an authenticated JSON POST request (e.g. createRecord, deleteRecord).
+    ///
+    /// Dispatches to Bearer auth (app-password) or DPoP auth (OAuth) transparently.
+    pub async fn xrpc_post_json(
+        &self,
+        endpoint: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let pds = self.get_pds_base().await?;
+        let url = format!("{}/{}", pds.trim_end_matches('/'), endpoint);
+
+        if self.is_oauth_session() {
+            let json_bytes = serde_json::to_vec(&body)
+                .map_err(|e| format!("JSON serialize failed: {}", e))?;
+            let resp_str = self.oauth_manager
+                .authenticated_post(&url, json_bytes, "application/json")
+                .await?;
+            serde_json::from_str(&resp_str)
+                .map_err(|e| format!("Failed to parse response: {}", e))
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let client = connectors::bluesky::BlueskyClient::with_jwt(&jwt);
+            let resp = client.create_record(&url, body).await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                return Err(format!("XRPC POST {} failed ({}): {}", endpoint, status, err_body));
+            }
+            resp.json::<serde_json::Value>().await
+                .map_err(|e| format!("Failed to parse response: {}", e))
+        }
+    }
+
+    /// Upload a binary blob (image/video) to the PDS.
+    ///
+    /// Returns the parsed JSON response containing the blob reference.
+    pub async fn xrpc_upload_blob(
+        &self,
+        data: Vec<u8>,
+        mime: &str,
+    ) -> Result<serde_json::Value, String> {
+        let pds = self.get_pds_base().await?;
+        let url = format!("{}/com.atproto.repo.uploadBlob", pds.trim_end_matches('/'));
+
+        if self.is_oauth_session() {
+            let resp_str = self.oauth_manager
+                .authenticated_post(&url, data, mime)
+                .await?;
+            serde_json::from_str(&resp_str)
+                .map_err(|e| format!("Failed to parse upload response: {}", e))
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let client = connectors::bluesky::BlueskyClient::with_jwt(&jwt);
+            let resp = client.post_blob(&url, mime, data).await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                return Err(format!("Blob upload failed ({}): {}", status, err_body));
+            }
+            resp.json::<serde_json::Value>().await
+                .map_err(|e| format!("Failed to parse upload response: {}", e))
+        }
+    }
+
+    /// Make an authenticated GET request.
+    ///
+    /// Returns the parsed JSON response.
+    pub async fn xrpc_get(&self, endpoint: &str) -> Result<serde_json::Value, String> {
+        let pds = self.get_pds_base().await?;
+        let url = format!("{}/{}", pds.trim_end_matches('/'), endpoint);
+
+        if self.is_oauth_session() {
+            let resp_str = self.oauth_manager.authenticated_get(&url).await?;
+            serde_json::from_str(&resp_str)
+                .map_err(|e| format!("Failed to parse response: {}", e))
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let client = connectors::bluesky::BlueskyClient::with_jwt(&jwt);
+            let resp = client.get_resource(&url).await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                return Err(format!("XRPC GET {} failed ({}): {}", endpoint, status, err_body));
+            }
+            resp.json::<serde_json::Value>().await
+                .map_err(|e| format!("Failed to parse response: {}", e))
+        }
     }
 
     /// Check whether a JWT's `exp` claim has passed (or is within `margin_secs`).
@@ -259,6 +373,14 @@ pub fn run() {
             commands::peers::list_p2p_conversations,
             commands::peers::send_p2p_chat_message,
             commands::peers::request_peer_feed,
+            
+            // Collab commands (C6.1)
+            commands::collab::create_collab_doc,
+            commands::collab::apply_collab_update,
+            commands::collab::get_collab_state,
+            commands::collab::snapshot_collab_to_item,
+            commands::collab::list_collab_docs,
+            commands::collab::delete_collab_doc,
         ])
         .setup(|app| {
             // Initialize application state
