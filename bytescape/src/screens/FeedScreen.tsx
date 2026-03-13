@@ -24,12 +24,17 @@ interface FeedScreenProps {
     activeTab: FeedTab;
     setActiveTab: (tab: FeedTab) => void;
     isImporting?: boolean;
+    /** Lens state lifted to AppLayout for context panel control. */
+    activeLens?: FeedLens;
+    setActiveLens?: (lens: FeedLens) => void;
 }
 
-export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedScreenProps) {
+export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, activeLens: lensFromParent, setActiveLens: setLensFromParent }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
-    const [activeLens, setActiveLens] = useState<FeedLens>('list');
+    const [localLens, setLocalLens] = useState<FeedLens>('list');
+    const activeLens = (lensFromParent as FeedLens) || localLens;
+    const setActiveLens = setLensFromParent || setLocalLens;
     const autoRefreshFeeds = true;
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');

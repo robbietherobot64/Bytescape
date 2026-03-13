@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore } from "./store";
-import { FeedTab, FEED_TAB_LABELS } from "./hooks/useUnifiedFeed";
 
 import "./App.css";
 
@@ -94,20 +93,19 @@ function App() {
   // Feed / Archive
   const [isImporting, setIsImporting] = useState(false);
 
-  // Build the feed tab buttons to pass into the mobile top bar
-  const feedTabSlot = screen === "feed" ? (
-    <>
-      {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
-        <button
-          key={tab}
-          className={`tab ${feedActiveTab === tab ? 'active' : ''}`}
-          onClick={() => setFeedActiveTab(tab)}
-        >
-          {FEED_TAB_LABELS[tab]}
-        </button>
-      ))}
-    </>
-  ) : undefined;
+  // Search state (top bar)
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Lens state (lifted so context panel can control it)
+  const [activeLens, setActiveLens] = useState<string>('list');
+
+  const handleSearchSubmit = (query: string) => {
+    // Navigate to feed screen when searching
+    setScreen('feed');
+    setActiveSidebar('feed');
+    // Future: wire into feed filtering
+    console.log('Search submitted:', query);
+  };
 
   // === Init ===
   useEffect(() => {
@@ -462,7 +460,27 @@ function App() {
     <AppLayout
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
-      feedTabSlot={feedTabSlot}
+      screen={screen}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      onSearchSubmit={handleSearchSubmit}
+      avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
+      feedActiveTab={feedActiveTab}
+      setFeedActiveTab={setFeedActiveTab}
+      activeLens={activeLens}
+      setActiveLens={setActiveLens}
+      onOpenChat={(peerNodeId, _peerName) => {
+        const { setSelectedConvoId } = useChatStore.getState();
+        setSelectedConvoId(`p2p:${peerNodeId}`);
+        setScreen("chat");
+        setActiveSidebar("chat");
+      }}
+      onViewProfile={(peerNodeId, peerName) => {
+        setPeerProfileNodeId(peerNodeId);
+        setPeerProfileName(peerName || null);
+        setScreen("peer-profile");
+        setActiveSidebar("social");
+      }}
       mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile") ? {
         padding: 0,
         height: '100%',
@@ -481,6 +499,8 @@ function App() {
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
+            activeLens={activeLens as any}
+            setActiveLens={setActiveLens as any}
           />
         )}
 
