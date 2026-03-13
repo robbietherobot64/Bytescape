@@ -57,6 +57,11 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
     }
 
     // 2. Check for local-only identity
+    //
+    // Only treat a local identity as "logged in" if the user has explicitly
+    // confirmed their username. An auto-generated identity (created silently
+    // during a Bluesky login) should not auto-log in — otherwise logging out
+    // of Bluesky and trying OAuth will just bounce back to the local account.
     let recovery_status = state.keychain.get_identity_recovery_status()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
 
@@ -64,15 +69,18 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         if let Some(did) = recovery_status.did {
             let local_username = state.keychain.get_local_username()
                 .unwrap_or(None);
-            let handle = local_username.clone()
-                .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));
-            return Ok(Some(AuthStatus {
-                handle,
-                did,
-                source: "local".to_string(),
-                local_username: local_username.clone(),
-                identity_ready: local_username.is_some(),
-            }));
+            // Only auto-login if the user explicitly set a local username
+            if local_username.is_some() {
+                let handle = local_username.clone()
+                    .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));
+                return Ok(Some(AuthStatus {
+                    handle,
+                    did,
+                    source: "local".to_string(),
+                    local_username: local_username.clone(),
+                    identity_ready: true,
+                }));
+            }
         }
     }
 
@@ -210,6 +218,10 @@ pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), Strin
         *pending = None;
     }
 
+    // Clear OAuth session if active
+    state.oauth_manager.clear_session().await;
+    state.oauth_manager.stop_callback_server().await;
+
     state.keychain.delete_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     Ok(())
@@ -271,4 +283,40 @@ pub async fn identity_finalize_recovery(
         .keychain
         .finalize_recovery()
         .map_err(|e| e.to_string())
+}
+
+/// Start the Bluesky OAuth login flow.
+///
+/// Resolves the user's handle, initiates PKCE + DPoP authorization,
+/// starts a local callback server, and returns the authorization URL
+/// to be opened in the system browser.
+///
+/// The callback server handles the token exchange and emits an
+/// `oauth-complete` event when authentication succeeds.
+#[tauri::command]
+pub async fn start_bluesky_oauth(
+    handle: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<String, String> {
+    let trimmed = handle.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("Handle cannot be empty".to_string());
+    }
+
+    let app_handle = state.app_handle.clone();
+    let url = state.oauth_manager.start_auth(&trimmed, app_handle).await?;
+
+    Ok(url)
+}
+
+/// Cancel an in-progress OAuth login flow.
+///
+/// Stops the callback server if it's running. Safe to call even if
+/// no OAuth flow is in progress.
+#[tauri::command]
+pub async fn cancel_bluesky_oauth(
+    state: State<'_, AppState>,
+) -> std::result::Result<(), String> {
+    state.oauth_manager.stop_callback_server().await;
+    Ok(())
 }

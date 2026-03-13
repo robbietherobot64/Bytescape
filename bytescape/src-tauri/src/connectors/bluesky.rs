@@ -7,7 +7,17 @@ use std::sync::Arc;
 use crate::connectors::Source;
 use crate::sync::SyncManager;
 
-const PUBLIC_XRPC: &str = "https://bsky.social/xrpc";
+/// The public, unauthenticated Bluesky AppView API.
+///
+/// `bsky.social/xrpc` now requires authentication for all endpoints.
+/// `public.api.bsky.app/xrpc` serves read-only public data without auth.
+const PUBLIC_XRPC: &str = "https://public.api.bsky.app/xrpc";
+
+/// The authenticated Bluesky XRPC endpoint.
+///
+/// Used for app-password Bearer-auth calls. For OAuth sessions, callers
+/// should use the user's PDS URL (via `OAuthManager::get_pds_url()`) instead.
+const AUTH_XRPC: &str = "https://bsky.social/xrpc";
 const PLC_DIRECTORY: &str = "https://plc.directory";
 
 fn decode_base64url_json(input: &str) -> Option<serde_json::Value> {
@@ -40,11 +50,11 @@ pub fn authenticated_xrpc_candidates(access_jwt: &str, prefer_private: bool) -> 
         if let Some(pds_xrpc) = xrpc_from_access_jwt(access_jwt) {
             urls.push(pds_xrpc);
         }
-        urls.push(PUBLIC_XRPC.to_string());
+        urls.push(AUTH_XRPC.to_string());
     } else {
-        urls.push(PUBLIC_XRPC.to_string());
+        urls.push(AUTH_XRPC.to_string());
         if let Some(pds_xrpc) = xrpc_from_access_jwt(access_jwt) {
-            if pds_xrpc != PUBLIC_XRPC {
+            if pds_xrpc != AUTH_XRPC {
                 urls.push(pds_xrpc);
             }
         }
@@ -332,6 +342,22 @@ struct DidService {
 /// internal representation. All feed-fetching functions (timeline, custom feeds)
 /// route through here to ensure consistent handling of:
 ///
+/// Parse raw JSON from a Bluesky feed/timeline API response into posts.
+///
+/// Accepts the JSON body from `getAuthorFeed`, `getTimeline`, or similar
+/// endpoints and returns parsed posts plus the cursor for pagination.
+/// This allows the OAuth code path to reuse the same parsing logic.
+pub fn parse_feed_json(json: &str) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
+    let feed_res: AuthorFeedResponse = serde_json::from_str(json)
+        .map_err(|e| format!("Failed to parse feed JSON: {}", e))?;
+    let posts: Vec<BlueskyImportedPost> = feed_res.feed.into_iter().map(parse_feed_item).collect();
+    Ok((posts, feed_res.cursor))
+}
+
+/// Internal canonical parser for a single feed item.
+///
+/// Handles three post shapes uniformly:
+///
 /// - **Regular post**: `item.post` is the post itself. `item.reason` is `None`.
 /// - **Repost**: `item.post` is the **original** post — its author, text, and media
 ///   all belong to the original author. `item.reason` is `Repost { by, indexed_at }`
@@ -557,8 +583,11 @@ pub async fn import_bluesky_feed(
             url.push_str(&format!("&cursor={}", c));
         }
 
-        let response = client.get(&url)
-            .header("Authorization", format!("Bearer {}", _access_jwt))
+        let mut req = client.get(&url);
+        if !_access_jwt.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", _access_jwt));
+        }
+        let response = req
             .send()
             .await
             .map_err(|e| format!("Feed fetch failed: {}", e))?;
@@ -972,7 +1001,7 @@ pub async fn search_posts(
     let _token = access_jwt.trim();
     let mut url = format!(
         "{}/app.bsky.feed.searchPosts?q={}&limit={}",
-        PUBLIC_XRPC, urlencoding::encode(query), fetch_limit
+        AUTH_XRPC, urlencoding::encode(query), fetch_limit
     );
     println!("bluesky: search_posts fetching from URL: {}", url);
     if let Some(ref c) = cursor {
@@ -1114,8 +1143,11 @@ pub async fn get_follows(
         url.push_str(&format!("&cursor={}", c));
     }
 
-    let response = client.get(&url)
-        .header("Authorization", format!("Bearer {}", access_jwt))
+    let mut req = client.get(&url);
+    if !access_jwt.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", access_jwt));
+    }
+    let response = req
         .send()
         .await
         .map_err(|e| format!("Follows fetch failed: {}", e))?;
@@ -1227,7 +1259,7 @@ pub async fn get_saved_feeds(
     }
 
     // 3. Resolve Feed Generators (best effort, tolerant to partial/invalid feeds)
-    let feeds_url = format!("{}/app.bsky.feed.getFeedGenerators", PUBLIC_XRPC);
+    let feeds_url = format!("{}/app.bsky.feed.getFeedGenerators", AUTH_XRPC);
     let mut resolved_feeds: Vec<GeneratorView> = Vec::new();
 
     // Query in small batches to avoid 400/414 from a single bad URI poisoning all results.
@@ -1296,7 +1328,7 @@ pub async fn get_custom_feed(
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
     let encoded_feed = urlencoding::encode(feed_uri);
-    let mut url = format!("{}/app.bsky.feed.getFeed?feed={}&limit={}", PUBLIC_XRPC, encoded_feed, limit);
+    let mut url = format!("{}/app.bsky.feed.getFeed?feed={}&limit={}", AUTH_XRPC, encoded_feed, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", urlencoding::encode(&c)));
     }
@@ -1337,7 +1369,7 @@ pub async fn get_actor_likes(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to create client: {}", e))?;
-    let mut url = format!("{}/app.bsky.feed.getActorLikes?actor={}&limit={}", PUBLIC_XRPC, actor, limit);
+    let mut url = format!("{}/app.bsky.feed.getActorLikes?actor={}&limit={}", AUTH_XRPC, actor, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", c));
     }
@@ -1626,7 +1658,7 @@ pub async fn import_bluesky_likes(
 
         let mut url = format!(
             "{}/app.bsky.feed.getActorLikes?actor={}&limit=100",
-            PUBLIC_XRPC, actor
+            AUTH_XRPC, actor
         );
         if let Some(ref c) = cursor {
             url.push_str(&format!("&cursor={}", c));
@@ -1756,7 +1788,7 @@ pub async fn get_all_follows(
     let mut cursor: Option<String> = None;
 
     loop {
-        let mut url = format!("{}/app.bsky.graph.getFollows?actor={}&limit=100", PUBLIC_XRPC, actor);
+        let mut url = format!("{}/app.bsky.graph.getFollows?actor={}&limit=100", AUTH_XRPC, actor);
         if let Some(ref c) = cursor {
             url.push_str(&format!("&cursor={}", c));
         }
@@ -1795,7 +1827,7 @@ pub async fn get_all_followers(
     let mut cursor: Option<String> = None;
 
     loop {
-        let mut url = format!("{}/app.bsky.graph.getFollowers?actor={}&limit=100", PUBLIC_XRPC, actor);
+        let mut url = format!("{}/app.bsky.graph.getFollowers?actor={}&limit=100", AUTH_XRPC, actor);
         if let Some(ref c) = cursor {
             url.push_str(&format!("&cursor={}", c));
         }
