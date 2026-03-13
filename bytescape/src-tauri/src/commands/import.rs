@@ -1485,12 +1485,111 @@ pub async fn send_bsky_dm(
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
     if state.is_oauth_session() {
-        // Saved feeds require getPreferences which needs DPoP auth on the user's PDS.
-        // For now, return an empty list — the timeline still works via get_timeline.
-        return Ok(Vec::new());
+        // OAuth path: use DPoP-authenticated XRPC helpers
+        return list_saved_feeds_oauth(&state).await;
     }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+}
+
+/// OAuth-aware implementation of saved feeds fetching.
+///
+/// Uses the unified XRPC helpers to make DPoP-authenticated requests
+/// for getPreferences and getFeedGenerators.
+async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
+    use crate::connectors::bluesky::GeneratorView;
+
+    // 1. Fetch preferences via OAuth
+    let prefs_json = state
+        .xrpc_get("app.bsky.actor.getPreferences")
+        .await?;
+
+    // 2. Extract feed URIs from preferences
+    fn collect_feed_uris(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => {
+                if s.starts_with("at://") && s.contains("/app.bsky.feed.generator/") {
+                    out.push(s.to_string());
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr { collect_feed_uris(v, out); }
+            }
+            serde_json::Value::Object(map) => {
+                if let Some(v) = map.get("value").and_then(|v| v.as_str()) {
+                    if v.starts_with("at://") && v.contains("/app.bsky.feed.generator/") {
+                        out.push(v.to_string());
+                    }
+                }
+                if let Some(v) = map.get("uri").and_then(|v| v.as_str()) {
+                    if v.starts_with("at://") && v.contains("/app.bsky.feed.generator/") {
+                        out.push(v.to_string());
+                    }
+                }
+                for v in map.values() { collect_feed_uris(v, out); }
+            }
+            _ => {}
+        }
+    }
+
+    let mut feed_uris = Vec::new();
+    if let Some(prefs) = prefs_json.get("preferences").and_then(|p| p.as_array()) {
+        for pref in prefs {
+            collect_feed_uris(pref, &mut feed_uris);
+        }
+    }
+
+    // Deduplicate
+    let mut seen = std::collections::HashSet::new();
+    feed_uris.retain(|uri| seen.insert(uri.clone()));
+
+    if feed_uris.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 3. Resolve feed generators in batches via OAuth
+    let mut resolved_feeds: Vec<GeneratorView> = Vec::new();
+    for chunk in feed_uris.chunks(10) {
+        let params: Vec<String> = chunk.iter().map(|uri| format!("feeds={}", urlencoding::encode(uri))).collect();
+        let query = params.join("&");
+        let endpoint = format!("app.bsky.feed.getFeedGenerators?{}", query);
+
+        match state.xrpc_get(&endpoint).await {
+            Ok(resp) => {
+                if let Some(feeds) = resp.get("feeds").and_then(|f| f.as_array()) {
+                    for feed in feeds {
+                        if let Ok(view) = serde_json::from_value::<GeneratorView>(feed.clone()) {
+                            resolved_feeds.push(view);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("OAuth: getFeedGenerators batch error: {}", e);
+            }
+        }
+    }
+
+    // 4. Synthetic fallback for unresolved URIs
+    let resolved_uris: std::collections::HashSet<String> = resolved_feeds.iter().map(|f| f.uri.clone()).collect();
+    for uri in feed_uris {
+        if resolved_uris.contains(&uri) { continue; }
+        let trimmed = uri.trim_start_matches("at://");
+        let mut parts = trimmed.split('/');
+        let did = parts.next().unwrap_or_default().to_string();
+        let _collection = parts.next();
+        let rkey = parts.next().unwrap_or("feed");
+        resolved_feeds.push(GeneratorView {
+            uri: uri.clone(),
+            cid: String::new(),
+            did,
+            display_name: Some(rkey.replace('-', " ")),
+            description: None,
+            avatar: None,
+        });
+    }
+
+    Ok(resolved_feeds)
 }
 
 /// List profiles this actor follows.
@@ -1533,12 +1632,183 @@ pub async fn get_unified_feed(
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     if state.is_oauth_session() {
-        // Unified feed aggregation requires multiple auth-dependent calls.
-        // Fall back to basic timeline for OAuth sessions.
-        return Err("Unified feed requires App Password login. Use the timeline instead.".to_string());
+        // OAuth path: use DPoP-authenticated XRPC for each sub-query
+        return get_unified_feed_oauth(&state, tags, feed_uris, limit, cursor).await;
     }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+}
+
+/// OAuth-aware unified feed aggregation.
+///
+/// Fetches hashtag search results and custom feed posts via DPoP-authenticated
+/// XRPC helpers, then merges and deduplicates by URI.
+async fn get_unified_feed_oauth(
+    state: &AppState,
+    tags: Vec<String>,
+    feed_uris: Vec<String>,
+    limit: u8,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    use crate::connectors::bluesky::BlueskyImportedPost;
+
+    let parsed_cursor: crate::connectors::bluesky::UnifiedCursor = cursor
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+
+    let mut all_posts: Vec<BlueskyImportedPost> = Vec::new();
+    let mut next_cursor = crate::connectors::bluesky::UnifiedCursor::default();
+
+    // 1. Hashtag search — get raw JSON via OAuth, then parse with existing parsers
+    if !tags.is_empty() {
+        let tag_query = tags.join(" OR ");
+        let mut search_endpoint = format!(
+            "app.bsky.feed.searchPosts?q={}&limit={}",
+            urlencoding::encode(&tag_query),
+            limit
+        );
+        if let Some(ref c) = parsed_cursor.hashtag_cursor {
+            search_endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        match state.xrpc_get(&search_endpoint).await {
+            Ok(resp) => {
+                // searchPosts returns { posts: [...], cursor: ... }
+                // Convert to the feed format that parse_feed_json expects
+                if let Some(posts_arr) = resp.get("posts").and_then(|p| p.as_array()) {
+                    let strict_tags: Vec<String> = tags.iter()
+                        .map(|t| t.trim_start_matches('#').to_lowercase())
+                        .collect();
+                    for post_val in posts_arr {
+                        // Parse each post using manual extraction (search results are FeedPost, not FeedItem)
+                        if let Some(post) = parse_search_post_json(post_val) {
+                            let post_text = post.text.to_lowercase();
+                            if strict_tags.iter().any(|t| post_text.contains(t)) {
+                                all_posts.push(post);
+                            }
+                        }
+                    }
+                }
+                next_cursor.hashtag_cursor = resp
+                    .get("cursor")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string());
+            }
+            Err(e) => eprintln!("OAuth unified feed: hashtag search error: {}", e),
+        }
+    }
+
+    // 2. Custom feed posts — get raw JSON via OAuth, parse with parse_feed_json
+    let uris = if feed_uris.is_empty() {
+        match list_saved_feeds_oauth(state).await {
+            Ok(views) => views.into_iter()
+                .map(|v| v.uri)
+                .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        feed_uris
+    };
+
+    for feed_uri in &uris {
+        let mut endpoint = format!(
+            "app.bsky.feed.getFeed?feed={}&limit={}",
+            urlencoding::encode(feed_uri),
+            limit
+        );
+        if let Some(c) = parsed_cursor.feed_cursors.get(feed_uri.as_str()) {
+            endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        match state.xrpc_get(&endpoint).await {
+            Ok(resp) => {
+                // getFeed returns { feed: [...], cursor: ... } — same shape as getTimeline
+                let json_str = serde_json::to_string(&resp).unwrap_or_default();
+                if let Ok((posts, _)) = crate::connectors::bluesky::parse_feed_json(&json_str) {
+                    all_posts.extend(posts);
+                }
+                if let Some(c) = resp.get("cursor").and_then(|c| c.as_str()) {
+                    next_cursor.feed_cursors.insert(feed_uri.clone(), c.to_string());
+                }
+            }
+            Err(e) => eprintln!("OAuth unified feed: getFeed error for {}: {}", feed_uri, e),
+        }
+    }
+
+    // 3. Deduplicate by URI
+    let mut seen = std::collections::HashSet::new();
+    all_posts.retain(|p| seen.insert(p.uri.clone()));
+
+    // Sort by timestamp descending
+    all_posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all_posts.truncate(limit as usize);
+
+    let cursor_str = serde_json::to_string(&next_cursor).ok();
+    Ok((all_posts, cursor_str))
+}
+
+/// Parse a single search result post (FeedPost shape) into a BlueskyImportedPost.
+///
+/// Search results have a flat structure unlike timeline items which wrap posts in FeedItem.
+fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connectors::bluesky::BlueskyImportedPost> {
+    use crate::connectors::bluesky::BlueskyImportedPost;
+
+    let uri = post_val.get("uri")?.as_str()?.to_string();
+    let cid = post_val.get("cid").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+    let author = post_val.get("author")?;
+    let author_did = author.get("did")?.as_str()?.to_string();
+    let author_handle = author.get("handle").and_then(|h| h.as_str()).unwrap_or_default().to_string();
+    let author_avatar = author.get("avatar").and_then(|a| a.as_str()).map(|s| s.to_string());
+
+    let record = post_val.get("record")?;
+    let text = record.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+    let created_at = record.get("createdAt")
+        .and_then(|c| c.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    let reply_count = post_val.get("replyCount").and_then(|v| v.as_i64());
+    let repost_count = post_val.get("repostCount").and_then(|v| v.as_i64());
+    let like_count = post_val.get("likeCount").and_then(|v| v.as_i64());
+
+    let viewer_like = post_val.get("viewer")
+        .and_then(|v| v.get("like"))
+        .and_then(|l| l.as_str())
+        .map(|s| s.to_string());
+    let viewer_repost = post_val.get("viewer")
+        .and_then(|v| v.get("repost"))
+        .and_then(|r| r.as_str())
+        .map(|s| s.to_string());
+
+    Some(BlueskyImportedPost {
+        uri,
+        cid,
+        text,
+        created_at,
+        image_urls: Vec::new(),
+        image_local_paths: Vec::new(),
+        author_did,
+        author_handle,
+        author_avatar,
+        reply_count,
+        repost_count,
+        like_count,
+        video_url: None,
+        video_thumbnail: None,
+        external_url: None,
+        external_title: None,
+        external_description: None,
+        external_thumb: None,
+        reposted_by: None,
+        reposted_by_handle: None,
+        reply_parent_handle: None,
+        reply_parent_uri: None,
+        quoted_post: None,
+        viewer_like,
+        viewer_repost,
+    })
 }
 
 /// Publish a new post with explicit destination routing.
