@@ -407,7 +407,7 @@ pub fn run() {
                 .unwrap_or_else(|_| "default_dev_password_CHANGE_IN_PRODUCTION".to_string());
             let keychain = keychain_encrypted::EncryptedKeychain::new(
                 keychain_path,
-                master_password,
+                master_password.clone(),
             );
 
             // Initialize database
@@ -421,7 +421,10 @@ pub fn run() {
             let auth_manager = AuthManager::new();
 
             // Initialize OAuth manager for Bluesky OAuth login
-            let oauth_manager = oauth::OAuthManager::new()
+            let oauth_manager = oauth::OAuthManager::new(
+                app_data_dir.clone(),
+                master_password.clone(),
+            )
                 .map_err(|e| format!("OAuth manager init failed: {}", e))?;
 
             // Initialize chat client
@@ -450,6 +453,30 @@ pub fn run() {
             };
 
             app.manage(state);
+
+            // Background: restore OAuth session if one was active before the app closed
+            let restore_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let state = restore_handle.state::<AppState>();
+                if state.is_oauth_session() {
+                    match state.get_user_did() {
+                        Ok(did) => {
+                            println!("Startup: Restoring OAuth session for {}...", did);
+                            match state.oauth_manager.restore_session(&did).await {
+                                Ok(()) => println!("Startup: OAuth session restored successfully"),
+                                Err(e) => {
+                                    eprintln!("Startup: OAuth session restore failed: {}", e);
+                                    eprintln!("Startup: User will need to re-authenticate");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Startup: Cannot restore OAuth — no DID in keychain: {}", e);
+                        }
+                    }
+                }
+            });
 
             // Background: backfill media_mimes for existing items
             let backfill_handle = app.handle().clone();

@@ -11,13 +11,18 @@
 //! 4. Callback server exchanges code for tokens via DPoP + PKCE
 //! 5. Session stored, Tauri event emitted → frontend updates
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use base64::Engine;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, oneshot};
 
+use atrium_api::types::string::Did;
+use atrium_common::store::Store;
 use atrium_identity::{
     did::{CommonDidResolver, CommonDidResolverConfig, DEFAULT_PLC_DIRECTORY_URL},
     handle::{AtprotoHandleResolver, AtprotoHandleResolverConfig, DnsTxtResolver},
@@ -25,7 +30,10 @@ use atrium_identity::{
 use atrium_oauth::{
     AtprotoLocalhostClientMetadata, AuthorizeOptions, CallbackParams, DefaultHttpClient,
     KnownScope, OAuthClient, OAuthClientConfig, OAuthResolverConfig, OAuthSession, Scope,
-    store::{session::MemorySessionStore, state::MemoryStateStore},
+    store::{
+        session::{Session, SessionStore},
+        state::MemoryStateStore,
+    },
 };
 
 /// Fixed port for the OAuth callback server.
@@ -80,6 +88,190 @@ impl DnsTxtResolver for CloudflareDnsTxtResolver {
     }
 }
 
+// ─── Persistent Session Store (encrypted file-backed) ───────────────────────
+//
+// Replaces MemorySessionStore so OAuth sessions survive app restarts.
+// Uses ChaCha20-Poly1305 + Argon2id (same primitives as EncryptedKeychain).
+
+const SESSION_FILE_NAME: &str = "oauth_sessions.enc";
+const SESSION_SALT_LEN: usize = 16;
+const SESSION_NONCE_LEN: usize = 12;
+
+/// File-backed session store with at-rest encryption.
+///
+/// Implements `Store<Did, Session>` + `SessionStore` for atrium-oauth.
+/// Sessions are held in an in-memory HashMap for fast access and flushed
+/// to an encrypted file on every mutation (`set`, `del`, `clear`).
+pub struct FileSessionStore {
+    /// In-memory cache of all sessions (DID → Session).
+    cache: tokio::sync::Mutex<HashMap<String, Session>>,
+    /// Path to the encrypted session file.
+    file_path: PathBuf,
+    /// Master password for Argon2id key derivation.
+    master_password: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("session store error: {0}")]
+pub struct FileSessionStoreError(String);
+
+impl FileSessionStore {
+    /// Create a new FileSessionStore, loading any existing sessions from disk.
+    pub fn new(data_dir: PathBuf, master_password: String) -> Self {
+        let file_path = data_dir.join(SESSION_FILE_NAME);
+        let sessions = Self::load_from_disk(&file_path, &master_password)
+            .unwrap_or_default();
+        println!(
+            "FileSessionStore: Loaded {} persisted OAuth session(s) from {:?}",
+            sessions.len(),
+            file_path
+        );
+        Self {
+            cache: tokio::sync::Mutex::new(sessions),
+            file_path,
+            master_password,
+        }
+    }
+
+    /// Derive a 256-bit encryption key from the master password + salt using Argon2id.
+    fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], FileSessionStoreError> {
+        use argon2::Argon2;
+        let argon2 = Argon2::default();
+        let mut key = [0u8; 32];
+        argon2
+            .hash_password_into(password.as_bytes(), salt, &mut key)
+            .map_err(|e| FileSessionStoreError(format!("KDF failed: {}", e)))?;
+        Ok(key)
+    }
+
+    /// Encrypt and persist the current session map to disk.
+    fn flush_to_disk(
+        sessions: &HashMap<String, Session>,
+        file_path: &PathBuf,
+        master_password: &str,
+    ) -> Result<(), FileSessionStoreError> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
+        use rand::RngCore;
+
+        let json = serde_json::to_string(sessions)
+            .map_err(|e| FileSessionStoreError(format!("Serialize: {}", e)))?;
+
+        let mut salt = vec![0u8; SESSION_SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; SESSION_NONCE_LEN];
+        rand::rng().fill_bytes(&mut nonce_bytes);
+
+        let key = Self::derive_key(master_password, &salt)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| FileSessionStoreError(format!("Cipher init: {}", e)))?;
+
+        let nonce = Nonce::from(nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(&nonce, json.as_bytes())
+            .map_err(|e| FileSessionStoreError(format!("Encrypt: {}", e)))?;
+
+        // Wire format: salt || nonce || ciphertext → base64-encoded JSON wrapper
+        let mut blob = salt;
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&blob);
+        let wrapper = serde_json::json!({ "encrypted_sessions": encoded });
+        let content = serde_json::to_string_pretty(&wrapper)
+            .map_err(|e| FileSessionStoreError(format!("JSON wrap: {}", e)))?;
+
+        std::fs::write(file_path, content)
+            .map_err(|e| FileSessionStoreError(format!("Write: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load and decrypt sessions from disk. Returns empty map on any failure.
+    fn load_from_disk(
+        file_path: &PathBuf,
+        master_password: &str,
+    ) -> Result<HashMap<String, Session>, FileSessionStoreError> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
+
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(HashMap::new());
+            }
+            Err(e) => return Err(FileSessionStoreError(format!("Read: {}", e))),
+        };
+
+        let wrapper: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| FileSessionStoreError(format!("JSON parse: {}", e)))?;
+
+        let encoded = wrapper["encrypted_sessions"]
+            .as_str()
+            .ok_or_else(|| FileSessionStoreError("Missing encrypted_sessions field".into()))?;
+
+        let blob = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| FileSessionStoreError(format!("Decode: {}", e)))?;
+
+        if blob.len() <= SESSION_SALT_LEN + SESSION_NONCE_LEN {
+            return Err(FileSessionStoreError("Blob too short".into()));
+        }
+
+        let salt = &blob[..SESSION_SALT_LEN];
+        let nonce_bytes = &blob[SESSION_SALT_LEN..SESSION_SALT_LEN + SESSION_NONCE_LEN];
+        let ciphertext = &blob[SESSION_SALT_LEN + SESSION_NONCE_LEN..];
+
+        let key = Self::derive_key(master_password, salt)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| FileSessionStoreError(format!("Cipher init: {}", e)))?;
+
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| FileSessionStoreError("Decryption failed — wrong password?".into()))?;
+
+        let sessions: HashMap<String, Session> = serde_json::from_slice(&plaintext)
+            .map_err(|e| FileSessionStoreError(format!("Deserialize: {}", e)))?;
+
+        Ok(sessions)
+    }
+}
+
+impl Store<Did, Session> for FileSessionStore {
+    type Error = FileSessionStoreError;
+
+    async fn get(&self, key: &Did) -> Result<Option<Session>, Self::Error> {
+        let cache = self.cache.lock().await;
+        Ok(cache.get(key.as_str()).cloned())
+    }
+
+    async fn set(&self, key: Did, value: Session) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.insert(key.as_str().to_string(), value);
+        Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
+        println!("FileSessionStore: Persisted session for {}", key.as_str());
+        Ok(())
+    }
+
+    async fn del(&self, key: &Did) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.remove(key.as_str());
+        Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
+        println!("FileSessionStore: Removed session for {}", key.as_str());
+        Ok(())
+    }
+
+    async fn clear(&self) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.clear();
+        // Delete the file entirely
+        let _ = std::fs::remove_file(&self.file_path);
+        println!("FileSessionStore: Cleared all sessions");
+        Ok(())
+    }
+}
+
+impl SessionStore for FileSessionStore {}
+
 // ─── Concrete Type Aliases ──────────────────────────────────────────────────
 //
 // The atrium-oauth crate is heavily generic. These aliases pin the concrete
@@ -91,7 +283,7 @@ type OAuthHandleResolver = AtprotoHandleResolver<CloudflareDnsTxtResolver, OAuth
 
 type ConcreteOAuthClient = OAuthClient<
     MemoryStateStore,
-    MemorySessionStore,
+    FileSessionStore,
     OAuthDidResolver,
     OAuthHandleResolver,
     OAuthHttp,
@@ -101,7 +293,7 @@ type ConcreteOAuthSession = OAuthSession<
     OAuthHttp,
     OAuthDidResolver,
     OAuthHandleResolver,
-    MemorySessionStore,
+    FileSessionStore,
 >;
 
 // ─── OAuth Manager ─────────────────────────────────────────────────────────
@@ -114,12 +306,15 @@ pub struct OAuthManager {
     /// The live OAuth session after successful authentication.
     /// Used for DPoP-authenticated API calls.
     /// Access via `clear_session()`, `has_session()`, etc.
-    session: Mutex<Option<ConcreteOAuthSession>>,
+    pub(crate) session: Mutex<Option<ConcreteOAuthSession>>,
 }
 
 impl OAuthManager {
-    /// Create a new OAuthManager with the AT Protocol localhost client metadata.
-    pub fn new() -> Result<Self, String> {
+    /// Create a new OAuthManager with persistent file-backed session storage.
+    ///
+    /// `data_dir` is the Tauri app data directory where `oauth_sessions.enc` will be stored.
+    /// `master_password` is the same password used by `EncryptedKeychain`.
+    pub fn new(data_dir: PathBuf, master_password: String) -> Result<Self, String> {
         let http_client = Arc::new(DefaultHttpClient::default());
         let redirect_uri = format!("http://127.0.0.1:{}/callback", OAUTH_CALLBACK_PORT);
 
@@ -147,7 +342,7 @@ impl OAuthManager {
                 protected_resource_metadata: Default::default(),
             },
             state_store: MemoryStateStore::default(),
-            session_store: MemorySessionStore::default(),
+            session_store: FileSessionStore::new(data_dir, master_password),
         };
 
         let client =
@@ -158,6 +353,28 @@ impl OAuthManager {
             callback_shutdown: Mutex::new(None),
             session: Mutex::new(None),
         })
+    }
+
+    /// Restore a previously persisted OAuth session by DID.
+    ///
+    /// Called on app startup when the keychain indicates an OAuth session was active.
+    /// The `FileSessionStore` already has the session data loaded from disk;
+    /// `client.restore()` reads from it and rebuilds a live `OAuthSession`
+    /// with working DPoP credentials and automatic token refresh.
+    pub async fn restore_session(&self, did: &str) -> Result<(), String> {
+        let did: Did = did
+            .parse()
+            .map_err(|_| format!("Invalid DID for session restore: {}", did))?;
+
+        let session = self
+            .client
+            .restore(&did)
+            .await
+            .map_err(|e| format!("OAuth session restore failed: {}", e))?;
+
+        *self.session.lock().await = Some(session);
+        println!("OAuth: Restored persisted session for {}", did.as_str());
+        Ok(())
     }
 
     /// Start the OAuth authorization flow for a given Bluesky handle.
