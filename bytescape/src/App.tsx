@@ -50,6 +50,7 @@ import { AuditScreen } from "./screens/AuditScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
+import { ProfileBuilderScreen } from "./screens/ProfileBuilderScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
@@ -492,7 +493,7 @@ function App() {
         setScreen("peer-profile");
         setActiveSidebar("social");
       }}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile") ? {
+      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder") ? {
         padding: 0,
         height: '100%',
         overflow: 'hidden',
@@ -544,6 +545,10 @@ function App() {
             auth={auth}
             archiveCount={archiveCount}
           />
+        )}
+
+        {screen === "profile-builder" && (
+          <ProfileBuilderScreen />
         )}
 
         {screen === "chat" && (

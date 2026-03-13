@@ -22,6 +22,8 @@
     "@tiptap/react": "^3.20.1",
     "@tiptap/starter-kit": "^3.20.1",
     "dompurify": "^3.3.3",
+    "grapesjs": "^0.22.14",
+    "grapesjs-preset-webpage": "^1.0.3",
     "hls.js": "^1.6.15",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

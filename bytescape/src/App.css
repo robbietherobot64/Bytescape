@@ -5568,6 +5568,137 @@ textarea::placeholder {
     color: var(--link-hover);
 }
 
+/* ─── RICH TEXT FACETS (C1.1b) ─── */
+
+.facet-mention {
+    color: var(--link-visited);
+    cursor: pointer;
+    text-decoration: none;
+    font-weight: 500;
+}
+.facet-mention:hover {
+    text-decoration: underline;
+    color: var(--link-hover);
+}
+
+.facet-hashtag {
+    color: var(--accent-teal);
+    cursor: pointer;
+    text-decoration: none;
+    font-weight: 500;
+}
+.facet-hashtag:hover {
+    text-decoration: underline;
+    color: var(--link-hover);
+}
+
+.facet-link {
+    color: var(--link-blue);
+    text-decoration: none;
+    word-break: break-all;
+}
+.facet-link:hover {
+    text-decoration: underline;
+    color: var(--link-hover);
+}
+
+/* ─── AUTOCOMPLETE DROPDOWN (C1.2b / C1.3b) ─── */
+
+.autocomplete-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    margin-bottom: 4px;
+    background: var(--bg-card);
+    border: 2px solid;
+    border-color: var(--border-outset-light) var(--border-outset-dark) var(--border-outset-dark) var(--border-outset-light);
+    box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 100;
+    font-size: 0.85rem;
+}
+
+.autocomplete-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+}
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+    background: var(--bg-card-hover);
+    outline: 1px dotted var(--text-muted);
+}
+
+.autocomplete-mention-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.autocomplete-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--bg-panel);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+.autocomplete-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.autocomplete-mention-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.autocomplete-handle {
+    color: var(--link-visited);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.autocomplete-hashtag-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+}
+
+.autocomplete-hashtag-icon {
+    color: var(--accent-teal);
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.autocomplete-tag-text {
+    color: var(--text-primary);
+}
+
+.autocomplete-loading,
+.autocomplete-empty {
+    padding: 8px 10px;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.8rem;
+    text-align: center;
+}
+
 /* ─── ARTICLE EDITOR (Tiptap) ─── */
 .article-editor-container {
     border: var(--border-default);
@@ -5781,4 +5912,118 @@ textarea::placeholder {
     background: var(--accent-teal);
     transition: width 0.1s linear;
     z-index: 10;
+}
+
+/* ═══════════════════════════════════════════════════════
+   GrapesJS PROFILE BUILDER OVERRIDES
+   Theme the GrapesJS editor to match the Bytescape aesthetic.
+   ═══════════════════════════════════════════════════════ */
+
+.profile-builder-editor .gjs-one-bg {
+    background: var(--bg-sidebar, #336);
+}
+
+.profile-builder-editor .gjs-two-color {
+    color: var(--text-primary, #e2e8f0);
+}
+
+.profile-builder-editor .gjs-three-bg {
+    background: var(--bg-toolbar, #d4d0c8);
+}
+
+.profile-builder-editor .gjs-four-color,
+.profile-builder-editor .gjs-four-color-h:hover {
+    color: var(--accent-teal, #008080);
+}
+
+/* Panel backgrounds */
+.profile-builder-editor .gjs-pn-panel {
+    background: var(--bg-sidebar, #336);
+    border-color: var(--border-color, #2d2d4e);
+}
+
+/* Block items */
+.profile-builder-editor .gjs-block {
+    background: var(--bg-panel, #e8e0d0);
+    border: var(--border-default, 1px solid #999);
+    border-radius: 3px;
+    color: var(--text-primary, #333);
+    box-shadow: var(--bevel-raised, 1px 1px 0 #fff, inset 1px 1px 0 #fff);
+    min-height: 60px;
+    padding: 8px;
+    transition: box-shadow 0.15s;
+}
+
+.profile-builder-editor .gjs-block:hover {
+    box-shadow: var(--bevel-sunken, inset 1px 1px 0 #808080, inset -1px -1px 0 #fff);
+}
+
+.profile-builder-editor .gjs-block__media {
+    font-size: 22px;
+}
+
+/* Canvas frame */
+.profile-builder-editor .gjs-frame-wrapper {
+    background: var(--bg-page, #c0c0c0);
+}
+
+/* Category headers */
+.profile-builder-editor .gjs-title {
+    background: var(--bg-toolbar, #d4d0c8);
+    color: var(--text-primary, #333);
+    border-bottom: var(--border-default, 1px solid #999);
+    padding: 6px 10px;
+    font-family: var(--font-primary, 'Verdana', 'Geneva', sans-serif);
+    font-size: 12px;
+    font-weight: bold;
+}
+
+/* Style manager inputs */
+.profile-builder-editor .gjs-field {
+    background: var(--bg-input, #fff);
+    border: var(--border-default, 1px solid #999);
+    box-shadow: var(--bevel-sunken, inset 1px 1px 0 #808080, inset -1px -1px 0 #fff);
+    color: var(--text-primary, #333);
+}
+
+.profile-builder-editor .gjs-field input,
+.profile-builder-editor .gjs-field select {
+    color: var(--text-primary, #333);
+}
+
+/* Toolbar icons */
+.profile-builder-editor .gjs-toolbar .gjs-toolbar-item {
+    background: var(--bg-toolbar, #d4d0c8);
+    border: var(--border-default, 1px solid #999);
+    color: var(--text-primary, #333);
+    box-shadow: var(--bevel-raised, 1px 1px 0 #fff, inset 1px 1px 0 #fff);
+}
+
+.profile-builder-editor .gjs-toolbar .gjs-toolbar-item:hover {
+    background: var(--accent-teal, #008080);
+    color: #fff;
+}
+
+/* Layer manager */
+.profile-builder-editor .gjs-layer-name {
+    color: var(--text-primary, #333);
+}
+
+/* Canvas highlight for selected elements */
+.profile-builder-editor .gjs-selected {
+    outline: 2px solid var(--accent-teal, #008080) !important;
+}
+
+/* Resize handles */
+.profile-builder-editor .gjs-resizer-h {
+    border-color: var(--accent-teal, #008080);
+}
+
+/* Profile hero edit button */
+.profile-hero {
+    position: relative;
+}
+
+.profile-edit-btn:hover {
+    background: rgba(124, 58, 237, 0.4) !important;
 }

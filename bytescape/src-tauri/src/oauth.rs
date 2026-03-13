@@ -125,10 +125,10 @@ impl FileSessionStore {
         let file_path = data_dir.join(SESSION_FILE_NAME);
         let sessions = Self::load_from_disk(&file_path, &master_password)
             .unwrap_or_default();
+        #[cfg(debug_assertions)]
         println!(
-            "FileSessionStore: Loaded {} persisted OAuth session(s) from {:?}",
+            "FileSessionStore: Loaded {} session(s)",
             sessions.len(),
-            file_path
         );
         Self {
             cache: tokio::sync::Mutex::new(sessions),
@@ -252,7 +252,8 @@ impl Store<Did, Session> for FileSessionStore {
         let mut cache = self.cache.lock().await;
         cache.insert(key.as_str().to_string(), value);
         Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
-        println!("FileSessionStore: Persisted session for {}", key.as_str());
+        #[cfg(debug_assertions)]
+        println!("FileSessionStore: Persisted session for did:***");
         Ok(())
     }
 
@@ -260,7 +261,8 @@ impl Store<Did, Session> for FileSessionStore {
         let mut cache = self.cache.lock().await;
         cache.remove(key.as_str());
         Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
-        println!("FileSessionStore: Removed session for {}", key.as_str());
+        #[cfg(debug_assertions)]
+        println!("FileSessionStore: Removed session");
         Ok(())
     }
 
@@ -269,6 +271,7 @@ impl Store<Did, Session> for FileSessionStore {
         cache.clear();
         // Delete the file entirely
         let _ = std::fs::remove_file(&self.file_path);
+        #[cfg(debug_assertions)]
         println!("FileSessionStore: Cleared all sessions");
         Ok(())
     }
@@ -386,7 +389,8 @@ impl OAuthManager {
             .map_err(|e| format!("OAuth session restore failed: {}", e))?;
 
         *self.session.lock().await = Some(session);
-        println!("OAuth: Restored persisted session for {}", did.as_str());
+        #[cfg(debug_assertions)]
+        println!("OAuth: Restored persisted session");
         Ok(())
     }
 
@@ -899,9 +903,7 @@ impl OAuthManager {
         use atrium_xrpc::XrpcClient;
         use atrium_api::agent::CloneWithProxy;
 
-        println!("authenticated_chat_get: url={}", url);
         let (nsid, query) = Self::parse_xrpc_url(url)?;
-        println!("authenticated_chat_get: nsid={}, query={:?}", nsid, query);
 
         let session_guard = self.session.lock().await;
         let session = session_guard

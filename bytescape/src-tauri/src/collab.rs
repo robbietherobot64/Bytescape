@@ -12,7 +12,7 @@
 //!   it back to the linked BytescapeItem's `content` field
 
 use serde::{Deserialize, Serialize};
-use yrs::{Doc, GetString, ReadTxn, Transact, updates::decoder::Decode, updates::encoder::Encode, Update, StateVector};
+use yrs::{Doc, ReadTxn, Transact, updates::decoder::Decode, updates::encoder::Encode, Update, StateVector};
 use base64::Engine;
 use redb::{ReadableDatabase, ReadableTable};
 
@@ -190,38 +190,19 @@ impl DbManager {
         Ok((record.state_b64, sv_b64, record.meta))
     }
 
-    /// Snapshot the Yjs document's text content into the linked BytescapeItem.
-    /// Extracts all text from the Yjs doc and writes it to the item's `content` field.
+    /// Snapshot content into the linked BytescapeItem.
+    /// Accepts the rendered content from the frontend (since Tiptap uses
+    /// Y.XmlFragment which cannot be trivially read as plain text in Rust).
     pub fn snapshot_collab_to_item(
         &self,
         doc_id: &str,
+        content: &str,
     ) -> Result<String, String> {
         let record = self.get_collab_record(doc_id)?;
 
         let item_id = record.meta.item_id.as_ref()
             .ok_or_else(|| "Document has no linked item_id".to_string())?
             .clone();
-
-        // Decode state and extract text
-        let state_bytes = base64::engine::general_purpose::STANDARD
-            .decode(&record.state_b64)
-            .map_err(|e| format!("Failed to decode state: {}", e))?;
-
-        let doc = Doc::new();
-        {
-            let mut txn = doc.transact_mut();
-            let update = Update::decode_v1(&state_bytes)
-                .map_err(|e| format!("Failed to decode Yjs state: {}", e))?;
-            txn.apply_update(update)
-                .map_err(|e| format!("Failed to apply state: {}", e))?;
-        }
-
-        // Extract text from the default Text type
-        let text_content = {
-            let txn = doc.transact();
-            let text_ref = doc.get_or_insert_text("content");
-            text_ref.get_string(&txn)
-        };
 
         // Read the linked BytescapeItem directly (blocking, no async)
         let db = self.db.blocking_read();
@@ -249,7 +230,7 @@ impl DbManager {
         drop(db);
 
         let mut item = item.ok_or_else(|| format!("Linked item {} not found", item_id))?;
-        item.content = text_content;
+        item.content = content.to_string();
 
         // Persist the updated item (blocking write)
         let serialized = serde_json::to_string(&item).map_err(|e| e.to_string())?;
