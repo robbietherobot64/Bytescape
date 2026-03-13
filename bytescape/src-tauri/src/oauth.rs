@@ -36,9 +36,13 @@ use atrium_oauth::{
     },
 };
 
-/// Fixed port for the OAuth callback server.
+/// Preferred port for the OAuth callback server.
 /// The browser redirects here after authentication.
-const OAUTH_CALLBACK_PORT: u16 = 28457;
+const OAUTH_PREFERRED_PORT: u16 = 28457;
+
+/// Fallback ports tried if the preferred port is already in use.
+/// All ports are registered in the OAuth client metadata's redirect_uris.
+const OAUTH_FALLBACK_PORTS: &[u16] = &[28458, 28459, 28460, 38457];
 
 // ─── DNS TXT Resolver via Cloudflare DNS-over-HTTPS (JSON API) ──────────────
 //
@@ -316,11 +320,17 @@ impl OAuthManager {
     /// `master_password` is the same password used by `EncryptedKeychain`.
     pub fn new(data_dir: PathBuf, master_password: String) -> Result<Self, String> {
         let http_client = Arc::new(DefaultHttpClient::default());
-        let redirect_uri = format!("http://127.0.0.1:{}/callback", OAUTH_CALLBACK_PORT);
+
+        // Register redirect URIs for all candidate ports
+        let mut redirect_uris: Vec<String> = Vec::with_capacity(1 + OAUTH_FALLBACK_PORTS.len());
+        redirect_uris.push(format!("http://127.0.0.1:{}/callback", OAUTH_PREFERRED_PORT));
+        for &port in OAUTH_FALLBACK_PORTS {
+            redirect_uris.push(format!("http://127.0.0.1:{}/callback", port));
+        }
 
         let config = OAuthClientConfig {
             client_metadata: AtprotoLocalhostClientMetadata {
-                redirect_uris: Some(vec![redirect_uri]),
+                redirect_uris: Some(redirect_uris),
                 scopes: Some(vec![
                     Scope::Known(KnownScope::Atproto),
                     Scope::Known(KnownScope::TransitionGeneric),
@@ -379,8 +389,8 @@ impl OAuthManager {
 
     /// Start the OAuth authorization flow for a given Bluesky handle.
     ///
-    /// 1. Spins up a temporary callback server on `127.0.0.1:{OAUTH_CALLBACK_PORT}`
-    /// 2. Calls the authorization server to get an auth URL
+    /// 1. Binds a callback server (preferred port, then fallbacks)
+    /// 2. Calls the authorization server to get an auth URL with the correct redirect_uri
     /// 3. Returns the URL for the frontend to open in the system browser
     pub async fn start_auth(
         &self,
@@ -390,20 +400,28 @@ impl OAuthManager {
         // Stop any previous callback server
         self.stop_callback_server().await;
 
-        // Spawn raw TCP callback server (avoids warp HRTB lifetime issues with tokio::spawn)
+        // Try binding to ports in order: preferred, then fallbacks
+        let listener = Self::bind_callback_server().await?;
+        let actual_port = listener
+            .local_addr()
+            .map_err(|e| format!("Failed to get listener address: {}", e))?
+            .port();
+        let redirect_uri = format!("http://127.0.0.1:{}/callback", actual_port);
+
+        println!("OAuth: Callback server bound on port {}", actual_port);
+
+        // Spawn the callback server with the already-bound listener
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let client = Arc::clone(&self.client);
         let app = app_handle.clone();
 
         tokio::spawn(async move {
-            Self::run_callback_server(client, shutdown_rx, app).await;
+            Self::run_callback_server(listener, client, shutdown_rx, app).await;
         });
 
         *self.callback_shutdown.lock().await = Some(shutdown_tx);
 
-        // Get authorization URL.
-        // Pass the handle as `state` so we get it back in the callback
-        // (the library stores it alongside PKCE state internally).
+        // Get authorization URL with the actual redirect URI for the bound port
         let url = self
             .client
             .authorize(
@@ -414,6 +432,7 @@ impl OAuthManager {
                         Scope::Known(KnownScope::TransitionGeneric),
                     ],
                     state: Some(handle.to_string()),
+                    redirect_uri: Some(redirect_uri),
                     ..Default::default()
                 },
             )
@@ -423,39 +442,45 @@ impl OAuthManager {
         Ok(url)
     }
 
-    /// Run the callback server using raw TCP.
+    /// Try binding to the preferred port, then fallback ports.
+    ///
+    /// Returns the first successfully bound `TcpListener`.
+    async fn bind_callback_server() -> Result<tokio::net::TcpListener, String> {
+        // Build candidate list: preferred port first, then fallbacks
+        let mut ports = Vec::with_capacity(1 + OAUTH_FALLBACK_PORTS.len());
+        ports.push(OAUTH_PREFERRED_PORT);
+        ports.extend_from_slice(OAUTH_FALLBACK_PORTS);
+
+        for &port in &ports {
+            match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
+                Ok(listener) => return Ok(listener),
+                Err(e) => {
+                    eprintln!(
+                        "OAuth: Port {} unavailable ({}), trying next...",
+                        port, e
+                    );
+                }
+            }
+        }
+
+        Err(format!(
+            "OAuth: All callback ports unavailable ({:?}). Close the conflicting application and try again.",
+            ports
+        ))
+    }
+
+    /// Run the callback server using a pre-bound TCP listener.
     ///
     /// Accepts connections and dispatches each to `handle_tcp_connection`.
     /// Stops when the shutdown signal is received.
     async fn run_callback_server(
+        listener: tokio::net::TcpListener,
         client: Arc<ConcreteOAuthClient>,
         mut shutdown_rx: oneshot::Receiver<()>,
         app_handle: AppHandle,
     ) {
-        let listener = match tokio::net::TcpListener::bind(format!(
-            "127.0.0.1:{}",
-            OAUTH_CALLBACK_PORT
-        ))
-        .await
-        {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!(
-                    "OAuth: Failed to bind callback server on port {}: {}",
-                    OAUTH_CALLBACK_PORT, e
-                );
-                let _ = app_handle.emit(
-                    "oauth-error",
-                    format!("Failed to start callback server: {}", e),
-                );
-                return;
-            }
-        };
-
-        println!(
-            "OAuth: Callback server listening on http://127.0.0.1:{}",
-            OAUTH_CALLBACK_PORT
-        );
+        let addr = listener.local_addr().unwrap();
+        println!("OAuth: Callback server listening on http://{}", addr);
 
         loop {
             tokio::select! {
