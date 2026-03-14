@@ -1135,21 +1135,50 @@ pub async fn get_author_feed(
 pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
     use crate::db::VaultMessage;
     
+    println!("import_vault_messages: ENTER");
+    
     let session = state.keychain.load_session()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
-    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+        .map_err(|e| {
+            eprintln!("import_vault_messages: keychain load_session failed: {}", e);
+            BytescapeError::Keychain(e.to_string())
+        })?;
+    let (user_did, _user_handle) = session.ok_or_else(|| {
+        eprintln!("import_vault_messages: No session found (unauthenticated)");
+        BytescapeError::Unauthenticated
+    })?;
 
+    println!("import_vault_messages: user_did={}, is_oauth={}", user_did, state.is_oauth_session());
     let db_manager = state.db_manager.clone();
 
     if state.is_oauth_session() {
         // OAuth path: use xrpc_chat_get with DPoP + atproto-proxy
-        let convos_resp = state.xrpc_chat_get("chat.bsky.convo.listConvos").await
-            .map_err(|e| format!("Failed to list conversations: {}", e))?;
+        println!("import_vault_messages: OAuth path — calling listConvos...");
+        let convos_resp = match state.xrpc_chat_get("chat.bsky.convo.listConvos").await {
+            Ok(resp) => resp,
+            Err(e) => {
+                eprintln!("import_vault_messages: listConvos FAILED: {}", e);
+                // If the scope is missing, the user needs to re-authenticate
+                // with the updated OAuth scopes. Return a non-error response
+                // so polling doesn't spam the logs.
+                if e.contains("ScopeMissing") || e.contains("scope") {
+                    println!("import_vault_messages: Chat scope missing — user needs to re-authenticate");
+                    return Ok(serde_json::json!({
+                        "new": 0,
+                        "convos": 0,
+                        "error": "chat_scope_missing",
+                        "message": "Please log out and log back in to enable chat import. Your existing session was created before chat support was added."
+                    }));
+                }
+                return Err(format!("Failed to list conversations: {}", e));
+            }
+        };
 
         let convos = convos_resp.get("convos")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
+
+        println!("import_vault_messages: Found {} conversations", convos.len());
 
         let db_guard = db_manager.read().await;
         let db = db_guard.as_ref()
@@ -1237,6 +1266,7 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
             }
         }
 
+        println!("import_vault_messages: OAuth import done — {} new msgs from {} convos", new_count, convos.len());
         return Ok(serde_json::json!({
             "new": new_count,
             "convos": convos.len()
