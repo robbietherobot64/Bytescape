@@ -24,17 +24,12 @@ interface FeedScreenProps {
     activeTab: FeedTab;
     setActiveTab: (tab: FeedTab) => void;
     isImporting?: boolean;
-    /** Lens state lifted to AppLayout for context panel control. */
-    activeLens?: FeedLens;
-    setActiveLens?: (lens: FeedLens) => void;
 }
 
-export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, activeLens: lensFromParent, setActiveLens: setLensFromParent }: FeedScreenProps) {
+export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
-    const [localLens, setLocalLens] = useState<FeedLens>('list');
-    const activeLens = (lensFromParent as FeedLens) || localLens;
-    const setActiveLens = setLensFromParent || setLocalLens;
+    const [activeLens, setActiveLens] = useState<FeedLens>('list');
     const autoRefreshFeeds = true;
     const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
     const [hashtagInput, setHashtagInput] = useState('');
@@ -237,6 +232,25 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, activeL
 
     return (
         <div className="feed-layout">
+            {/* Feed context panel — left side */}
+            <FeedRightPanel
+                activeTab={activeTab}
+                followingList={followingList}
+                savedFeeds={savedFeeds}
+                selectedFeedUri={selectedFeedUri}
+                setSelectedFeedUri={setSelectedFeedUri}
+                FEED_FILTER_ALL={FEED_FILTER_ALL}
+                hashtagInput={hashtagInput}
+                setHashtagInput={setHashtagInput}
+                handleAddHashtag={handleAddHashtag}
+                followedHashtags={followedHashtags || []}
+                handleRemoveHashtag={handleRemoveHashtag}
+                archiveSourceFilter={archiveSourceFilter}
+                setArchiveSourceFilter={setArchiveSourceFilter}
+                vaultSources={vaultSources}
+                archiveTotal={archiveTotal}
+                position="left"
+            />
             <div className="feed-main">
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
@@ -399,25 +413,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, activeL
                     </div>
                 </div>
             </div>
-
-            {/* Right Panel stays fixed on the right */}
-            <FeedRightPanel
-                activeTab={activeTab}
-                followingList={followingList}
-                savedFeeds={savedFeeds}
-                selectedFeedUri={selectedFeedUri}
-                setSelectedFeedUri={setSelectedFeedUri}
-                FEED_FILTER_ALL={FEED_FILTER_ALL}
-                hashtagInput={hashtagInput}
-                setHashtagInput={setHashtagInput}
-                handleAddHashtag={handleAddHashtag}
-                followedHashtags={followedHashtags || []}
-                handleRemoveHashtag={handleRemoveHashtag}
-                archiveSourceFilter={archiveSourceFilter}
-                setArchiveSourceFilter={setArchiveSourceFilter}
-                vaultSources={vaultSources}
-                archiveTotal={archiveTotal}
-            />
 
         </div>
     );

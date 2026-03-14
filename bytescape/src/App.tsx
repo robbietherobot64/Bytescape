@@ -97,9 +97,6 @@ function App() {
   // Search state (top bar)
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Lens state (lifted so context panel can control it)
-  const [activeLens, setActiveLens] = useState<string>('list');
-
   const handleSearchSubmit = (query: string) => {
     // Navigate to feed screen when searching
     setScreen('feed');
@@ -469,10 +466,6 @@ function App() {
       onSearchChange={setSearchQuery}
       onSearchSubmit={handleSearchSubmit}
       avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
-      feedActiveTab={feedActiveTab}
-      setFeedActiveTab={setFeedActiveTab}
-      activeLens={activeLens}
-      setActiveLens={setActiveLens}
       onOpenChat={(peerNodeId, _peerName) => {
         const { setSelectedConvoId } = useChatStore.getState();
         setSelectedConvoId(`p2p:${peerNodeId}`);
@@ -503,8 +496,6 @@ function App() {
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
-            activeLens={activeLens as any}
-            setActiveLens={setActiveLens as any}
           />
         )}
 
