@@ -1,8 +1,6 @@
 import React from 'react';
 import { TopBar } from './TopBar';
-import { FriendsPanel } from './FriendsPanel';
 import { SidebarItem } from '../types';
-import { Screen } from '../store';
 import {
     BsHouseFill, BsChatDotsFill, BsPeopleFill,
     BsFolderFill, BsPersonFill
@@ -17,17 +15,12 @@ interface AppLayoutProps {
     onNavigate: (item: SidebarItem) => void;
     /** Optional style override for full-bleed layouts. */
     mainStyle?: React.CSSProperties;
-    /** Current active screen for context panel. */
-    screen: Screen;
     /** Search bar state. */
     searchQuery: string;
     onSearchChange: (query: string) => void;
     onSearchSubmit: (query: string) => void;
     /** User avatar initial for top bar. */
     avatarInitial?: string;
-    /** Friends panel callbacks. */
-    onOpenChat?: (peerNodeId: string, peerName: string) => void;
-    onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
 /** Bottom navigation items for mobile. */
@@ -39,22 +32,17 @@ const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string 
     { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
 ];
 
-/** Application shell: top bar + friends panel (feed only) + main content + mobile bottom nav. */
+/** Application shell: top bar + main content + mobile bottom nav. */
 export function AppLayout({
     children,
     activeSidebar,
     onNavigate,
     mainStyle,
-    screen,
     searchQuery,
     onSearchChange,
     onSearchSubmit,
     avatarInitial,
-    onOpenChat,
-    onViewProfile,
 }: AppLayoutProps) {
-    const showFriendsPanel = screen === 'feed';
-
     return (
         <div className="app-layout">
             <TopBar
@@ -69,12 +57,6 @@ export function AppLayout({
                 <main className="main-content" style={mainStyle}>
                     {children}
                 </main>
-                {showFriendsPanel && (
-                    <FriendsPanel
-                        onOpenChat={onOpenChat}
-                        onViewProfile={onViewProfile}
-                    />
-                )}
             </div>
 
             {/* Mobile bottom navigation bar — visible only on small screens via CSS */}

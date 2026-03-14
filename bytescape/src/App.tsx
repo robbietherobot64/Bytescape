@@ -485,23 +485,10 @@ function App() {
     <AppLayout
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
-      screen={screen}
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
       onSearchSubmit={handleSearchSubmit}
       avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
-      onOpenChat={(peerNodeId, _peerName) => {
-        const { setSelectedConvoId } = useChatStore.getState();
-        setSelectedConvoId(`p2p:${peerNodeId}`);
-        setScreen("chat");
-        setActiveSidebar("chat");
-      }}
-      onViewProfile={(peerNodeId, peerName) => {
-        setPeerProfileNodeId(peerNodeId);
-        setPeerProfileName(peerName || null);
-        setScreen("peer-profile");
-        setActiveSidebar("social");
-      }}
       mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder" || screen === "profile-browser") ? {
         padding: 0,
         height: '100%',
@@ -520,6 +507,18 @@ function App() {
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
+            onOpenChat={(peerNodeId, _peerName) => {
+              const { setSelectedConvoId } = useChatStore.getState();
+              setSelectedConvoId(`p2p:${peerNodeId}`);
+              setScreen("chat");
+              setActiveSidebar("chat");
+            }}
+            onViewProfile={(peerNodeId, peerName) => {
+              setPeerProfileNodeId(peerNodeId);
+              setPeerProfileName(peerName || null);
+              setScreen("peer-profile");
+              setActiveSidebar("social");
+            }}
           />
         )}
 

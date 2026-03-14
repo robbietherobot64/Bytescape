@@ -3,6 +3,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
 import { ComposeBox, Attachment, PublishOptions, PostTarget } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
+import { FriendsPanel } from '../components/FriendsPanel';
 import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS, customFeedUris } from '../hooks/useUnifiedFeed';
@@ -22,9 +23,11 @@ interface FeedScreenProps {
     activeTab: FeedTab;
     setActiveTab: (tab: FeedTab) => void;
     isImporting?: boolean;
+    onOpenChat?: (peerNodeId: string, peerName: string) => void;
+    onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedScreenProps) {
+export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenChat, onViewProfile }: FeedScreenProps) {
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
     const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
@@ -417,24 +420,10 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                 </div>
             </div>
 
-            {/* Feed context panel — right side */}
-            <FeedRightPanel
-                activeTab={activeTab}
-                followingList={followingList}
-                savedFeeds={savedFeeds}
-                selectedFeedUri={selectedFeedUri}
-                setSelectedFeedUri={setSelectedFeedUri}
-                FEED_FILTER_ALL={FEED_FILTER_ALL}
-                hashtagInput={hashtagInput}
-                setHashtagInput={setHashtagInput}
-                handleAddHashtag={handleAddHashtag}
-                followedHashtags={followedHashtags || []}
-                handleRemoveHashtag={handleRemoveHashtag}
-                archiveSourceFilter={archiveSourceFilter}
-                setArchiveSourceFilter={setArchiveSourceFilter}
-                vaultSources={vaultSources}
-                archiveTotal={archiveTotal}
-                position="right"
+            {/* Friends panel — right side, hugs the feed */}
+            <FriendsPanel
+                onOpenChat={onOpenChat}
+                onViewProfile={onViewProfile}
             />
         </div>
     );
