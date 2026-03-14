@@ -74,9 +74,15 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
+## ⚠️ Guardrails — READ BEFORE EVERY SPRINT
 
-⚠️ **The user REVERTED the classification system.** classify.rs module removed, reclassify command removed, Link/Video removed from TS types, filter chips removed. Read the "READ FIRST" section in your sprint prompt carefully.
+Read [../instructions/agent-guardrails.instructions.md](../instructions/agent-guardrails.instructions.md). Key rules:
+- The user **never edits code files**. All user intent comes from `user-feedback` and chat.
+- Do NOT modify files outside Track C scope (see §3).
+- Do NOT create test files for types that don't exist yet.
+- Verify build (cargo check + tsc + tests) before every commit.
+
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v3
 
 Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
 Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)

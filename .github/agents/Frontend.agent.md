@@ -59,9 +59,15 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
+## ⚠️ Guardrails — READ BEFORE EVERY SPRINT
 
-⚠️ **The user REVERTED several agent changes.** Read the "READ FIRST" section in your sprint prompt carefully — it lists what was undone and what NOT to redo.
+Read [../instructions/agent-guardrails.instructions.md](../instructions/agent-guardrails.instructions.md). Key rules:
+- The user **never edits code files**. All user intent comes from `user-feedback` and chat.
+- Do NOT modify files outside Track B scope (see §3).
+- Check `git log` on shared files before editing.
+- Verify build (cargo check + tsc + tests) before every commit.
+
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v3
 
 Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
 Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)

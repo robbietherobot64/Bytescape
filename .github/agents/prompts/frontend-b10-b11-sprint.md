@@ -1,22 +1,27 @@
-# Frontend Agent — Sprint: USER FEEDBACK v2 (2026-03-15)
+# Frontend Agent — Sprint: USER FEEDBACK v3 (2026-03-15)
 
-## 🚨 READ FIRST — User Reverted Agent Work
+## 🚨 READ FIRST — Codebase State & Guardrails
 
-The user manually reverted several changes from the last sprint. **Do NOT re-implement reverted features.** Respect their design choices:
+Read `.github/instructions/agent-guardrails.instructions.md` before doing anything.
 
-### What was reverted (DO NOT REDO):
-- ❌ Content-type filter chips → User restored **lens toggle buttons** (List/Gallery/Reader). Keep lenses.
-- ❌ `--content-max-width: 100%` → User restored `960px`. They want a width LIMIT, not full-bleed.
-- ❌ `"maximized": true` → User removed it. Don't add it back.
-- ❌ `Link`/`Video` removed from TypeScript `BytescapeType` — only 3 types: `Status | Gallery | Article`
-- ❌ `ReclassifyResult` removed from types — don't reference it
-- ❌ `category` removed from `TrackerEntry` — don't add it back to the type
-- ❌ `subscribed` tab was RE-ADDED by user — they want it but with better purpose
+### Current Codebase State (as of commit `eef398e`)
 
-### What these reverts mean:
-- The user prefers **lenses** (view modes) over **filter chips** (content type filtering)
-- The user wants screen width **controlled, not maximized** — sidebars + content should fill space proportionally within a limit
-- The `ReaderLens` is broken because `item_type` is hardcoded to `Status` for all Bluesky posts — classify needs to be restored (see P1 below)
+These are facts about the current code — not user preferences. Fix or keep based on **user feedback** (in `user-feedback` file), not file state.
+
+- **Lenses**: FeedScreen uses lens toggle buttons (List/Gallery/Reader) via `GalleryLens` and `ReaderLens` components. 
+- **Content width**: `--content-max-width: 960px` in App.css.
+- **Window**: `tauri.conf.json` does NOT have `"maximized": true`.
+- **TypeScript types**: `BytescapeType = 'Status' | 'Gallery' | 'Article'` (3 variants). Rust has 5 (includes Link/Video). No `ReclassifyResult`, no `category` on `TrackerEntry`.
+- **Subscribed tab**: FeedScreen renders 4 tabs `['all', 'following', 'subscribed', 'you']`, BUT `useUnifiedFeed.ts` only defines `FeedTab = 'all' | 'following' | 'you'` — **this is a type mismatch** that compiles only because of `as FeedTab[]` cast. The subscribed tab currently has no handler and shows nothing.
+- **ReaderLens broken**: `item_type` is hardcoded to `Some(BytescapeType::Status)` for all Bluesky posts in `feed_aggregation.rs`. ReaderLens filters on `item_type === 'Article'` → shows nothing. The `classify_feed_entry` function exists in `models/mod.rs` but is not called.
+- **Backend agent's `store/index.ts`**: Still exists at `src/store/index.ts` with `useFeedCacheStore`, imported in `useUnifiedFeed.ts`.
+
+### What user feedback actually says:
+- *"Subscribed is now deleted for some reason"* → User noticed it was missing, wants it with a distinct purpose
+- *"Use of space is still awkward"* → User wants better layout, proportional sidebars
+- *"Article reader is busted"* → Articles don't load, need classify restored
+- *"Posts are too narrow in height"* → Want natural aspect ratio images
+- *"Customize should be a pencil button"* → Edit mode with drag-and-drop
 
 All work on **`main`**. Run `git branch --show-current` before every commit.
 
@@ -177,11 +182,11 @@ The user re-added `subscribed` to the tabs array. They want it with a DISTINCT p
 ---
 
 ## Anti-Patterns
-- Do NOT re-implement content-type filter chips
-- Do NOT set `--content-max-width: 100%` or add `"maximized": true`
-- Do NOT add `Link`/`Video` to TypeScript BytescapeType
+- Do NOT modify files outside Track B scope (see `agent-guardrails.instructions.md` §3)
+- Do NOT add types to Rust enums — Backend scope
 - Do NOT modify Rust connectors — Backend scope
 - Do NOT modify ComposeBox — Content scope
+- Check `git log --oneline -5 -- <file>` before editing shared files (`types/index.ts`, `useUnifiedFeed.ts`)
 - **Always run `git branch --show-current` before committing**
 
 ## Definition of Done

@@ -28,7 +28,9 @@ Step 5: Commit. If verification passes, commit with a semantic message (e.g., fe
 4. Anti-Patterns (Avoid These) 
 Do not leave “TODO” comments in the code. Implement it.
 Do not remove existing code unless explicitly asked.
-Do not hallucinate imports. Check package.json first. 
+Do not hallucinate imports. Check package.json first.
+Do not attribute uncommitted file changes to the user. The user never edits code files. See agent-guardrails.instructions.md.
+Do not modify files outside your track scope. See agent-guardrails.instructions.md §3.
 5. Emergency Recovery 
 If you see the same error message twice in a row (check git diff or logs): 1. Stop what you are doing. 2. Re-read the documentation for the library
 you are using. 3. Try a radically different approach

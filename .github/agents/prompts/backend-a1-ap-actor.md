@@ -1,14 +1,22 @@
-# Backend Agent — Sprint: USER FEEDBACK v2 (2026-03-15)
+# Backend Agent — Sprint: USER FEEDBACK v3 (2026-03-15)
 
-## 🚨 READ FIRST — User Reverted Agent Work
+## 🚨 READ FIRST — Codebase State & Guardrails
 
-The user manually reverted several backend changes:
-- ❌ `headers_cache` removed from `DbManager` — do NOT re-add caching to the struct
-- ❌ `item_type_filter` parameter removed from `get_timeline_unified` — do NOT add server-side type filtering
-- ❌ `reclassify_vault_items` command removed from `lib.rs` — do NOT re-register it
-- ❌ `commands/classify.rs` module removed from `commands/mod.rs` — the file still exists but is dead code
+Read `.github/instructions/agent-guardrails.instructions.md` before doing anything.
 
-The `classify_feed_entry` and `classify_item` functions in `models/mod.rs` still exist and should be used for item classification on ingest — just don't expose them as standalone commands.
+### Current Codebase State (as of commit `eef398e`)
+
+These are facts about the current code — not user preferences. Fix or keep based on **user feedback**, not file state.
+
+- **`headers_cache`**: Not present in `DbManager` struct. Was added by Backend agent in Sprint 3 (`c60d784`), removed in PM fix commit. The performance problem (16s feed load) is still unsolved — find a different approach.
+- **`item_type_filter`**: Not present on `get_timeline_unified`. Server-side type filtering was removed.
+- **`reclassify_vault_items`**: Not registered in `lib.rs`. `commands/classify.rs` still exists as a file but is dead code (not in `mod.rs`).
+- **`classify_feed_entry`** and **`classify_item`** in `models/mod.rs` still exist and should be called during ingest to set `item_type` on feed entries.
+- **`item_type` is hardcoded**: In `feed_aggregation.rs`, the `From<BlueskyImportedPost>` impl sets `item_type: Some(BytescapeType::Status)` for ALL posts. This breaks the ReaderLens (Frontend expects `Article` type items). Restore the `classify_feed_entry` call.
+- **`store/index.ts`**: Backend agent created this in Sprint 3. It still exists and is imported by `useUnifiedFeed.ts`. This is a **frontend file** — Backend should not have created it (see guardrails §3).
+
+### ⚠️ Track Boundaries
+You (Backend) modified `useUnifiedFeed.ts` and created `store/index.ts` in Sprint 3. These are **frontend files**. Going forward, do NOT modify files in `src/` (React) — coordinate with Frontend agent through `progress.md` if a frontend change is needed.
 
 All work on **`main`**. Run `git branch --show-current` before every commit.
 
@@ -20,13 +28,22 @@ Read the user's latest feedback at `.github/agents/prompts/user-feedback` before
 
 **User:** *"Feed takes a while to refresh...like a really really long while. Backend worked on this for a bit, but it's still 16 seconds to load the feed."*
 
-The headers_cache approach was rejected. Try a different strategy:
+The Sprint 3 `headers_cache` approach was removed in the PM fix commit. Try a different strategy:
 
 ### Fix:
 1. **Profile the actual bottleneck**: Add `#[cfg(debug_assertions)]` timing logs to pinpoint whether the 16s is in token retrieval, Bluesky API request, response parsing, vault merge, or dedup
 2. **Reduce API payload**: Use pagination properly — request only 30 items per call, not bulk fetches
 3. **Parallel fetch**: If fetching timeline + custom feeds, use `tokio::join!` to run them concurrently (check if this is already implemented, it may be)
-4. **Quick-return vault items**: Return vault items immediately as a first page, then fetch live data in the background and emit a `feed-updated` event (do NOT use struct-level caching — use a simple event-based approach)
+4. **Quick-return vault items**: Return vault items immediately as a first page, then fetch live data in the background and emit a `feed-updated` event (event-based approach, not struct-level caching)
+
+### Also Fix — Restore classify_feed_entry:
+In `feed_aggregation.rs`, the `From<BlueskyImportedPost>` impl hardcodes `item_type: Some(BytescapeType::Status)`. Change it to:
+```rust
+let mut entry = FeedEntry { ..., item_type: None, ... };
+entry.item_type = Some(crate::models::classify_feed_entry(&entry));
+entry
+```
+This is critical — it unblocks the Frontend ReaderLens (which filters on `item_type === 'Article'`).
 
 **Target**: Feed shows content within 2-3 seconds. 16 seconds is unacceptable.
 
@@ -80,12 +97,11 @@ The user's previous feedback about Facebook import "not really working" and "sho
 ---
 
 ## Anti-Patterns
-- Do NOT re-add `headers_cache` to DbManager
-- Do NOT re-add `item_type_filter` to `get_timeline_unified`
-- Do NOT re-register `reclassify_vault_items` command
-- Do NOT modify frontend components — Frontend scope
+- Do NOT modify files in `src/` (React/TypeScript) — that is Frontend/Content scope. See guardrails §3.
 - Do NOT modify ComposeBox — Content scope
+- Check `git log --oneline -5 -- <file>` before editing any file another agent recently touched
 - **Always run `git branch --show-current` before committing**
+- **Always verify before committing**: `cargo check` + `npx tsc --noEmit` + `pnpm test -- --run`
 
 ## Definition of Done
 - [ ] Feed loads in <3 seconds with timing logs showing bottleneck

@@ -52,9 +52,15 @@ See [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the ori
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
+## ⚠️ Guardrails — READ BEFORE EVERY SPRINT
 
-⚠️ **The user REVERTED several agent changes.** Read the "READ FIRST" section in your sprint prompt — headers_cache, item_type_filter, and reclassify command were all removed. Do NOT re-add them.
+Read [../instructions/agent-guardrails.instructions.md](../instructions/agent-guardrails.instructions.md). Key rules:
+- The user **never edits code files**. All user intent comes from `user-feedback` and chat.
+- Do NOT modify files in `src/` (React/TypeScript) — that is Frontend/Content scope (see §3).
+- Check `git log` on shared files before editing.
+- Verify build (cargo check + tsc + tests) before every commit.
+
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v3
 
 Read your full kickoff prompt: [prompts/backend-a1-ap-actor.md](prompts/backend-a1-ap-actor.md)
 Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)

@@ -1,24 +1,20 @@
-# Content Agent — Sprint: USER FEEDBACK v2 (2026-03-15)
+# Content Agent — Sprint: USER FEEDBACK v3 (2026-03-15)
 
-## 🚨 READ FIRST — User Reverted Agent Work
+## 🚨 READ FIRST — Codebase State & Guardrails
 
-The user manually reverted the content classification system you built:
-- ❌ `commands/classify.rs` module removed from `commands/mod.rs` (file still exists but is dead code)
-- ❌ `reclassify_vault_items` removed from `lib.rs` command registration
-- ❌ `Link`/`Video` removed from TypeScript `BytescapeType` — only 3 types in TS: `Status | Gallery | Article`
-- ❌ `ReclassifyResult` removed from TypeScript types
-- ❌ `category` removed from TypeScript `TrackerEntry`
-- ❌ Content-type filter chips removed from FeedScreen — user restored lens toggles (List/Gallery/Reader)
-- ❌ `item_type_filter` removed from `get_timeline_unified` backend command
+Read `.github/instructions/agent-guardrails.instructions.md` before doing anything.
 
-### What this means for you:
-- The Rust `BytescapeType` enum STILL has `Link` and `Video` — that's fine in Rust
-- The `classify_item` and `classify_feed_entry` functions in `models/mod.rs` still exist — they should be used on ingest
-- But do NOT expose them as standalone commands or add filter parameters to feed queries
-- The frontend uses **lenses** (GalleryLens, ReaderLens) with client-side filtering, NOT server-side type filtering
-- Do NOT add `category` back to the TypeScript `TrackerEntry` type
-- Do NOT add `Link`/`Video` to TypeScript `BytescapeType`
-- Do NOT create GIF pickers, emoji pickers, or any roadmap items
+### Current Codebase State (as of commit `eef398e`)
+
+These are facts about the current code. Fix or keep based on **user feedback**, not file state.
+
+- **`commands/classify.rs`**: File exists on disk but is dead code — removed from `commands/mod.rs` and `lib.rs` in PM fix commit. The `classify_feed_entry` and `classify_item` functions in `models/mod.rs` still exist and should be used during ingest.
+- **TypeScript types**: `BytescapeType = 'Status' | 'Gallery' | 'Article'` (3 variants). Rust has 5 (includes Link/Video). No `ReclassifyResult` type. No `category` on `TrackerEntry`.
+- **Content-type filter chips**: Not present — FeedScreen uses lens toggle buttons (List/Gallery/Reader).
+- **`classification.test.ts`**: Deleted in PM fix commit (tested types that don't exist in TS).
+
+### ⚠️ Track Boundaries
+Content agent created `classification.test.ts` in Sprint 3 — a test file for TypeScript types that didn't match the actual type definitions. Going forward, ensure any test files you create test **existing** types, not types you plan to add. See guardrails §3 for file ownership boundaries.
 
 All work on **`main`**. Run `git branch --show-current` before every commit.
 
@@ -62,14 +58,13 @@ Review the ComposeBox for any outstanding issues. The user hasn't complained abo
 ---
 
 ## Anti-Patterns
-- Do NOT create GIF pickers, emoji pickers, or any C2.2/C2.3 roadmap items
-- Do NOT add `Link`/`Video` to TypeScript BytescapeType
-- Do NOT add `category` to TypeScript TrackerEntry
-- Do NOT re-create `commands/classify.rs` module registration
-- Do NOT add `item_type_filter` to feed commands
-- Do NOT modify Rust connectors — Backend scope
-- Do NOT modify FeedScreen, ProfileScreen, or AuditScreen — Frontend scope
+- Do NOT modify files outside Track C scope (see `agent-guardrails.instructions.md` §3)
+- Do NOT modify FeedScreen, ProfileScreen, SettingsScreen, or AuditScreen — Frontend scope
+- Do NOT modify Rust connectors or DB layer — Backend scope
+- Do NOT create test files for types that don't exist yet
+- Check `git log --oneline -5 -- <file>` before editing shared files
 - **Always run `git branch --show-current` before committing**
+- **Always verify before committing**: `cargo check` + `npx tsc --noEmit` + `pnpm test -- --run`
 
 ## Definition of Done
 - [ ] Theme colors are individually customizable via color picker
