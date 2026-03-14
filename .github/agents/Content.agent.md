@@ -57,19 +57,22 @@ Tiptap collaboration extensions (`@tiptap/extension-collaboration`, `@tiptap/ext
 ### Completed Work Reference
 C3.2 shipped as commit `8610577` — 11 files, +1859/-56 lines, 34 tests. The `ArticleEditor`, `ArticleReader`, and `utils/markdown.ts` are your foundation for all subsequent article/editing work.
 
-## 🎯 Current Assignment (2026-03-13)
+## ✅ Previous Assignments Complete (2026-03-15 PM Audit)
 
-Read your full kickoff prompt: [prompts/content-c1-c6-kickoff.md](prompts/content-c1-c6-kickoff.md)
+All prior work verified and accepted:
+- C1.1b/C1.2b/C1.3b Facet rendering + autocomplete — 53 tests, commit `38cf4c2` ✅
+- C6.1 CRDT Storage Layer — yrs backend + useCollabDoc hook + ArticleEditor collab mode, 18 tests, commit `16a9c69` ✅
+- C6.2 Frontend Yjs Integration — delivered within C6.1 scope ✅
 
-**Priority 1 — C1.1b + C1.2b + C1.3b: Facet Rendering & Autocomplete Frontend**
-- C1.1b: Render @mentions, #hashtags, hyperlinks as interactive elements in `FeedEntryCard` and `ArticleReader`
-- C1.2b: @mention typeahead dropdown in ComposeBox (backend `search_mentions` command exists)
-- C1.3b: #hashtag typeahead dropdown in ComposeBox (backend `search_hashtags_autocomplete` command exists)
+**Do not redo any of this work.**
 
-**Priority 2 — C6.1: CRDT Storage Layer**
-- Add `yrs` crate, create `collab.rs`, new `COLLAB_DOCS` redb table
-- Wire `@tiptap/extension-collaboration` (already installed) into ArticleEditor
-- Local-only CRDT-backed editing first — no P2P sync yet
+## 🎯 Current Assignment (2026-03-15)
+
+Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
+
+**Priority 0 — Merge `main` into `track-c/c1-facet-frontend`** (get `fe890b4` remediation commit)
+**Priority 1 — C1.4 Character Count & Limits** (platform-aware grapheme counting)
+**Priority 2 — C2.1 Link Card Embeds** (unfurl_link backend + LinkPreviewCard frontend)
 
 ## Prime Directive
 

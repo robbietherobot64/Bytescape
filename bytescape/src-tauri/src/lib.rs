@@ -50,6 +50,9 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Guard to ensure `restore_session` runs at most once per app lifetime.
     pub session_restored: AtomicBool,
+    /// Shared HTTP client for connection pooling across all API calls.
+    /// Reusing a single client avoids redundant TLS handshakes per request.
+    pub http_client: reqwest::Client,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -459,7 +462,15 @@ pub fn run() {
             commands::collab::list_collab_docs,
             commands::collab::delete_collab_doc,
             // Profile layout commands
-            
+            commands::profile::save_profile_layout,
+            commands::profile::get_profile_layout,
+            commands::profile::delete_profile_layout,
+            // Widget & guestbook commands (B2.4)
+            commands::profile::save_widget_data,
+            commands::profile::get_widget_data,
+            commands::profile::add_guestbook_entry,
+            commands::profile::list_guestbook_entries,
+            commands::profile::delete_guestbook_entry,
             // Link unfurling (C2.1)
             
             // ActivityPub commands (A1.1)
@@ -571,6 +582,7 @@ pub fn run() {
                 oauth_manager,
                 http_client: reqwest::Client::new(),
                 session_restored: AtomicBool::new(false),
+                http_client: reqwest::Client::new(),
             };
 
             app.manage(state);

@@ -15,6 +15,7 @@ pub mod interactions;
 pub mod peers;
 pub mod collab;
 pub mod ap;
+pub mod profile;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
@@ -28,3 +29,4 @@ pub use interactions::*;
 pub use peers::*;
 pub use collab::*;
 pub use ap::*;
+pub use profile::*;

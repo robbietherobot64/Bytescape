@@ -383,7 +383,7 @@ export const PROTOCOLS: ProtocolOption[] = [
 ];
 
 /** @deprecated - use Screen from store/index.ts */
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
 
 export interface BlueskyPost {
@@ -445,6 +445,60 @@ export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "i
 
 // ─── Theme ───
 export type ThemeId = 'geocities' | 'win98' | 'midnight';
+
+// ─── Profile Builder & Widget Types (B2.1 / B2.4) ───
+export interface ProfileLayout {
+    html: string;
+    css: string;
+    /** GrapesJS internal JSON for re-loading the editor state */
+    components_json?: string | null;
+    styles_json?: string | null;
+    /** Widget configuration data (away message, music playlist, etc.) as JSON */
+    widget_data?: string | null;
+    /** Render mode: null/"grapesjs" = widget hydration, "raw" = sandboxed iframe */
+    render_mode?: string | null;
+    /** Optional custom JavaScript for raw HTML mode (sandboxed only) */
+    js?: string | null;
+    updated_at: number;
+}
+
+/** Aggregated widget configuration saved alongside the profile layout */
+export interface WidgetData {
+    away_message?: AwayMessageConfig;
+    music_playlist?: MusicTrack[];
+    visitor_count?: number;
+    /** Additional widget-specific config can go here */
+    [key: string]: unknown;
+}
+
+/** Away-message widget configuration */
+export interface AwayMessageConfig {
+    status: 'online' | 'away' | 'busy' | 'offline';
+    text: string;
+    enabled: boolean;
+}
+
+/** A single track in the music-player widget */
+export interface MusicTrack {
+    id: string;
+    title: string;
+    artist?: string;
+    /** Direct URL to the audio file */
+    url?: string;
+    /** Blob hash for vault-stored audio */
+    blob_hash?: string;
+    /** Fallback src field */
+    src?: string;
+}
+
+/** A guestbook entry */
+export interface GuestbookEntry {
+    id: string;
+    author: string;
+    message: string;
+    timestamp: number;
+    node_id?: string | null;
+}
 
 export interface LikeResult {
     uri: string;

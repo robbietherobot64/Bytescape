@@ -18,7 +18,7 @@ export function ImportScreen({
     archiveCount,
     onImportBluesky,
     onFilePick,
-    onNavigate,
+    onNavigate: _onNavigate,
     error
 }: ImportScreenProps) {
     const isBlueskyLinked = auth?.source === 'bluesky';
@@ -26,7 +26,7 @@ export function ImportScreen({
     return (
         <>
             <div className="main-header">
-                <h1>Import</h1>
+                <h1 style={{ textAlign: 'center', width: '100%' } as React.CSSProperties}>Import Archive</h1>
             </div>
 
             <div className="import-tools">
@@ -72,7 +72,7 @@ export function ImportScreen({
                                 <div className="drop-icon">📂</div>
                                 <div className="drop-title">Drop a ZIP export</div>
                                 <div className="drop-hint">
-                                    Supports Facebook, Google Takeout, Twitter/X archives
+                                    Supports Facebook, Instagram, Google Takeout, Twitter/X archives
                                 </div>
                             </div>
                         </div>
@@ -80,17 +80,11 @@ export function ImportScreen({
                 </div>
 
                 {archiveCount > 0 && (
-                    <div className="card" style={{ marginTop: 16 }}>
+                    <div className="card" style={{ marginTop: 16, textAlign: 'center' } as React.CSSProperties}>
                         <h2>📜 Your Vault</h2>
-                        <p className="text-muted text-sm" style={{ marginBottom: 12 }}>
-                            {archiveCount} files in your vault
+                        <p className="text-muted text-sm">
+                            {archiveCount} files imported to your vault
                         </p>
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => onNavigate("feed")}
-                        >
-                            View Feed
-                        </button>
                     </div>
                 )}
             </div>

@@ -17,6 +17,8 @@ interface FeedRightPanelProps {
     setArchiveSourceFilter: (source: string) => void;
     vaultSources: string[];
     archiveTotal: number;
+    /** Render position — affects border/shadow direction */
+    position?: 'left' | 'right';
 }
 
 export function FeedRightPanel({
@@ -35,6 +37,7 @@ export function FeedRightPanel({
     setArchiveSourceFilter,
     vaultSources,
     archiveTotal,
+    position = 'right',
 }: FeedRightPanelProps) {
 
     const panelTitle =
@@ -44,7 +47,7 @@ export function FeedRightPanel({
         'Discovery Tools';
 
     return (
-        <div className="right-panel">
+        <div className={`right-panel ${position === 'left' ? 'right-panel--left' : ''}`}>
             <div className="right-panel-header">
                 <h3 className="right-panel-title">{panelTitle}</h3>
             </div>

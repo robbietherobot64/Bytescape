@@ -3,8 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BytescapeItem, VaultStats } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { Win98Box } from '../components/Win98Box';
+import { ProfileRenderer } from '../components/ProfileRenderer';
 import { adaptBytescapeItem } from '../utils/adapters';
-import { BsPersonFill, BsGlobe, BsStar, BsBookmark } from 'react-icons/bs';
+import { useNavStore } from '../store';
+import { BsPersonFill, BsGlobe, BsStar, BsBookmark, BsPalette2 } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -29,7 +31,16 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [hasCustomLayout, setHasCustomLayout] = useState(false);
     const offsetRef = useRef(0);
+    const { setScreen, setActiveSidebar } = useNavStore();
+
+    // Check for custom profile layout
+    useEffect(() => {
+        invoke('get_profile_layout').then((layout) => {
+            setHasCustomLayout(!!layout);
+        }).catch(() => {});
+    }, []);
 
     // Load first page + metadata
     const loadInitial = useCallback(async () => {
@@ -127,8 +138,39 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                 <div className="profile-visitor-counter">
                     Visitors: {stats ? String(stats.total + 1337).padStart(6, '0') : '001337'}
                 </div>
+                <button
+                    className="profile-edit-btn"
+                    onClick={() => { setScreen('profile-builder'); setActiveSidebar('profile'); }}
+                    title={hasCustomLayout ? 'Edit your custom layout' : 'Customize your profile page'}
+                    style={{
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 14px',
+                        border: '1px solid var(--accent-purple, #7c3aed)',
+                        borderRadius: 'var(--border-radius, 4px)',
+                        background: 'rgba(124, 58, 237, 0.2)',
+                        color: 'var(--accent-purple, #7c3aed)',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        zIndex: 10,
+                    } as React.CSSProperties}
+                >
+                    <BsPalette2 /> {hasCustomLayout ? 'Edit Layout' : 'Customize'}
+                </button>
             </div>
 
+            {/* ═══ Custom Layout or Default Wall ═══ */}
+            {hasCustomLayout ? (
+                <div className="profile-custom-layout" style={{ margin: '0 16px' } as React.CSSProperties}>
+                    <ProfileRenderer editable={false} did={auth?.did} handle={auth?.handle} />
+                </div>
+            ) : (
+            <>
             {/* ═══ GeoCities Content Grid ═══ */}
             <div className="profile-content-grid">
                 {/* Left Column: About Boxes */}
@@ -254,6 +296,8 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                     ⭐ Thanks for visiting my page! ⭐ Built with Bytescape ⭐ Best viewed on any screen ⭐
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 }

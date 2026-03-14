@@ -59,17 +59,19 @@ pub async fn get_collab_state(
     })
 }
 
-/// Snapshot the current Yjs document content into the linked BytescapeItem.
-/// Extracts plain text from the Yjs document and updates the item's content field.
+/// Snapshot the current content into the linked BytescapeItem.
+/// The frontend provides the rendered content (Markdown or HTML) since Tiptap
+/// uses Y.XmlFragment which is not trivially readable in Rust.
 /// Returns the item_id that was updated.
 #[tauri::command]
 pub async fn snapshot_collab_to_item(
     doc_id: String,
+    content: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let db_lock = state.db_manager.read().await;
     let db = db_lock.as_ref().ok_or("Database not initialized")?;
-    db.snapshot_collab_to_item(&doc_id)
+    db.snapshot_collab_to_item(&doc_id, &content)
 }
 
 /// List all collab documents (metadata only, sorted by updated_at desc).

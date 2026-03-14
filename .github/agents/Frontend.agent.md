@@ -50,20 +50,23 @@ Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for 
 ### OAuth UI Note
 The Backend agent modified `LoginScreen.tsx` (+143 lines) on the `track-a/a0-bluesky-oauth` branch to add OAuth login UI. If that branch has been merged, `LoginScreen` now has an "OAuth Login" flow with `listen('oauth-complete')` event handling and a 5-minute timeout. Be aware of this when working on LoginScreen for any reason.
 
-## 🎯 Current Assignment (2026-03-13)
+## ✅ Previous Assignments Complete (2026-03-15 PM Audit)
 
-Read your full kickoff prompt: [prompts/frontend-b21-grapesjs.md](prompts/frontend-b21-grapesjs.md)
+All prior work verified and accepted:
+- B2.1 GrapesJS, B2.2 Raw HTML, B2.3 DID Meta Tags, B2.4 Widget System, B2.5 Theme Engine ✅
+- B3.1 Profile Browser, B3.2 Sandboxed Peer View ✅
+- B10.1 URL Scheme, B10.2 Nav History, B10.3 Omnibar, B10.6 Peer Browser Sync ✅ *(retroactively approved)*
 
-**Priority 1 — B2.1 GrapesJS Profile Builder**
-- Install `grapesjs` + `grapesjs-preset-webpage`
-- Create `ProfileBuilderScreen.tsx` with drag-and-drop canvas
-- Bytescape-specific blocks (About Me, Post Feed, Media Grid, Friends List, etc.)
-- Save/load profile layouts via Tauri commands (store in redb)
-- Integrate with `ProfileScreen` — render custom layout if one exists
-- Sandboxed rendering (DOMPurify or `<iframe>`) for security
-- Maintain GeoCities/Win98 aesthetic in builder UI
+**Do not redo any of this work.**
 
-This task is **fully independent** — no cross-track blockers.
+## 🎯 Current Assignment (2026-03-15)
+
+Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
+
+**Priority 0 — Merge `main` into `track-b/ui-redesign`** (resolve lib.rs, oauth.rs, oauth_test.rs conflicts)
+**Priority 1 — B10.4 Reload/Refresh**
+**Priority 2 — Navigation Unification** (migrate callers from useNavStore → useLocationStore)
+**Priority 3 — B11.1 Network State Feed** (if time permits)
 
 ## Prime Directive
 

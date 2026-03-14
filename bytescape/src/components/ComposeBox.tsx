@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { INPUT_LIMITS, formatFileSize } from '../utils/sanitize';
+import { useCharacterCount, TARGET_ICONS, STATUS_COLORS } from '../hooks/useCharacterCount';
 import { ArticleEditor } from './ArticleEditor';
 import type { ArticleEditorData } from './ArticleEditor';
 
@@ -37,11 +38,14 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [articleMode, setArticleMode] = useState(false);
     const articleDataRef = useRef<ArticleEditorData | null>(null);
 
-    // Input validation (MED-4)
-    const charCount = articleMode ? (articleDataRef.current?.wordCount ?? 0) : composeText.length;
-    const isOverCharLimit = !articleMode && charCount > INPUT_LIMITS.MAX_LOCAL_CHARS;
-    const isNearCharLimit = !articleMode && charCount > INPUT_LIMITS.WARN_CHARS;
+    // Input validation (MED-4) + multi-target character counting (C1.4)
+    const charResult = useCharacterCount(composeText, postTarget);
     const isAtAttachmentLimit = attachments.length >= INPUT_LIMITS.MAX_ATTACHMENTS;
+
+    // In article mode, character limits don't apply (articles are long-form)
+    const isOverCharLimit = !articleMode && charResult.allOver;
+    const isAnyTargetOver = !articleMode && charResult.anyOver;
+    const isNearCharLimit = !articleMode && charResult.counts.some(c => c.status === 'warn' || c.status === 'danger');
 
     const hasContent = articleMode
         ? (articleDataRef.current?.content?.trim().length ?? 0) > 0 || (articleDataRef.current?.title?.trim().length ?? 0) > 0
@@ -161,7 +165,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                                 marginBottom: 4,
                                 width: '100%',
                                 background: 'rgba(255,255,255,0.05)',
-                                border: `1px solid ${isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
+                                    border: `1px solid ${isOverCharLimit ? '#e74c3c' : isAnyTargetOver ? '#e67e22' : isNearCharLimit ? '#f39c12' : 'rgba(255,255,255,0.1)'}`,
                                 borderRadius: 8,
                                 padding: 10,
                                 color: 'inherit',
@@ -174,16 +178,33 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                             alignItems: 'center',
                             marginBottom: 8,
                             fontSize: '0.72rem',
-                            color: isOverCharLimit ? '#e74c3c' : isNearCharLimit ? '#f39c12' : 'var(--text-muted)',
+                            color: 'var(--text-muted)',
                         }}>
-                            <span>
-                                {charCount > 0 && `${charCount.toLocaleString()} / ${INPUT_LIMITS.MAX_LOCAL_CHARS.toLocaleString()}`}
-                                {isOverCharLimit && ' — over limit'}
-                            </span>
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                {composeText.length > 0 && charResult.counts.map(c => (
+                                    <span key={c.target} style={{ color: STATUS_COLORS[c.status] }} title={`${c.target}: ${c.current}/${c.limit}`}>
+                                        {TARGET_ICONS[c.target]} {c.current}/{c.limit}
+                                    </span>
+                                ))}
+                            </div>
                             <span style={{ color: 'var(--text-muted)' }}>
                                 {attachments.length > 0 && `${attachments.length} / ${INPUT_LIMITS.MAX_ATTACHMENTS} attachments`}
                             </span>
                         </div>
+                        {isAnyTargetOver && !isOverCharLimit && (
+                            <div style={{
+                                fontSize: '0.72rem',
+                                color: '#e67e22',
+                                background: 'rgba(230,126,34,0.08)',
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                marginBottom: 8,
+                            }}>
+                                ⚠️ Text exceeds limit on: {charResult.truncatedTargets.map(t =>
+                                    `${TARGET_ICONS[t]} ${t} (by ${charResult.counts.find(c => c.target === t)?.overBy ?? 0})`
+                                ).join(', ')}
+                            </div>
+                        )}
                     </>
                 )}
 
@@ -276,7 +297,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                         className="btn btn-primary"
                         onClick={handlePublish}
                         disabled={!canPost}
-                        title={isOverCharLimit ? 'Post exceeds character limit' : ''}
+                        title={isOverCharLimit ? 'Post exceeds character limit on all targets' : isAnyTargetOver ? 'Post will be truncated on some targets' : ''}
                         style={{ padding: '6px 16px' }}
                     >
                         {isPosting ? 'Posting...' : 'Post'}

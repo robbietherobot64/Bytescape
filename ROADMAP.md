@@ -169,28 +169,86 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 - [ ] **A4.2 Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions. Add `Rss` variant to `Source` enum.
 - [ ] **A4.3 Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs → stored as `BytescapeType::Article`.
 
+#### A5. Platform Integrity & Anti-Bot 🛡️
+*Bytescape is 100% user-generated content. No AI bots, no spam accounts, no automated posting. These measures apply to Bytescape-native accounts and to federated content ingested from external protocols.*
+
+> **Philosophy**: We can't control what happens on Bluesky or Mastodon, but we can control what Bytescape amplifies. Federated content from external sources passes through the same detection pipeline — flagged content is demoted or hidden, not displayed alongside human posts.
+
+- [ ] **A5.1 Identity Verification Gate**: New Bytescape identities (local or hosted on `bytescape.social`) must pass a proof-of-humanity step during registration. Options (implement at least two, configurable):
+  1. **Interactive CAPTCHA**: Locally-rendered challenge (no third-party CAPTCHA service — keep it privacy-respecting). E.g., image-based puzzle, drag-to-solve, or audio challenge. Rendered in the app UI, verified by the Rust backend.
+  2. **Invite-only onboarding**: New accounts require an invite code from an existing user. Each user gets N invite codes (configurable, default 5). Invite tree is tracked for abuse tracing.
+  3. **Email verification** *(for hosted accounts)*: When `bytescape.social` is live, require email confirmation. Rate-limit registrations per email domain. Block known disposable email providers.
+  4. **Vouching system**: Existing users can vouch for new accounts. Unvouched accounts have limited posting visibility until vouched by ≥2 peers.
+  *(Backend — Track A)*
+- [ ] **A5.2 Rate Limiting & Behavioral Analysis**: Detect and throttle bot-like posting patterns on Bytescape-native accounts:
+  1. **Posting rate limits**: Max posts per hour/day (configurable, default 30/hr, 200/day). Burst detection — flag accounts that post >5 times in 60 seconds.
+  2. **Content similarity detection**: BLAKE3-hash the text content of each post. If an account posts >3 near-identical items within 24 hours, flag for review. Use Levenshtein distance or n-gram similarity for fuzzy matching.
+  3. **Engagement ratio monitoring**: Accounts that post heavily but never interact (no likes, replies, or DMs) get flagged. Pure broadcast accounts are suspicious.
+  4. **New account probation**: Fresh accounts (first 7 days) have reduced posting limits (10/hr, 50/day) and cannot DM non-contacts.
+  *(Backend — Track A)*
+- [ ] **A5.3 Federated Content Filtering**: Apply bot/spam detection to content ingested from Bluesky, AP, and other federated sources:
+  1. **AT Protocol labeler integration**: Subscribe to community bot-detection labelers on Bluesky. Content labeled as bot-generated is hidden by default (user can override in settings).
+  2. **AP actor heuristics**: Check inbound AP actors for bot signals — missing `summary`/bio, default avatar, account age <24h with >100 posts, `bot: true` flag in actor metadata (Mastodon sets this).
+  3. **Content-level signals**: Detect AI slop patterns — repetitive phrasing, excessive hashtag stuffing (>10 per post), URL-only posts from unknown domains, identical text posted to multiple targets.
+  4. **User-level block/report**: Users can flag accounts as bots. Aggregated reports (≥3 unique reporters) auto-hide the account's content platform-wide pending review.
+  *(Backend — Track A, builds on A1.1 and A0)*
+- [ ] **A5.4 AI Scraping Prevention (Hosted)** *(unlocked by A1.1 + hosting)*: Protect Bytescape user content from AI training data harvesting when served via `bytescape.social`:
+  1. **`robots.txt`**: Block all known AI crawlers — GPTBot, CCBot, Google-Extended, anthropic-ai, Bytespider, etc. Maintain an updatable blocklist.
+  2. **`X-Robots-Tag` headers**: Serve `noai, noimageai` on all user content pages.
+  3. **`ai.txt`** *(emerging spec)*: Publish machine-readable AI usage policy at `bytescape.social/ai.txt`.
+  4. **Rate limiting**: Aggressive rate limiting on `bytescape.social` — max 60 req/min per IP, CAPTCHA challenge on sustained high-frequency access patterns.
+  5. **Hotlink protection**: Prevent direct embedding/scraping of user media. Serve images via signed, time-limited URLs when accessed from non-Bytescape referrers.
+  *(Backend — Track A, hosted infrastructure)*
+- [ ] **A5.5 Content Provenance & Attestation** *(stretch)*: Cryptographic proof that content was created by a human using the Bytescape app:
+  1. **Signed posts**: Every `BytescapeItem` created locally is signed with the user's Iroh ed25519 key. The signature covers the content hash + timestamp. Federated recipients can verify the signature against the user's published `did:key`.
+  2. **Device attestation** *(research)*: Investigate platform-specific attestation (Android SafetyNet/Play Integrity, Apple DeviceCheck) to prove content originated from a real device, not a script. Privacy implications need careful evaluation.
+  3. **C2PA metadata** *(stretch)*: For photos/videos, embed C2PA (Content Credentials) provenance data proving the media was captured on a real camera and not AI-generated. Requires integration with the C2PA Rust SDK.
+  *(Backend — Track A, research phase)*
+
 ---
 
 ### Track B — Profile, Lenses & Communities 🎨
 *Agent focus: Frontend React components, UI screens, CSS, map integration. No AP dependency for most items — build against local data and P2P peers.*
 
-#### B1. Lenses & Content Views
-- [x] **B1.1 Lens: Gallery**: Masonry grid with column count by viewport. `GalleryLens` component with source filter dropdown, `Lightbox` overlay with prev/next navigation, keyboard controls (arrows, Escape), full metadata display. Source filter persisted across lightbox open/close.
-- [x] **B1.2 Lens: Reader**: `ReaderLens` with clean serif typography, reading-time estimate, scroll progress bar, source/date header. Full article content rendered in sanitized HTML with `sanitizeHtml()` from DOMPurify. Empty-state messaging.
-- [x] **B1.3 Item-Type Rendering**: `FeedItemRenderer` dispatches to `GalleryLens`, `ReaderLens`, or default `FeedEntryCard` based on `BytescapeType`. `FeedScreen` has lens toggle button (grid/list/book icons) cycling through Feed → Gallery → Reader views.
+#### UF. User Feedback — Critical UX Overhaul (2026-03-14) 🔥
+*Direct user feedback. These take priority over new feature development. Items marked ⚡ are bugs in "completed" features that need immediate fixing. Items marked 🔄 are design philosophy changes that require rethinking existing implementations.*
+
+> **Philosophy shift — Filters, not Lenses:** The Gallery/Reader "lens" concept is being replaced with **feed content-type filters**. Instead of switching to entirely different views, users filter the main feed by content type (images, videos, articles, short text, etc.) and the feed adapts its card layout to optimize for that type. The feed stays the feed — it just shows different slices.
+
+- [ ] ⚡ **UF.1 Layout & Spacing Overhaul**: Default to fullscreen on launch. Sidebars, content area, and panels should fill available width. Feed tabs and filters align with the edges of the content section. All panels and content adapt fluidly to window resize. Currently the app wastes horizontal space — fix CSS grid/flex to be full-width responsive. *(Frontend — Track B)*
+- [ ] ⚡ **UF.2 Feed Post Card Sizing**: Posts are too narrow in height. Post cards should be more symmetrical (closer to square), and images/video previews should show the full media rather than cropping aggressively. Adjust `FeedEntryCard` aspect ratios and image container styling. *(Frontend — Track B)*
+- [ ] ⚡ **UF.3 Friends List Shows Only Chatted Users**: The friends/contacts list in the Social tab only shows users you've chatted with, not all connected contacts. It should show **all** contacts (Bluesky follows, P2P peers, imported contacts) with a chat initiation button next to each. *(Frontend + Backend — Track B + A)*
+- [ ] ⚡ **UF.4 Feed Friends Panel — Missing Chat + Profile Actions**: No chat button next to user names on the feed sidebar friends list. Clicking a profile does nothing. Fix: chat icon → opens DM, profile click → navigates to user's profile (Bluesky profile, AP actor page, or Bytescape peer profile). *(Frontend — Track B)*
+- [ ] 🔄 **UF.5 Following/Subscribed Tab Dedup**: "My Contacts" section on the Following view is a worse version of the friends tab. "Subscribed" is a copy of "All" sidebar. Redesign: merge contacts into the Social tab (its home), collapse subscribed into All with subscription-source filters instead of a separate tab. *(Frontend — Track B)*
+- [ ] 🔄 **UF.6 Feed Content-Type Filters (Replaces Lenses)**: Replace the Gallery/Reader lens toggle with **content-type filter chips** on the feed toolbar. Filters: 📝 Text · 📸 Images · 🎬 Video · 📰 Articles · 🔗 Links. Each filter adjusts the feed query to only show items of that type and optimizes the card layout (image filter → larger thumbnails in a grid; article filter → headline + excerpt + reading time; video filter → video player cards). Add a 🌐 Source filter (Bluesky / ActivityPub / Local / Archives / All). Filters are combinable. This replaces B1.1, B1.2, and B1.3. *(Frontend — Track B, Backend content-type tagging — Track A)*
+- [ ] ⚡ **UF.7 Article Filter — Content Quality**: The article/reader view shows YouTube videos, GIFs, and links that aren't articles. The article filter must only show: blog posts, news articles, long-form text posts (>500 chars), and `BytescapeType::Article` items. Exclude: video embeds, GIF-only posts, short link shares, image-only posts. Backend needs a `content_classification` field or heuristic to tag items. *(Content — Track C, Backend — Track A)*
+- [ ] ⚡ **UF.8 Profile Builder Broken**: "Customize" on the profile shows a blank screen that says "Body" on hover. GrapesJS is not initializing properly. Fix: ensure GrapesJS editor loads with interactive toolbars, add-block buttons, drag-and-drop panels, and configuration dropdowns for size/shape/color. The builder must be usable by a non-technical user. *(Frontend — Track B)*
+- [ ] 🔄 **UF.9 Profile Page Rework**: Profile posts are too wide — make them narrow cards. Split profile feed into two tabs: **Wall** (posts by/to the user — pinnable, guestbook-like) and **Posts** (user's posts on the wider web). Both tabs have the same filter chips as the main feed (UF.6). Remove the stats bar (media count, vault files, storage). Move network/source display into a filter box on the Posts tab. Add verified account badges for linked external accounts. *(Frontend — Track B)*
+- [ ] 🔄 **UF.10 Social Module Redesign**: The Social tab is the weakest module. Current "Browse Profiles" opens a redundant second browser bar below the main Omnibar — remove it. Redesign the Social tab to focus on: ① managing followers/following across all platforms, ② webring membership and discovery, ③ friend search and discovery, ④ cross-platform contact management. The sidebar icons (browse, search, add/remove) are closer to the right UX — expand on that pattern rather than the current profile browser approach. *(Frontend — Track B)*
+- [ ] 🔄 **UF.11 Settings Consolidation**: Merge "Account" and "Connected Accounts" into one section — Bytescape identity as parent, linked accounts below with "Link New Account" button. Add sections: default search settings (search engine, scope), privacy settings (global search visibility, friend request policy), browser customization (ad blocker toggle, privacy level). Move "Bluesky Feeds" management out of Settings and into the Feeds screen directly. Evaluate whether "Device Sync" is still needed (P2P node pairing covers this) — if redundant, remove. *(Frontend — Track B)*
+- [ ] ⚡ **UF.12 Import Screen UX Fix**: ① Content is crushed to upper-left — center it. ② Remove redundant "View Feed" button. ③ Change "Shred Surveillance & Save Memories" → "Import Archive". ④ Change "Exorcism Complete" → "Import Complete". ⑤ Classify and define discovered trackers with categories and descriptions rather than just a count. *(Frontend — Track B)*
+- [ ] ⚡ **UF.13 Facebook Import Quality**: Facebook import glitches the import screen and shows random activity instead of actual posts and media. Major rework needed in `connectors/facebook.rs` — prioritize posts with text/photos/videos, filter out low-value activity logs (likes, reactions, login events, ad interactions). *(Backend — Track A)*
+- [ ] 🔄 **UF.14 Theme Customization Enhancement**: Users should be able to click any color swatch in a theme and change it individually (custom color picker per CSS variable). Support importing images/GIFs as backgrounds. Provide default animated background options. Themes become fully user-customizable, not just preset switching. *(Frontend — Track B)*
+- [ ] 🔄 **UF.15 Export Manager & Account Deletion**: Add "Export" option before "Clear Vault" — detailed export manager to export whole or partial vault + profile data as a ZIP file in JSON format. Rename "Clear Vault" to "Delete Account" — permanently wipes all data, unlinks all connected accounts, removes identity from the platform. *(Frontend + Backend — Track B + A)*
+- [ ] ⚡ **UF.16 Feed Refresh Performance**: Feed takes tens of seconds to refresh, appearing stalled. Investigate: timeline fetch timeout, redundant API calls, missing pagination, heavy deserialization. Add visible loading indicators and progressive rendering (show cached items immediately, update when fresh data arrives). *(Backend — Track A)*
+
+#### B1. ~~Lenses & Content Views~~ → Feed Content Filters *(reworked per UF.6)*
+- [x] ~~**B1.1 Lens: Gallery**~~: *(Implemented but user feedback: "worst possible version of Instagram." Replaced by UF.6 Image content filter with optimized grid layout.)*
+- [x] ~~**B1.2 Lens: Reader**~~: *(Implemented but user feedback: "totally busted — shows YouTube videos, GIFs, links." Replaced by UF.6 Article content filter with UF.7 quality filtering.)*
+- [x] ~~**B1.3 Item-Type Rendering**~~: *(Implemented but user feedback: lens paradigm is wrong — should be feed filters, not separate views. Replaced by UF.6.)*
 
 #### B2. Profile Builder & Theming
-- [ ] **B2.1 GrapesJS Integration**: Embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Outputs clean HTML/CSS stored locally in user's Willow store. Requires `grapesjs` npm package.
-- [ ] **B2.2 Raw HTML Override**: Upload custom HTML/CSS/JS directly to Willow store. Rendered in a sandboxed `<iframe>` to prevent XSS.
-- [ ] **B2.3 DID Meta Tags**: Emit `<meta name="bytescape:did">` and cross-platform subscription link tags for client-side DID resolution.
-- [ ] **B2.4 Widget System**: Away message, music player, friends list, guestbook — configurable and drag-and-drop arrangeable within GrapesJS or standalone.
-- [x] **B2.5 Theme Engine**: Three built-in themes — **Cozy Mode** (GeoCities default), **Desktop Mode** (Win98 silver/teal, sharper bevels, system font, no stars), **Midnight Mode** (deep blues, soft purples, rounded corners). `ThemeId` type, `useThemeStore` (Zustand + localStorage persistence), `useTheme()` hook applies `data-theme` attribute on `<html>`. `ThemePicker` component in SettingsScreen Appearance card with swatch previews and instant switching. Ghost CSS variables (`--accent-purple`, `--bg-primary`, etc.) defined with defaults. 5 ThemePicker tests.
+- [x] **B2.1 GrapesJS Integration**: Embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Outputs clean HTML/CSS stored locally in user's Willow store. Requires `grapesjs` npm package. ⚠️ *User feedback: shows blank screen — see UF.8 for required fixes.*
+- [x] **B2.2 Raw HTML Override**: Upload custom HTML/CSS/JS directly to Willow store. Rendered in a sandboxed `<iframe>` to prevent XSS.
+- [x] **B2.3 DID Meta Tags**: Emit `<meta name="bytescape:did">` and cross-platform subscription link tags for client-side DID resolution.
+- [x] **B2.4 Widget System**: Away message, music player, friends list, guestbook, visitor counter, post feed, media grid — live React widget hydration from GrapesJS blocks, with persistent configuration via Tauri commands and redb storage.
+- [x] **B2.5 Theme Engine**: Three built-in themes — **Cozy Mode** (GeoCities default), **Desktop Mode** (Win98 silver/teal, sharper bevels, system font, no stars), **Midnight Mode** (deep blues, soft purples, rounded corners). `ThemeId` type, `useThemeStore` (Zustand + localStorage persistence), `useTheme()` hook applies `data-theme` attribute on `<html>`. `ThemePicker` component in SettingsScreen Appearance card with swatch previews and instant switching. Ghost CSS variables (`--accent-purple`, `--bg-primary`, etc.) defined with defaults. 5 ThemePicker tests. ⚠️ *User feedback: needs per-color customization + animated backgrounds — see UF.14.*
 - [ ] **B2.6 Dual-Format Serving** *(unlocked by Track A — A1.1)*: Profile URL serves HTML to browsers and Atom/Lexicon to aggregators simultaneously via `<link rel="alternate">`.
 - [ ] **B2.7 "Memory" Post Type** *(tentative, low priority)*: Vault item resurfacing with "On This Day" semantics and optional syndication as a nostalgia post. Details TBD when we get to it.
 
-#### B3. Peer Profile Browser
-- [ ] **B3.1 Profile Browser Tab**: New top-level screen for visiting and traversing peer profiles by following profile links, webrings, and connection graphs.
-- [ ] **B3.2 Sandboxed iframe Renderer**: Load peer profile HTML in an isolated frame. Shell reads `<meta>` tags and populates Follow/Subscribe action buttons.
+#### B3. ~~Peer Profile Browser~~ → Social Module *(reworked per UF.10)*
+- [x] ~~**B3.1 Profile Browser Tab**~~: *(Implemented but user feedback: opens redundant second browser bar, Social module is weakest — needs redesign. See UF.10.)*
+- [x] ~~**B3.2 Sandboxed iframe Renderer**~~: *(Implemented. Renderer code may be reused in the redesigned Social module.)*
 - [ ] **B3.3 Swarm Caching**: Temporarily cache visited profile data locally (Iroh blobs, signed by owner's key) to distribute load from high-traffic profiles.
 - [ ] **B3.4 Pub Node Support**: Allow users to configure a dedicated Pub pinning node for 24/7 profile availability without full self-hosting.
 
@@ -237,10 +295,37 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **B9.2 Webrings & Forums**: `com.platform.webring.member` AT Protocol Lexicon, `publish_webring_membership` command, AppView Indexer subscribing to firehose, webring UI with prev/next navigation.
 - [ ] **B9.3 WASM Web Portal** *(unlocked by Track A — A1.1 + hosting)*: Public profiles serve blurred preview to scrapers; full content via WebAssembly Iroh node in browser.
 
-#### B10. Network & Interaction Polish
-- [ ] **B10.1 Network State Feed**: `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created). Feed injection with distinct visual treatment.
-- [ ] **B10.2 Friend Zoom**: Per-connection closeness slider that filters feed by relationship strength.
-- [ ] **B10.3 Haptics & Audio**: "Mechanical" (crisp clicks) and "Organic" (wood taps, paper) sound profiles via `tauri-plugin-haptics`.
+#### B10. Browser Chrome & Navigation 🌐
+*Every Bytescape page is addressable by URL — whether served locally on desktop or mirrored on a relay. The app shell leans into a browser-within-a-browser aesthetic: omnibar, back/forward, reload.*
+
+> **URL Scheme Design:** Locally, pages use path-based addresses like `byte://feed/following` or `byte://profile/@alice.bsky.social`. When a user mirrors content via a relay (Phase 5 Station or `bytescape.social`), the same paths resolve at `https://lovingisliving.bytescape.social/feed/following` (subdomain per user). The omnibar shows whichever form is canonical — `byte://` by default, the public HTTPS URL when the user's relay mirror is active. Peer profiles visited over P2P use `byte://peer/{nodeId}/profile`.
+
+- [x] **B10.1 Internal URL Scheme**: Define and register internal URL addressing for all Bytescape screens. Mapping: `/feed`, `/feed/following`, `/feed/feeds/{feedUri}`, `/feed/hashtags/{tag}`, `/chat/bsky/{convoId}`, `/chat/p2p/{nodeId}`, `/vault`, `/vault/{blobHash}`, `/profile`, `/profile/@{handle}`, `/profile-builder`, `/import`, `/settings`, `/article/{itemId}`, `/map`. Create a `useLocation()` hook (Zustand) that exposes `currentUrl` and `navigate(url)`. All screen transitions go through this hook so the URL always reflects the visible page. *(useLocation.ts — resolveUrl/buildUrl + useLocationStore with syncFromNavStore bridge, 45 tests)*
+- [x] **B10.2 Navigation History Stack**: Browser-style forward/backward navigation. `useNavigationHistory` Zustand store maintaining a stack of visited URLs with a cursor index. `goBack()`, `goForward()`, `canGoBack`, `canGoForward` exposed to the UI. Max depth ~50 entries. Each `navigate()` call pushes onto the stack. *(Integrated into useLocationStore — history array + cursor, back/forward with trim-on-branch, max 50 depth)*
+- [x] **B10.3 Omnibar UI**: Evolve the existing `TopBar` search bar into a browser-style omnibar. Shows the current page URL (from B10.1 scheme) in a styled address bar. Editable — user can type a URL to navigate directly, or type text to search. Auto-completes known routes and recent URLs. Flanked by ◀ Back / ▶ Forward buttons. Shows a 🏠 local / 🌐 relay / 🔗 peer icon indicating content origin. The bar has the classic beveled-inset browser field look consistent with the GeoCities aesthetic. *(Omnibar.tsx \u2014 replaces TopBar search bar, wired to useLocationStore)*
+- [ ] **B10.4 Reload / Refresh**: Reload button next to the omnibar triggers a full re-fetch of the current screen's data sources. Each screen exports a `refresh()` callback (or listens for a `byte://reload` event). Feed screens re-fetch timeline, vault re-queries blob list, profile re-fetches actor data, chat re-polls conversations. *(Frontend agent — Track B)*
+- [ ] **B10.5 URL Deep Linking** *(unlocked by Track A — A1.1 + hosting)*: When `bytescape.social` is live, the internal URL scheme maps to public HTTP URLs. `byte://profile/@alice` → `https://alice.bytescape.social`. The omnibar shows the public HTTPS URL when the user's relay mirror is active. Clicking "Copy Link" copies the public URL. Incoming links from external browsers resolve via the WASM portal (B9.3) or redirect to the app via `byte://` protocol handler (registered via Tauri deep-link plugin). *(Cross-track — A + B)*
+- [x] **B10.6 URL Bar for Peer Browsing**: When visiting a peer's profile (B3.1), the omnibar shows `byte://peer/{nodeId}/profile`. Users can type a peer's node ID or `did:key` into the omnibar to navigate directly to their profile. Integrates with the Peer Profile Browser — omnibar becomes the primary navigation surface for traversing the peer graph. *(ProfileBrowserScreen navigateTo/goHome sync to useLocationStore, Omnibar detects hex node IDs)*
+- [ ] **B10.7 External Web Browsing (Desktop Only)**: On desktop, the content area uses a **secondary Tauri `Webview`** (created via `WebviewBuilder::new()` with **no IPC access**) that can load arbitrary `http://`/`https://` URLs. The React shell (omnibar, sidebar) stays in the primary webview and controls the content webview via Tauri commands (`webview.navigate(url)`, `webview.go_back()`, `webview.go_forward()`). Content webview navigation events bubble up to update the omnibar URL display and history stack (B10.2). When viewing a `byte://` internal route, the content webview is hidden and the React screen renders directly; when navigating to an external URL, the React screen is hidden and the content webview is shown. **iframe fallback**: For niche cases like embedded profile widgets or whitelisted embeds, sandboxed `<iframe>` elements remain available within React components (e.g., embedding a Bandcamp player or a peer's profile widget). **Mobile**: External links open via the platform's in-app browser (SFSafariViewController / Chrome Custom Tabs via `tauri-plugin-opener`) — mobile stays focused on the social platform experience, not general browsing. *(Frontend + Backend — Track B)*
+- [ ] **B10.8 Unified Search (Omnibar)**: The omnibar doubles as a federated search surface. When the user types text that isn't a URL or `byte://` route, it triggers a **tiered search** across multiple sources, prioritized in this order:
+  1. **Bytescape Network** (default, highest priority): Search local vault items, contacts, P2P peers, and (when hosting is live) the Bytescape directory. Results include profiles, pages, articles, vault items.
+  2. **Fediverse** (AT Protocol + ActivityPub): Search public content across all subscribed protocols — Bluesky actor search (`app.bsky.actor.searchActors`), AP WebFinger lookups, hashtag federation. Returns profiles, posts, communities.
+  3. **Web** (lowest priority): Falls back to a configurable search engine (default: DuckDuckGo) for general web results. Results open in the content webview (B10.7 on desktop) or in-app browser (mobile).
+  Results render in a unified dropdown below the omnibar, grouped by source with clear section headers (🏠 Bytescape · 🌐 Fediverse · 🔍 Web). **Filters**: User can prefix queries to constrain scope — `@linkinpark` (people only), `#rockmusic` (hashtags only), `site:bandcamp.com linkin park` (specific site via web search), or toggle filter chips: "Bytescape only", "Fediverse only", "Web only". **Example**: Searching "Linkin Park" → ① Linkin Park's Bytescape profile → ② Linkin Park fan page on Bytescape → ③ Linkin Park Bluesky/AP profiles → ④ linkinpark.com (web result). *(Cross-track — A + B + C)*
+- [ ] **B10.9 Built-in Ad Blocker (Desktop)**: Bytescape is ad-free by philosophy — this extends to external web content viewed in the content webview (B10.7). Implement content filtering on the Rust side by intercepting the webview's resource requests (WebKitGTK `WebView::resource-load-started` / WebView2 `add_WebResourceRequested`) and blocking requests matching known ad/tracker domains. Ship a bundled filter list (EasyList subset or similar — curated for size). Block ad iframes, tracking pixels, and video pre-rolls where possible. **Scope**: Desktop only (mobile uses platform in-app browsers which have their own ad handling). **Research items**: Evaluate WebKitGTK vs WebView2 interception APIs for feasibility, determine filter list update mechanism (bundled vs. periodic fetch), assess performance impact of request-level filtering. *(Backend — Track B, research phase)*
+- [ ] **B10.10 Privacy Shield (Desktop)**: Comprehensive anti-tracking for the content webview, layered on top of the ad blocker (B10.9). Bytescape protects user privacy even when browsing external sites:
+  1. **Third-party cookie blocking**: Configure the webview cookie policy to reject all third-party cookies (WebKitGTK `WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY` / WebView2 equivalent). First-party cookies preserved so logins work.
+  2. **Tracker filter list**: Extend B10.9 filter lists with EasyPrivacy or Disconnect.me tracker list — blocks known analytics endpoints (Google Analytics, Meta Pixel, etc.), tracking pixels (1×1 images with query-string IDs), and beacon requests.
+  3. **Referrer stripping**: Set `Referrer-Policy: no-referrer` on the content webview so external sites can't see where the user came from.
+  4. **URL hygiene**: Before navigating, strip known tracking parameters from URLs — `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `fbclid`, `gclid`, `mc_eid`, `igshid`, `twclid`. Implement as a URL-cleaning pass in the Rust navigate handler.
+  5. **Fingerprint resistance** *(research)*: Investigate spoofing or randomizing canvas fingerprint, WebGL renderer strings, `AudioContext` output, and `navigator.hardwareConcurrency` in the content webview. This is cat-and-mouse territory — start with canvas noise injection via JS injection on page load. Evaluate impact on site functionality.
+  6. **DNS-over-HTTPS** *(stretch)*: Route content webview DNS through a DoH resolver (Cloudflare `1.1.1.1` or NextDNS) to prevent ISP-level tracking. Requires system-level or webview-level DNS override — feasibility varies by platform.
+  **Scope**: Desktop content webview only. Internal `byte://` screens don't load external resources, so they're inherently tracking-free. *(Backend — Track B, builds on B10.9)*
+
+#### B11. Network & Interaction Polish
+- [ ] **B11.1 Network State Feed**: `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created). Feed injection with distinct visual treatment.
+- [ ] **B11.2 Friend Zoom**: Per-connection closeness slider that filters feed by relationship strength.
+- [ ] **B11.3 Haptics & Audio**: "Mechanical" (crisp clicks) and "Organic" (wood taps, paper) sound profiles via `tauri-plugin-haptics`.
 
 ---
 
@@ -249,11 +334,11 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 #### C1. Rich Text & Facets
 - [x] **C1.1 Rich Text Facet Parsing — Backend**: `richtext.rs` — `detect_facets()`, `parse_facets_for_bluesky()`, `parse_facets_local()` with UTF-8 byte offset calculation. 23 unit tests. Wired into `posting.rs` (publish_post_v2) and `syndicate.rs` (syndicate_vault_item) — facets auto-generated on Bluesky publish.
-- [ ] **C1.1b Rich Text Facet Rendering — Frontend**: Render facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Add facet TypeScript types to `types/index.ts`.
+- [x] **C1.1b Rich Text Facet Rendering — Frontend**: `RichText` component renders facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Facet TypeScript types added to `types/index.ts`. *(Commit: `38cf4c2`)*
 - [x] **C1.2 Mention Autocomplete — Backend**: `search_mentions` Tauri command registered — searches local contacts by handle prefix, returns `MentionSuggestion { handle, did, avatar_url }`.
-- [ ] **C1.2b Mention Autocomplete — Frontend**: Typeahead dropdown UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle.
+- [x] **C1.2b Mention Autocomplete — Frontend**: `AutocompleteDropdown` UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle. *(Commit: `38cf4c2`)*
 - [x] **C1.3 Hashtag Autocomplete — Backend**: `search_hashtags_autocomplete` Tauri command registered — searches followed hashtags by prefix.
-- [ ] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag.
+- [x] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag. *(Commit: `38cf4c2`)*
 - [ ] **C1.4 Character Count & Limits**: Per-target live counter in ComposeBox. Bluesky: 300 graphemes (via `Intl.Segmenter`). AP: configurable per-server (default 500). Show which targets will truncate. *(Basic local-only 10K char counter exists from MED-4.)*
 
 #### C2. Link & Embed System
@@ -288,8 +373,8 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 > **Why not Willow?** Willow uses last-writer-wins per Entry — concurrent edits silently overwrite each other. Yjs merges at the character level with causal ordering, which is what "real-time collaborative editing" actually requires.
 
-- [ ] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: Add `yrs` (Rust Yjs port) crate to backend. New file `collab.rs` — Yjs doc CRUD, state vector management, update encoding/decoding. New redb table `COLLAB_DOCS: TableDefinition<&str, &[u8]>` storing binary Yjs state keyed by doc ID. Add optional `collab_doc_id: Option<String>` field to `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`. **Disruption: one optional field on BytescapeItem, everything else is new files/tables.**
-- [ ] **C6.2 Frontend Yjs Integration**: Wire `yjs` + `y-tiptap` into the Article editor from C3.2. Local-only mode first — single user editing with CRDT doc backing. Verify round-trip: edits → Yjs update → Tauri command → `yrs` merge → redb persist → reload. Packages: `yjs`, `y-prosemirror` (or `@tiptap/extension-collaboration` already added in C3.2).
+- [x] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: `yrs` crate in backend, `collab.rs` with Yjs doc CRUD + state vector management + update encoding. `COLLAB_DOCS` redb table. `collab_doc_id: Option<String>` on `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item` (accepts `content: &str` — frontend renders via Tiptap, Rust stores CRDT state + snapshots). *(Backend: GAP-4 commit `9c60417` + Content: `16a9c69`)*
+- [x] **C6.2 Frontend Yjs Integration**: `useCollabDoc` hook (216 lines) manages Y.Doc lifecycle, debounced persistence (300ms batched via `Y.mergeUpdates()`), and snapshot function. `ArticleEditor` enhanced with `collaborative`/`collabDocId`/`itemId` props + `@tiptap/extension-collaboration`. 18 tests. Delivered within C6.1 scope. *(Commit: `16a9c69`)*
 - [ ] **C6.3 P2P Real-Time Sync via Gossip** *(prerequisite: working iroh-gossip from existing P2P chat)*: New gossip topic type `CollabUpdate` — Yjs update vectors broadcast to all peers with the doc open. Implement awareness protocol over gossip for cursor positions, selection highlights, and user presence indicators. Frontend shows colored cursors with peer names. **Disruption: adds a gossip topic variant, no breaking changes to existing chat gossip.**
 - [ ] **C6.4 Offline & Async Merge**: When a peer reconnects after editing offline, exchange Yjs state vectors and compute minimal sync updates. Yjs handles conflict resolution automatically (no user-facing merge conflicts). Persist pending updates in redb for crash recovery.
 - [ ] **C6.5 Station Relay for Always-On Collaboration** *(unlocked by Phase 5 — Station Protocol)*: Community Station acts as Yjs awareness relay + document update cache. Peer A edits → gossip update → Station buffers → Peer B comes online → Station forwards. Enables async collaboration without simultaneous presence. **This is what delivers true Google Docs parity.**
@@ -333,18 +418,20 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 ## 🐛 Open Issues
 - [ ] **Type Duplication**: `BlueskyPost` vs `BytescapeItem` in frontend—normalize into shared `FeedEntry` adapter (currently handled per-tab in `FeedScreen`).
-- [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
+- [ ] **Feed Refresh Performance** *(UF.16)*: Feed takes tens of seconds to refresh, appearing stalled. Needs investigation: timeline fetch timeout, redundant API calls, pagination, progressive rendering.
+- [ ] **Facebook Import Broken** *(UF.13)*: Import glitches the screen and shows random activity instead of actual posts/media. `connectors/facebook.rs` needs rework to prioritize real posts with text/photos/videos.
+- [ ] **Content-Type Classification** *(UF.7)*: Backend needs heuristic or field to classify items as text/image/video/article/link for feed filtering. Used by UF.6 feed filters.
 
 ### A0 OAuth — Known Gaps (post-merge follow-ups)
 *Identified by PM audit of Track A delivery. These are not bugs — they are documented scope gaps in the initial OAuth implementation that need follow-up work.*
 
-- [ ] **A0-GAP-1 Ephemeral OAuth Sessions**: `OAuthManager` uses `MemorySessionStore` — if the app restarts, the OAuth session is lost and the user must re-authenticate. Migrate to persistent storage (redb or encrypted keychain) so OAuth sessions survive app restarts. *(Backend agent — `oauth.rs`)*
-- [ ] **A0-GAP-2 Fixed Callback Port**: `OAUTH_CALLBACK_PORT` is hardcoded to `28457`. If the port is in use, the OAuth flow fails silently. Consider falling back to OS-assigned port (`127.0.0.1:0`) and constructing the redirect URI dynamically. Verify that `AtprotoLocalhostClientMetadata` supports dynamic ports. *(Backend agent — `oauth.rs`)*
-- [ ] **A0-GAP-3 No OAuth Rust Tests**: `oauth.rs` is 601 lines with zero test coverage. Add unit tests for at minimum: `OAuthManager::new()` construction, callback URL parsing (`OAuthCallbackQuery`), `process_callback` error paths, `is_oauth_session()` sentinel detection. *(Backend agent — `oauth.rs`, `src-tauri/tests/`)*
-- [ ] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` still use the old Bearer token path. They need the same `is_oauth_session()` branching pattern already applied in `import.rs`. Without this, OAuth users can read but not post. *(Backend agent — `commands/posting.rs`, `commands/syndicate.rs`)*
-- [ ] **A0-GAP-5 DMs Skipped for OAuth Sessions**: Bluesky DM APIs have separate OAuth scopes. The backend agent correctly documented this as out-of-scope for A0, but it means OAuth users cannot access DMs until scope is expanded. *(Backend agent — `commands/import.rs`)*
-- [ ] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: The backend agent reported that saved feeds and unified feed return empty results for OAuth sessions. Likely a PDS URL vs AppView routing issue similar to the one fixed in commit `3b01559`. *(Backend agent — `connectors/bluesky.rs`)*
-- [ ] **A0-GAP-7 Verify Transitive Crate Dependencies**: `oauth.rs` uses `p256` (ECDSA DPoP proofs) and `urlencoding` — confirm these come transitively from `atrium-oauth` or add explicit Cargo.toml entries. Missing deps would cause builds to fail on clean machines. *(Backend agent — `Cargo.toml`)*
+- [x] **A0-GAP-1 Ephemeral OAuth Sessions**: Persistent `FileSessionStore` with ChaCha20-Poly1305 encryption + Argon2id KDF. OAuth sessions survive app restarts. *(Commit: `45c6d04`)*
+- [x] **A0-GAP-2 Fixed Callback Port**: Dynamic fallback to OS-assigned port (`127.0.0.1:0`) when `28457` is in use. *(Commit: `f2f279f`)*
+- [x] **A0-GAP-3 OAuth Rust Tests**: 30 test functions covering FileSessionStore CRUD, OAuthManager construction, callback query-string parsing (full/error/empty/URL-encoded), XRPC URL parsing, session-absent error paths. *(Commit: `fe890b4`)*
+- [x] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` now use `is_oauth_session()` branching. *(Commit: `9c60417`)*
+- [x] **A0-GAP-5 DMs for OAuth Sessions**: Added `transition:chat.bsky` OAuth scope, `clone_with_proxy()` for isolated chat proxy headers, parallel chat import. *(Commits: `c29e549`, `ad6af24`)*
+- [x] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: Fixed PDS URL vs AppView routing. *(Commit: `c684d84`)*
+- [x] **A0-GAP-7 Transitive Crate Dependencies Verified**: `p256` confirmed transitive via `atrium-oauth` (zero direct imports — correct). `urlencoding` confirmed in `Cargo.toml`. *(Verified in remediation commit `fe890b4`)*
 
 <details>
 <summary>✅ Resolved Issues (click to expand)</summary>
@@ -358,6 +445,11 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [x] Facebook HTML Import: HTML format detection, scraper-based parsing, media extraction, tracker audit.
 - [x] Media Pipeline Fixes: Tokio runtime handle, path resolution, data:/https URI filtering.
 - [x] Feed Tab Restructure: Tabs aligned as All / Following / Feeds / #Hashtags / RSS / Archives.
+- [x] Bluesky Buddy Names Missing in Chat Sidebar: Resolved sender handles from convo members array; unified buddy list with friends panel. *(Commits: `bf56e20`, `ae4bf4b`)*
+- [x] OAuth Chat Proxy Header Leak: `clone_with_proxy()` prevents chat proxy from poisoning feed XRPC calls. *(Commit: `c29e549`)*
+- [x] "You" Feed Tab Empty: Added `get_author_feed` command merging Bluesky author feed with local vault posts. *(Commit: `a870548`)*
+- [x] Chat Import Never Completes: Parallel import so `import_vault_messages` runs alongside `import_bluesky_posts`. *(Commit: `ad6af24`)*
+- [x] OAuth Feeds Empty / DMs Broken: Three root causes — missing `Authorization: DPoP` header on `send_http`, wrong PDS URL construction (`/xrpc` suffix missing), no chat proxy path for OAuth. All fixed with shared `FileSessionStore` (Arc), `xrpc_chat_get/post` helpers, and DM wiring. *(Commit: `22a0435`)*
 - [x] Cross-Account Message Leakage: Fixed by owner-scoping vault messages.
 - [x] Deletion Path Coverage: `clear_vault` + `logout` wipe local user-scoped tables.
 - [x] Live Feed Semantics: Feed tabs aligned with live Bluesky subscribed-feed fetching.
