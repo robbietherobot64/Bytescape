@@ -434,6 +434,95 @@ pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Ve
         .map_err(|e| e.to_string())
 }
 
+/// Unified contact list — merges DB contacts with Bluesky follows.
+///
+/// Returns a combined, deduplicated contact list sorted so P2P-capable
+/// contacts appear first, then alphabetically by display name / handle.
+#[tauri::command]
+pub async fn list_contacts_unified(
+    state: State<'_, AppState>,
+) -> std::result::Result<Vec<serde_json::Value>, String> {
+    let mut contacts: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+
+    // ── 1. DB contacts (users we've chatted with) ──
+    {
+        let db_guard = state.db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            if let Ok(db_contacts) = db.list_contacts().await {
+                for c in db_contacts {
+                    let key = c.did.clone();
+                    contacts.entry(key).or_insert_with(|| serde_json::json!({
+                        "did": c.did,
+                        "handle": c.handle,
+                        "display_name": null,
+                        "avatar": null,
+                        "source": "chat",
+                        "p2p_capable": c.p2p_capable,
+                    }));
+                }
+            }
+        }
+    }
+
+    // ── 2. Bluesky follows (paginated via get_follows) ──
+    {
+        // Get the user's DID for the actor param
+        let actor_did = state.keychain.get_did()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+
+        if !actor_did.is_empty() {
+            let access_jwt = if state.is_oauth_session() {
+                String::new()
+            } else {
+                state.get_fresh_access_jwt().await.unwrap_or_default()
+            };
+
+            let mut cursor: Option<String> = None;
+            for _ in 0..10 {
+                // max 10 pages × 100 = 1000 follows
+                match crate::connectors::bluesky::get_follows(
+                    &access_jwt, &actor_did, 100, cursor.clone()
+                ).await {
+                    Ok((profiles, next_cursor)) => {
+                        for p in profiles {
+                            contacts.entry(p.did.clone()).or_insert_with(|| serde_json::json!({
+                                "did": p.did,
+                                "handle": p.handle,
+                                "display_name": p.display_name,
+                                "avatar": p.avatar,
+                                "source": "bluesky",
+                                "p2p_capable": false,
+                            }));
+                        }
+                        cursor = next_cursor;
+                        if cursor.is_none() { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    // ── 3. Sort: P2P-capable first, then alphabetically ──
+    let mut result: Vec<serde_json::Value> = contacts.into_values().collect();
+    result.sort_by(|a, b| {
+        let a_p2p = a.get("p2p_capable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let b_p2p = b.get("p2p_capable").and_then(|v| v.as_bool()).unwrap_or(false);
+        b_p2p.cmp(&a_p2p).then_with(|| {
+            let a_name = a.get("display_name").and_then(|v| v.as_str())
+                .or_else(|| a.get("handle").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            let b_name = b.get("display_name").and_then(|v| v.as_str())
+                .or_else(|| b.get("handle").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            a_name.to_lowercase().cmp(&b_name.to_lowercase())
+        })
+    });
+
+    Ok(result)
+}
+
 /// Garbage-collect orphaned tombstone entries from the Iroh vault namespace.
 /// 
 /// Tombstones accumulate as files are deleted. This reclaims namespace metadata weight.

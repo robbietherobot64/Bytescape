@@ -45,6 +45,8 @@ pub struct AppState {
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
     pub media_port: u16,
     pub oauth_manager: oauth::OAuthManager,
+    /// Shared HTTP client for connection pooling across all API calls.
+    pub http_client: reqwest::Client,
     /// Guard to ensure `restore_session` runs at most once per app lifetime.
     pub session_restored: AtomicBool,
 }
@@ -377,6 +379,7 @@ pub fn run() {
             commands::vault::list_vault_messages,
             commands::vault::count_archive_posts,
             commands::vault::list_contacts,
+            commands::vault::list_contacts_unified,
             commands::vault::vault_gc_tombstones,
             
             // Auth commands
@@ -555,6 +558,7 @@ pub fn run() {
                 pending_import: Mutex::new(None),
                 media_port,
                 oauth_manager,
+                http_client: reqwest::Client::new(),
                 session_restored: AtomicBool::new(false),
             };
 
