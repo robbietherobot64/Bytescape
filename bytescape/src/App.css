@@ -6153,3 +6153,25 @@ textarea::placeholder {
 .profile-edit-btn:hover {
     background: rgba(124, 58, 237, 0.4) !important;
 }
+
+/* ─── Profile Renderer & Widget System (B2.4) ─── */
+
+.profile-custom-layout {
+    margin: 16px;
+}
+
+.profile-renderer {
+    background: var(--bg-primary);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+/* Music player spinning disc animation */
+.music-disc.spinning {
+    animation: spin 3s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

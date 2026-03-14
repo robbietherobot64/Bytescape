@@ -400,6 +400,7 @@ export function ProfileBuilderScreen() {
                 css,
                 componentsJson,
                 stylesJson,
+                widgetData: null,
             });
 
             setHasLayout(true);

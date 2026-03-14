@@ -458,6 +458,12 @@ pub fn run() {
             commands::profile::save_profile_layout,
             commands::profile::get_profile_layout,
             commands::profile::delete_profile_layout,
+            // Widget & guestbook commands (B2.4)
+            commands::profile::save_widget_data,
+            commands::profile::get_widget_data,
+            commands::profile::add_guestbook_entry,
+            commands::profile::list_guestbook_entries,
+            commands::profile::delete_guestbook_entry,
         ])
         .setup(|app| {
             // Initialize application state

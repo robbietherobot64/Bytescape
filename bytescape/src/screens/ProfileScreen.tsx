@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BytescapeItem, VaultStats, ProfileLayout } from '../types';
+import { AuthStatus, BytescapeItem, VaultStats } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { Win98Box } from '../components/Win98Box';
+import { ProfileRenderer } from '../components/ProfileRenderer';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { useNavStore } from '../store';
 import { BsPersonFill, BsGlobe, BsStar, BsBookmark, BsPalette2 } from 'react-icons/bs';
@@ -30,30 +31,16 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [customLayout, setCustomLayout] = useState<ProfileLayout | null>(null);
-    const [layoutLoading, setLayoutLoading] = useState(true);
+    const [hasCustomLayout, setHasCustomLayout] = useState(false);
     const offsetRef = useRef(0);
-    const iframeRef = useRef<HTMLIFrameElement>(null);
     const { setScreen, setActiveSidebar } = useNavStore();
 
-    // Load custom profile layout
+    // Check for custom profile layout
     useEffect(() => {
-        (async () => {
-            try {
-                const layout = await invoke<ProfileLayout | null>('get_profile_layout');
-                setCustomLayout(layout);
-            } catch (e) {
-                console.warn('Failed to load profile layout:', e);
-            } finally {
-                setLayoutLoading(false);
-            }
-        })();
+        invoke('get_profile_layout').then((layout) => {
+            setHasCustomLayout(!!layout);
+        }).catch(() => {});
     }, []);
-
-    const handleEditProfile = useCallback(() => {
-        setScreen('profile-builder');
-        setActiveSidebar('profile');
-    }, [setScreen, setActiveSidebar]);
 
     // Load first page + metadata
     const loadInitial = useCallback(async () => {
@@ -153,8 +140,8 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                 </div>
                 <button
                     className="profile-edit-btn"
-                    onClick={handleEditProfile}
-                    title="Customize your profile page"
+                    onClick={() => { setScreen('profile-builder'); setActiveSidebar('profile'); }}
+                    title={hasCustomLayout ? 'Edit your custom layout' : 'Customize your profile page'}
                     style={{
                         position: 'absolute',
                         top: 12,
@@ -173,36 +160,17 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                         zIndex: 10,
                     } as React.CSSProperties}
                 >
-                    <BsPalette2 /> Edit Profile
+                    <BsPalette2 /> {hasCustomLayout ? 'Edit Layout' : 'Customize'}
                 </button>
             </div>
 
-            {/* ═══ Custom Profile Layout (sandboxed iframe) ═══ */}
-            {!layoutLoading && customLayout && (
+            {/* ═══ Custom Layout or Default Wall ═══ */}
+            {hasCustomLayout ? (
                 <div className="profile-custom-layout" style={{ margin: '0 16px' } as React.CSSProperties}>
-                    <Win98Box variant="window" title="✨ My Custom Page ✨">
-                        <iframe
-                            ref={iframeRef}
-                            sandbox="allow-same-origin"
-                            title="Custom Profile Layout"
-                            srcDoc={`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-body { background: #0f0f23; color: #e2e8f0; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 16px; }
-* { box-sizing: border-box; }
-${customLayout.css}
-</style></head><body>${customLayout.html}</body></html>`}
-                            style={{
-                                width: '100%',
-                                minHeight: 400,
-                                border: 'none',
-                                borderRadius: 'var(--border-radius, 4px)',
-                                background: '#0f0f23',
-                            } as React.CSSProperties}
-                        />
-                    </Win98Box>
+                    <ProfileRenderer editable={false} />
                 </div>
-            )}
-
+            ) : (
+            <>
             {/* ═══ GeoCities Content Grid ═══ */}
             <div className="profile-content-grid">
                 {/* Left Column: About Boxes */}
@@ -328,6 +296,8 @@ ${customLayout.css}
                     ⭐ Thanks for visiting my page! ⭐ Built with Bytescape ⭐ Best viewed on any screen ⭐
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 }
