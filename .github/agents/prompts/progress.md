@@ -73,25 +73,81 @@ All A0 OAuth gaps (GAP-1 through GAP-7) are now **closed**. The critical bug cau
 
 ---
 
-## Next Up: A1.1 — ActivityPub Actor & Inbox/Outbox
+## 2026-03-14 — A1.1 ActivityPub Actor & Inbox/Outbox ✅
 
-**Status:** Not started. Blocked on A0 completion (now unblocked).
+### Summary
+A1.1 is **complete**. Full ActivityPub foundation implemented: actor identity with ed25519 HTTP signatures, inbox processing with signature verification, outbox collection pagination, signed activity delivery, WebFinger discovery, and all 9 ActivityStreams activity constructors. This is the most critical-path item in the project — it unblocks 7 items across Tracks B and C.
 
-**Plan:**
-1. Create `src-tauri/src/activitypub/` module
-2. Define AP Actor type at `bytescape.social/@{username}`
-3. Implement HTTP signature verification for inbox POST
-4. Add outbox GET endpoint
-5. Add `ActivityPub` variant to `Source` enum
-6. This unlocks Track B items: B2.6, B9.1, B9.3
+### New Files (9 files, 1,636 lines total)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `activitypub/mod.rs` | 12 | Module re-exports: ApActor, ApObject, ApActivity, ApCollection, ApPublicKey, ApMediaLink |
+| `activitypub/types.rs` | 164 | Core AP types: `ApObject`, `ApActivity`, `ApCollection`, `ApPublicKey`, `ApMediaLink`, `ApTag`, `ApSource`. AS/Security JSON-LD context constants. |
+| `activitypub/actor.rs` | 170 | `ApActor` struct with ed25519 keys via `iroh::SecretKey`. `new()` generates keypair. `to_activitystreams()` produces JSON-LD (excludes secret key). `ed25519_public_key_to_pem()` for DER→PEM encoding. Domain: `bytescape.social`. |
+| `activitypub/signatures.rs` | 404 | HTTP Signatures (draft-cavage-http-signatures-12, Mastodon-compatible). `sign_post_request()` / `sign_get_request()` produce signed headers. `parse_signature_header()` / `verify_ed25519_signature()` for inbox verification. Inline SHA-256 implementation (no extra deps). |
+| `activitypub/activities.rs` | 211 | Activity constructors: `create_note`, `follow`, `accept`, `reject`, `like`, `announce`, `delete`, `undo`, `update`. `bytescape_item_to_note()` converts `BytescapeItem` → AP `Note` with RFC 3339 timestamps. |
+| `activitypub/inbox.rs` | 263 | `process_inbox()`: verify HTTP signature → parse activity → dispatch. `InboxResult` enum: `Accepted`, `FollowReceived`, `ObjectReceived`, `Undone`, `Ignored`. Handlers for all 9 activity types. `fetch_actor_public_key()` for remote key retrieval. |
+| `activitypub/outbox.rs` | 146 | `build_outbox_collection()` / `build_outbox_page()` for OrderedCollection pagination. `deliver_activity()`: signed POST to remote inboxes. `fetch_remote_actor()`: signed/unsigned GET with AP Accept header. |
+| `activitypub/webfinger.rs` | 117 | `WebFingerResponse` / `WebFingerLink` structs. `generate_webfinger()` produces JRD for local actors. `parse_acct_resource()` extracts username/domain. `resolve_webfinger()` queries remote servers. |
+| `commands/ap.rs` | 149 | 5 Tauri commands: `create_ap_actor`, `get_ap_actor`, `send_ap_activity`, `fetch_remote_actor`, `resolve_webfinger`. All derive `owner_did` from Iroh endpoint secret key via bs58. |
+
+### Integration Points (4 existing files modified)
+
+| File | Changes |
+|------|---------|
+| `connectors/mod.rs` | `ActivityPub` variant added to `Source` enum + all 5 match arms (`as_str` → "activitypub", `from_str`, `label` → "ActivityPub", `emoji` → "🌐") |
+| `db/mod.rs` | `AP_ACTORS_TABLE` constant, table creation in `DbManager::new()`, 3 CRUD methods: `save_ap_actor()`, `get_ap_actor()`, `delete_ap_actor()` |
+| `commands/mod.rs` | `pub mod ap;` + `pub use ap::*;` |
+| `lib.rs` | `pub mod activitypub;` + 5 AP commands registered in invoke_handler |
+
+### Architecture Decisions
+
+1. **ed25519 only** — No RSA. Uses `iroh::SecretKey` / `iroh::PublicKey` (same key infra as P2P layer). Avoids additional crypto dependencies.
+2. **Inline SHA-256** — Hand-rolled in `signatures.rs` using FIPS 180-4 constants. Avoids pulling in `sha2` crate just for HTTP signature digest computation.
+3. **draft-cavage-http-signatures-12** — Mastodon-compatible HTTP Signature scheme. Signs `(request-target)`, `host`, `date`, `digest` (POST) or `(request-target)`, `host`, `date` (GET).
+4. **PEM encoding** — DER prefix `302a300506032b6570032100` + raw ed25519 public key bytes, base64-wrapped in `-----BEGIN PUBLIC KEY-----` / `-----END PUBLIC KEY-----`. Compatible with ActivityPub `publicKeyPem` field.
+5. **No HTTP server yet** — Inbox/outbox are library functions, not HTTP endpoints. Serving will be added when `bytescape.social` hosting is implemented (B9.3).
+
+### Tests (22 new unit tests)
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| types | 2 | AP context generation, ApObject serialization |
+| actor | 4 | Actor creation, AS JSON-LD serialization, secret key roundtrip, PEM structure validation |
+| signatures | 5 | SHA-256 known vector, POST signing + verification, GET signing, signature header parsing, PEM→key roundtrip |
+| activities | 4 | Create Note, Follow activity, Delete tombstone, Announce addressing |
+| inbox | 1 | Unsupported activity type → Ignored |
+| outbox | 2 | Outbox root collection, outbox page with pagination |
+| webfinger | 4 | WebFinger generation, valid acct parsing, invalid acct rejection, JRD serialization |
+
+### Cross-Track Items Unblocked
+
+| Item | Track | Description |
+|------|-------|-------------|
+| B2.6 | Track B | Dual-Format Serving (AP + AT Protocol) |
+| B8.5 | Track B | AP Event Federation |
+| B9.1 | Track B | AP-Federated Group Threading |
+| B9.3 | Track B | WASM Web Portal |
+| C2.4 | Track C | Custom Emoji (needs A1.2) |
+| C5.2 | Track C | AP destination wiring (needs A1.2) |
+
+### Commits
+
+| Commit | Branch | Description |
+|--------|--------|-------------|
+| `7c58c40` | `track-c/c1-facet-frontend` | Initial A1.1 implementation |
+| `a4e4062` | `main` | Cherry-pick to main (conflict resolution: removed track-c profile/unfurl refs) |
+| `28a6b8c` | `main` | Post-merge cleanup (duplicate http_client, ap module dedup) |
 
 ---
 
 ## Build & Test Status
 
-- **Rust build**: ✅ Compiles (warnings only, no errors)
-- **Frontend tests**: ✅ 151/151 passing
-- **Branch**: `track-c/c1-facet-frontend` (merged `main` + `track-b/ui-redesign`)
+- **Rust build**: ✅ Compiles (25 pre-existing warnings, 0 errors, 0 new AP warnings)
+- **Rust tests**: ✅ 125/125 passing (68 lib + 7 db + 8 error + 12 facebook + 2 iroh + 28 oauth)
+- **Frontend tests**: ✅ 75/75 passing (5 test files — main branch)
+- **Branch**: `main` at `28a6b8c`
 - **Last verified**: 2026-03-14
 
 ---
