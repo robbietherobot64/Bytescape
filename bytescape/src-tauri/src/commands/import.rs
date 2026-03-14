@@ -1200,6 +1200,17 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
             let peer_did = peer.and_then(|p| p.get("did").and_then(|d| d.as_str()).map(|s| s.to_string()));
             let peer_handle = peer.and_then(|p| p.get("handle").and_then(|h| h.as_str()).map(|s| s.to_string()));
 
+            // Build did→handle map from members so we can resolve sender handles
+            // (getMessages sender object only has `did`, not `handle`)
+            let member_handle_map: std::collections::HashMap<String, String> = members.iter()
+                .filter_map(|m| {
+                    let did = m.get("did").and_then(|d| d.as_str())?.to_string();
+                    let handle = m.get("handle").and_then(|h| h.as_str())?.to_string();
+                    if handle.is_empty() { return None; }
+                    Some((did, handle))
+                })
+                .collect();
+
             let endpoint = format!("chat.bsky.convo.getMessages?convoId={}&limit=100", convo_id);
             let msgs_resp = match state.xrpc_chat_get(&endpoint).await {
                 Ok(r) => r,
@@ -1232,8 +1243,10 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
                 let sender_handle = msg_val.get("sender")
                     .and_then(|s| s.get("handle"))
                     .and_then(|h| h.as_str())
-                    .unwrap_or_default()
-                    .to_string();
+                    .filter(|h| !h.is_empty())
+                    .map(|h| h.to_string())
+                    .or_else(|| member_handle_map.get(&sender_did).cloned())
+                    .unwrap_or_default();
                 let text = msg_val.get("text")
                     .and_then(|t| t.as_str())
                     .unwrap_or_default()
