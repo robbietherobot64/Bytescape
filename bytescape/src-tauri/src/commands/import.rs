@@ -1063,22 +1063,115 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
-    // DMs require authenticated access — OAuth DPoP not yet wired for chat API
+    let db_manager = state.db_manager.clone();
+
     if state.is_oauth_session() {
-        println!("import_vault_messages: Skipping DMs for OAuth session (DPoP chat API not yet supported)");
+        // OAuth path: use xrpc_chat_get with DPoP + atproto-proxy
+        let convos_resp = state.xrpc_chat_get("chat.bsky.convo.listConvos").await
+            .map_err(|e| format!("Failed to list conversations: {}", e))?;
+
+        let convos = convos_resp.get("convos")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let db_guard = db_manager.read().await;
+        let db = db_guard.as_ref()
+            .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+        let mut new_count = 0;
+
+        for convo_val in &convos {
+            let convo_id = convo_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+            if convo_id.is_empty() { continue; }
+
+            let members = convo_val.get("members")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let peer = members.iter().find(|m| {
+                m.get("did").and_then(|d| d.as_str()) != Some(&user_did)
+            });
+            let peer_did = peer.and_then(|p| p.get("did").and_then(|d| d.as_str()).map(|s| s.to_string()));
+            let peer_handle = peer.and_then(|p| p.get("handle").and_then(|h| h.as_str()).map(|s| s.to_string()));
+
+            let endpoint = format!("chat.bsky.convo.getMessages?convoId={}&limit=100", convo_id);
+            let msgs_resp = match state.xrpc_chat_get(&endpoint).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("import_vault_messages: Failed to get messages for convo {}: {}", convo_id, e);
+                    continue;
+                }
+            };
+
+            let messages = msgs_resp.get("messages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for msg_val in &messages {
+                // Only process actual chat messages (skip deletions etc.)
+                let msg_type = msg_val.get("$type").and_then(|t| t.as_str()).unwrap_or("");
+                if msg_type != "chat.bsky.convo.defs#messageView" && !msg_type.is_empty() {
+                    continue;
+                }
+
+                let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                if msg_id.is_empty() { continue; }
+
+                let sender_did = msg_val.get("sender")
+                    .and_then(|s| s.get("did"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let sender_handle = msg_val.get("sender")
+                    .and_then(|s| s.get("handle"))
+                    .and_then(|h| h.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let text = msg_val.get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let sent_at = msg_val.get("sentAt")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let vault_msg = VaultMessage {
+                    id: msg_id.to_string(),
+                    owner_did: Some(user_did.clone()),
+                    convo_id: convo_id.to_string(),
+                    sender_did,
+                    sender_handle,
+                    text,
+                    sent_at,
+                    source: "bluesky".to_string(),
+                    imported_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as u64,
+                    peer_did: peer_did.clone(),
+                    peer_handle: peer_handle.clone(),
+                };
+
+                if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                    new_count += 1;
+                }
+            }
+        }
+
         return Ok(serde_json::json!({
-            "conversations": 0,
-            "threads": 0,
-            "parsed": 0,
-            "new": 0
+            "new": new_count,
+            "convos": convos.len()
         }));
     }
 
+    // App-password path: use ChatClient with Bearer auth
     let access_jwt = state.get_fresh_access_jwt().await
         .map_err(|e| BytescapeError::AuthFailed(e))?;
 
     let chat_client = state.chat_client.clone();
-    let db_manager = state.db_manager.clone();
     
     // List conversations
     let convos = chat_client.list_convos(&access_jwt, &user_did).await
@@ -1437,7 +1530,47 @@ pub async fn send_bsky_dm(
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     if state.is_oauth_session() {
-        return Err("Sending DMs requires App Password login. OAuth DPoP chat support is coming soon.".to_string());
+        // OAuth path: use xrpc_chat_post with DPoP + atproto-proxy
+        let body = serde_json::json!({
+            "convoId": convo_id,
+            "message": {
+                "text": content.clone()
+            }
+        });
+        let resp = state.xrpc_chat_post("chat.bsky.convo.sendMessage", body).await
+            .map_err(|e| format!("Failed to send DM: {}", e))?;
+
+        let msg_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // Save to local DB
+        let db_guard = state.db_manager.read().await;
+        let db = db_guard.as_ref()
+            .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+        let vault_msg = crate::db::VaultMessage {
+            id: msg_id.clone(),
+            owner_did: Some(user_did.clone()),
+            convo_id: convo_id.clone(),
+            sender_did: user_did.clone(),
+            sender_handle: _user_handle.clone(),
+            text: content,
+            sent_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis().to_string(),
+            source: "bluesky".to_string(),
+            imported_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u64,
+            peer_did: _recipient_did,
+            peer_handle: None,
+        };
+
+        let _ = db.save_vault_message(&vault_msg).await;
+
+        return Ok(serde_json::json!({
+            "id": msg_id,
+            "convo_id": convo_id,
+            "sent": true
+        }));
     }
 
     let access_jwt = state.get_fresh_access_jwt().await

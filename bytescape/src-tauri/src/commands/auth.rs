@@ -44,6 +44,18 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
 
     if let Some((did, handle)) = session {
+        // Eagerly restore the OAuth session so that authenticated API calls
+        // (getTimeline, getAuthorFeed, etc.) work immediately after the
+        // frontend receives this auth status. Without this, the background
+        // restore task may not have completed yet, causing "No OAuth session"
+        // errors on the first feed fetch.
+        if state.is_oauth_session() {
+            match state.oauth_manager.restore_session(&did).await {
+                Ok(()) => println!("check_auth_status: OAuth session restored for {}", did),
+                Err(e) => eprintln!("check_auth_status: OAuth restore failed (will retry in background): {}", e),
+            }
+        }
+
         let local_username = state.keychain.get_local_username()
             .unwrap_or(None);
         let identity_ready = local_username.is_some();

@@ -108,11 +108,23 @@ const SESSION_NONCE_LEN: usize = 12;
 /// to an encrypted file on every mutation (`set`, `del`, `clear`).
 pub struct FileSessionStore {
     /// In-memory cache of all sessions (DID → Session).
-    cache: tokio::sync::Mutex<HashMap<String, Session>>,
+    /// Arc-wrapped so clones share the same cache (used by OAuthManager
+    /// to read access tokens while OAuthClient manages the session lifecycle).
+    cache: std::sync::Arc<tokio::sync::Mutex<HashMap<String, Session>>>,
     /// Path to the encrypted session file.
     file_path: PathBuf,
     /// Master password for Argon2id key derivation.
     master_password: String,
+}
+
+impl Clone for FileSessionStore {
+    fn clone(&self) -> Self {
+        Self {
+            cache: std::sync::Arc::clone(&self.cache),
+            file_path: self.file_path.clone(),
+            master_password: self.master_password.clone(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,7 +143,7 @@ impl FileSessionStore {
             file_path
         );
         Self {
-            cache: tokio::sync::Mutex::new(sessions),
+            cache: std::sync::Arc::new(tokio::sync::Mutex::new(sessions)),
             file_path,
             master_password,
         }
@@ -311,6 +323,12 @@ pub struct OAuthManager {
     /// Used for DPoP-authenticated API calls.
     /// Access via `clear_session()`, `has_session()`, etc.
     pub(crate) session: Mutex<Option<ConcreteOAuthSession>>,
+    /// Shared clone of the FileSessionStore — reads the latest access tokens
+    /// that the OAuthClient's internal session registry writes on refresh.
+    session_store: FileSessionStore,
+    /// The authenticated user's DID, set on login/restore. Used to look up
+    /// the current access token from the session store.
+    user_did: Mutex<Option<String>>,
 }
 
 impl OAuthManager {
@@ -327,6 +345,8 @@ impl OAuthManager {
         for &port in OAUTH_FALLBACK_PORTS {
             redirect_uris.push(format!("http://127.0.0.1:{}/callback", port));
         }
+
+        let session_store = FileSessionStore::new(data_dir, master_password);
 
         let config = OAuthClientConfig {
             client_metadata: AtprotoLocalhostClientMetadata {
@@ -352,7 +372,7 @@ impl OAuthManager {
                 protected_resource_metadata: Default::default(),
             },
             state_store: MemoryStateStore::default(),
-            session_store: FileSessionStore::new(data_dir, master_password),
+            session_store: session_store.clone(),
         };
 
         let client =
@@ -362,6 +382,8 @@ impl OAuthManager {
             client: Arc::new(client),
             callback_shutdown: Mutex::new(None),
             session: Mutex::new(None),
+            session_store,
+            user_did: Mutex::new(None),
         })
     }
 
@@ -383,6 +405,7 @@ impl OAuthManager {
             .map_err(|e| format!("OAuth session restore failed: {}", e))?;
 
         *self.session.lock().await = Some(session);
+        *self.user_did.lock().await = Some(did.as_str().to_string());
         println!("OAuth: Restored persisted session for {}", did.as_str());
         Ok(())
     }
@@ -644,6 +667,7 @@ impl OAuthManager {
 
                 // Store the live OAuth session for future DPoP-authenticated API calls
                 *app_state.oauth_manager.session.lock().await = Some(session);
+                *app_state.oauth_manager.user_did.lock().await = Some(did.clone());
 
                 // Auto-generate local identity if one doesn't exist yet
                 let recovery_status = app_state
@@ -758,9 +782,34 @@ impl OAuthManager {
     /// The `OAuthSession` implements `atrium_xrpc::HttpClient` which automatically
     /// adds the `Authorization: DPoP {token}` and `DPoP: {proof}` headers.
     /// Returns the response body as a UTF-8 string.
+    /// Read the current DPoP access token from the shared session store.
+    ///
+    /// The OAuthClient's internal SessionRegistry updates this store on
+    /// token refresh, so we always read the latest token.
+    async fn current_access_token(&self) -> Result<String, String> {
+        use atrium_common::store::Store;
+
+        let did_str = {
+            let guard = self.user_did.lock().await;
+            guard.clone().ok_or("No user DID set — please log in again")?
+        };
+        let did: Did = did_str
+            .parse()
+            .map_err(|_| format!("Invalid DID: {}", did_str))?;
+        let stored = self
+            .session_store
+            .get(&did)
+            .await
+            .map_err(|e| format!("Session store error: {}", e))?
+            .ok_or("No session found in store — please log in again")?;
+        Ok(stored.token_set.access_token)
+    }
+
     pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
         use atrium_xrpc::HttpClient;
         use atrium_xrpc::http;
+
+        let access_token = self.current_access_token().await?;
 
         let session_guard = self.session.lock().await;
         let session = session_guard
@@ -771,6 +820,7 @@ impl OAuthManager {
             .method(http::Method::GET)
             .uri(url)
             .header("Accept", "application/json")
+            .header("Authorization", format!("DPoP {}", access_token))
             .body(Vec::new())
             .map_err(|e| format!("Failed to build request: {}", e))?;
 
@@ -803,6 +853,8 @@ impl OAuthManager {
         use atrium_xrpc::HttpClient;
         use atrium_xrpc::http;
 
+        let access_token = self.current_access_token().await?;
+
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
@@ -813,6 +865,7 @@ impl OAuthManager {
             .uri(url)
             .header("Content-Type", content_type)
             .header("Accept", "application/json")
+            .header("Authorization", format!("DPoP {}", access_token))
             .body(body)
             .map_err(|e| format!("Failed to build request: {}", e))?;
 
@@ -827,6 +880,89 @@ impl OAuthManager {
 
         if !status.is_success() {
             return Err(format!("API returned {}: {}", status, resp_body));
+        }
+
+        Ok(resp_body)
+    }
+
+    /// Make a DPoP-authenticated GET request routed through the Bluesky chat proxy.
+    ///
+    /// Adds `atproto-proxy: did:web:api.bsky.chat#bsky_chat` header so the PDS
+    /// forwards the request to the chat service.
+    pub async fn authenticated_chat_get(&self, url: &str) -> Result<String, String> {
+        use atrium_xrpc::HttpClient;
+        use atrium_xrpc::http;
+
+        let access_token = self.current_access_token().await?;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(url)
+            .header("Accept", "application/json")
+            .header("Authorization", format!("DPoP {}", access_token))
+            .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
+            .body(Vec::new())
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        let response = session
+            .send_http(request)
+            .await
+            .map_err(|e| format!("OAuth chat request failed: {}", e))?;
+
+        let status = response.status();
+        let body = String::from_utf8(response.into_body())
+            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+
+        if !status.is_success() {
+            return Err(format!("Chat API returned {}: {}", status, body));
+        }
+
+        Ok(body)
+    }
+
+    /// Make a DPoP-authenticated POST request routed through the Bluesky chat proxy.
+    pub async fn authenticated_chat_post(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<String, String> {
+        use atrium_xrpc::HttpClient;
+        use atrium_xrpc::http;
+
+        let access_token = self.current_access_token().await?;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(url)
+            .header("Content-Type", content_type)
+            .header("Accept", "application/json")
+            .header("Authorization", format!("DPoP {}", access_token))
+            .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
+            .body(body)
+            .map_err(|e| format!("Failed to build request: {}", e))?;
+
+        let response = session
+            .send_http(request)
+            .await
+            .map_err(|e| format!("OAuth chat request failed: {}", e))?;
+
+        let status = response.status();
+        let resp_body = String::from_utf8(response.into_body())
+            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+
+        if !status.is_success() {
+            return Err(format!("Chat API returned {}: {}", status, resp_body));
         }
 
         Ok(resp_body)
