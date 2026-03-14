@@ -35,7 +35,23 @@ interface AppLayoutProps {
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-/** Application shell: top bar, context panel, main content, friends panel. */
+/**
+ * Screens that get the left ContextPanel.
+ * Feed: shows tab navigation + lens picker.
+ * All other screens either have their own built-in side panels
+ * (Chat, Vault, Friends) or are simple single-column layouts.
+ */
+const SCREENS_WITH_CONTEXT_PANEL: Set<Screen> = new Set(['feed']);
+
+/**
+ * Screens that get the right FriendsPanel.
+ * Currently none — Feed has FeedRightPanel, Chat has its own buddy list,
+ * Vault/Friends/Profile all manage their own layouts.
+ * This set exists so we can opt individual screens in later.
+ */
+const SCREENS_WITH_FRIENDS_PANEL: Set<Screen> = new Set<Screen>();
+
+/** Application shell: top bar + conditional side panels + main content. */
 export function AppLayout({
     children,
     activeSidebar,
@@ -54,6 +70,9 @@ export function AppLayout({
     onOpenChat,
     onViewProfile,
 }: AppLayoutProps) {
+    const showContext = SCREENS_WITH_CONTEXT_PANEL.has(screen);
+    const showFriends = SCREENS_WITH_FRIENDS_PANEL.has(screen);
+
     return (
         <div className="app-layout">
             <TopBar
@@ -65,21 +84,25 @@ export function AppLayout({
                 avatarInitial={avatarInitial}
             />
             <div className="app-body">
-                <ContextPanel
-                    screen={screen}
-                    feedActiveTab={feedActiveTab}
-                    setFeedActiveTab={setFeedActiveTab}
-                    activeLens={activeLens}
-                    setActiveLens={setActiveLens}
-                    contextContent={contextContent}
-                />
+                {showContext && (
+                    <ContextPanel
+                        screen={screen}
+                        feedActiveTab={feedActiveTab}
+                        setFeedActiveTab={setFeedActiveTab}
+                        activeLens={activeLens}
+                        setActiveLens={setActiveLens}
+                        contextContent={contextContent}
+                    />
+                )}
                 <main className="main-content" style={mainStyle}>
                     {children}
                 </main>
-                <FriendsPanel
-                    onOpenChat={onOpenChat}
-                    onViewProfile={onViewProfile}
-                />
+                {showFriends && (
+                    <FriendsPanel
+                        onOpenChat={onOpenChat}
+                        onViewProfile={onViewProfile}
+                    />
+                )}
             </div>
         </div>
     );
