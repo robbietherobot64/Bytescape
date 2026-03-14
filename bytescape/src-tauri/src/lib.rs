@@ -401,6 +401,7 @@ pub fn run() {
             commands::import::migrate_willow_paths,
             commands::import::get_willow_write_parity_report,
             commands::import::get_timeline,
+            commands::import::get_author_feed,
             commands::feed_aggregation::get_timeline_unified,
             commands::import::import_vault_messages,
             commands::import::import_archive_messages,

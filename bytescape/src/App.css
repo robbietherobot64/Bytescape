@@ -4267,6 +4267,9 @@ textarea::placeholder {
     .mobile-feed-tabs { display: none; }
     .mobile-context-drawer { display: none; }
     .chat-back-btn { display: none; }
+
+    /* Feed header is redundant on desktop — ContextPanel provides tabs + lens */
+    .feed-header { display: none; }
 }
 
 @media (min-width: 1025px) {

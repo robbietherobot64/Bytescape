@@ -108,23 +108,11 @@ const SESSION_NONCE_LEN: usize = 12;
 /// to an encrypted file on every mutation (`set`, `del`, `clear`).
 pub struct FileSessionStore {
     /// In-memory cache of all sessions (DID → Session).
-    /// Arc-wrapped so clones share the same cache (used by OAuthManager
-    /// to read access tokens while OAuthClient manages the session lifecycle).
-    cache: std::sync::Arc<tokio::sync::Mutex<HashMap<String, Session>>>,
+    cache: tokio::sync::Mutex<HashMap<String, Session>>,
     /// Path to the encrypted session file.
     file_path: PathBuf,
     /// Master password for Argon2id key derivation.
     master_password: String,
-}
-
-impl Clone for FileSessionStore {
-    fn clone(&self) -> Self {
-        Self {
-            cache: std::sync::Arc::clone(&self.cache),
-            file_path: self.file_path.clone(),
-            master_password: self.master_password.clone(),
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,7 +131,7 @@ impl FileSessionStore {
             file_path
         );
         Self {
-            cache: std::sync::Arc::new(tokio::sync::Mutex::new(sessions)),
+            cache: tokio::sync::Mutex::new(sessions),
             file_path,
             master_password,
         }
@@ -323,12 +311,6 @@ pub struct OAuthManager {
     /// Used for DPoP-authenticated API calls.
     /// Access via `clear_session()`, `has_session()`, etc.
     pub(crate) session: Mutex<Option<ConcreteOAuthSession>>,
-    /// Shared clone of the FileSessionStore — reads the latest access tokens
-    /// that the OAuthClient's internal session registry writes on refresh.
-    session_store: FileSessionStore,
-    /// The authenticated user's DID, set on login/restore. Used to look up
-    /// the current access token from the session store.
-    user_did: Mutex<Option<String>>,
 }
 
 impl OAuthManager {
@@ -372,7 +354,7 @@ impl OAuthManager {
                 protected_resource_metadata: Default::default(),
             },
             state_store: MemoryStateStore::default(),
-            session_store: session_store.clone(),
+            session_store,
         };
 
         let client =
@@ -382,8 +364,6 @@ impl OAuthManager {
             client: Arc::new(client),
             callback_shutdown: Mutex::new(None),
             session: Mutex::new(None),
-            session_store,
-            user_did: Mutex::new(None),
         })
     }
 
@@ -405,7 +385,6 @@ impl OAuthManager {
             .map_err(|e| format!("OAuth session restore failed: {}", e))?;
 
         *self.session.lock().await = Some(session);
-        *self.user_did.lock().await = Some(did.as_str().to_string());
         println!("OAuth: Restored persisted session for {}", did.as_str());
         Ok(())
     }
@@ -667,7 +646,6 @@ impl OAuthManager {
 
                 // Store the live OAuth session for future DPoP-authenticated API calls
                 *app_state.oauth_manager.session.lock().await = Some(session);
-                *app_state.oauth_manager.user_did.lock().await = Some(did.clone());
 
                 // Auto-generate local identity if one doesn't exist yet
                 let recovery_status = app_state
@@ -777,112 +755,140 @@ impl OAuthManager {
         Ok(session.base_uri())
     }
 
-    /// Make an authenticated GET request using the OAuth session's DPoP credentials.
+    /// Make an authenticated XRPC GET request using `send_xrpc` which properly
+    /// handles DPoP Authorization headers, proof generation, and automatic
+    /// token refresh on `invalid_token` responses.
     ///
-    /// The `OAuthSession` implements `atrium_xrpc::HttpClient` which automatically
-    /// adds the `Authorization: DPoP {token}` and `DPoP: {proof}` headers.
-    /// Returns the response body as a UTF-8 string.
-    /// Read the current DPoP access token from the shared session store.
-    ///
-    /// The OAuthClient's internal SessionRegistry updates this store on
-    /// token refresh, so we always read the latest token.
-    async fn current_access_token(&self) -> Result<String, String> {
-        use atrium_common::store::Store;
-
-        let did_str = {
-            let guard = self.user_did.lock().await;
-            guard.clone().ok_or("No user DID set — please log in again")?
-        };
-        let did: Did = did_str
-            .parse()
-            .map_err(|_| format!("Invalid DID: {}", did_str))?;
-        let stored = self
-            .session_store
-            .get(&did)
-            .await
-            .map_err(|e| format!("Session store error: {}", e))?
-            .ok_or("No session found in store — please log in again")?;
-        Ok(stored.token_set.access_token)
-    }
-
-    pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
-
-        let access_token = self.current_access_token().await?;
+    /// `nsid` is the XRPC method name, e.g. `"app.bsky.feed.getTimeline"`.
+    /// `query_params` is an optional pre-serialized query string (without `?`).
+    /// Returns the response body as a JSON string.
+    pub async fn xrpc_get(
+        &self,
+        nsid: &str,
+        query_params: Option<&str>,
+    ) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
 
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        let request = http::Request::builder()
-            .method(http::Method::GET)
-            .uri(url)
-            .header("Accept", "application/json")
-            .header("Authorization", format!("DPoP {}", access_token))
-            .body(Vec::new())
-            .map_err(|e| format!("Failed to build request: {}", e))?;
+        // Build a raw XrpcRequest with no typed params/input.
+        // We'll manually append query params to the nsid since the serde
+        // serialization path requires a concrete Serialize type.
+        let effective_nsid = if let Some(qs) = query_params {
+            format!("{}?{}", nsid, qs)
+        } else {
+            nsid.to_string()
+        };
 
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth request failed: {}", e))?;
+        println!("OAuth xrpc_get: base_uri={}, nsid={}, effective_nsid={}", session.base_uri(), nsid, effective_nsid);
 
-        let status = response.status();
-        let body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::GET,
+            nsid: effective_nsid,
+            parameters: None,
+            input: None,
+            encoding: None,
+        };
 
-        if !status.is_success() {
-            return Err(format!("API returned {}: {}", status, body));
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC request failed: {}", e)),
         }
-
-        Ok(body)
     }
 
-    /// Make an authenticated POST request using the OAuth session's DPoP credentials.
+    /// Make an authenticated XRPC POST request with a JSON body.
     ///
-    /// `content_type` should be `"application/json"` for XRPC calls.
-    /// Returns the response body as a UTF-8 string.
+    /// Uses `send_xrpc` for proper DPoP auth and automatic token refresh.
+    pub async fn xrpc_post(
+        &self,
+        nsid: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::POST,
+            nsid: nsid.to_string(),
+            parameters: None,
+            input: Some(atrium_xrpc::InputDataOrBytes::Bytes(body)),
+            encoding: Some(content_type.to_string()),
+        };
+
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC request failed: {}", e)),
+        }
+    }
+
+    /// Legacy authenticated_get — delegates to xrpc_get by parsing the URL.
+    ///
+    /// Callers pass a full URL like `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`.
+    /// We extract the NSID and query string, then use `xrpc_get` for proper DPoP auth.
+    pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
+        let (nsid, query) = Self::parse_xrpc_url(url)?;
+        self.xrpc_get(&nsid, query.as_deref()).await
+    }
+
+    /// Legacy authenticated_post — delegates to xrpc_post by parsing the URL.
     pub async fn authenticated_post(
         &self,
         url: &str,
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
+        let (nsid, _query) = Self::parse_xrpc_url(url)?;
+        self.xrpc_post(&nsid, body, content_type).await
+    }
 
-        let access_token = self.current_access_token().await?;
+    /// Parse a full XRPC URL into (nsid, optional_query_string).
+    ///
+    /// Input: `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`
+    /// Output: `("app.bsky.feed.getTimeline", Some("limit=50"))`
+    fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
+        // Find /xrpc/ in the URL
+        let xrpc_idx = url.find("/xrpc/")
+            .ok_or_else(|| format!("URL is not an XRPC endpoint: {}", url))?;
+        let after_xrpc = &url[xrpc_idx + 6..]; // skip "/xrpc/"
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
-
-        let request = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(url)
-            .header("Content-Type", content_type)
-            .header("Accept", "application/json")
-            .header("Authorization", format!("DPoP {}", access_token))
-            .body(body)
-            .map_err(|e| format!("Failed to build request: {}", e))?;
-
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth request failed: {}", e))?;
-
-        let status = response.status();
-        let resp_body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
-
-        if !status.is_success() {
-            return Err(format!("API returned {}: {}", status, resp_body));
+        // Split on '?' for query string
+        if let Some(q_idx) = after_xrpc.find('?') {
+            let nsid = after_xrpc[..q_idx].to_string();
+            let query = after_xrpc[q_idx + 1..].to_string();
+            Ok((nsid, Some(query)))
+        } else {
+            Ok((after_xrpc.to_string(), None))
         }
-
-        Ok(resp_body)
     }
 
     /// Make a DPoP-authenticated GET request routed through the Bluesky chat proxy.
@@ -890,39 +896,62 @@ impl OAuthManager {
     /// Adds `atproto-proxy: did:web:api.bsky.chat#bsky_chat` header so the PDS
     /// forwards the request to the chat service.
     pub async fn authenticated_chat_get(&self, url: &str) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
+        use atrium_xrpc::XrpcClient;
 
-        let access_token = self.current_access_token().await?;
+        // Chat proxy requests need a special header that send_xrpc doesn't support
+        // directly. We still need send_http here but we get the access token from
+        // the internal session store via a fresh xrpc_get to warm the nonce, then
+        // fall back to send_http with the proxy header.
+        // For now, reuse the xrpc_get approach but we need proxy support.
+        // TODO: The chat proxy needs atproto-proxy header — for now, keep send_http
+        // but read access token from the OAuthSession's internal store.
+        let (nsid, query) = Self::parse_xrpc_url(url)?;
 
+        // Use send_xrpc but configure proxy first
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        let request = http::Request::builder()
-            .method(http::Method::GET)
-            .uri(url)
-            .header("Accept", "application/json")
-            .header("Authorization", format!("DPoP {}", access_token))
-            .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
-            .body(Vec::new())
-            .map_err(|e| format!("Failed to build request: {}", e))?;
+        // Configure the proxy header for chat
+        use atrium_api::agent::Configure;
+        session.configure_proxy_header(
+            "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
+            "bsky_chat",
+        );
 
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth chat request failed: {}", e))?;
+        let effective_nsid = if let Some(qs) = query {
+            format!("{}?{}", nsid, qs)
+        } else {
+            nsid.clone()
+        };
 
-        let status = response.status();
-        let body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::GET,
+            nsid: effective_nsid,
+            parameters: None,
+            input: None,
+            encoding: None,
+        };
 
-        if !status.is_success() {
-            return Err(format!("Chat API returned {}: {}", status, body));
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
+
+        // Reset proxy header so non-chat requests aren't affected
+        session.configure_endpoint(session.base_uri());
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("Chat API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC chat request failed: {}", e)),
         }
-
-        Ok(body)
     }
 
     /// Make a DPoP-authenticated POST request routed through the Bluesky chat proxy.
@@ -932,40 +961,47 @@ impl OAuthManager {
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
-
-        let access_token = self.current_access_token().await?;
+        use atrium_xrpc::XrpcClient;
+        use atrium_api::agent::Configure;
+        let (nsid, _query) = Self::parse_xrpc_url(url)?;
 
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        let request = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(url)
-            .header("Content-Type", content_type)
-            .header("Accept", "application/json")
-            .header("Authorization", format!("DPoP {}", access_token))
-            .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
-            .body(body)
-            .map_err(|e| format!("Failed to build request: {}", e))?;
+        // Configure the proxy header for chat
+        session.configure_proxy_header(
+            "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
+            "bsky_chat",
+        );
 
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth chat request failed: {}", e))?;
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::POST,
+            nsid: nsid.to_string(),
+            parameters: None,
+            input: Some(atrium_xrpc::InputDataOrBytes::Bytes(body)),
+            encoding: Some(content_type.to_string()),
+        };
 
-        let status = response.status();
-        let resp_body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
 
-        if !status.is_success() {
-            return Err(format!("Chat API returned {}: {}", status, resp_body));
+        // Reset proxy header
+        session.configure_endpoint(session.base_uri());
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("Chat API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC chat request failed: {}", e)),
         }
-
-        Ok(resp_body)
     }
 }
 

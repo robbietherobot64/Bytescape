@@ -93,6 +93,7 @@ function App() {
 
   // Feed / Archive
   const [isImporting, setIsImporting] = useState(false);
+  const importGuardRef = React.useRef(false);
 
   // Build the feed tab buttons to pass into the mobile top bar
   const feedTabSlot = screen === "feed" ? (
@@ -283,6 +284,8 @@ function App() {
 
   // === Bluesky Import ===
   async function importBluesky() {
+    if (importGuardRef.current) return;
+    importGuardRef.current = true;
     setIsImporting(true);
     setImportStatus("Connecting to Bluesky...");
     setError("");
@@ -311,6 +314,7 @@ function App() {
       setImportStatus("");
     } finally {
       setIsImporting(false);
+      importGuardRef.current = false;
     }
   }
 
