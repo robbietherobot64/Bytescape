@@ -223,3 +223,144 @@ Reasoning:
 - **TypeScript**: ✅ Clean (`npx tsc --noEmit`)
 - **Branch**: `track-c/c1-facet-frontend` at `93fde71`
 - **Last verified**: 2026-03-15
+
+---
+
+## Frontend Agent (Track B) — Progress Log
+
+---
+
+## 2026-03-15 — Feature Branch Merge Crisis & Resolution
+
+### Problem
+
+User reported: *"The entire UI seems to have been rolled back like a half dozen builds."* All frontend work appeared missing from the running app.
+
+**Root Cause:** The user was running from the `main` branch, which only contained Backend (Track A) commits. All Frontend Agent work (40+ commits on `track-b/ui-redesign`) and Content Agent work (15+ commits on `track-c/c1-facet-frontend`) had **never been merged into `main`**.
+
+### Resolution
+
+Merged both feature branches into `main` and resolved all post-merge conflicts.
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `7351377` | **Merge `track-b/ui-redesign` into `main`** — resolved 3 Rust conflicts (commands/mod.rs, db/mod.rs, lib.rs). Kept both AP Actor (main) + Profile/Guestbook (track-b) code. |
+| `0c6bcd0` | **Merge `track-c/c1-facet-frontend` into `main`** — resolved 5 conflicts (progress.md, db/mod.rs, lib.rs, ComposeBox.tsx, ComposeBox.test.tsx). Accepted track-c versions for TS files, manually merged Rust files. |
+| `28a6b8c` | **Fix post-merge duplicates** — removed duplicate `pub mod ap` / `pub use ap::*` in commands/mod.rs, removed duplicate `http_client` field + initialization in lib.rs AppState. |
+
+### Merge Conflict Details
+
+**Track-B merge (3 Rust conflicts):**
+- `commands/mod.rs`: Both main (AP module) and track-b (profile/unfurl modules) added new `pub mod` declarations — kept both.
+- `db/mod.rs`: Main added `AP_ACTORS_TABLE` + CRUD methods; track-b added `PROFILE_LAYOUT_TABLE` + `GUESTBOOK_TABLE` + CRUD methods — merged all table definitions and methods.
+- `lib.rs`: Main registered AP commands; track-b registered profile/widget/guestbook/unfurl commands — merged all command registrations into single invoke_handler.
+
+**Track-C merge (5 conflicts):**
+- `db/mod.rs` / `lib.rs`: Same pattern — track-c added collab doc commands on top of track-b's profile commands. Merged to keep everything.
+- `ComposeBox.tsx` / `ComposeBox.test.tsx`: Track C owns these. Accepted track-c version (includes link card unfurling, character counting).
+- `progress.md`: Accepted track-c version (most up-to-date).
+
+**Post-merge compilation errors (8 total):**
+- Duplicate `pub mod ap` and `pub use ap::*` in `commands/mod.rs` (appeared in both merge parents)
+- Duplicate `http_client: reqwest::Client` field in `AppState` struct and its initialization in `lib.rs`
+
+All fixed in commit `28a6b8c`.
+
+---
+
+## 2026-03-14 — UX Fixes Sprint (P0–P4) 
+
+### Summary
+
+Completed all priorities from `frontend-b10-b11-sprint.md`: P0 merge main, P1–P4 UX fix items.
+
+### Commit
+
+| Commit | Description |
+|--------|-------------|
+| `f08b001` | **fix(track-b): UF.1/UF.2/UF.4/UF.8/UF.12** — layout overhaul, post card sizing, friend actions, GrapesJS blank screen fix, import UX |
+
+### UF.1 — Layout Overhaul
+- Full-width content layout (960px max-width, feed uses full available width)
+- Fixed cramped sidebar and content area spacing
+- Updated `App.css` with `--content-max-width: 960px`, feed full-width rules
+
+### UF.2 — Post Card Sizing
+- Squarer media aspect ratio (changed from 16/9 to 4/3)
+- Better image display in feed entries
+- Consistent card sizing across feed views
+
+### UF.4 — Friends Panel Actions
+- Bluesky friend click → opens chat with that friend
+- Added `did` field to `UnifiedFriend` type
+- Wired friend click handler in `FriendsPanel.tsx`
+
+### UF.8 — GrapesJS Blank Screen Fix
+- Root cause: `panels: { defaults: [] }` config was removing ALL GrapesJS panels including the canvas
+- Fix: Removed the empty `panels` override, kept `grapesjs-preset-webpage` plugin defaults
+- Profile Builder now loads correctly with drag-and-drop editor visible
+
+### UF.12 — Import Screen UX
+- Centered "Import Archive" header
+- Removed confusing "View Feed" button
+- Added Instagram to supported formats list
+- Centered import tools layout
+
+---
+
+## Previously Completed (Track B) — Merged to Main
+
+All of the following were completed on `track-b/ui-redesign` and are now merged to `main`:
+
+### B1 — Lenses & Content Views ✅
+- **B1.1** Gallery Lens — masonry grid for Gallery-type items
+- **B1.2** Reader Lens — article view with clean typography
+- **B1.3** FeedItemRenderer — FeedEntryCard switches view by BytescapeType
+
+### B2 — Profile Builder & Theming ✅
+- **B2.1** GrapesJS Integration — `ProfileBuilderScreen` with drag-and-drop builder
+- **B2.2** Raw HTML Override — upload custom HTML/CSS/JS, sandboxed `<iframe>` render
+- **B2.3** DID Meta Tags — `<meta name="bytescape:did">` in profile output
+- **B2.4** Widget System — away message, music player, friends list, guestbook widgets (Rust CRUD backend included)
+- **B2.5** Theme Engine — 3 themes (Cozy/Desktop/Midnight), `useTheme` hook, `ThemePicker`, 5 tests
+
+### B3 — Peer Profile Browser ✅
+- **B3.1** Profile Browser Tab — new top-level screen for traversing peer profiles
+- **B3.2** Sandboxed iframe Renderer — isolated frame with `<meta>` tag parsing
+
+### B10 — Navigation & Browser UX ✅
+- **B10.1** Internal URL Scheme — `byte://` URL routing
+- **B10.2** Navigation History Stack — back/forward browser-style navigation
+- **B10.3** Omnibar — browser-style address bar with search
+- **B10.6** Peer Browser Sync — Omnibar ↔ Profile Browser state sync
+
+### Window & Layout
+- Window size: 1280×800, maximizable
+- Responsive bottom nav for mobile
+- Tablet layout support
+- AppLayout wrapper component
+
+---
+
+## Deferred Items (Not Started — Per PM Directive)
+
+The following UF items were explicitly told NOT to start:
+- UF.5 (Compose Box visibility)
+- UF.6 (Compose Box targeting)
+- UF.9 (Video player)
+- UF.10 (RSS feeds)
+- UF.11 (Hashtag feeds)
+- UF.14 (Settings)
+
+---
+
+## Current Build & Test Status (All Tracks Unified on Main)
+
+- **Rust build**: ✅ Compiles (25 warnings, 0 errors)
+- **Frontend tests**: ✅ 230/230 passing (11 test files)
+- **TypeScript**: ✅ Clean (`npx tsc --noEmit` — 0 errors)
+- **Branch**: `main` at `28a6b8c`
+- **Feature branches**: Both `track-b/ui-redesign` and `track-c/c1-facet-frontend` fully merged (0 unmerged commits)
+- **Last verified**: 2026-03-15
