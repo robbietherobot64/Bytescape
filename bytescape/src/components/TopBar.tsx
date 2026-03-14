@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { SidebarItem } from '../types';
 import {
-    BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill,
+    BsHouseFill, BsPersonFill, BsChatDotsFill,
     BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill
 } from 'react-icons/bs';
+import { Omnibar } from './Omnibar';
 
 interface TopBarProps {
     activeSidebar: SidebarItem;
     onNavigate: (item: SidebarItem) => void;
-    searchQuery: string;
-    onSearchChange: (query: string) => void;
+    /** @deprecated — now handled internally by Omnibar. Kept for backwards compat. */
+    searchQuery?: string;
+    /** @deprecated — now handled internally by Omnibar. Kept for backwards compat. */
+    onSearchChange?: (query: string) => void;
     onSearchSubmit: (query: string) => void;
     avatarInitial?: string;
 }
@@ -23,7 +26,7 @@ const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
-export function TopBar({ activeSidebar, onNavigate, searchQuery, onSearchChange, onSearchSubmit, avatarInitial }: TopBarProps) {
+export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitial }: TopBarProps) {
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -44,12 +47,6 @@ export function TopBar({ activeSidebar, onNavigate, searchQuery, onSearchChange,
         onNavigate(id);
     };
 
-    const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            onSearchSubmit(searchQuery);
-        }
-    };
-
     return (
         <div className="topbar">
             {/* Left: Profile Icon */}
@@ -63,23 +60,8 @@ export function TopBar({ activeSidebar, onNavigate, searchQuery, onSearchChange,
                 </div>
             </button>
 
-            {/* Center: Search Bar */}
-            <div className="topbar-search-wrapper">
-                <BsSearch className="topbar-search-icon" />
-                <input
-                    type="text"
-                    className="topbar-search-input"
-                    placeholder="Search your vault…"
-                    value={searchQuery}
-                    onChange={(e) => onSearchChange(e.target.value)}
-                    onKeyDown={handleSearchKeyDown}
-                    onFocus={() => {
-                        if (activeSidebar !== 'feed') {
-                            onNavigate('search');
-                        }
-                    }}
-                />
-            </div>
+            {/* Center: Omnibar (B10.3) — browser-style address bar + search */}
+            <Omnibar onSearchSubmit={onSearchSubmit} />
 
             {/* Right: Hamburger Menu */}
             <div className="topbar-menu-container" ref={menuRef}>
