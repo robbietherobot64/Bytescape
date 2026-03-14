@@ -59,15 +59,18 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15)
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK BLITZ
 
-⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
+⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes.
 
 Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
 
-**Priority 1 — Fix UF.1** (window maximized in tauri.conf.json + true full-width layout)
-**Priority 2 — Complete UF.12** (tracker content classification for Memories tab)
-**Priority 3 — UF.5** (Following/Subscribed tab dedup cleanup)
+**Priority 1 — UF.1** Full-width + maximized window
+**Priority 2 — UF.12** Import/Audit screen text + tracker classification
+**Priority 3 — UF.5** Remove Subscribed tab, clean up Following
+**Priority 4 — UF.6** Feed content-type filter chips (replace lens toggles)
+**Priority 5 — UF.11** Settings consolidation
+**Priority 6 — UF.9** Profile page rework (narrow cards, Wall/Posts tabs)
 
 ## Prime Directive
 

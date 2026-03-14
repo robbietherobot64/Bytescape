@@ -1,163 +1,123 @@
-# Content Agent — Sprint: UF.7 Classification + ComposeBox Polish (2026-03-15)
+# Content Agent — Sprint: USER FEEDBACK — Content Classification (2026-03-15)
 
-## 🚨 PM AUDIT FINDINGS — READ THIS FIRST
+## 🚨 CRITICAL CONTEXT — THE USER IS UNHAPPY
 
-### ✅ Verified Completions — Excellent Work
-- **C1.4 Character Count** ✅ — `useCharacterCount.ts` (121 lines), 28 tests, Bluesky grapheme segmentation correct. *(Commit: `23c7bbe`)*
-- **C2.1 Link Card Embeds** ✅ — `unfurl.rs` (166 lines), `LinkPreviewCard.tsx` (144 lines), integrated into ComposeBox. *(Commits: `9123e0b`, `93fde71`)*
-- **P3 Content Classification Research** ✅ — Thorough, well-reasoned analysis. PM is acting on your recommendations this sprint.
+The user gave 16 feedback items. After a full sprint, only 3 were completed. The user says "literally none of my feedback has been listened to." **This sprint is 100% user feedback. No GIF pickers. No emoji pickers. Only fixing what the user asked for.**
 
-### ✅ Process — Clean
-Your work was solid. No major process issues. The cross-branch commit of C1.4 appearing on track-b (`cf205df`) was likely a merge artifact, not intentional.
+Your C1.4 (char count) and C2.1 (link cards) work was excellent and verified. But those were roadmap items — not user feedback. This sprint, everything you do must directly serve a UF item.
 
-### Current State
-All branches merged to **`main`** at `0f9f0a6`. All work happens on `main` going forward. No more feature branches.
+All work is on **`main`**. Verify with `git branch --show-current` before every commit.
 
 ---
 
-## Priority 1 — UF.7: Content-Type Classification (Cross-Track Implementation)
+## Priority 1 — UF.7: Content-Type Classification ⚡⚡⚡
 
-Your P3 research proposed a clean classification scheme. Now implement it. This is the most impactful content quality improvement we can make.
+**User:** *"Article reader is totally busted. It's mostly just YouTube videos, GIFs, and links. We want only blog posts, news articles, or largely text based long form posts. No videos, no gifs."*
 
-### 1a. Add `BytescapeType` Variants (Rust)
+**AND UF.6:** *"Gallery view sucks. Let's think about feed filters rather than views. For images, filter image posts. Same for videos, articles, short form text."*
 
-In `db.rs` (or wherever `BytescapeType` is defined), add `Link` and `Video` variants:
+The Frontend agent is building filter chips (UF.6) that depend on content being classified. Without your classification, those filters have nothing to filter on. **This is the critical dependency.**
+
+### 1a. Add `BytescapeType` Variants
+
+In `db.rs` (or wherever `BytescapeType` is defined), add `Link` and `Video`:
 
 ```rust
 pub enum BytescapeType {
-    Status,
-    Gallery,
-    Article,
-    Link,    // NEW — URL embed with minimal original text
-    Video,   // NEW — video as primary content
+    Status,   // Short text, minimal media
+    Gallery,  // Image-centric (≥2 images, text ≤300 chars)
+    Article,  // Substantial text (>500 chars body)
+    Link,     // URL embed with minimal original text (≤100 chars)
+    Video,    // Video as primary content
 }
 ```
 
-Also update `src/types/index.ts` to add `'Link' | 'Video'` to the `BytescapeType` union.
+Also update `src/types/index.ts` — add `'Link' | 'Video'` to the TypeScript `BytescapeType` union.
 
-### 1b. Classification Heuristic (Rust)
+### 1b. Classification Heuristic
 
-Create a `classify_item(item: &BytescapeItem) -> BytescapeType` function that applies your proposed heuristic table:
+Create `classify_item(item: &BytescapeItem) -> BytescapeType`:
 
-| Type | Signal | Threshold |
-|------|--------|-----------|
-| `video` | Has video attachment(s) | Any video embed/attachment |
-| `gallery` | Image-centric | ≥2 images, text ≤300 chars |
-| `article` | Substantial text | >500 chars body (excluding URL + OG metadata) |
-| `link` | URL embed + minimal text | Has link_url, ≤100 chars original text |
-| `status` | Everything else | Default fallback |
+| Priority | Type | Signal |
+|----------|------|--------|
+| 1 | `Video` | Has video attachment(s) |
+| 2 | `Gallery` | ≥2 images, text ≤300 chars |
+| 3 | `Article` | >500 chars body (excluding URL + OG metadata) |
+| 4 | `Link` | Has link_url, ≤100 chars original text |
+| 5 | `Status` | Everything else (default) |
 
-**Check order matters**: video → gallery → article → link → status (most specific first).
+Check in priority order — most specific first.
 
-### 1c. Wire Into Connectors
+### 1c. Wire Into Ingest
 
-- **Bluesky connector** (`connectors/bluesky.rs`): When fetching timeline items, apply classification using embed type (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`). This is Track A territory — **coordinate with the Backend agent** or propose a clean interface. If the Backend agent is busy with UF.16, you may add the classification call at the point where `BytescapeItem` is constructed, but document what you touched.
-- **`publish_post_v2`**: When publishing, auto-classify based on content + attachments.
+- When Bluesky timeline items are fetched, classify them using embed types (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`)
+- When `publish_post_v2` creates a new item, auto-classify based on content + attachments
+- When Facebook/Instagram archives are imported, classify each item
 
 ### 1d. Re-classification Command
 
-Create a `reclassify_vault_items` Tauri command that re-scans ALL existing vault items and updates their `item_type`. This handles items imported before classification was improved. Register in `lib.rs`.
-
-### 1e. Tests
-- Classification heuristic: test each type boundary (short text→status, 2 images→gallery, long text→article, link+short text→link, video→video)
-- Edge cases: empty text, text exactly at boundaries, mixed content (video + long text)
-
-### PM Decision on Your Open Question
-> "Should `Link` be a new `BytescapeType` variant, or a metadata flag?"
-
-**Decision: New variant.** Simpler, cleaner, better for filtering. If a linked URL has substantial body content (>500 chars of original text, not OG description), classify it as `article`, not `link`. The heuristic handles the ambiguity.
-
----
-
-## Priority 2 — C2.2: GIF Picker
-
-### Backend (Rust)
-
-Create `src-tauri/src/commands/gif.rs`:
-
 ```rust
-#[derive(Serialize, Deserialize, Clone)]
-pub struct GifResult {
-    pub id: String,
-    pub preview_url: String,    // Low-res preview
-    pub full_url: String,       // Full-res GIF/MP4
-    pub width: u32,
-    pub height: u32,
-    pub title: Option<String>,
-}
-
 #[tauri::command]
-pub async fn search_gifs(query: String, limit: Option<u32>) -> Result<Vec<GifResult>, String>
-
-#[tauri::command]
-pub async fn get_trending_gifs(limit: Option<u32>) -> Result<Vec<GifResult>, String>
+pub async fn reclassify_vault_items(state: State<'_, AppState>) -> Result<ReclassifyResult, String>
 ```
 
-Use the **Tenor API v2** (free tier, 50 req/min). The API key can be stored in app config (hardcode a dev key for now — PM will provide a production key later).
+Re-scans ALL existing vault items and updates their `item_type`. Returns count of items re-classified per type. Register in `lib.rs`.
 
-Register both commands in `lib.rs`.
-
-### Frontend (React)
-
-1. **GIF button**: Add a GIF icon button to the ComposeBox toolbar (next to media attach)
-2. **Picker modal**: Clicking opens a searchable grid modal:
-   - Search bar at top
-   - Trending GIFs shown by default (via `get_trending_gifs`)
-   - Results update on search (debounced 300ms, via `search_gifs`)
-   - Grid layout, 2-3 columns, lazy-loaded previews
-3. **Selection**: Click a GIF → inserts it as a media attachment on the post
-4. **For Bluesky**: Upload the GIF as a blob and attach as `app.bsky.embed.images` (Bluesky renders GIFs as static images, but we send the full URL)
-5. **For local vault**: Store as media attachment with `image/gif` MIME type
-
-### Tests
-- GIF search returns results
-- Picker renders grid
-- Selection adds attachment to compose state
-- Handles API errors gracefully
+### 1e. Tests
+- Each type boundary: short text→status, 2 images→gallery, long text→article, link+short text→link, video→video
+- Edge cases: empty text, exactly at boundaries, mixed content (video + long text → video wins)
+- Re-classification: verify items change type after heuristic update
 
 ---
 
-## Priority 3 — C2.3: Emoji Picker
+## Priority 2 — UF.12 Support: Tracker Classification Data
 
-### Frontend (React)
+**User:** *"Be more specific and clear about what trackers did find. Maybe classify and define them, so we aren't just left to the imagination on what they are tracking."*
 
-Use an existing emoji picker library (e.g., `emoji-mart` or `@emoji-mart/react`) to avoid reimplementing the Unicode emoji database.
+The Frontend agent is fixing the AuditScreen to show tracker categories. But the Rust-side tracker data may only return name + event count. Check:
 
-1. **Emoji button**: Add to ComposeBox toolbar (smiley face icon)
-2. **Picker popover**: Clicking opens the emoji picker:
-   - Full Unicode emoji grid with categories
-   - Search by name/keyword
-   - Skin tone selector
-   - Recently-used section (persist in localStorage)
-3. **Selection**: Click an emoji → insert Unicode character at cursor position in compose text
-4. **Integration**: Must work alongside the existing `@mention` and `#hashtag` autocomplete without conflicts
+1. **Read `facebook.rs` tracker parsing** — what data does the audit produce? Just tracker names and counts, or categories too?
+2. **If categories are missing**: Add a classification heuristic for tracker names:
+   - `ad_tracking`: Trackers related to ads, advertising, ad preferences
+   - `location_tracking`: Location, places, check-ins
+   - `cross_site_tracking`: Off-Facebook activity, apps & websites, cookies
+   - `data_collection`: Device info, session history, login data
+   - `social_tracking`: Friends, contacts, interactions tracking
+3. Return `TrackerInfo { name, event_count, category }` instead of just name + count
+4. The Frontend will use `category` to group and label trackers in the UI
 
-### Tests
-- Emoji insertion at cursor position
-- Search functionality
-- Skin tone selection persists
-- No interference with mention/hashtag autocomplete
+---
+
+## Priority 3 — UF.6 Support: Feed Query by Content Type
+
+**User wants filter chips on the feed.** The Frontend will add the UI, but the Backend/Content needs to support querying by type.
+
+Check if `get_timeline` / `get_unified_feed` accepts a `content_type` filter parameter. If not:
+
+1. Add an optional `item_type_filter: Option<String>` parameter to feed commands
+2. When set, only return items matching that type (e.g., `item_type_filter: Some("Article")` → only articles)
+3. The Frontend will call: `invoke('get_timeline', { limit: 50, itemTypeFilter: 'Article' })`
+
+This is simple query-side filtering — it must be fast (no re-scanning).
 
 ---
 
 ## Anti-Patterns
-- Do NOT modify `ProfileBuilderScreen`, `ProfileBrowserScreen`, or lens components — Track B owns those
-- Do NOT modify Rust connector files (`connectors/*.rs`) beyond adding classification calls — Track A owns those. Coordinate with Backend agent.
+- Do NOT start C2.2 GIF Picker or C2.3 Emoji Picker — those are roadmap items, not user feedback
+- Do NOT modify `ProfileBuilderScreen`, `ProfileBrowserScreen`, or screen components — Track B owns those
 - Do NOT add items to ROADMAP.md — PM scope only
-- Do NOT start unassigned items after completing these priorities — report back via progress.md
 - All work on `main` — no feature branches
 - **Always run `git branch --show-current` before committing**
-- Do NOT hallucinate npm packages — check `package.json` before importing
+- Do NOT hallucinate crate imports — check Cargo.toml before using
 
----
-
-## Definition of Done (This Sprint)
+## Definition of Done
 - [ ] `BytescapeType::Link` and `BytescapeType::Video` variants added (Rust + TypeScript)
-- [ ] `classify_item` heuristic implemented with all 5 type paths
+- [ ] `classify_item` heuristic works for all 5 types
+- [ ] Bluesky ingest + publish auto-classify items
 - [ ] `reclassify_vault_items` command registered and working
-- [ ] GIF picker: search + trending + selection + attachment
-- [ ] Emoji picker: full grid + search + insertion
-- [ ] Classification tests cover each type boundary + edge cases
+- [ ] Tracker data includes category classification
+- [ ] Feed commands accept optional `item_type_filter`
+- [ ] Tests cover each type boundary + edge cases
 - [ ] `cargo check` passes (0 errors)
 - [ ] `pnpm test` passes
 - [ ] Committed to `main` with semantic messages

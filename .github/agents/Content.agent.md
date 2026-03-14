@@ -74,15 +74,15 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15)
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK FIXES
 
-⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
+⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes. No GIF/emoji pickers.
 
 Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
 
-**Priority 1 — UF.7 Content-Type Classification** (add Link/Video variants, classification heuristic, reclassify command)
-**Priority 2 — C2.2 GIF Picker** (Tenor API backend + searchable picker UI)
-**Priority 3 — C2.3 Emoji Picker** (emoji-mart integration + ComposeBox insertion)
+**Priority 1 — UF.7** Content-type classification (Link + Video variants, heuristic, reclassify command)
+**Priority 2 — UF.12** Tracker category classification data for AuditScreen
+**Priority 3 — UF.6** Feed query filtering by content type (backend support for filter chips)
 
 ## Prime Directive
 

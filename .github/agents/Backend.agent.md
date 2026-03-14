@@ -52,15 +52,16 @@ See [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the ori
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15)
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK FIXES
 
-⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
+⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes. No A1.2 research.
 
 Read your full kickoff prompt: [prompts/backend-a1-ap-actor.md](prompts/backend-a1-ap-actor.md)
 
-**Priority 1 — UF.16 Feed Performance** (cached-first rendering + timing instrumentation)
-**Priority 2 — UF.3 Unified Contacts** (extend ContactManager to include imported contacts)
-**Priority 3 — A1.2 Research** (Mastodon/Lemmy requirements — research only, document in progress.md)
+**Priority 1 — UF.16** Feed performance (cached-first rendering + timing)
+**Priority 2 — UF.3** Unified contacts (all sources, not just Bluesky)
+**Priority 3 — UF.15** Export vault data as ZIP backend command
+**Priority 4 — UF.13** Facebook import verification with real archive
 
 ## Prime Directive
 
