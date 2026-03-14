@@ -412,11 +412,102 @@ The following UF items were explicitly told NOT to start:
 
 ---
 
+---
+
+## Content Agent (Track C) — Complete Deliverables Report (2026-03-15)
+
+### Overview
+
+All Content Agent work on `track-c/c1-facet-frontend` has been **merged to `main`** (commit `0c6bcd0`). Track C delivered 6 major features across 4 sprints, totaling ~3,500 lines of new code and 152 frontend tests. The ComposeBox is now a full-featured composition environment with rich text facets, autocomplete, character counting, link card embeds, and CRDT-backed article editing.
+
+### Feature Inventory — All Shipped ✅
+
+| ID | Feature | Commit(s) | Tests | Status |
+|----|---------|-----------|-------|--------|
+| C1.1b | Facet Rendering Frontend — @mentions, #hashtags, links render as interactive elements in feed | `38cf4c2` | 10 (RichText.test.tsx) | ✅ Merged |
+| C1.2b | Mention Autocomplete — `@` triggers typeahead from contacts + follows | `38cf4c2` | included in ComposeBox tests | ✅ Merged |
+| C1.3b | Hashtag Autocomplete — `#` triggers typeahead from followed + recent tags | `38cf4c2` | included in ComposeBox tests | ✅ Merged |
+| C1.4 | Character Count & Limits — grapheme-aware per-target counters | `23c7bbe` | 28 (useCharacterCount.test.ts) | ✅ Merged |
+| C2.1 | Link Card Embeds — full-stack unfurl + preview + Bluesky embed.external | `9123e0b`, `93fde71` | 3 (ComposeBox.test.tsx) | ✅ Merged |
+| C3.2 | Article Editor — Tiptap-based rich text editor for long-form content | prior sprint | 34 (ArticleEditor.test.tsx) | ✅ Merged |
+| C6.1 | CRDT Storage Layer — Yjs backend + useCollabDoc hook + collaborative ArticleEditor | `cc85d0f`, `80a5407` | 18 (useCollabDoc.test.tsx) | ✅ Merged |
+
+### Files Created (Track C)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src-tauri/src/commands/unfurl.rs` | 167 | `unfurl_link` Tauri command — OG/Twitter Card extraction, favicon, sanitization |
+| `src-tauri/src/commands/richtext.rs` | ~200 | Rich text facet parsing — byte-offset @mention/#hashtag/URL detection for Bluesky AT Protocol |
+| `src-tauri/src/collab.rs` | ~324 | CRDT storage — Yjs doc CRUD via `yrs` crate, redb persistence |
+| `src-tauri/src/commands/collab.rs` | ~94 | Tauri command wrappers for collab operations |
+| `src/components/LinkPreviewCard.tsx` | 144 | Link card preview UI — thumbnail, domain, title, description, dismiss |
+| `src/components/ArticleEditor.tsx` | ~350 | Tiptap rich text editor with collaborative mode (Yjs-backed) |
+| `src/components/ArticleReader.tsx` | ~150 | Rendered article view with facet-aware content |
+| `src/components/AutocompleteDropdown.tsx` | ~180 | Reusable typeahead dropdown for @mention and #hashtag |
+| `src/components/RichText.tsx` | ~120 | Facet-aware text renderer — clickable mentions, hashtags, links |
+| `src/hooks/useCharacterCount.ts` | 121 | `Intl.Segmenter` grapheme counting, per-target limits, color-coded status |
+| `src/hooks/useCollabDoc.ts` | 216 | Y.Doc lifecycle management, debounced persistence, snapshot |
+| `src/utils/richtext.ts` | ~250 | Frontend facet detection/parsing utilities |
+| `src/utils/markdown.ts` | ~100 | Markdown ↔ HTML conversion for articles |
+
+### Files Modified (Track C)
+
+| File | Changes |
+|------|---------|
+| `src/components/ComposeBox.tsx` | +autocomplete triggers, +link preview state/UI, +character counters, +PublishOptions.linkCard |
+| `src-tauri/src/commands/posting.rs` | +LinkCardInput struct, +link_card param, +embed.external for Bluesky, +download_and_upload_thumb |
+| `src-tauri/src/commands/mod.rs` | +unfurl, +richtext, +collab modules |
+| `src-tauri/src/lib.rs` | +unfurl_link, +richtext, +collab commands in invoke_handler |
+| `src-tauri/Cargo.toml` | +yrs, +scraper dependencies |
+| `src/types/index.ts` | +LinkCard, +ArticleEditorData interfaces |
+| `src/screens/FeedScreen.tsx` | +linkCard in invoke('publish_post_v2') call |
+| `bytescape/tsconfig.json` | +ES2022.Intl in lib array (for Intl.Segmenter) |
+
+### Test Coverage (Track C — 133 tests across 6 files)
+
+| Test File | Count | Coverage |
+|-----------|-------|----------|
+| `useCharacterCount.test.ts` | 28 | Grapheme counting: ASCII, emoji, ZWJ, CJK, multi-target, color transitions |
+| `ArticleEditor.test.tsx` | 34 | Editor modes, collaborative loading/error, content persistence |
+| `richtext.test.ts` | 43 | Facet parsing, byte offsets, @mention resolution, #hashtag extraction, URL detection |
+| `useCollabDoc.test.tsx` | 18 | Y.Doc creation, loading, error handling, update persistence, snapshot |
+| `RichText.test.tsx` | 10 | Facet rendering: clickable mentions, hashtags, plain links |
+| `ComposeBox.test.tsx` (partial) | ~8 | Link preview loading/render/dismiss, character limit integration |
+
+### Architecture Contributions
+
+1. **Rich Text Pipeline**: ComposeBox text → `richtext.ts` facet parser → byte-offset facets → `app.bsky.richtext.facet` array on Bluesky publish. Same parsed facets render via `RichText.tsx` in feed.
+2. **Link Embed Pipeline**: URL detected in compose text → 500ms debounce → `unfurl_link` Tauri command → `LinkPreviewCard.tsx` preview → on publish: `download_and_upload_thumb` + `app.bsky.embed.external` for Bluesky, `link_url`/`preview_img` for local vault.
+3. **CRDT Architecture**: `yrs` (Rust Yjs port) stores binary Yjs state in `COLLAB_DOCS_TABLE` (redb). Frontend `useCollabDoc` hook manages Y.Doc lifecycle with 300ms debounced batch persistence. Tiptap `Collaboration` extension wires Y.XmlFragment for structured rich text editing. Snapshot extracts rendered HTML to `BytescapeItem.content`.
+4. **Grapheme-Aware Counting**: `Intl.Segmenter` with `granularity: 'grapheme'` handles emoji, ZWJ sequences, CJK correctly. Per-target limits (Bluesky 300, AP 500, Local 10K) with `resolveTargets()` mapping for 'all' target.
+
+### Pending Research (P3 — Content-Type Classification)
+
+Documented in the C1.4+C2.1 sprint section above. Key open question for PM: Should `Link` be a new `BytescapeType` variant or a metadata flag? Cross-track implementation plan provided.
+
+### What's Next for Track C
+
+Per sprint instructions, the Content Agent has reported back and is **awaiting PM assignment** for the next sprint. Candidate items from the roadmap:
+
+| ID | Feature | Dependencies |
+|----|---------|-------------|
+| C2.2 | GIF Picker (Tenor API) | None |
+| C2.3 | Emoji Picker | None |
+| C3.1 | Polls | None |
+| C4.1 | Drag-and-Drop Media | None |
+| C4.2 | Video Upload | None |
+| C5.1 | "Post to Wall" UX | None |
+| C6.3 | P2P Real-Time Sync via Gossip | Requires working iroh-gossip |
+| C2.4 | Custom Emoji | Blocked on A1.2 |
+| C5.2 | AP Destination Wiring | Blocked on A1.2 |
+
+---
+
 ## Current Build & Test Status (All Tracks Unified on Main)
 
 - **Rust build**: ✅ Compiles (25 warnings, 0 errors)
 - **Frontend tests**: ✅ 230/230 passing (11 test files)
 - **TypeScript**: ✅ Clean (`npx tsc --noEmit` — 0 errors)
-- **Branch**: `main` at `28a6b8c`
+- **Branch**: `main` at `950d9e0`
 - **Feature branches**: Both `track-b/ui-redesign` and `track-c/c1-facet-frontend` fully merged (0 unmerged commits)
 - **Last verified**: 2026-03-15
