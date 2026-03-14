@@ -139,3 +139,87 @@ C6.1 CRDT Storage Layer is **complete**. Local-only Yjs-backed collaborative edi
 |--------|-------------|
 | `cc85d0f` | Merge main into track-c (resolve lib.rs conflicts) |
 | `80a5407` | Merge track-b/ui-redesign into track-c (bring in C6.1 + Profile Builder work) |
+
+---
+
+## 2026-03-15 — Content Agent Sprint: C1.4 + C2.1
+
+### Summary
+Sprint from `content-c1c2-sprint.md` — priorities P0 (merge main), P1 (C1.4 character count), P2 (C2.1 link card embeds), P3 (content-type classification research). All completed.
+
+### Commits (track-c/c1-facet-frontend)
+| Commit | Description |
+|--------|-------------|
+| `f68679c` | merge: main into track-c (get fe890b4 remediation) |
+| `23c7bbe` | feat(track-c): C1.4 character count & limits — grapheme-aware multi-target counters |
+| `9123e0b` | feat(track-c): C2.1 link card embeds — unfurl.rs, LinkPreviewCard, URL detection |
+| `93fde71` | feat(track-c): C2.1 embed.external — Bluesky link card publishing |
+
+### C1.4 — Multi-Target Character Counting
+- **useCharacterCount hook** (121 lines): `Intl.Segmenter` grapheme counting, per-target limits (Bluesky 300 graphemes, AP 500, Local 10K)
+- **TARGET_LIMITS**, **TARGET_ICONS**, **STATUS_COLORS** exports for UI rendering
+- **resolveTargets()**: Maps PostTarget → active target list ('all' → bluesky + activitypub + local)
+- **Color-coded counters**: ok (green) → warn (yellow 80%) → danger (orange 95%) → over (red >100%)
+- **Truncation warnings**: Shows which targets will truncate and by how much
+- **Post button logic**: Disabled when ALL targets over; enabled with warning when some over
+- **28 unit tests**: ASCII, emoji, ZWJ sequences, CJK, multi-target resolution, color transitions
+
+### C2.1 — Link Card Embeds (Full Stack)
+
+**Backend:**
+- `commands/unfurl.rs` (167 lines): `unfurl_link` Tauri command
+  - reqwest fetch: 5s timeout, 3 redirects max, 1MB body limit, text/html only
+  - scraper HTML parsing: og:title/description/image/site_name with twitter:* fallbacks
+  - Favicon detection, relative URL resolution, string sanitization (500 char cap)
+- `commands/posting.rs`: `LinkCardInput` struct, `link_card` parameter on `publish_post_v2`
+  - `embed.external` emission: `{uri, title, description, thumb}` in AT Protocol record
+  - `download_and_upload_thumb()`: fetches OG image, uploads as blob to PDS
+  - Local vault: stores `link_url` and `preview_img` on `BytescapeItem`
+
+**Frontend:**
+- `LinkPreviewCard.tsx` (144 lines): Thumbnail, favicon + domain, title, description, dismiss button
+- ComposeBox URL detection: regex `/https?:\/\/[^\s<>"{}|\\^`[\]]+/`, 500ms debounce
+- `LinkCard` type in `types/index.ts`
+- `PublishOptions.linkCard` flows ComposeBox → FeedScreen → invoke → posting.rs
+- 3 integration tests: loading indicator, card rendering, card dismissal
+
+### P3 — Content-Type Classification Research
+
+**Problem:** User feedback (UF.7) reports that ArticleReader shows too many non-articles (videos, GIFs, links with just a title + description). Current classification in `publish_post_v2` is naive: video → Status, multi-image → Gallery, everything else → Status. No "Link" type exists, and the Status/Article/Gallery classification doesn't reflect content substance.
+
+**Proposed Classification Heuristics:**
+
+| Type | Signal | Threshold |
+|------|--------|-----------|
+| `status` | Short text, minimal media | ≤300 chars body, 0–1 images, no video |
+| `gallery` | Image-centric content | ≥2 images as primary content, text is caption-length |
+| `article` | Substantial long-form text | >500 chars body text (excluding URL + OG metadata), may have inline images |
+| `link` | URL embed with minimal original text | Has link_url, ≤100 chars of original text (not OG description), title comes from OG metadata |
+| `video` | Video as primary content | Has video attachment(s), any text length |
+
+**Where should classification happen?**
+
+**Recommendation: At ingest time in Rust, stored as `item_type` on `BytescapeItem`.**
+
+Reasoning:
+1. Classification at ingest ensures all views (feed, gallery, reader, search) have consistent typing without re-computing
+2. Existing `BytescapeType` enum already has `Status`, `Gallery`, `Article` — needs `Link` and `Video` variants added
+3. Bluesky connector already has access to embed types (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`) which map cleanly to the new types
+4. Facebook archive connector has `media_type` hints (photos vs videos)
+5. Frontend filters become trivial: `items.filter(i => i.item_type === 'article')`
+
+**Implementation plan (cross-track):**
+
+1. **Track A**: Add `Link` and `Video` variants to `BytescapeType` enum in `models/mod.rs`. Update Bluesky connector to classify posts at fetch time using embed type. Update Facebook connector to classify using media presence/type.
+2. **Track C**: Update `publish_post_v2` to auto-classify based on content analysis (apply heuristic table above). When a link card is attached but text is short, set type to `Link` instead of `Status`.
+3. **Track B**: Replace lens-based content routing with filter chips on feed toolbar. Filter by `item_type`. ArticleReader only shows `item_type: 'article'`.
+4. **Re-classification migration**: One-time migration command `reclassify_vault_items` that re-scans existing vault items and updates their `item_type` using the new heuristics. This handles items imported before the classification logic was improved.
+
+**Open question for PM:** Should `Link` be a new `BytescapeType` variant, or should it be a metadata flag (e.g., `has_link_embed: bool`) on any type? The variant approach is simpler but a linked article is both a "link" and potentially an "article" if the OG content is substantial.
+
+### Build & Test Status
+- **Rust build**: ✅ Compiles (25 warnings, 0 errors)
+- **Frontend tests**: ✅ 185/185 passing (10 test files)
+- **TypeScript**: ✅ Clean (`npx tsc --noEmit`)
+- **Branch**: `track-c/c1-facet-frontend` at `93fde71`
+- **Last verified**: 2026-03-15
