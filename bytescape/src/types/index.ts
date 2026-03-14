@@ -513,3 +513,13 @@ export interface CollabStateResponse {
     state_vector_b64: string;
     meta: CollabDocMeta;
 }
+
+/** Link card metadata returned by unfurl_link command */
+export interface LinkCard {
+    url: string;
+    title?: string | null;
+    description?: string | null;
+    image_url?: string | null;
+    site_name?: string | null;
+    favicon_url?: string | null;
+}

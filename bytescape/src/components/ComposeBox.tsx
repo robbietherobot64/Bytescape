@@ -8,6 +8,8 @@ import type { AutocompleteContext } from '../utils/richtext';
 import { ArticleEditor } from './ArticleEditor';
 import type { ArticleEditorData } from './ArticleEditor';
 import { AutocompleteDropdown, mentionToItem, hashtagToItem } from './AutocompleteDropdown';
+import { LinkPreviewCard } from './LinkPreviewCard';
+import type { LinkCard } from '../types';
 import type { AutocompleteItem } from './AutocompleteDropdown';
 import type { MentionSuggestion } from '../types';
 
@@ -51,6 +53,12 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [acLoading, setAcLoading] = useState(false);
     const acVisible = acContext !== null && acContext.type !== null;
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ─── Link Preview State (C2.1) ───
+    const [linkCard, setLinkCard] = useState<LinkCard | null>(null);
+    const [linkDismissed, setLinkDismissed] = useState<string | null>(null);
+    const [linkLoading, setLinkLoading] = useState(false);
+    const linkDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Input validation (MED-4) + multi-target character counting (C1.4)
     const charResult = useCharacterCount(composeText, postTarget);
@@ -163,6 +171,38 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         };
     }, []);
 
+    // ─── Link Preview Detection (C2.1) ───
+    useEffect(() => {
+        if (articleMode) return;
+        const urlMatch = composeText.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
+        const detectedUrl = urlMatch ? urlMatch[0] : null;
+
+        if (!detectedUrl) {
+            setLinkCard(null);
+            return;
+        }
+        if (detectedUrl === linkDismissed) return;
+        if (linkCard?.url === detectedUrl) return;
+
+        if (linkDebounceRef.current) clearTimeout(linkDebounceRef.current);
+        linkDebounceRef.current = setTimeout(async () => {
+            setLinkLoading(true);
+            try {
+                const card = await invoke<LinkCard>('unfurl_link', { url: detectedUrl });
+                setLinkCard(card);
+            } catch (err) {
+                console.warn('Link unfurl failed:', err);
+                setLinkCard(null);
+            } finally {
+                setLinkLoading(false);
+            }
+        }, 500);
+
+        return () => {
+            if (linkDebounceRef.current) clearTimeout(linkDebounceRef.current);
+        };
+    }, [composeText, articleMode, linkDismissed, linkCard?.url]);
+
     const handlePublish = async () => {
         if (!canPost) return;
         if (articleMode && articleDataRef.current) {
@@ -179,6 +219,8 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         setComposeText('');
         setAttachments([]);
         setFileSizeWarnings([]);
+        setLinkCard(null);
+        setLinkDismissed(null);
     };
 
     const handleAddMedia = async () => {
@@ -326,6 +368,22 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                                 ⚠️ Text exceeds limit on: {charResult.truncatedTargets.map(t =>
                                     `${TARGET_ICONS[t]} ${t} (by ${charResult.counts.find(c => c.target === t)?.overBy ?? 0})`
                                 ).join(', ')}
+                            </div>
+                        )}
+
+                        {/* Link Preview Card (C2.1) */}
+                        {linkCard && (
+                            <LinkPreviewCard
+                                card={linkCard}
+                                onDismiss={() => {
+                                    setLinkDismissed(linkCard.url);
+                                    setLinkCard(null);
+                                }}
+                            />
+                        )}
+                        {linkLoading && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+                                🔗 Loading link preview…
                             </div>
                         )}
                     </>

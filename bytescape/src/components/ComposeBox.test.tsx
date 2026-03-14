@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ComposeBox } from './ComposeBox';
 import { INPUT_LIMITS } from '../utils/sanitize';
@@ -145,5 +145,84 @@ describe('ComposeBox', () => {
         // Post button should still be enabled (only Bluesky is over, local is fine)
         const postBtn = screen.getByText('Post');
         expect(postBtn).not.toBeDisabled();
+    });
+
+    // ─── Link Preview Tests (C2.1) ───
+
+    it('shows loading indicator when URL detected in text', async () => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+            if (cmd === 'unfurl_link') {
+                return new Promise(() => {}); // never resolves — keeps loading
+            }
+            return Promise.resolve(0);
+        });
+
+        render(<ComposeBox {...defaultProps} />);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        fireEvent.change(textarea, { target: { value: 'Check out https://example.com' } });
+
+        // The link detection is debounced at 500ms
+        await waitFor(() => {
+            expect(screen.getByText(/Loading link preview/)).toBeTruthy();
+        }, { timeout: 1500 });
+    });
+
+    it('renders link preview card when unfurl succeeds', async () => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+            if (cmd === 'unfurl_link') {
+                return Promise.resolve({
+                    url: 'https://example.com',
+                    title: 'Example Domain',
+                    description: 'This domain is for examples.',
+                    image_url: null,
+                    site_name: 'Example',
+                    favicon_url: null,
+                });
+            }
+            return Promise.resolve(0);
+        });
+
+        render(<ComposeBox {...defaultProps} />);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        fireEvent.change(textarea, { target: { value: 'Visit https://example.com today' } });
+
+        await waitFor(() => {
+            expect(screen.getByText('Example Domain')).toBeTruthy();
+            expect(screen.getByText('This domain is for examples.')).toBeTruthy();
+        }, { timeout: 2000 });
+    });
+
+    it('dismisses link preview when X button clicked', async () => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+            if (cmd === 'unfurl_link') {
+                return Promise.resolve({
+                    url: 'https://example.com',
+                    title: 'Example Domain',
+                    description: null,
+                    image_url: null,
+                    site_name: null,
+                    favicon_url: null,
+                });
+            }
+            return Promise.resolve(0);
+        });
+
+        render(<ComposeBox {...defaultProps} />);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        fireEvent.change(textarea, { target: { value: 'See https://example.com' } });
+
+        await waitFor(() => {
+            expect(screen.getByText('Example Domain')).toBeTruthy();
+        }, { timeout: 2000 });
+
+        // Click the dismiss button
+        const dismissBtn = screen.getByLabelText('Remove link preview');
+        fireEvent.click(dismissBtn);
+
+        // Card should be gone
+        expect(screen.queryByText('Example Domain')).toBeNull();
     });
 });
