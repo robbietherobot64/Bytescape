@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { usePeerStore } from '../store';
-import { PeerInfo } from '../types';
+import { usePeerStore, useAuthStore } from '../store';
+import { PeerInfo, ProfileView } from '../types';
 
 interface FriendsPanelProps {
     onOpenChat?: (peerNodeId: string, peerName: string) => void;
@@ -20,78 +20,169 @@ function getAwayMessage(lastSeen: number | null): string {
     return 'Offline';
 }
 
-/** Get status icon based on how long ago the peer was seen */
-function getStatusIndicator(status: 'online' | 'offline', lastSeen: number | null): { dot: string; color: string } {
-    if (status === 'online') return { dot: '●', color: '#50fa7b' };
-    if (!lastSeen) return { dot: '●', color: '#666' };
+/** Get status indicator color based on how long ago the peer was seen */
+function getStatusIndicator(status: 'online' | 'offline', lastSeen: number | null): { color: string } {
+    if (status === 'online') return { color: '#50fa7b' };
+    if (!lastSeen) return { color: '#666' };
     const secs = Math.floor(Date.now() / 1000) - lastSeen;
-    if (secs < 300) return { dot: '●', color: '#ffb86c' };   // idle/just left
-    if (secs < 3600) return { dot: '●', color: '#ff9944' };  // away
-    if (secs < 86400) return { dot: '●', color: '#ff5555' }; // long away
-    return { dot: '○', color: '#666' };                      // offline
+    if (secs < 300) return { color: '#ffb86c' };
+    if (secs < 3600) return { color: '#ff9944' };
+    if (secs < 86400) return { color: '#ff5555' };
+    return { color: '#666' };
+}
+
+/** Unified friend entry — can be a P2P peer or a Bluesky follow */
+interface UnifiedFriend {
+    id: string;
+    displayName: string;
+    source: 'p2p' | 'bluesky';
+    /** P2P: online/offline based on connectivity. Bluesky: always 'cloud'. */
+    status: 'online' | 'offline' | 'cloud';
+    avatar?: string;
+    handle?: string;
+    lastSeen?: number | null;
+    nodeId?: string;
 }
 
 export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
     const globalStatuses = usePeerStore(s => s.peerStatuses);
+    const auth = useAuthStore(s => s.auth);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
+    const [blueskyFollows, setBlueskyFollows] = useState<ProfileView[]>([]);
     const [loading, setLoading] = useState(true);
+    const [activeSection, setActiveSection] = useState<'all' | 'p2p' | 'bluesky'>('all');
 
+    // Load P2P peers
     const loadPeers = useCallback(async () => {
         try {
             const peerList = await invoke<PeerInfo[]>('list_peers');
             setPeers(peerList);
         } catch {
             // P2P not ready yet
-        } finally {
-            setLoading(false);
         }
     }, []);
 
-    useEffect(() => {
-        loadPeers();
-        const interval = setInterval(loadPeers, 60_000);
-        return () => clearInterval(interval);
-    }, [loadPeers]);
+    // Load Bluesky follows
+    const loadBlueskyFollows = useCallback(async () => {
+        if (!auth?.did) return;
+        try {
+            const follows = await invoke<ProfileView[]>('list_follows', { actor: auth.did });
+            setBlueskyFollows(follows);
+        } catch {
+            // Bluesky not connected or API error
+            try {
+                // Fallback: use cached contacts table
+                const contacts = await invoke<{ did: string; handle: string }[]>('list_contacts');
+                setBlueskyFollows(contacts.map(c => ({ did: c.did, handle: c.handle })));
+            } catch {
+                // No contacts either
+            }
+        }
+    }, [auth?.did]);
 
-    const onlinePeers = peers.filter(p => globalStatuses[p.node_id] === 'online');
-    const offlinePeers = peers.filter(p => globalStatuses[p.node_id] !== 'online');
+    useEffect(() => {
+        Promise.all([loadPeers(), loadBlueskyFollows()]).finally(() => setLoading(false));
+        const interval = setInterval(() => {
+            loadPeers();
+            // Refresh bluesky follows less frequently (every 5 min)
+        }, 60_000);
+        const bskyInterval = setInterval(loadBlueskyFollows, 300_000);
+        return () => { clearInterval(interval); clearInterval(bskyInterval); };
+    }, [loadPeers, loadBlueskyFollows]);
+
+    // Build unified friend list
+    const p2pFriends: UnifiedFriend[] = peers.map(peer => ({
+        id: `p2p:${peer.node_id}`,
+        displayName: peer.display_name || `Peer ${peer.node_id.slice(0, 8)}`,
+        source: 'p2p' as const,
+        status: globalStatuses[peer.node_id] === 'online' ? 'online' as const : 'offline' as const,
+        lastSeen: peer.last_seen,
+        nodeId: peer.node_id,
+    }));
+
+    // Filter out Bluesky follows that are also P2P peers (by DID match)
+    const p2pDids = new Set(peers.map(p => p.did).filter(Boolean));
+    const bskyFriends: UnifiedFriend[] = blueskyFollows
+        .filter(f => !p2pDids.has(f.did)) // Don't duplicate if already a P2P peer
+        .map(f => ({
+            id: `bsky:${f.did}`,
+            displayName: f.displayName || f.handle,
+            source: 'bluesky' as const,
+            status: 'cloud' as const,
+            avatar: f.avatar,
+            handle: f.handle,
+        }));
+
+    const onlineP2p = p2pFriends.filter(f => f.status === 'online');
+    const offlineP2p = p2pFriends.filter(f => f.status !== 'online');
+    const totalCount = p2pFriends.length + bskyFriends.length;
 
     return (
         <div className="friends-panel">
             <div className="friends-panel-header">
                 <span className="friends-panel-title">Friends</span>
                 <span className="friends-panel-count">
-                    {onlinePeers.length > 0 && (
-                        <span className="friends-online-badge">{onlinePeers.length}</span>
+                    {onlineP2p.length > 0 && (
+                        <span className="friends-online-badge">{onlineP2p.length}</span>
                     )}
-                    {peers.length}
+                    {totalCount}
                 </span>
             </div>
+
+            {/* Source filter tabs */}
+            {(p2pFriends.length > 0 || bskyFriends.length > 0) && (
+                <div className="friends-source-tabs">
+                    <button
+                        className={`friends-source-tab ${activeSection === 'all' ? 'active' : ''}`}
+                        onClick={() => setActiveSection('all')}
+                    >
+                        All
+                    </button>
+                    {p2pFriends.length > 0 && (
+                        <button
+                            className={`friends-source-tab ${activeSection === 'p2p' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('p2p')}
+                        >
+                            🔗 P2P
+                        </button>
+                    )}
+                    {bskyFriends.length > 0 && (
+                        <button
+                            className={`friends-source-tab ${activeSection === 'bluesky' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('bluesky')}
+                        >
+                            🦋 Bsky
+                        </button>
+                    )}
+                </div>
+            )}
 
             <div className="friends-panel-list">
                 {loading && (
                     <div className="friends-panel-empty">Loading…</div>
                 )}
 
-                {!loading && peers.length === 0 && (
+                {!loading && totalCount === 0 && (
                     <div className="friends-panel-empty">
                         <div style={{ fontSize: '1.4rem', marginBottom: 6 } as React.CSSProperties}>👤</div>
-                        <div style={{ fontWeight: 700 } as React.CSSProperties}>No peers yet</div>
+                        <div style={{ fontWeight: 700 } as React.CSSProperties}>No friends yet</div>
                         <div style={{ fontSize: '0.65rem', marginTop: 4, opacity: 0.7 } as React.CSSProperties}>
-                            Go to Social to add friends
+                            Follow people on Bluesky or add P2P peers
                         </div>
                     </div>
                 )}
 
-                {/* Online peers */}
-                {onlinePeers.length > 0 && (
+                {/* P2P Online peers */}
+                {(activeSection === 'all' || activeSection === 'p2p') && onlineP2p.length > 0 && (
                     <div className="friends-panel-group">
-                        <div className="friends-panel-group-label">Online ({onlinePeers.length})</div>
-                        {onlinePeers.map(peer => (
+                        <div className="friends-panel-group-label">
+                            <span className="friends-group-source-icon">🔗</span>
+                            Online ({onlineP2p.length})
+                        </div>
+                        {onlineP2p.map(friend => (
                             <FriendItem
-                                key={peer.node_id}
-                                peer={peer}
-                                status="online"
+                                key={friend.id}
+                                friend={friend}
                                 onChat={onOpenChat}
                                 onProfile={onViewProfile}
                             />
@@ -99,17 +190,35 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                     </div>
                 )}
 
-                {/* Offline / Away peers */}
-                {offlinePeers.length > 0 && (
+                {/* P2P Offline/Away peers */}
+                {(activeSection === 'all' || activeSection === 'p2p') && offlineP2p.length > 0 && (
                     <div className="friends-panel-group">
-                        <div className="friends-panel-group-label">Away ({offlinePeers.length})</div>
-                        {offlinePeers.map(peer => (
+                        <div className="friends-panel-group-label">
+                            <span className="friends-group-source-icon">🔗</span>
+                            Away ({offlineP2p.length})
+                        </div>
+                        {offlineP2p.map(friend => (
                             <FriendItem
-                                key={peer.node_id}
-                                peer={peer}
-                                status="offline"
+                                key={friend.id}
+                                friend={friend}
                                 onChat={onOpenChat}
                                 onProfile={onViewProfile}
+                            />
+                        ))}
+                    </div>
+                )}
+
+                {/* Bluesky follows */}
+                {(activeSection === 'all' || activeSection === 'bluesky') && bskyFriends.length > 0 && (
+                    <div className="friends-panel-group">
+                        <div className="friends-panel-group-label">
+                            <span className="friends-group-source-icon">🦋</span>
+                            Bluesky ({bskyFriends.length})
+                        </div>
+                        {bskyFriends.map(friend => (
+                            <FriendItem
+                                key={friend.id}
+                                friend={friend}
                             />
                         ))}
                     </div>
@@ -120,44 +229,84 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
 }
 
 interface FriendItemProps {
-    peer: PeerInfo;
-    status: 'online' | 'offline';
+    friend: UnifiedFriend;
     onChat?: (nodeId: string, name: string) => void;
     onProfile?: (nodeId: string, name?: string) => void;
 }
 
-function FriendItem({ peer, status, onChat, onProfile }: FriendItemProps) {
-    const displayName = peer.display_name || `Peer ${peer.node_id.slice(0, 8)}`;
-    const initial = displayName[0]?.toUpperCase() || '?';
-    const indicator = getStatusIndicator(status, peer.last_seen);
-    const awayMsg = status === 'offline' ? getAwayMessage(peer.last_seen) : 'Online';
+function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
+    const initial = friend.displayName[0]?.toUpperCase() || '?';
+    const isP2p = friend.source === 'p2p';
+
+    // Status display
+    let statusText: string;
+    let statusClass: string;
+    let dotColor: string;
+
+    if (friend.status === 'online') {
+        statusText = 'Online';
+        statusClass = 'online';
+        dotColor = '#50fa7b';
+    } else if (friend.status === 'cloud') {
+        statusText = friend.handle ? `@${friend.handle}` : 'Bluesky';
+        statusClass = 'cloud';
+        dotColor = '#1185fe'; // Bluesky blue
+    } else {
+        const indicator = getStatusIndicator('offline', friend.lastSeen ?? null);
+        statusText = getAwayMessage(friend.lastSeen ?? null);
+        statusClass = 'offline';
+        dotColor = indicator.color;
+    }
+
+    const handleClick = () => {
+        if (isP2p && friend.nodeId && onProfile) {
+            onProfile(friend.nodeId, friend.displayName);
+        }
+    };
+
+    const handleChat = () => {
+        if (isP2p && friend.nodeId && onChat) {
+            onChat(friend.nodeId, friend.displayName);
+        }
+    };
 
     return (
-        <div className="friend-item">
+        <div className={`friend-item friend-item--${friend.source}`}>
             <button
                 className="friend-item-main"
-                onClick={() => onProfile?.(peer.node_id, peer.display_name || undefined)}
-                title={`View ${displayName}'s profile`}
+                onClick={handleClick}
+                title={isP2p ? `View ${friend.displayName}'s profile` : `${friend.displayName} on Bluesky`}
+                style={!isP2p ? { cursor: 'default' } as React.CSSProperties : undefined}
             >
                 <div className="friend-item-avatar">
-                    <span className="friend-item-initial">{initial}</span>
+                    {friend.avatar ? (
+                        <img
+                            src={friend.avatar}
+                            alt=""
+                            className="friend-item-avatar-img"
+                        />
+                    ) : (
+                        <span className="friend-item-initial">{initial}</span>
+                    )}
                     <span
-                        className={`friend-item-dot ${status}`}
-                        style={{ background: indicator.color } as React.CSSProperties}
+                        className={`friend-item-dot ${statusClass}`}
+                        style={{ background: dotColor } as React.CSSProperties}
                     />
                 </div>
                 <div className="friend-item-info">
-                    <div className="friend-item-name">{displayName}</div>
-                    <div className={`friend-item-away ${status}`}>
-                        {awayMsg}
+                    <div className="friend-item-name">
+                        {friend.displayName}
+                    </div>
+                    <div className={`friend-item-away ${statusClass}`}>
+                        {statusText}
                     </div>
                 </div>
             </button>
-            {onChat && (
+            {isP2p && onChat && friend.nodeId && (
                 <button
                     className="friend-item-chat-btn"
-                    onClick={() => onChat(peer.node_id, displayName)}
-                    title={`Chat with ${displayName}`}
+                    onClick={handleChat}
+                    title={`Chat with ${friend.displayName}`}
                 >
                     💬
                 </button>

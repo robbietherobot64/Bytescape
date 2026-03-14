@@ -903,6 +903,72 @@ a:hover {
     opacity: 1;
 }
 
+/* ─── Friends Source Tabs (P2P / Bluesky filter) ─── */
+.friends-source-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 4px 8px 6px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.friends-source-tab {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.friends-source-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+}
+
+.friends-source-tab.active {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border-color: var(--border-subtle);
+    font-weight: 700;
+}
+
+/* ─── Friends Group Source Icon ─── */
+.friends-group-source-icon {
+    margin-right: 4px;
+    font-size: 10px;
+}
+
+/* ─── Bluesky status color (cloud) ─── */
+.friend-item-dot.cloud {
+    background: #1185fe;
+}
+
+.friend-item-away.cloud {
+    color: #5eaaff;
+    font-style: normal;
+    font-size: 9px;
+}
+
+/* ─── Avatar image for Bluesky follows ─── */
+.friend-item-avatar-img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+/* ─── Source-specific styling ─── */
+.friend-item--bluesky .friend-item-avatar {
+    border: 1.5px solid #1185fe40;
+}
+
+.friend-item--p2p .friend-item-avatar {
+    border: 1.5px solid #50fa7b40;
+}
+
 /* ─── LEGACY SIDEBAR (kept for backward compat, hidden) ─── */
 .sidebar {
     display: none;
