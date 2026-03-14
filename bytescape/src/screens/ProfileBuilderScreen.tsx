@@ -45,9 +45,12 @@ export function ProfileBuilderScreen() {
         async function initEditor() {
             // Dynamic imports — GrapesJS is a large library
             const grapesjs = await import('grapesjs');
+            const presetWebpage = await import('grapesjs-preset-webpage');
             await import('grapesjs/dist/css/grapes.min.css');
 
             if (cancelled || !containerRef.current) return;
+
+            const presetPlugin = presetWebpage.default || presetWebpage;
 
             editor = grapesjs.default.init({
                 container: containerRef.current,
@@ -55,14 +58,13 @@ export function ProfileBuilderScreen() {
                 width: 'auto',
                 height: '100%',
                 storageManager: false, // We handle storage via Tauri
-                plugins: [],
+                plugins: [presetPlugin],
                 canvas: {
                     styles: [
                         // Inject the current theme colors into the canvas
                     ],
                 },
-                // Default panel config — we override below
-                panels: { defaults: [] },
+                // Let GrapesJS render its default panels (block manager, style manager, layers)
                 deviceManager: {
                     devices: [
                         { name: 'Desktop', width: '' },

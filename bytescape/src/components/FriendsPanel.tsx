@@ -43,6 +43,7 @@ interface UnifiedFriend {
     handle?: string;
     lastSeen?: number | null;
     nodeId?: string;
+    did?: string;
 }
 
 export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
@@ -112,6 +113,7 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
             status: 'cloud' as const,
             avatar: f.avatar,
             handle: f.handle,
+            did: f.did,
         }));
 
     const onlineP2p = p2pFriends.filter(f => f.status === 'online');
@@ -220,6 +222,8 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                             <FriendItem
                                 key={friend.id}
                                 friend={friend}
+                                onChat={onOpenChat}
+                                onProfile={onViewProfile}
                             />
                         ))}
                     </div>
@@ -238,6 +242,7 @@ interface FriendItemProps {
 function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
     const initial = friend.displayName[0]?.toUpperCase() || '?';
     const isP2p = friend.source === 'p2p';
+    const isBsky = friend.source === 'bluesky';
 
     // Status display
     let statusText: string;
@@ -262,12 +267,18 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
     const handleClick = () => {
         if (isP2p && friend.nodeId && onProfile) {
             onProfile(friend.nodeId, friend.displayName);
+        } else if (isBsky && friend.handle) {
+            // Open Bluesky profile in new tab
+            window.open(`https://bsky.app/profile/${friend.handle}`, '_blank');
         }
     };
 
     const handleChat = () => {
         if (isP2p && friend.nodeId && onChat) {
             onChat(friend.nodeId, friend.displayName);
+        } else if (isBsky && friend.did && onChat) {
+            // Open Bluesky DM via the chat screen with DID identifier
+            onChat(friend.did, friend.displayName);
         }
     };
 
@@ -276,8 +287,8 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
             <button
                 className="friend-item-main"
                 onClick={handleClick}
-                title={isP2p ? `View ${friend.displayName}'s profile` : `${friend.displayName} on Bluesky`}
-                style={!isP2p ? { cursor: 'default' } as React.CSSProperties : undefined}
+                title={isP2p ? `View ${friend.displayName}'s profile` : isBsky ? `View @${friend.handle || friend.displayName} on Bluesky` : friend.displayName}
+                style={{ cursor: 'pointer' } as React.CSSProperties}
             >
                 <div className="friend-item-avatar">
                     {friend.avatar ? (
@@ -304,7 +315,7 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
                 </div>
             </button>
             <div className="friend-item-actions">
-                {onChat && friend.nodeId && (
+                {onChat && (friend.nodeId || friend.did) && (
                     <button
                         className="friend-item-action-btn"
                         onClick={handleChat}
