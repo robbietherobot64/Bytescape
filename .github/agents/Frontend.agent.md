@@ -50,20 +50,22 @@ Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for 
 ### OAuth UI Note
 The Backend agent modified `LoginScreen.tsx` (+143 lines) on the `track-a/a0-bluesky-oauth` branch to add OAuth login UI. If that branch has been merged, `LoginScreen` now has an "OAuth Login" flow with `listen('oauth-complete')` event handling and a 5-minute timeout. Be aware of this when working on LoginScreen for any reason.
 
-## 🎯 Current Assignment (2026-03-13)
+## ✅ Previous Assignment Complete (2026-03-13)
 
-Read your full kickoff prompt: [prompts/frontend-b21-grapesjs.md](prompts/frontend-b21-grapesjs.md)
+B2.1 GrapesJS Profile Builder delivered in commit `aabfa9e` on `track-b/b2-profile-builder`. 13 files, +1,356 lines, 5 new tests. **Do not redo this work.**
 
-**Priority 1 — B2.1 GrapesJS Profile Builder**
-- Install `grapesjs` + `grapesjs-preset-webpage`
-- Create `ProfileBuilderScreen.tsx` with drag-and-drop canvas
-- Bytescape-specific blocks (About Me, Post Feed, Media Grid, Friends List, etc.)
-- Save/load profile layouts via Tauri commands (store in redb)
-- Integrate with `ProfileScreen` — render custom layout if one exists
-- Sandboxed rendering (DOMPurify or `<iframe>`) for security
-- Maintain GeoCities/Win98 aesthetic in builder UI
+## 🎯 Current Assignment (2026-03-14)
 
-This task is **fully independent** — no cross-track blockers.
+Read your full kickoff prompt: [prompts/frontend-b21-ui-integration.md](prompts/frontend-b21-ui-integration.md)
+
+**Priority 0 — Merge `main` into your branch + Review UI Redesign**
+- The Backend agent (PM-authorized) built a full UI redesign on `track-b/ui-redesign`: TopBar, ContextPanel, FriendsPanel, 3-column layout (~1,300 lines). **This is your domain** — review it and decide: adopt as-is, cherry-pick selectively, or rework.
+- Merge `main` into `track-b/b2-profile-builder` first (your branch is behind by 6 commits)
+
+**Priority 1 — B2.1 Verification & Polish**
+- Verify ProfileBuilder builds, tests pass, and functionality works end-to-end
+
+**Priority 2 — Next Track B Item** (B2.4 Theme Widgets, B3.1 Mobile Responsive, or B4.1 Archive Import Wizard)
 
 ## Prime Directive
 
