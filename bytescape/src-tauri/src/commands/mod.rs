@@ -17,6 +17,8 @@ pub mod collab;
 pub mod ap;
 pub mod profile;
 pub mod unfurl;
+pub mod classify;
+pub mod export;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;

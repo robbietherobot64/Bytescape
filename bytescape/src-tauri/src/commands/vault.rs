@@ -434,7 +434,7 @@ pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Ve
         .map_err(|e| e.to_string())
 }
 
-/// Unified contact list — merges DB contacts with Bluesky follows.
+/// Unified contact list — merges DB contacts with Bluesky follows AND followers.
 ///
 /// Returns a combined, deduplicated contact list sorted so P2P-capable
 /// contacts appear first, then alphabetically by display name / handle.
@@ -464,9 +464,8 @@ pub async fn list_contacts_unified(
         }
     }
 
-    // ── 2. Bluesky follows (paginated via get_follows) ──
+    // ── 2. Bluesky follows + followers (paginated) ──
     {
-        // Get the user's DID for the actor param
         let actor_did = state.keychain.get_did()
             .map_err(|e| e.to_string())?
             .unwrap_or_default();
@@ -478,9 +477,9 @@ pub async fn list_contacts_unified(
                 state.get_fresh_access_jwt().await.unwrap_or_default()
             };
 
+            // Follows — paginate up to 1000
             let mut cursor: Option<String> = None;
             for _ in 0..10 {
-                // max 10 pages × 100 = 1000 follows
                 match crate::connectors::bluesky::get_follows(
                     &access_jwt, &actor_did, 100, cursor.clone()
                 ).await {
@@ -500,6 +499,23 @@ pub async fn list_contacts_unified(
                     }
                     Err(_) => break,
                 }
+            }
+
+            // Followers — fetch via chat_client
+            match state.chat_client.get_followers(&actor_did).await {
+                Ok(members) => {
+                    for m in members {
+                        contacts.entry(m.did.clone()).or_insert_with(|| serde_json::json!({
+                            "did": m.did,
+                            "handle": m.handle.unwrap_or_default(),
+                            "display_name": m.display_name,
+                            "avatar": null,
+                            "source": "bluesky",
+                            "p2p_capable": false,
+                        }));
+                    }
+                }
+                Err(_) => {} // Silently skip if followers fetch fails
             }
         }
     }

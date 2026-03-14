@@ -1,6 +1,6 @@
 use tauri::State;
 use crate::AppState;
-use crate::models::{FeedEntry, BytescapeItem, BytescapeType, Audience, audiences_from_legacy};
+use crate::models::{FeedEntry, BytescapeItem, Audience, audiences_from_legacy, classify_feed_entry};
 use crate::connectors::bluesky::BlueskyImportedPost;
 use serde::{Serialize, Deserialize};
 
@@ -38,7 +38,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
-        FeedEntry {
+        let mut entry = FeedEntry {
             id: post.uri.clone(),
             cid: Some(post.cid.clone()),
             viewer_like: post.viewer_like,
@@ -65,7 +65,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             reply_parent_handle: post.reply_parent_handle,
             reply_parent_uri: post.reply_parent_uri,
             quoted_post: post.quoted_post.map(|q| Box::new(FeedEntry::from(*q))),
-            item_type: Some(BytescapeType::Status),
+            item_type: None,
             syndication_status: None,
             audiences: vec![Audience::Local, Audience::Bluesky],
             share_history: vec![
@@ -80,7 +80,10 @@ impl From<BlueskyImportedPost> for FeedEntry {
             tagged_people: vec![],
             title: None,
             original_url: Some(post.uri),
-        }
+        };
+        // Classify based on content (links, media, text length) instead of hardcoding Status
+        entry.item_type = Some(classify_feed_entry(&entry));
+        entry
     }
 }
 
@@ -192,10 +195,35 @@ pub async fn get_timeline_unified(
     cursor: Option<String>,
     vault_offset: Option<usize>
 ) -> Result<UnifiedFeedResponse, String> {
+    #[cfg(debug_assertions)]
+    let t_start = std::time::Instant::now();
+
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
 
-    // ── 1 + 2. Live timeline + custom feeds — in parallel ──
+    // Load session DID upfront (keychain is not Clone)
+    let owner_did = state.keychain.load_session()
+        .ok()
+        .flatten()
+        .map(|(did, _)| did);
+
+    // ── Prepare vault future (will run in parallel with network) ──
+    let db_manager_clone = state.db_manager.clone();
+    let vault_offset_val = vault_offset.unwrap_or(0);
+    let owner_did_clone = owner_did.clone();
+    let vault_fut = async move {
+        if let Some(did) = owner_did_clone {
+            let db_guard = db_manager_clone.read().await;
+            if let Some(db) = db_guard.as_ref() {
+                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, vault_offset_val).await {
+                    return items.into_iter().map(FeedEntry::from).collect::<Vec<_>>();
+                }
+            }
+        }
+        Vec::new()
+    };
+
+    // ── 1 + 2. Live timeline + custom feeds — in parallel WITH vault ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
     let timeline_fut = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone());
@@ -205,7 +233,11 @@ pub async fn get_timeline_unified(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         );
 
-        let (timeline_result, custom_result) = tokio::join!(timeline_fut, custom_fut);
+        // Run ALL three concurrently: timeline + custom feeds + vault
+        let (timeline_result, custom_result, vault_entries) = tokio::join!(timeline_fut, custom_fut, vault_fut);
+
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: network+vault parallel fetch took {:?}", t_start.elapsed());
 
         match timeline_result {
             Ok((posts, nc)) => {
@@ -229,8 +261,40 @@ pub async fn get_timeline_unified(
                 eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
             }
         }
+
+        // ── 3. Vault items (already fetched in parallel) ──
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: vault returned {} items", vault_entries.len());
+
+        // Vault dedup
+        let vault_uris: std::collections::HashSet<String> = vault_entries.iter()
+            .flat_map(|v| {
+                let mut uris = Vec::new();
+                for event in &v.share_history {
+                    if event.active { uris.push(event.uri.clone()); }
+                }
+                if let Some(ref url) = v.original_url {
+                    if !url.is_empty() { uris.push(url.clone()); }
+                }
+                uris
+            })
+            .collect();
+
+        feed.retain(|entry| {
+            if entry.reposted_by.is_some() { return true; }
+            let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
+            !vault_uris.contains(uri) && !vault_uris.contains(&entry.id)
+        });
+
+        feed.extend(vault_entries);
     } else {
-        match timeline_fut.await {
+        // Run timeline + vault in parallel (no custom feeds)
+        let (timeline_result, vault_entries) = tokio::join!(timeline_fut, vault_fut);
+
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: network+vault parallel fetch took {:?}", t_start.elapsed());
+
+        match timeline_result {
             Ok((posts, nc)) => {
                 #[cfg(debug_assertions)]
                 println!("get_timeline_unified: live timeline returned {} posts", posts.len());
@@ -241,58 +305,44 @@ pub async fn get_timeline_unified(
                 eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
             }
         }
-    }
 
-    // ── 3. Vault items ──
-    let mut vault_entries: Vec<FeedEntry> = Vec::new();
-    {
-        let db_manager = state.db_manager.clone();
-        let db_guard = db_manager.read().await;
-        if let Some(db) = db_guard.as_ref() {
-            let offset = vault_offset.unwrap_or(0);
-            if let Ok(Some((did, _))) = state.keychain.load_session() {
-                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, offset).await {
-                    vault_entries.extend(items.into_iter().map(FeedEntry::from));
+        // ── 3. Vault items (already fetched in parallel) ──
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: vault returned {} items", vault_entries.len());
+
+        // Vault dedup
+        let vault_uris: std::collections::HashSet<String> = vault_entries.iter()
+            .flat_map(|v| {
+                let mut uris = Vec::new();
+                for event in &v.share_history {
+                    if event.active { uris.push(event.uri.clone()); }
                 }
-            }
-        }
+                if let Some(ref url) = v.original_url {
+                    if !url.is_empty() { uris.push(url.clone()); }
+                }
+                uris
+            })
+            .collect();
+
+        feed.retain(|entry| {
+            if entry.reposted_by.is_some() { return true; }
+            let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
+            !vault_uris.contains(uri) && !vault_uris.contains(&entry.id)
+        });
+
+        feed.extend(vault_entries);
     }
-
-    // ── 4. Vault dedup ──
-    // Remove timeline entries that are already represented by a vault item's
-    // chain of custody. Reposts are always kept — they're distinct events.
-    let vault_uris: std::collections::HashSet<String> = vault_entries.iter()
-        .flat_map(|v| {
-            let mut uris = Vec::new();
-            for event in &v.share_history {
-                if event.active { uris.push(event.uri.clone()); }
-            }
-            if let Some(ref url) = v.original_url {
-                if !url.is_empty() { uris.push(url.clone()); }
-            }
-            uris
-        })
-        .collect();
-
-    feed.retain(|entry| {
-        if entry.reposted_by.is_some() { return true; }
-        let uri = entry.original_url.as_ref().unwrap_or(&entry.id);
-        !vault_uris.contains(uri) && !vault_uris.contains(&entry.id)
-    });
-
-    feed.extend(vault_entries);
 
     // ── 5. Sort by timestamp descending ──
     feed.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     // ── 6. Deduplicate ──
-    // Composite keys ensure reposts are distinct from originals.
     let mut seen = std::collections::HashSet::new();
     feed.retain(|entry| {
         let uri = if !entry.id.is_empty() { &entry.id } else {
             match entry.original_url.as_deref() {
                 Some(u) if !u.is_empty() => u,
-                _ => return true, // No identifier — keep it
+                _ => return true,
             }
         };
 
@@ -308,6 +358,9 @@ pub async fn get_timeline_unified(
             true
         }
     });
+
+    #[cfg(debug_assertions)]
+    println!("get_timeline_unified: total pipeline took {:?}, returning {} items", t_start.elapsed(), feed.len());
 
     Ok(UnifiedFeedResponse {
         items: feed,

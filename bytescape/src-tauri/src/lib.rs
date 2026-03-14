@@ -471,6 +471,10 @@ pub fn run() {
             commands::profile::delete_guestbook_entry,
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
+            // Classification commands
+            commands::classify::reclassify_vault_items,
+            // Export commands
+            commands::export::export_vault_data,
             
             // ActivityPub commands (A1.1)
             commands::ap::create_ap_actor,
