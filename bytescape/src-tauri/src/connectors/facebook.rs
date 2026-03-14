@@ -447,6 +447,33 @@ pub fn is_excluded_path(lower_name: &str) -> bool {
         "link_history/",
         "other_activity/",
         "facebook_gaming/",
+        // Short/live/ephemeral video metadata
+        "short_videos/",
+        "live_videos/",
+        // AR / Spark effects metadata
+        "meta_spark/",
+        // Shops / commerce
+        "shops/",
+        // Support messages
+        "support_messages/",
+        // Reviews you wrote
+        "reviews/",
+        // Fantasy games
+        "fantasy_games/",
+        // Volunteering signups
+        "volunteering/",
+        // Problem reports
+        "your_problem_reports/",
+        // Bonuses / credits
+        "bonuses/",
+        // News feed preferences
+        "facebook_news/",
+        // Device information
+        "device_information/",
+        // Music / audio recommendations
+        "music_recommendations/",
+        // Activity messages (system logs)
+        "activity_messages/",
         // Navigation / index files
         "index.htm",
     ];
@@ -575,6 +602,26 @@ pub fn is_noise_content(content: &str, title: Option<&str>) -> bool {
         return true;
     }
 
+    // Activity records that describe actions on OTHER people's content
+    let activity_noise = [
+        "commented on ",
+        "reacted to ",
+        "responded to ",
+        "joined the group",
+        "liked a ",
+        "voted on ",
+        "saved a ",
+        "you searched for",
+        "replied to ",
+        "shared a memory",
+        "shared a post",
+        "was tagged in",
+        "was mentioned in",
+    ];
+    if activity_noise.iter().any(|n| combined.starts_with(n) || combined.contains(&format!(" {}", n))) {
+        return true;
+    }
+
     // Empty content with no meaningful title
     if content.trim().is_empty() && title.map_or(true, |t| t.trim().is_empty()) {
         return true;
@@ -647,8 +694,10 @@ pub fn parse_facebook_zip(
     // Facebook exports wrap everything in a single top-level folder
     let top_prefix = detect_top_level_prefix(&file_names);
     if let Some(ref prefix) = top_prefix {
+        #[cfg(debug_assertions)]
         println!("facebook: Detected top-level prefix: {}", prefix);
     }
+    #[cfg(debug_assertions)]
     println!("facebook: ZIP contains {} entries", file_names.len());
 
     // Build a lookup map of lowercase zip entry names for fuzzy media matching
@@ -676,11 +725,13 @@ pub fn parse_facebook_zip(
     let html_count = file_names.iter()
         .filter(|n| n.to_lowercase().ends_with(".html") || n.to_lowercase().ends_with(".htm"))
         .count();
+    #[cfg(debug_assertions)]
     println!("facebook: Found {} JSON files, {} HTML files in archive", json_count, html_count);
 
     let is_html_export = json_count == 0 && html_count > 0;
 
     if is_html_export {
+        #[cfg(debug_assertions)]
         println!("facebook: HTML format export detected — parsing HTML files");
         // =============================================
         // HTML FORMAT PARSING
@@ -733,6 +784,7 @@ pub fn parse_facebook_zip(
             if is_message {
                 let parsed_msgs = parse_html_messages(&contents, file_name);
                 if !parsed_msgs.is_empty() {
+                    #[cfg(debug_assertions)]
                     println!("facebook: ✅ Parsed {} messages (HTML) from {}", parsed_msgs.len(), file_name);
                     messages.extend(parsed_msgs);
                 }
@@ -749,6 +801,7 @@ pub fn parse_facebook_zip(
                             }
                         }
                     }
+                    #[cfg(debug_assertions)]
                     println!("facebook: ✅ Parsed {} posts (HTML) from {}", parsed.len(), file_name);
                     posts.extend(parsed);
                 }
@@ -767,6 +820,7 @@ pub fn parse_facebook_zip(
                         }
                     }
                     if added > 0 {
+                        #[cfg(debug_assertions)]
                         println!("facebook: Added {} new trackers from {} (total: {})", added, file_name, trackers.len());
                     }
                 }
@@ -775,6 +829,7 @@ pub fn parse_facebook_zip(
 
         // If strict path matching found nothing, try ALL HTML files as posts
         if posts.is_empty() {
+            #[cfg(debug_assertions)]
             println!("facebook: Named path matching found 0 posts, trying ALL HTML files...");
             for file_name in &file_names {
                 let lower_name = file_name.to_lowercase();
@@ -803,6 +858,7 @@ pub fn parse_facebook_zip(
                             }
                         }
                     }
+                    #[cfg(debug_assertions)]
                     println!("facebook: ✅ Parsed {} posts (HTML, broad scan) from {}", parsed.len(), file_name);
                     posts.extend(parsed);
                 }
@@ -864,6 +920,7 @@ pub fn parse_facebook_zip(
                             event_types,
                         });
                     }
+                    #[cfg(debug_assertions)]
                     println!("facebook: Found {} trackers from {}", activities.len(), file_name);
                 }
             } else if let Ok(activities) = serde_json::from_str::<Vec<OffFacebookActivity>>(&contents) {
@@ -997,6 +1054,7 @@ pub fn parse_facebook_zip(
                         location: None,
                     });
                 }
+                #[cfg(debug_assertions)]
                 println!("facebook: ✅ Parsed {} posts from {}", fb_posts.len(), file_name);
             } else {
                 // Fallback for complex/variant JSON structures (e.g. video-focused exports)
@@ -1043,6 +1101,7 @@ pub fn parse_facebook_zip(
 
                         total_photos += h_photos;
                         total_videos += h_videos;
+                        #[cfg(debug_assertions)]
                         println!(
                             "facebook: ⚠️ Heuristic JSON parse recovered {} media posts from {} ({} photos, {} videos)",
                             heuristic_posts.len(),
@@ -1075,6 +1134,7 @@ pub fn parse_facebook_zip(
     let skippable_refs: usize = posts.iter().map(|p| p.media_uris.iter()
         .filter(|u| u.starts_with("data:") || u.starts_with("http://") || u.starts_with("https://"))
         .count()).sum();
+    #[cfg(debug_assertions)]
     println!("facebook: Second pass — extracting {} media refs across {} posts ({} external/inline skipped)",
         total_media_refs, posts.len(), skippable_refs);
     let mut media_found = 0usize;
@@ -1197,6 +1257,7 @@ pub fn parse_facebook_zip(
                 media_missed += 1;
                 // Log first few misses for debugging
                 if media_missed <= 5 {
+                    #[cfg(debug_assertions)]
                     println!("facebook: ⚠️ Media not found in ZIP: '{}'", uri);
                 }
             }
@@ -1204,6 +1265,7 @@ pub fn parse_facebook_zip(
         post.media_local_paths = local_paths;
     }
 
+    #[cfg(debug_assertions)]
     println!("facebook: Media extraction — {} found, {} missed out of {} total refs",
         media_found, media_missed, total_media_refs);
 
@@ -1226,6 +1288,7 @@ pub fn parse_facebook_zip(
             seen_post_keys.insert(key)
         });
         if pre_dedup != posts.len() {
+            #[cfg(debug_assertions)]
             println!("facebook: Cross-file dedup removed {} duplicate posts ({} → {})",
                 pre_dedup - posts.len(), pre_dedup, posts.len());
         }
@@ -1239,6 +1302,7 @@ pub fn parse_facebook_zip(
 
     // Recalculate total tracker events from the final deduplicated list
     let total_tracker_events: usize = trackers.iter().map(|t| t.event_count).sum();
+    #[cfg(debug_assertions)]
     println!("facebook: Final tracker stats — {} unique trackers, {} total events", trackers.len(), total_tracker_events);
 
     // Final progress event
@@ -1251,6 +1315,7 @@ pub fn parse_facebook_zip(
         current_file: "Done!".to_string(),
     });
 
+    #[cfg(debug_assertions)]
     println!("facebook: Import complete — {} posts, {} photos, {} videos, {} trackers",
         posts.len(), total_photos, total_videos, trackers.len());
 
@@ -1308,6 +1373,7 @@ fn parse_posts_json(contents: &str, file_name: &str) -> Vec<FacebookPost> {
                     }
                 }
             }
+            #[cfg(debug_assertions)]
             println!("facebook: ✅ Parsed {} posts (flat array) from {}", fb_posts.len(), file_name);
             return fb_posts;
         }
@@ -1324,6 +1390,7 @@ fn parse_posts_json(contents: &str, file_name: &str) -> Vec<FacebookPost> {
                         }
                     }
                 }
+                #[cfg(debug_assertions)]
                 println!("facebook: ✅ Parsed {} posts (status_updates) from {}", posts.len(), file_name);
                 return posts;
             }
@@ -1337,6 +1404,7 @@ fn parse_posts_json(contents: &str, file_name: &str) -> Vec<FacebookPost> {
                         }
                     }
                 }
+                #[cfg(debug_assertions)]
                 println!("facebook: ✅ Parsed {} posts (posts key) from {}", posts.len(), file_name);
                 return posts;
             }
@@ -1360,6 +1428,7 @@ fn parse_posts_json(contents: &str, file_name: &str) -> Vec<FacebookPost> {
                                     }
                                 }
                             }
+                            #[cfg(debug_assertions)]
                             println!("facebook: ✅ Parsed {} posts (key='{}') from {}", fb_posts.len(), key, file_name);
                             return fb_posts;
                         }
@@ -1485,6 +1554,7 @@ fn parse_html_posts(html: &str, file_name: &str, _top_prefix: &Option<String>) -
                 if elements.is_empty() {
                     continue;
                 }
+                #[cfg(debug_assertions)]
                 println!("facebook: HTML selector '{}' matched {} elements in {}", sel_str, elements.len(), file_name);
 
                 // Pre-parse sub-selectors once
@@ -1684,7 +1754,9 @@ fn parse_html_posts(html: &str, file_name: &str, _top_prefix: &Option<String>) -
     }
 
     // Fallback: If class selectors didn't work, try a broader structural approach
-    if posts.is_empty() {
+    // Only run on files that look like actual post files to avoid extracting noise.
+    if posts.is_empty() && is_post_file_path(&file_name.to_lowercase()) {
+        #[cfg(debug_assertions)]
         println!("facebook: Class selectors found nothing, trying structural parse in {}", file_name);
 
         // Collect ALL images and videos from the document
@@ -1819,6 +1891,7 @@ fn parse_html_posts(html: &str, file_name: &str, _top_prefix: &Option<String>) -
         });
     }
     
+    #[cfg(debug_assertions)]
     println!("facebook: parse_html_posts found {} posts with {} total media refs in {}",
         posts.len(),
         posts.iter().map(|p| p.media_uris.len()).sum::<usize>(),
@@ -2419,6 +2492,7 @@ fn parse_html_trackers(html: &str, file_name: &str) -> Vec<TrackerEntry> {
         }
     }
 
+    #[cfg(debug_assertions)]
     println!("facebook: parse_html_trackers found {} tracker entries from {}", trackers.len(), file_name);
     trackers
 }

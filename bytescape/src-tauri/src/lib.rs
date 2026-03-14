@@ -45,11 +45,11 @@ pub struct AppState {
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
     pub media_port: u16,
     pub oauth_manager: oauth::OAuthManager,
-    /// Guard to ensure `restore_session` runs at most once per app lifetime.
-    pub session_restored: AtomicBool,
     /// Shared HTTP client for connection pooling across all API calls.
     /// Reusing a single client avoids redundant TLS handshakes per request.
     pub http_client: reqwest::Client,
+    /// Guard to ensure `restore_session` runs at most once per app lifetime.
+    pub session_restored: AtomicBool,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -461,6 +461,9 @@ pub fn run() {
             commands::profile::save_profile_layout,
             commands::profile::get_profile_layout,
             commands::profile::delete_profile_layout,
+            
+            // Link unfurling (C2.1)
+            commands::unfurl::unfurl_link,
         ])
         .setup(|app| {
             // Initialize application state
@@ -562,8 +565,8 @@ pub fn run() {
                 pending_import: Mutex::new(None),
                 media_port,
                 oauth_manager,
-                session_restored: AtomicBool::new(false),
                 http_client: reqwest::Client::new(),
+                session_restored: AtomicBool::new(false),
             };
 
             app.manage(state);

@@ -603,6 +603,7 @@ pub async fn import_bluesky_feed(
             .await
             .map_err(|e| format!("Failed to parse feed: {}", e))?;
 
+        #[cfg(debug_assertions)]
         println!("bluesky: Fetching page {}, found {} items", page, feed_response.feed.len());
         if feed_response.feed.is_empty() {
             break;
@@ -619,6 +620,7 @@ pub async fn import_bluesky_feed(
 
             // Skip posts not authored or reposted by this user
             if post.author.did != did && !is_users_repost {
+                #[cfg(debug_assertions)]
                 println!("bluesky: Skipping post from {} (not authored or reposted by {})", post.author.did, did);
                 continue;
             }
@@ -749,6 +751,7 @@ pub async fn import_bluesky_feed(
         current_item: format!("Done! {} posts imported.", all_posts.len()),
     });
 
+    #[cfg(debug_assertions)]
     println!("bluesky: Imported {} posts with {} images",
         all_posts.len(),
         all_posts.iter().map(|p| p.image_local_paths.len()).sum::<usize>()
@@ -787,6 +790,7 @@ async fn download_media_from_embed_with_sync(
         let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
         let filename = format!("bsky_import_{}_{}.{}", timestamp, i, ext);
         let dest = media_dir.join(&filename);
+        #[cfg(debug_assertions)]
         println!("bluesky: Downloading image to: {:?}", dest);
 
         match client.get(img_url).send().await {
@@ -801,8 +805,10 @@ async fn download_media_from_embed_with_sync(
                                 local_paths.push(hash_str);
                                 remote_urls.push(img_url.clone());
                                 if let Some(th) = thumb_hash {
+                                    #[cfg(debug_assertions)]
                                     println!("bluesky: Stored image in Iroh blob: {} (thumb: {})", media_hash, th);
                                 } else {
+                                    #[cfg(debug_assertions)]
                                     println!("bluesky: Stored image in Iroh blob: {} (no thumbnail)", media_hash);
                                 }
                                 continue;
@@ -997,6 +1003,7 @@ pub async fn search_posts(
     // Use the public search endpoint (assuming app.bsky.feed.searchPosts)
     // Note: searchPosts usually takes 'q' parameter.
     let fetch_limit = if required_tags.is_some() { 100 } else { limit };
+    #[cfg(debug_assertions)]
     println!("bluesky: search_posts query='{}' limit={} fetch_limit={}", query, limit, fetch_limit);
     
     let _token = access_jwt.trim();
@@ -1004,6 +1011,7 @@ pub async fn search_posts(
         "{}/app.bsky.feed.searchPosts?q={}&limit={}",
         AUTH_XRPC, urlencoding::encode(query), fetch_limit
     );
+    #[cfg(debug_assertions)]
     println!("bluesky: search_posts fetching from URL: {}", url);
     if let Some(ref c) = cursor {
         url.push_str(&format!("&cursor={}", c));
@@ -1037,6 +1045,7 @@ pub async fn search_posts(
         .await
         .map_err(|e| format!("Failed to parse search response: {}", e))?;
 
+    #[cfg(debug_assertions)]
     println!("bluesky: search_posts received {} raw results", search_response.posts.len());
 
     let mut posts: Vec<BlueskyImportedPost> = Vec::new();
@@ -1196,6 +1205,7 @@ pub async fn get_saved_feeds(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         pref_err = format!("Preferences API error from {}: {} {}", base, status, body);
+        #[cfg(debug_assertions)]
         println!("{}", pref_err);
     }
 
@@ -1206,9 +1216,11 @@ pub async fn get_saved_feeds(
             pref_err
         }
     })?;
+    #[cfg(debug_assertions)]
     println!("bluesky: get_saved_feeds raw preferences count: {}", res.preferences.len());
     for pref in &res.preferences {
         if let Some(t) = pref.get("$type").and_then(|t| t.as_str()) {
+            #[cfg(debug_assertions)]
             println!("bluesky: preference found: {}", t);
         }
     }
@@ -1274,12 +1286,14 @@ pub async fn get_saved_feeds(
             .await {
                 Ok(r) => r,
                 Err(e) => {
+                    #[cfg(debug_assertions)]
                     println!("bluesky: getFeedGenerators batch request failed: {}", e);
                     continue;
                 }
             };
 
         if !feed_resp.status().is_success() {
+            #[cfg(debug_assertions)]
             println!("bluesky: getFeedGenerators batch returned {} (continuing)", feed_resp.status());
             continue;
         }
@@ -1467,20 +1481,25 @@ pub async fn get_unified_feed(
     let tag_query = tags.join(" OR ");
     let strict_tags = if tags.is_empty() { None } else { Some(tags.clone().iter().map(|t| t.trim_start_matches('#').to_string()).collect()) };
     
+    #[cfg(debug_assertions)]
     println!("UnifiedFeed: Starting fetch. Tags: {:?}, Feeds: {:?}, Limit: {}", tags, feed_uris, limit);
 
     let hashtag_future = async {
         if tags.is_empty() { 
+            #[cfg(debug_assertions)]
             println!("UnifiedFeed: No hashtags to fetch.");
             return Ok((Vec::new(), None)); 
         }
+        #[cfg(debug_assertions)]
         println!("UnifiedFeed: Fetching hashtags query: {}", tag_query);
         match search_posts(access_jwt, &tag_query, limit, parsed_cursor.hashtag_cursor.clone(), strict_tags).await {
             Ok((posts, cursor)) => {
+                #[cfg(debug_assertions)]
                 println!("UnifiedFeed: Fetched {} hashtag posts", posts.len());
                 Ok((posts, cursor))
             },
             Err(e) => {
+                #[cfg(debug_assertions)]
                 println!("UnifiedFeed: Hashtag fetch error: {}", e);
                 Err(e)
             },
@@ -1491,9 +1510,11 @@ pub async fn get_unified_feed(
     let uris_future = async {
         if let Some(provided_uris) = feed_uris {
             if !provided_uris.is_empty() {
+                #[cfg(debug_assertions)]
                 println!("UnifiedFeed: Using {} provided URIs", provided_uris.len());
                 Ok(provided_uris)
             } else {
+                #[cfg(debug_assertions)]
                 println!("UnifiedFeed: Provided feed URI list was empty, falling back to saved feeds");
                 match get_saved_feeds(access_jwt).await {
                     Ok(views) => {
@@ -1501,16 +1522,19 @@ pub async fn get_unified_feed(
                             .map(|v| v.uri)
                             .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
                             .collect();
+                        #[cfg(debug_assertions)]
                         println!("UnifiedFeed: Fallback saved feeds count: {}", uris.len());
                         Ok(uris)
                     },
                     Err(e) => {
+                        #[cfg(debug_assertions)]
                         println!("UnifiedFeed: Saved feeds fallback error: {}", e);
                         Err(e)
                     },
                 }
             }
         } else {
+            #[cfg(debug_assertions)]
             println!("UnifiedFeed: Fetching all saved feeds...");
             match get_saved_feeds(access_jwt).await {
                 Ok(views) => {
@@ -1518,10 +1542,12 @@ pub async fn get_unified_feed(
                         .map(|v| v.uri)
                         .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
                         .collect();
+                    #[cfg(debug_assertions)]
                     println!("UnifiedFeed: Found {} custom saved feeds (filtered): {:?}", uris.len(), uris);
                     Ok(uris)
                 },
                 Err(e) => {
+                    #[cfg(debug_assertions)]
                     println!("UnifiedFeed: Saved feeds list error: {}", e);
                     Err(e)
                 },
@@ -1554,6 +1580,7 @@ pub async fn get_unified_feed(
 
     // 3. Fetch Posts from Each Saved Feed (Parallel)
     if let Ok(uris) = uris_res {
+        #[cfg(debug_assertions)]
         println!("UnifiedFeed: Fetching content from {} saved feeds in parallel...", uris.len());
         let mut feed_futures = Vec::new();
         let mut feed_count = 0usize;
@@ -1567,10 +1594,12 @@ pub async fn get_unified_feed(
                 let res = get_custom_feed(&jwt, &u, limit, feed_cursor).await;
                 match res {
                     Ok((posts, cursor)) => {
+                        #[cfg(debug_assertions)]
                         println!("UnifiedFeed: Feed content retrieved: {} ({} posts)", u, posts.len());
                         Ok((u, posts, cursor))
                     },
                     Err(e) => {
+                        #[cfg(debug_assertions)]
                         println!("UnifiedFeed: Feed content fetch failed: {} - {}", u, e);
                         Err(e)
                     }
@@ -1582,6 +1611,7 @@ pub async fn get_unified_feed(
         for (i, future) in feed_futures.into_iter().enumerate() {
             match future.await {
                 Ok(Ok((uri, posts, cursor))) => {
+                    #[cfg(debug_assertions)]
                     println!("UnifiedFeed: Merging {} posts from feed #{}", posts.len(), i);
                     feed_success_count += 1;
                     all_posts.extend(posts);
@@ -1595,10 +1625,12 @@ pub async fn get_unified_feed(
         }
 
         if feed_count > 0 && feed_success_count == 0 && all_posts.is_empty() {
+            #[cfg(debug_assertions)]
             println!("UnifiedFeed: all subscribed feed fetches failed; returning empty result instead of hard error");
         }
     }
 
+    #[cfg(debug_assertions)]
     println!("UnifiedFeed: Total raw posts before dedup: {}", all_posts.len());
 
     // 4. Deduplicate: collapse exact duplicates only.
@@ -1611,6 +1643,7 @@ pub async fn get_unified_feed(
     });
     all_posts.dedup_by(|a, b| a.uri == b.uri && a.reposted_by == b.reposted_by);
 
+    #[cfg(debug_assertions)]
     println!("UnifiedFeed: Total posts after dedup: {}", all_posts.len());
 
     // 5. Sort by Date Descending
@@ -1877,6 +1910,7 @@ pub async fn import_follows_posts(
     });
 
     let follows = get_all_follows(&client, actor, access_jwt).await?;
+    #[cfg(debug_assertions)]
     println!("Found {} follows", follows.len());
 
     let mut all_posts = Vec::new();
@@ -1895,9 +1929,11 @@ pub async fn import_follows_posts(
             ),
         });
 
+        #[cfg(debug_assertions)]
         println!("bluesky: Importing feed for {} ({})", follow.handle, follow.did);
         match import_bluesky_feed(&follow.did, access_jwt, media_dir.clone(), app_handle, Some(1), Some(20), sync_manager.clone()).await {
             Ok(mut posts) => {
+                #[cfg(debug_assertions)]
                 println!("bluesky: Found {} posts for {}", posts.len(), follow.handle);
                 all_posts.append(&mut posts);
             },
