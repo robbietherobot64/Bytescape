@@ -506,8 +506,60 @@ Per sprint instructions, the Content Agent has reported back and is **awaiting P
 ## Current Build & Test Status (All Tracks Unified on Main)
 
 - **Rust build**: ✅ Compiles (25 warnings, 0 errors)
-- **Frontend tests**: ✅ 230/230 passing (11 test files)
+- **Rust tests**: ✅ 35/35 classification tests passing
+- **Frontend tests**: ✅ 247/247 passing (12 test files)
 - **TypeScript**: ✅ Clean (`npx tsc --noEmit` — 0 errors)
-- **Branch**: `main` at `950d9e0`
-- **Feature branches**: Both `track-b/ui-redesign` and `track-c/c1-facet-frontend` fully merged (0 unmerged commits)
+- **Branch**: `main` at `d6108a8`
 - **Last verified**: 2026-03-15
+
+---
+
+## 2026-03-15 — Content Agent: UF.7 / UF.12 / UF.6 User Feedback Sprint ✅
+
+### Summary
+Sprint focused on user feedback items the PM flagged as unaddressed. Three priorities delivered:
+
+**P1 — UF.7: Content-Type Classification** ✅
+- Added `Link` and `Video` variants to `BytescapeType` (Rust + TypeScript already had them)
+- `classify_item()` heuristic: Video > Gallery > Article > Link > Status with boundary thresholds (300 chars gallery, 500 chars article, 100 chars link)
+- `classify_bluesky_post()` for ingest-time classification of Bluesky API posts
+- `classify_feed_entry()` for live timeline FeedEntry classification
+- All ingest sites auto-classify: Facebook import (MIME-based video detection), Bluesky import (uses `classify_bluesky_post`), `publish_post_v2` (Link/Video overrides, link_card detection)
+- `reclassify_vault_items` command registered in lib.rs for retroactive re-classification
+- `ReclassifyResult` type in TypeScript for frontend consumption
+
+**P2 — UF.12: Tracker Category Classification** ✅ (Already complete from prior session)
+- `TrackerEntry.category` field populated by `classify_tracker()` in facebook.rs
+- Categories: ad_tracking, location_tracking, cross_site_tracking, data_collection, social_tracking, general
+- All 5 tracker construction sites in facebook.rs already populate category
+- TypeScript `TrackerEntry` type already includes `category: string`
+
+**P3 — UF.6: Feed Query by Content Type** ✅
+- `get_timeline_unified` accepts `item_type_filter: Option<String>` parameter
+- Filters applied after dedup in "── 7. Item type filter ──" section
+- Supports all 5 type strings: "status", "gallery", "article", "link", "video"
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `models/mod.rs` | Link/Video in BytescapeType, classify_item, classify_bluesky_post, classify_feed_entry, build_canonical_path match arms |
+| `commands/import.rs` | willow_item_kind match, FB import video detection, Bluesky import uses classify_bluesky_post |
+| `commands/posting.rs` | publish_post_v2 Link/Video classification overrides |
+| `commands/feed_aggregation.rs` | item_type_filter param + filter logic |
+| `commands/classify.rs` | reclassify_vault_items command (new file) |
+| `db/vault.rs` | vault_stats match arms for Link/Video |
+| `types/index.ts` | BytescapeType includes Link/Video, ReclassifyResult type |
+
+### Tests Added
+
+| File | Tests | Description |
+|------|-------|-------------|
+| `src-tauri/tests/classify_test.rs` | 35 | classify_item (18), classify_bluesky_post (6), priority order (3), classify_feed_entry (8) |
+| `src/types/classification.test.ts` | 17 | TypeScript type validation for BytescapeType, TrackerEntry, ReclassifyResult, FeedEntry |
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `5f72a4c`→`d6108a8` | Previous session's classify.rs + classification types + this session's feed_entry tests |
