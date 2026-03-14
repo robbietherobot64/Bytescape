@@ -232,6 +232,25 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
 
     return (
         <div className="feed-layout">
+            {/* Feed context panel — left side */}
+            <FeedRightPanel
+                activeTab={activeTab}
+                followingList={followingList}
+                savedFeeds={savedFeeds}
+                selectedFeedUri={selectedFeedUri}
+                setSelectedFeedUri={setSelectedFeedUri}
+                FEED_FILTER_ALL={FEED_FILTER_ALL}
+                hashtagInput={hashtagInput}
+                setHashtagInput={setHashtagInput}
+                handleAddHashtag={handleAddHashtag}
+                followedHashtags={followedHashtags || []}
+                handleRemoveHashtag={handleRemoveHashtag}
+                archiveSourceFilter={archiveSourceFilter}
+                setArchiveSourceFilter={setArchiveSourceFilter}
+                vaultSources={vaultSources}
+                archiveTotal={archiveTotal}
+                position="left"
+            />
             <div className="feed-main">
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
@@ -394,25 +413,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                     </div>
                 </div>
             </div>
-
-            {/* Right Panel stays fixed on the right */}
-            <FeedRightPanel
-                activeTab={activeTab}
-                followingList={followingList}
-                savedFeeds={savedFeeds}
-                selectedFeedUri={selectedFeedUri}
-                setSelectedFeedUri={setSelectedFeedUri}
-                FEED_FILTER_ALL={FEED_FILTER_ALL}
-                hashtagInput={hashtagInput}
-                setHashtagInput={setHashtagInput}
-                handleAddHashtag={handleAddHashtag}
-                followedHashtags={followedHashtags || []}
-                handleRemoveHashtag={handleRemoveHashtag}
-                archiveSourceFilter={archiveSourceFilter}
-                setArchiveSourceFilter={setArchiveSourceFilter}
-                vaultSources={vaultSources}
-                archiveTotal={archiveTotal}
-            />
 
         </div>
     );

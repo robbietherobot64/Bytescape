@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore } from "./store";
-import { FeedTab, FEED_TAB_LABELS } from "./hooks/useUnifiedFeed";
 
 import "./App.css";
 
@@ -51,6 +50,7 @@ import { AuditScreen } from "./screens/AuditScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
+import { ProfileBuilderScreen } from "./screens/ProfileBuilderScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
@@ -95,20 +95,16 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const importGuardRef = React.useRef(false);
 
-  // Build the feed tab buttons to pass into the mobile top bar
-  const feedTabSlot = screen === "feed" ? (
-    <>
-      {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
-        <button
-          key={tab}
-          className={`tab ${feedActiveTab === tab ? 'active' : ''}`}
-          onClick={() => setFeedActiveTab(tab)}
-        >
-          {FEED_TAB_LABELS[tab]}
-        </button>
-      ))}
-    </>
-  ) : undefined;
+  // Search state (top bar)
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSearchSubmit = (query: string) => {
+    // Navigate to feed screen when searching
+    setScreen('feed');
+    setActiveSidebar('feed');
+    // Future: wire into feed filtering
+    console.log('Search submitted:', query);
+  };
 
   // === Init ===
   useEffect(() => {
@@ -480,8 +476,24 @@ function App() {
     <AppLayout
       activeSidebar={activeSidebar}
       onNavigate={handleNavigate}
-      feedTabSlot={feedTabSlot}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile") ? {
+      screen={screen}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      onSearchSubmit={handleSearchSubmit}
+      avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
+      onOpenChat={(peerNodeId, _peerName) => {
+        const { setSelectedConvoId } = useChatStore.getState();
+        setSelectedConvoId(`p2p:${peerNodeId}`);
+        setScreen("chat");
+        setActiveSidebar("chat");
+      }}
+      onViewProfile={(peerNodeId, peerName) => {
+        setPeerProfileNodeId(peerNodeId);
+        setPeerProfileName(peerName || null);
+        setScreen("peer-profile");
+        setActiveSidebar("social");
+      }}
+      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder") ? {
         padding: 0,
         height: '100%',
         overflow: 'hidden',
@@ -533,6 +545,10 @@ function App() {
             auth={auth}
             archiveCount={archiveCount}
           />
+        )}
+
+        {screen === "profile-builder" && (
+          <ProfileBuilderScreen />
         )}
 
         {screen === "chat" && (

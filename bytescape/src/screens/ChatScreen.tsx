@@ -5,7 +5,7 @@ import { useChatStore, useAuthStore } from '../store';
 import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
-import { BsPersonFill, BsSearch, BsArrowDown } from 'react-icons/bs';
+import { BsPersonFill, BsSearch, BsArrowDown, BsChatDotsFill } from 'react-icons/bs';
 
 /* ────────────────────────────────────────────────────────
    ChatScreen — Tabbed chat with Bluesky / P2P / Archives
@@ -510,43 +510,101 @@ export function ChatScreen() {
                     <div className="chat-empty-state">
                         <div className="chat-empty-icon">💬</div>
                         <div className="chat-empty-title">Select a conversation</div>
-                        <div className="chat-empty-hint">Pick a conversation from the list, or browse the buddy list →</div>
+                        <div className="chat-empty-hint">Pick a conversation from the list, or browse your friends →</div>
                     </div>
                 )}
             </div>
 
-            {/* ═══ Right Column: Buddy List (AIM-style) ═══ */}
-            <Win98Box variant="sunken" className="chat-buddy-list">
-                <div className="chat-buddy-header">
-                    <span>Buddy List</span>
-                    <span className="chat-buddy-count">{displayBuddies.length}</span>
+            {/* ═══ Right Column: Friends List ═══ */}
+            <div className="friends-panel chat-friends-panel">
+                <div className="friends-panel-header">
+                    <span className="friends-panel-title">Friends</span>
+                    <span className="friends-panel-count">{displayBuddies.length}</span>
                 </div>
                 <div className="chat-buddy-search">
                     <input
                         type="text"
-                        placeholder="Find buddy…"
+                        placeholder="Find friend…"
                         value={buddyFilter}
                         onChange={e => setBuddyFilter(e.target.value)}
                         className="chat-buddy-search-input"
                     />
                 </div>
-                <div className="chat-buddy-scroll">
+                <div className="friends-panel-list">
                     {displayBuddies.length === 0 ? (
-                        <div className="chat-buddy-empty">
-                            {buddyFilter ? 'No matches' : 'No buddies yet'}
+                        <div className="friends-panel-empty">
+                            <div style={{ fontSize: '1.4rem', marginBottom: 6 } as React.CSSProperties}>👤</div>
+                            <div style={{ fontWeight: 700 } as React.CSSProperties}>
+                                {buddyFilter ? 'No matches' : 'No friends yet'}
+                            </div>
                         </div>
                     ) : (
-                        displayBuddies.map(buddy => (
-                            <div key={buddy.did} className="chat-buddy-item" title={buddy.handle}>
-                                <div className="chat-buddy-avatar">
-                                    {buddy.avatar ? <img src={buddy.avatar} alt="" /> : <BsPersonFill size={14} />}
-                                </div>
-                                <span className="chat-buddy-name">{buddy.handle}</span>
+                        <div className="friends-panel-group">
+                            <div className="friends-panel-group-label">
+                                <span className="friends-group-source-icon">🦋</span>
+                                Bluesky ({displayBuddies.length})
                             </div>
-                        ))
+                            {displayBuddies.map(buddy => {
+                                const initial = (buddy.handle || '?')[0]?.toUpperCase() || '?';
+                                return (
+                                    <div key={buddy.did} className="friend-item friend-item--bluesky">
+                                        <button
+                                            className="friend-item-main"
+                                            title={`@${buddy.handle}`}
+                                            style={{ cursor: 'default' } as React.CSSProperties}
+                                        >
+                                            <div className="friend-item-avatar">
+                                                {buddy.avatar ? (
+                                                    <img src={buddy.avatar} alt="" className="friend-item-avatar-img" />
+                                                ) : (
+                                                    <span className="friend-item-initial">{initial}</span>
+                                                )}
+                                                <span
+                                                    className="friend-item-dot cloud"
+                                                    style={{ background: '#1185fe' } as React.CSSProperties}
+                                                />
+                                            </div>
+                                            <div className="friend-item-info">
+                                                <div className="friend-item-name">{buddy.handle}</div>
+                                                <div className="friend-item-away cloud">@{buddy.handle}</div>
+                                            </div>
+                                        </button>
+                                        <div className="friend-item-actions">
+                                            <button
+                                                className="friend-item-action-btn"
+                                                onClick={() => {
+                                                    // Find or select the conversation with this buddy
+                                                    const convoId = Object.keys(byConvo).find(cid => {
+                                                        const msgs = byConvo[cid];
+                                                        return msgs.some(m =>
+                                                            m.peer_did === buddy.did || m.sender_did === buddy.did
+                                                        );
+                                                    });
+                                                    if (convoId) {
+                                                        setSelectedConvoId(convoId);
+                                                    }
+                                                }}
+                                                title={`Message ${buddy.handle}`}
+                                            >
+                                                <BsChatDotsFill size={11} />
+                                            </button>
+                                            <button
+                                                className="friend-item-action-btn"
+                                                onClick={() => {
+                                                    window.open(`https://bsky.app/profile/${buddy.handle}`, '_blank');
+                                                }}
+                                                title={`${buddy.handle}'s profile`}
+                                            >
+                                                <BsPersonFill size={11} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     )}
                 </div>
-            </Win98Box>
+            </div>
         </div>
     );
 }

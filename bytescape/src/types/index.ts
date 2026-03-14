@@ -383,7 +383,7 @@ export const PROTOCOLS: ProtocolOption[] = [
 ];
 
 /** @deprecated - use Screen from store/index.ts */
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
 
 export interface BlueskyPost {
@@ -445,6 +445,16 @@ export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "i
 
 // ─── Theme ───
 export type ThemeId = 'geocities' | 'win98' | 'midnight';
+
+// ─── Profile Builder ───
+export interface ProfileLayout {
+    html: string;
+    css: string;
+    /** GrapesJS internal JSON for re-loading the editor state */
+    components_json?: string | null;
+    styles_json?: string | null;
+    updated_at: number;
+}
 
 export interface LikeResult {
     uri: string;

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BytescapeItem, VaultStats } from '../types';
+import { AuthStatus, BytescapeItem, VaultStats, ProfileLayout } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { Win98Box } from '../components/Win98Box';
 import { adaptBytescapeItem } from '../utils/adapters';
-import { BsPersonFill, BsGlobe, BsStar, BsBookmark } from 'react-icons/bs';
+import { useNavStore } from '../store';
+import { BsPersonFill, BsGlobe, BsStar, BsBookmark, BsPalette2 } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -29,7 +30,30 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [customLayout, setCustomLayout] = useState<ProfileLayout | null>(null);
+    const [layoutLoading, setLayoutLoading] = useState(true);
     const offsetRef = useRef(0);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const { setScreen, setActiveSidebar } = useNavStore();
+
+    // Load custom profile layout
+    useEffect(() => {
+        (async () => {
+            try {
+                const layout = await invoke<ProfileLayout | null>('get_profile_layout');
+                setCustomLayout(layout);
+            } catch (e) {
+                console.warn('Failed to load profile layout:', e);
+            } finally {
+                setLayoutLoading(false);
+            }
+        })();
+    }, []);
+
+    const handleEditProfile = useCallback(() => {
+        setScreen('profile-builder');
+        setActiveSidebar('profile');
+    }, [setScreen, setActiveSidebar]);
 
     // Load first page + metadata
     const loadInitial = useCallback(async () => {
@@ -127,7 +151,57 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                 <div className="profile-visitor-counter">
                     Visitors: {stats ? String(stats.total + 1337).padStart(6, '0') : '001337'}
                 </div>
+                <button
+                    className="profile-edit-btn"
+                    onClick={handleEditProfile}
+                    title="Customize your profile page"
+                    style={{
+                        position: 'absolute',
+                        top: 12,
+                        right: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 14px',
+                        border: '1px solid var(--accent-purple, #7c3aed)',
+                        borderRadius: 'var(--border-radius, 4px)',
+                        background: 'rgba(124, 58, 237, 0.2)',
+                        color: 'var(--accent-purple, #7c3aed)',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        zIndex: 10,
+                    } as React.CSSProperties}
+                >
+                    <BsPalette2 /> Edit Profile
+                </button>
             </div>
+
+            {/* ═══ Custom Profile Layout (sandboxed iframe) ═══ */}
+            {!layoutLoading && customLayout && (
+                <div className="profile-custom-layout" style={{ margin: '0 16px' } as React.CSSProperties}>
+                    <Win98Box variant="window" title="✨ My Custom Page ✨">
+                        <iframe
+                            ref={iframeRef}
+                            sandbox="allow-same-origin"
+                            title="Custom Profile Layout"
+                            srcDoc={`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body { background: #0f0f23; color: #e2e8f0; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 16px; }
+* { box-sizing: border-box; }
+${customLayout.css}
+</style></head><body>${customLayout.html}</body></html>`}
+                            style={{
+                                width: '100%',
+                                minHeight: 400,
+                                border: 'none',
+                                borderRadius: 'var(--border-radius, 4px)',
+                                background: '#0f0f23',
+                            } as React.CSSProperties}
+                        />
+                    </Win98Box>
+                </div>
+            )}
 
             {/* ═══ GeoCities Content Grid ═══ */}
             <div className="profile-content-grid">

@@ -1,13 +1,16 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import Collaboration from '@tiptap/extension-collaboration';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { markdownToHtml, htmlToMarkdown, countWords, readingTime } from '../utils/markdown';
+import { useCollabDoc } from '../hooks/useCollabDoc';
 
 export interface ArticleEditorData {
     title: string;
     content: string;       // Markdown
-    contentJson: object;   // Tiptap JSON (for future Yjs backing)
+    contentJson: object;   // Tiptap JSON
+    collabDocId?: string | null;  // Set when collaborative mode is active
     wordCount: number;
 }
 
@@ -16,6 +19,12 @@ export interface ArticleEditorProps {
     initialContent?: string;  // Markdown string
     onChange: (data: ArticleEditorData) => void;
     readOnly?: boolean;
+    /** Enable CRDT-backed collaborative editing. */
+    collaborative?: boolean;
+    /** Existing collab doc ID to resume editing. If omitted + collaborative=true, a new doc is created. */
+    collabDocId?: string | null;
+    /** BytescapeItem ID to link the collab doc to. */
+    itemId?: string | null;
 }
 
 export function ArticleEditor({
@@ -23,6 +32,9 @@ export function ArticleEditor({
     initialContent = '',
     onChange,
     readOnly = false,
+    collaborative = false,
+    collabDocId: inputCollabDocId,
+    itemId,
 }: ArticleEditorProps) {
     const [title, setTitle] = useState(initialTitle);
     const [wordCount, setWordCount] = useState(0);
@@ -31,6 +43,24 @@ export function ArticleEditor({
     const titleRef = useRef(initialTitle);
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+
+    // CRDT collaborative editing hook
+    const {
+        ydoc,
+        isLoaded: collabLoaded,
+        collabDocId: activeCollabDocId,
+        error: collabError,
+        snapshot,
+    } = useCollabDoc({
+        enabled: collaborative,
+        docId: inputCollabDocId,
+        itemId,
+        title: initialTitle || null,
+    });
+
+    // Store snapshot function on a ref for external access
+    const snapshotRef = useRef(snapshot);
+    snapshotRef.current = snapshot;
 
     useEffect(() => {
         titleRef.current = title;
@@ -44,22 +74,60 @@ export function ArticleEditor({
             content: htmlToMarkdown(editorHtml),
             contentJson: editorJson,
             wordCount: wc,
+            collabDocId: activeCollabDocId,
         });
-    }, []);
+    }, [activeCollabDocId]);
+
+    // Build Tiptap extensions based on mode
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extensions = useMemo((): any[] => {
+        if (collaborative && ydoc) {
+            // Collaborative mode: Yjs manages undo/redo
+            return [
+                StarterKit.configure({ undoRedo: false }),
+                Placeholder.configure({ placeholder: 'Write your article...' }),
+                Collaboration.configure({ document: ydoc, field: 'content' }),
+            ];
+        }
+        // Standard mode: local history
+        return [
+            StarterKit,
+            Placeholder.configure({ placeholder: 'Write your article...' }),
+        ];
+    }, [collaborative, ydoc]);
+
+    // Wait for collab state to load before creating the editor
+    const shouldCreateEditor = !collaborative || (collabLoaded && ydoc !== null);
 
     const editor = useEditor({
-        extensions: [
-            StarterKit,
-            Placeholder.configure({
-                placeholder: 'Write your article...',
-            }),
-        ],
-        content: initialContent ? markdownToHtml(initialContent) : '',
+        extensions,
+        // In collaborative mode, content comes from Yjs doc — do not set `content`
+        content: collaborative ? undefined : (initialContent ? markdownToHtml(initialContent) : ''),
         editable: !readOnly,
         onUpdate: ({ editor: ed }) => {
             emitChange(ed.getHTML(), ed.getJSON(), ed.getText());
         },
-    });
+    }, [shouldCreateEditor, extensions]);
+
+    // In collaborative mode, pre-populate with initial content after editor + Yjs are ready
+    const hasSetInitialContent = useRef(false);
+    useEffect(() => {
+        if (
+            collaborative &&
+            editor &&
+            collabLoaded &&
+            !inputCollabDocId &&
+            initialContent &&
+            !hasSetInitialContent.current
+        ) {
+            // New collab doc with initial content — insert into empty Yjs doc
+            const currentText = editor.getText();
+            if (!currentText || currentText.trim().length === 0) {
+                editor.commands.setContent(markdownToHtml(initialContent));
+                hasSetInitialContent.current = true;
+            }
+        }
+    }, [collaborative, editor, collabLoaded, inputCollabDocId, initialContent]);
 
     // Compute initial word count once editor is ready
     useEffect(() => {
@@ -78,6 +146,26 @@ export function ArticleEditor({
     }, [editor, emitChange]);
 
     const rt = readingTime(wordCount);
+
+    // Show loading state while collaborative doc state loads
+    if (collaborative && !collabLoaded) {
+        return (
+            <div className="article-editor-container" data-testid="article-editor-loading">
+                <div className="article-editor-footer">Loading collaborative document…</div>
+            </div>
+        );
+    }
+
+    // Show error state
+    if (collabError) {
+        return (
+            <div className="article-editor-container" data-testid="article-editor-error">
+                <div className="article-editor-footer" style={{ color: 'var(--error-red, #ff4444)' } as React.CSSProperties}>
+                    Collab error: {collabError}
+                </div>
+            </div>
+        );
+    }
 
     if (!editor) return null;
 
@@ -181,6 +269,11 @@ export function ArticleEditor({
 
             <div className="article-editor-footer" data-testid="article-footer">
                 {wordCount} {wordCount === 1 ? 'word' : 'words'} · {rt} min read
+                {collaborative && activeCollabDocId && (
+                    <span style={{ marginLeft: '8px', opacity: 0.6 } as React.CSSProperties}>
+                        · CRDT synced
+                    </span>
+                )}
             </div>
         </div>
     );

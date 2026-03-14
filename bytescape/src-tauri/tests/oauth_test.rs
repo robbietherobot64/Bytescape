@@ -1,13 +1,15 @@
 //! OAuth module tests
 //!
-//! Tests for FileSessionStore (GAP-3: oauth.rs test coverage).
-//! The OAuthManager itself requires network access, so we focus on
-//! the persistent session store which is fully testable offline.
+//! Tests for FileSessionStore (GAP-1 scope) and OAuth flow components (GAP-3 scope).
+//!
+//! GAP-1 tests: Persistent session store (encryption, persistence, CRUD).
+//! GAP-3 tests: OAuthManager construction, callback parsing, sentinel detection,
+//! XRPC URL parsing, and error handling.
 //!
 //! Note: We construct `Session` via serde_json deserialization to avoid
 //! depending on private types (OAuthTokenType) from atrium-oauth.
 
-use bytescape_lib::oauth::FileSessionStore;
+use bytescape_lib::oauth::{FileSessionStore, OAuthManager};
 use atrium_api::types::string::Did;
 use atrium_common::store::Store;
 use atrium_oauth::store::session::{Session, SessionStore};

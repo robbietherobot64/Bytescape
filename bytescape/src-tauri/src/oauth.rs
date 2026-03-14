@@ -125,10 +125,10 @@ impl FileSessionStore {
         let file_path = data_dir.join(SESSION_FILE_NAME);
         let sessions = Self::load_from_disk(&file_path, &master_password)
             .unwrap_or_default();
+        #[cfg(debug_assertions)]
         println!(
-            "FileSessionStore: Loaded {} persisted OAuth session(s) from {:?}",
+            "FileSessionStore: Loaded {} session(s)",
             sessions.len(),
-            file_path
         );
         Self {
             cache: tokio::sync::Mutex::new(sessions),
@@ -252,7 +252,8 @@ impl Store<Did, Session> for FileSessionStore {
         let mut cache = self.cache.lock().await;
         cache.insert(key.as_str().to_string(), value);
         Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
-        println!("FileSessionStore: Persisted session for {}", key.as_str());
+        #[cfg(debug_assertions)]
+        println!("FileSessionStore: Persisted session for did:***");
         Ok(())
     }
 
@@ -260,7 +261,8 @@ impl Store<Did, Session> for FileSessionStore {
         let mut cache = self.cache.lock().await;
         cache.remove(key.as_str());
         Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
-        println!("FileSessionStore: Removed session for {}", key.as_str());
+        #[cfg(debug_assertions)]
+        println!("FileSessionStore: Removed session");
         Ok(())
     }
 
@@ -269,6 +271,7 @@ impl Store<Did, Session> for FileSessionStore {
         cache.clear();
         // Delete the file entirely
         let _ = std::fs::remove_file(&self.file_path);
+        #[cfg(debug_assertions)]
         println!("FileSessionStore: Cleared all sessions");
         Ok(())
     }
@@ -386,7 +389,8 @@ impl OAuthManager {
             .map_err(|e| format!("OAuth session restore failed: {}", e))?;
 
         *self.session.lock().await = Some(session);
-        println!("OAuth: Restored persisted session for {}", did.as_str());
+        #[cfg(debug_assertions)]
+        println!("OAuth: Restored persisted session");
         Ok(())
     }
 
@@ -544,7 +548,7 @@ impl OAuthManager {
     }
 
     /// Parse OAuth callback query string parameters.
-    fn parse_query_string(qs: &str) -> OAuthCallbackQuery {
+    pub(crate) fn parse_query_string(qs: &str) -> OAuthCallbackQuery {
         let mut code = None;
         let mut state = None;
         let mut iss = None;
@@ -875,7 +879,7 @@ impl OAuthManager {
     ///
     /// Input: `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`
     /// Output: `("app.bsky.feed.getTimeline", Some("limit=50"))`
-    fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
+    pub(crate) fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
         // Find /xrpc/ in the URL
         let xrpc_idx = url.find("/xrpc/")
             .ok_or_else(|| format!("URL is not an XRPC endpoint: {}", url))?;
@@ -899,9 +903,7 @@ impl OAuthManager {
         use atrium_xrpc::XrpcClient;
         use atrium_api::agent::CloneWithProxy;
 
-        println!("authenticated_chat_get: url={}", url);
         let (nsid, query) = Self::parse_xrpc_url(url)?;
-        println!("authenticated_chat_get: nsid={}, query={:?}", nsid, query);
 
         let session_guard = self.session.lock().await;
         let session = session_guard
@@ -997,10 +999,10 @@ impl OAuthManager {
 }
 
 /// Query parameters from the OAuth callback redirect.
-struct OAuthCallbackQuery {
-    code: Option<String>,
-    state: Option<String>,
-    iss: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
+pub(crate) struct OAuthCallbackQuery {
+    pub(crate) code: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) iss: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) error_description: Option<String>,
 }

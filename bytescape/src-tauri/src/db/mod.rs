@@ -14,6 +14,7 @@ pub(crate) const FOLLOWED_HASHTAGS_TABLE: TableDefinition<&str, &str> = TableDef
 pub(crate) const WILLOW_WRITE_PARITY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("willow_write_parity");
 pub(crate) const PEERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("peers");
 pub(crate) const COLLAB_DOCS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("collab_docs");
+pub(crate) const PROFILE_LAYOUT_TABLE: TableDefinition<&str, &str> = TableDefinition::new("profile_layout");
 
 pub use crate::models::*;
 
@@ -44,6 +45,7 @@ impl DbManager {
             let _ = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(COLLAB_DOCS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
@@ -138,6 +140,8 @@ impl DbManager {
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         let peers = read_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
+        let profile_layouts = read_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?
+            .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         drop(read_txn);
 
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
@@ -151,6 +155,7 @@ impl DbManager {
             write_txn.delete_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(PEERS_TABLE).map_err(|e| e.to_string())?;
+            write_txn.delete_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
 
             write_txn.open_table(POSTS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(MESSAGES_TABLE).map_err(|e| e.to_string())?;
@@ -161,10 +166,11 @@ impl DbManager {
             write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
+            write_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
-        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + parity + peers)
+        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + parity + peers + profile_layouts)
     }
 
     pub async fn count_archive_posts(&self) -> Result<u64, String> {
@@ -209,5 +215,58 @@ impl DbManager {
             }
         }
         Ok(tags)
+    }
+
+    // ─── Profile Layout ───
+
+    pub async fn save_profile_layout(
+        &self,
+        layout: &crate::commands::profile::ProfileLayout,
+    ) -> Result<(), String> {
+        let serialized = serde_json::to_string(layout).map_err(|e| e.to_string())?;
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            table
+                .insert("user_profile_layout", serialized.as_str())
+                .map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_profile_layout(
+        &self,
+    ) -> Result<Option<crate::commands::profile::ProfileLayout>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn
+            .open_table(PROFILE_LAYOUT_TABLE)
+            .map_err(|e| e.to_string())?;
+        match table.get("user_profile_layout") {
+            Ok(Some(value)) => {
+                let layout: crate::commands::profile::ProfileLayout =
+                    serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+                Ok(Some(layout))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub async fn delete_profile_layout(&self) -> Result<(), String> {
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            let _ = table.remove("user_profile_layout");
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
 }

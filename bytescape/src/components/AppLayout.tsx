@@ -1,6 +1,8 @@
 import React from 'react';
-import { Sidebar } from './Sidebar';
+import { TopBar } from './TopBar';
+import { FriendsPanel } from './FriendsPanel';
 import { SidebarItem } from '../types';
+import { Screen } from '../store';
 
 interface AppLayoutProps {
     /** Screen content rendered in the primary pane. */
@@ -11,18 +13,56 @@ interface AppLayoutProps {
     onNavigate: (item: SidebarItem) => void;
     /** Optional style override for full-bleed layouts. */
     mainStyle?: React.CSSProperties;
-    /** Optional slot for feed tabs rendered in the mobile top bar. */
-    feedTabSlot?: React.ReactNode;
+    /** Current active screen for context panel. */
+    screen: Screen;
+    /** Search bar state. */
+    searchQuery: string;
+    onSearchChange: (query: string) => void;
+    onSearchSubmit: (query: string) => void;
+    /** User avatar initial for top bar. */
+    avatarInitial?: string;
+    /** Friends panel callbacks. */
+    onOpenChat?: (peerNodeId: string, peerName: string) => void;
+    onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-/** Application shell: persistent sidebar + main content region. */
-export function AppLayout({ children, activeSidebar, onNavigate, mainStyle, feedTabSlot }: AppLayoutProps) {
+/** Application shell: top bar + friends panel (feed only) + main content. */
+export function AppLayout({
+    children,
+    activeSidebar,
+    onNavigate,
+    mainStyle,
+    screen,
+    searchQuery,
+    onSearchChange,
+    onSearchSubmit,
+    avatarInitial,
+    onOpenChat,
+    onViewProfile,
+}: AppLayoutProps) {
+    const showFriendsPanel = screen === 'feed';
+
     return (
         <div className="app-layout">
-            <Sidebar activeSidebar={activeSidebar} onNavigate={onNavigate} feedTabSlot={feedTabSlot} />
-            <main className="main-content" style={mainStyle}>
-                {children}
-            </main>
+            <TopBar
+                activeSidebar={activeSidebar}
+                onNavigate={onNavigate}
+                searchQuery={searchQuery}
+                onSearchChange={onSearchChange}
+                onSearchSubmit={onSearchSubmit}
+                avatarInitial={avatarInitial}
+            />
+            <div className="app-body">
+                <main className="main-content" style={mainStyle}>
+                    {children}
+                </main>
+                {showFriendsPanel && (
+                    <FriendsPanel
+                        onOpenChat={onOpenChat}
+                        onViewProfile={onViewProfile}
+                    />
+                )}
+            </div>
         </div>
     );
 }

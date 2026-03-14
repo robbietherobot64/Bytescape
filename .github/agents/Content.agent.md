@@ -57,19 +57,24 @@ Tiptap collaboration extensions (`@tiptap/extension-collaboration`, `@tiptap/ext
 ### Completed Work Reference
 C3.2 shipped as commit `8610577` — 11 files, +1859/-56 lines, 34 tests. The `ArticleEditor`, `ArticleReader`, and `utils/markdown.ts` are your foundation for all subsequent article/editing work.
 
-## 🎯 Current Assignment (2026-03-13)
+## ✅ Previous Assignment Complete (2026-03-13)
 
-Read your full kickoff prompt: [prompts/content-c1-c6-kickoff.md](prompts/content-c1-c6-kickoff.md)
+C1.1b/C1.2b/C1.3b facet rendering + autocomplete delivered in commit `38cf4c2` on `track-c/c1-facet-frontend`. 53 new tests (128 total claimed). **Do not redo this work.**
 
-**Priority 1 — C1.1b + C1.2b + C1.3b: Facet Rendering & Autocomplete Frontend**
-- C1.1b: Render @mentions, #hashtags, hyperlinks as interactive elements in `FeedEntryCard` and `ArticleReader`
-- C1.2b: @mention typeahead dropdown in ComposeBox (backend `search_mentions` command exists)
-- C1.3b: #hashtag typeahead dropdown in ComposeBox (backend `search_hashtags_autocomplete` command exists)
+## 🎯 Current Assignment (2026-03-14)
 
-**Priority 2 — C6.1: CRDT Storage Layer**
-- Add `yrs` crate, create `collab.rs`, new `COLLAB_DOCS` redb table
-- Wire `@tiptap/extension-collaboration` (already installed) into ArticleEditor
-- Local-only CRDT-backed editing first — no P2P sync yet
+Read your full kickoff prompt: [prompts/content-c6-kickoff.md](prompts/content-c6-kickoff.md)
+
+**Priority 1 — C6.1: CRDT Storage Layer**
+- ⚠️ The Backend agent already created `collab.rs` + `commands/collab.rs` on `main` (GAP-4 commit). Assess and build on this — do NOT recreate from scratch.
+- Merge `main` into your branch first (your branch is behind by 6 commits)
+- Ensure `yrs` crate integration is complete in the backend
+- Wire `@tiptap/extension-collaboration` into `ArticleEditor.tsx`
+- Local-only CRDT-backed editing — no P2P sync yet (that's C6.3)
+
+**Priority 2 — C1 Branch Merge Prep**
+- Verify your C1 branch builds and tests pass
+- Rebase on latest `main` to minimize merge conflicts
 
 ## Prime Directive
 
