@@ -40,34 +40,18 @@ Read [security-addendum.md](security-addendum.md) — it contains audit findings
 - **CRIT-5**: Restrict media server CORS to Tauri origins only (replace `allow_any_origin()`) ✅ *Done*
 - **CRIT-6**: Replace MD5 with BLAKE3 for escrow integrity in `keychain_encrypted.rs` ✅ *Done*
 
-## ⚠️ PM Audit — A0 OAuth Status (2026-03-14)
+## ✅ A0 OAuth — Fully Closed (2026-03-15 PM Audit)
 
-Read [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the full audit.
+All 7 GAPs resolved. Critical 3-root-cause OAuth bug fixed. Post-GAP fixes shipped. Master password randomized. 30 OAuth tests. DM pagination with cursors. Debug output gated. Session restore guard added. **A0 is done — do not revisit.**
 
-### Completed ✅
-- **A0-GAP-1**: Persistent OAuth sessions (FileSessionStore, ChaCha20-Poly1305) ✅
-- **A0-GAP-2**: Dynamic callback port fallback ✅
-- **A0-GAP-4**: Write operations wired for OAuth ✅
-- **A0-GAP-5**: DMs wired for OAuth (`transition:chat.bsky` scope) ✅
-- **A0-GAP-6**: Saved feeds / unified feed fixed for OAuth ✅
-- **A0-GAP-7**: Transitive deps verified ✅
-- **Critical 3-root-cause bug** (empty feeds + broken DMs) ✅
+See [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the original audit.
 
-### Needs Remediation ❌
-- **A0-GAP-3**: FileSessionStore tests were written (GAP-1 tests). Real OAuth flow tests still needed: `OAuthManager::new()`, callback parsing, `process_callback` errors, `is_oauth_session()`.
-- **Hardcoded master password**: `"default_dev_password_CHANGE_IN_PRODUCTION"` in `oauth.rs`
-- **No DM pagination**: Only first 100 messages/convo fetched
-- **Empty JWT for OAuth feed import**: Only public posts imported
-- **Debug println with DIDs**: Not gated behind `#[cfg(debug_assertions)]`
-- **Dual session restore race**: No guard against redundant `restore_session` calls
+## 🎯 Current Assignment (2026-03-15)
 
-## 🎯 Current Assignment (2026-03-14)
+Read your full kickoff prompt: [prompts/backend-a1-ap-actor.md](prompts/backend-a1-ap-actor.md)
 
-Read your full kickoff prompt: [prompts/backend-a0-fixes-a1.md](prompts/backend-a0-fixes-a1.md)
-
-**Priority 0 — Branch Cleanup** (cherry-pick backend fixes from `track-b/ui-redesign` → `main`)
-**Priority 1 — A0 Remediation** (GAP-3 real tests, master password, DM pagination, JWT fix, debug cleanup, restore guard)
-**Priority 2 — A1.1 AP Actor & Inbox/Outbox** (begin after remediation)
+**Priority 1 — A1.1 AP Actor & Inbox/Outbox** — the most critical path item in the project. Unblocks 7 items across all tracks.
+**Priority 2 — A1.2 Research** (read only, inform next sprint)
 
 ## Prime Directive
 

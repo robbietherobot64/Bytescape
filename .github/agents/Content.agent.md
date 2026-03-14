@@ -57,24 +57,22 @@ Tiptap collaboration extensions (`@tiptap/extension-collaboration`, `@tiptap/ext
 ### Completed Work Reference
 C3.2 shipped as commit `8610577` — 11 files, +1859/-56 lines, 34 tests. The `ArticleEditor`, `ArticleReader`, and `utils/markdown.ts` are your foundation for all subsequent article/editing work.
 
-## ✅ Previous Assignment Complete (2026-03-13)
+## ✅ Previous Assignments Complete (2026-03-15 PM Audit)
 
-C1.1b/C1.2b/C1.3b facet rendering + autocomplete delivered in commit `38cf4c2` on `track-c/c1-facet-frontend`. 53 new tests (128 total claimed). **Do not redo this work.**
+All prior work verified and accepted:
+- C1.1b/C1.2b/C1.3b Facet rendering + autocomplete — 53 tests, commit `38cf4c2` ✅
+- C6.1 CRDT Storage Layer — yrs backend + useCollabDoc hook + ArticleEditor collab mode, 18 tests, commit `16a9c69` ✅
+- C6.2 Frontend Yjs Integration — delivered within C6.1 scope ✅
 
-## 🎯 Current Assignment (2026-03-14)
+**Do not redo any of this work.**
 
-Read your full kickoff prompt: [prompts/content-c6-kickoff.md](prompts/content-c6-kickoff.md)
+## 🎯 Current Assignment (2026-03-15)
 
-**Priority 1 — C6.1: CRDT Storage Layer**
-- ⚠️ The Backend agent already created `collab.rs` + `commands/collab.rs` on `main` (GAP-4 commit). Assess and build on this — do NOT recreate from scratch.
-- Merge `main` into your branch first (your branch is behind by 6 commits)
-- Ensure `yrs` crate integration is complete in the backend
-- Wire `@tiptap/extension-collaboration` into `ArticleEditor.tsx`
-- Local-only CRDT-backed editing — no P2P sync yet (that's C6.3)
+Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
 
-**Priority 2 — C1 Branch Merge Prep**
-- Verify your C1 branch builds and tests pass
-- Rebase on latest `main` to minimize merge conflicts
+**Priority 0 — Merge `main` into `track-c/c1-facet-frontend`** (get `fe890b4` remediation commit)
+**Priority 1 — C1.4 Character Count & Limits** (platform-aware grapheme counting)
+**Priority 2 — C2.1 Link Card Embeds** (unfurl_link backend + LinkPreviewCard frontend)
 
 ## Prime Directive
 

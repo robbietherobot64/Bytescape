@@ -50,22 +50,23 @@ Read [prompts/pm-advisory-2026-03-11.md](prompts/pm-advisory-2026-03-11.md) for 
 ### OAuth UI Note
 The Backend agent modified `LoginScreen.tsx` (+143 lines) on the `track-a/a0-bluesky-oauth` branch to add OAuth login UI. If that branch has been merged, `LoginScreen` now has an "OAuth Login" flow with `listen('oauth-complete')` event handling and a 5-minute timeout. Be aware of this when working on LoginScreen for any reason.
 
-## ✅ Previous Assignment Complete (2026-03-13)
+## ✅ Previous Assignments Complete (2026-03-15 PM Audit)
 
-B2.1 GrapesJS Profile Builder delivered in commit `aabfa9e` on `track-b/b2-profile-builder`. 13 files, +1,356 lines, 5 new tests. **Do not redo this work.**
+All prior work verified and accepted:
+- B2.1 GrapesJS, B2.2 Raw HTML, B2.3 DID Meta Tags, B2.4 Widget System, B2.5 Theme Engine ✅
+- B3.1 Profile Browser, B3.2 Sandboxed Peer View ✅
+- B10.1 URL Scheme, B10.2 Nav History, B10.3 Omnibar, B10.6 Peer Browser Sync ✅ *(retroactively approved)*
 
-## 🎯 Current Assignment (2026-03-14)
+**Do not redo any of this work.**
 
-Read your full kickoff prompt: [prompts/frontend-b21-ui-integration.md](prompts/frontend-b21-ui-integration.md)
+## 🎯 Current Assignment (2026-03-15)
 
-**Priority 0 — Merge `main` into your branch + Review UI Redesign**
-- The Backend agent (PM-authorized) built a full UI redesign on `track-b/ui-redesign`: TopBar, ContextPanel, FriendsPanel, 3-column layout (~1,300 lines). **This is your domain** — review it and decide: adopt as-is, cherry-pick selectively, or rework.
-- Merge `main` into `track-b/b2-profile-builder` first (your branch is behind by 6 commits)
+Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
 
-**Priority 1 — B2.1 Verification & Polish**
-- Verify ProfileBuilder builds, tests pass, and functionality works end-to-end
-
-**Priority 2 — Next Track B Item** (B2.4 Theme Widgets, B3.1 Mobile Responsive, or B4.1 Archive Import Wizard)
+**Priority 0 — Merge `main` into `track-b/ui-redesign`** (resolve lib.rs, oauth.rs, oauth_test.rs conflicts)
+**Priority 1 — B10.4 Reload/Refresh**
+**Priority 2 — Navigation Unification** (migrate callers from useNavStore → useLocationStore)
+**Priority 3 — B11.1 Network State Feed** (if time permits)
 
 ## Prime Directive
 

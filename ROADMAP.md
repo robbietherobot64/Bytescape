@@ -312,11 +312,11 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 #### C1. Rich Text & Facets
 - [x] **C1.1 Rich Text Facet Parsing — Backend**: `richtext.rs` — `detect_facets()`, `parse_facets_for_bluesky()`, `parse_facets_local()` with UTF-8 byte offset calculation. 23 unit tests. Wired into `posting.rs` (publish_post_v2) and `syndicate.rs` (syndicate_vault_item) — facets auto-generated on Bluesky publish.
-- [ ] **C1.1b Rich Text Facet Rendering — Frontend**: Render facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Add facet TypeScript types to `types/index.ts`.
+- [x] **C1.1b Rich Text Facet Rendering — Frontend**: `RichText` component renders facets as clickable @mentions, #hashtags, and hyperlinks in `FeedEntryCard` and thread replies. Facet TypeScript types added to `types/index.ts`. *(Commit: `38cf4c2`)*
 - [x] **C1.2 Mention Autocomplete — Backend**: `search_mentions` Tauri command registered — searches local contacts by handle prefix, returns `MentionSuggestion { handle, did, avatar_url }`.
-- [ ] **C1.2b Mention Autocomplete — Frontend**: Typeahead dropdown UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle.
+- [x] **C1.2b Mention Autocomplete — Frontend**: `AutocompleteDropdown` UI in ComposeBox triggered by `@` — calls `search_mentions`, inserts selected handle. *(Commit: `38cf4c2`)*
 - [x] **C1.3 Hashtag Autocomplete — Backend**: `search_hashtags_autocomplete` Tauri command registered — searches followed hashtags by prefix.
-- [ ] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag.
+- [x] **C1.3b Hashtag Autocomplete — Frontend**: Dropdown UI in ComposeBox triggered by `#` — calls `search_hashtags_autocomplete`, inserts selected tag. *(Commit: `38cf4c2`)*
 - [ ] **C1.4 Character Count & Limits**: Per-target live counter in ComposeBox. Bluesky: 300 graphemes (via `Intl.Segmenter`). AP: configurable per-server (default 500). Show which targets will truncate. *(Basic local-only 10K char counter exists from MED-4.)*
 
 #### C2. Link & Embed System
@@ -351,8 +351,8 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 > **Why not Willow?** Willow uses last-writer-wins per Entry — concurrent edits silently overwrite each other. Yjs merges at the character level with causal ordering, which is what "real-time collaborative editing" actually requires.
 
-- [ ] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: Add `yrs` (Rust Yjs port) crate to backend. New file `collab.rs` — Yjs doc CRUD, state vector management, update encoding/decoding. New redb table `COLLAB_DOCS: TableDefinition<&str, &[u8]>` storing binary Yjs state keyed by doc ID. Add optional `collab_doc_id: Option<String>` field to `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`. **Disruption: one optional field on BytescapeItem, everything else is new files/tables.**
-- [ ] **C6.2 Frontend Yjs Integration**: Wire `yjs` + `y-tiptap` into the Article editor from C3.2. Local-only mode first — single user editing with CRDT doc backing. Verify round-trip: edits → Yjs update → Tauri command → `yrs` merge → redb persist → reload. Packages: `yjs`, `y-prosemirror` (or `@tiptap/extension-collaboration` already added in C3.2).
+- [x] **C6.1 CRDT Storage Layer** *(prerequisite: C3.2 ships with Tiptap)*: `yrs` crate in backend, `collab.rs` with Yjs doc CRUD + state vector management + update encoding. `COLLAB_DOCS` redb table. `collab_doc_id: Option<String>` on `BytescapeItem`. Tauri commands: `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item` (accepts `content: &str` — frontend renders via Tiptap, Rust stores CRDT state + snapshots). *(Backend: GAP-4 commit `9c60417` + Content: `16a9c69`)*
+- [x] **C6.2 Frontend Yjs Integration**: `useCollabDoc` hook (216 lines) manages Y.Doc lifecycle, debounced persistence (300ms batched via `Y.mergeUpdates()`), and snapshot function. `ArticleEditor` enhanced with `collaborative`/`collabDocId`/`itemId` props + `@tiptap/extension-collaboration`. 18 tests. Delivered within C6.1 scope. *(Commit: `16a9c69`)*
 - [ ] **C6.3 P2P Real-Time Sync via Gossip** *(prerequisite: working iroh-gossip from existing P2P chat)*: New gossip topic type `CollabUpdate` — Yjs update vectors broadcast to all peers with the doc open. Implement awareness protocol over gossip for cursor positions, selection highlights, and user presence indicators. Frontend shows colored cursors with peer names. **Disruption: adds a gossip topic variant, no breaking changes to existing chat gossip.**
 - [ ] **C6.4 Offline & Async Merge**: When a peer reconnects after editing offline, exchange Yjs state vectors and compute minimal sync updates. Yjs handles conflict resolution automatically (no user-facing merge conflicts). Persist pending updates in redb for crash recovery.
 - [ ] **C6.5 Station Relay for Always-On Collaboration** *(unlocked by Phase 5 — Station Protocol)*: Community Station acts as Yjs awareness relay + document update cache. Peer A edits → gossip update → Station buffers → Peer B comes online → Station forwards. Enables async collaboration without simultaneous presence. **This is what delivers true Google Docs parity.**
@@ -402,11 +402,11 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 - [x] **A0-GAP-1 Ephemeral OAuth Sessions**: Persistent `FileSessionStore` with ChaCha20-Poly1305 encryption + Argon2id KDF. OAuth sessions survive app restarts. *(Commit: `45c6d04`)*
 - [x] **A0-GAP-2 Fixed Callback Port**: Dynamic fallback to OS-assigned port (`127.0.0.1:0`) when `28457` is in use. *(Commit: `f2f279f`)*
-- [ ] **A0-GAP-3 No OAuth Rust Tests**: `FileSessionStore` unit tests added (commit `bac702e`), but required test areas (OAuthManager construction, callback parsing, process_callback errors, is_oauth_session, PDS URL failure) are **not covered**. Needs proper OAuth flow tests.
+- [x] **A0-GAP-3 OAuth Rust Tests**: 30 test functions covering FileSessionStore CRUD, OAuthManager construction, callback query-string parsing (full/error/empty/URL-encoded), XRPC URL parsing, session-absent error paths. *(Commit: `fe890b4`)*
 - [x] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` now use `is_oauth_session()` branching. *(Commit: `9c60417`)*
 - [x] **A0-GAP-5 DMs for OAuth Sessions**: Added `transition:chat.bsky` OAuth scope, `clone_with_proxy()` for isolated chat proxy headers, parallel chat import. *(Commits: `c29e549`, `ad6af24`)*
 - [x] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: Fixed PDS URL vs AppView routing. *(Commit: `c684d84`)*
-- [ ] **A0-GAP-7 Verify Transitive Crate Dependencies**: `p256` is NOT in `Cargo.toml` (has zero direct imports — correct). `urlencoding` IS in `Cargo.toml`. Needs verification on clean machine builds.
+- [x] **A0-GAP-7 Transitive Crate Dependencies Verified**: `p256` confirmed transitive via `atrium-oauth` (zero direct imports — correct). `urlencoding` confirmed in `Cargo.toml`. *(Verified in remediation commit `fe890b4`)*
 
 <details>
 <summary>✅ Resolved Issues (click to expand)</summary>
