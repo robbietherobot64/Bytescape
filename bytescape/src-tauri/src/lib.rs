@@ -21,6 +21,7 @@ pub mod protocol;
 pub mod blob_hash;
 pub mod richtext;
 pub mod collab;
+pub mod activitypub;
 
 mod auth;
 use auth::AuthManager;
@@ -464,6 +465,13 @@ pub fn run() {
             
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
+            
+            // ActivityPub commands (A1.1)
+            commands::ap::create_ap_actor,
+            commands::ap::get_ap_actor,
+            commands::ap::send_ap_activity,
+            commands::ap::fetch_remote_actor,
+            commands::ap::resolve_webfinger,
         ])
         .setup(|app| {
             // Initialize application state

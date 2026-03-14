@@ -16,6 +16,7 @@ pub enum Source {
     Instagram,
     Google,
     Twitter,
+    ActivityPub,
     Manual,
 }
 
@@ -28,6 +29,7 @@ impl Source {
             Source::Instagram => "instagram",
             Source::Google => "google",
             Source::Twitter => "twitter",
+            Source::ActivityPub => "activitypub",
             Source::Manual => "manual",
         }
     }
@@ -40,6 +42,7 @@ impl Source {
             "instagram" => Source::Instagram,
             "google" => Source::Google,
             "twitter" => Source::Twitter,
+            "activitypub" => Source::ActivityPub,
             _ => Source::Manual,
         }
     }
@@ -52,6 +55,7 @@ impl Source {
             Source::Instagram => "Instagram",
             Source::Google => "Google",
             Source::Twitter => "Twitter/X",
+            Source::ActivityPub => "ActivityPub",
             Source::Manual => "Manual",
         }
     }
@@ -64,6 +68,7 @@ impl Source {
             Source::Instagram => "📸",
             Source::Google => "🔍",
             Source::Twitter => "🐦",
+            Source::ActivityPub => "🌐",
             Source::Manual => "📝",
         }
     }
