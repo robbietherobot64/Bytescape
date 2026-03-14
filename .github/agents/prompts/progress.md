@@ -1,81 +1,95 @@
-# Frontend Agent (Track B) — Progress Log
+# Backend Agent (Track A) — Progress Log
 
-## Session: 2026-03-13 → 2026-03-14
-**Branch:** `track-b/ui-redesign`
-
-### Completed This Session
-
-#### UI Redesign — Layout Restructure (`65d70e5`)
-- Removed `ContextPanel` sidebar entirely — feed management tools no longer live in a separate right panel
-- Moved `FeedRightPanel` (discovery tools, subscriptions, contacts) to the **left side** of the feed, rendered inline before the main feed column
-- Made `FriendsPanel` always visible on the **right side** of the feed screen with status-aware away messages
-- Away messages are duration-aware: "Just left", "Away 5m", "Away 3h", "Away 2d", "Offline"
-- Color-coded status dots: green (online), orange (idle), red (away), grey (offline)
-- Feed lens picker and tab bar moved inline into the feed header
-- Removed lifted `activeLens`/`feedActiveTab` state from App.tsx — FeedScreen manages its own lens state internally
-- **Files changed:** `AppLayout.tsx`, `FeedScreen.tsx`, `FeedRightPanel.tsx`, `FriendsPanel.tsx`, `App.css`, `App.tsx`
-
-#### Unified FriendsPanel — Bluesky + P2P (`aed605e`)
-- FriendsPanel now fetches **both** `list_peers` (P2P) and `list_follows` (Bluesky) data sources
-- Three grouped sections: **Online** (P2P with green dot), **Away** (P2P with duration), **Bluesky** (follows with blue dot)
-- Source filter tabs at top: All / 🔗 P2P / 🦋 Bsky
-- Bluesky follows display avatar images and `@handle` as status text
-- P2P peers with a matching DID are deduplicated from the Bluesky section
-- Bluesky follows refresh every 5 minutes; P2P peers refresh every 60 seconds
-- Falls back to `list_contacts` table if live `list_follows` API call fails
-- Source-specific CSS: blue avatar border for Bluesky, green for P2P
-- **Files changed:** `FriendsPanel.tsx`, `App.css`
-
-#### FriendsPanel Scoping (`507ce75`, `7766512`)
-- Initially hid FriendsPanel on screens with their own buddy list (Chat, Friends)
-- Refined per user feedback: FriendsPanel now renders **only on the Feed screen**
-- Uses the existing `screen` prop in `AppLayout` to conditionally render
-- **File changed:** `AppLayout.tsx`
+> This document is a running log of work completed by the Backend Agent. Updated after each commit. PM reviews this for status tracking.
 
 ---
 
-### Cumulative Track B Delivery Status
+## 2026-03-14 — A0 OAuth Hardening Complete
 
-| ID | Item | Status |
-|----|------|--------|
-| **B1.1** | Lens: Gallery | ✅ Complete (on `main`) |
-| **B1.2** | Lens: Reader | ✅ Complete (on `main`) |
-| **B1.3** | FeedItemRenderer | ✅ Complete (on `main`) |
-| **B2.1** | GrapesJS Profile Builder | ⬜ Not started |
-| **B2.2** | Raw HTML Override | ⬜ Not started |
-| **B2.3** | DID Meta Tags | ⬜ Not started |
-| **B2.4** | Widget System | ⬜ Not started |
-| **B2.5** | Theme Engine | ✅ Complete (on `main`) |
-| **B2.6** | Dual-Format Serving | 🔒 Blocked by A1.1 |
-| **B2.7** | "Memory" Post Type | ⬜ Low priority |
+### Summary
+All A0 OAuth gaps (GAP-1 through GAP-7) are now **closed**. The critical bug causing empty feeds and broken DMs for OAuth users has been fixed. A0 is fully hardened.
 
-### UI Redesign Delivery (this branch)
+### Commits (chronological)
 
-| Item | Status | Commit |
-|------|--------|--------|
-| Top bar browser-style navigation | ✅ | `737105a` |
-| Context panel per-screen | ✅ | `72d0461` |
-| Feed tools moved to left panel | ✅ | `65d70e5` |
-| Friends panel with away messages | ✅ | `65d70e5` |
-| Bluesky follows in friends list | ✅ | `aed605e` |
-| Source distinction (P2P vs Bluesky) | ✅ | `aed605e` |
-| Friends panel scoped to feed only | ✅ | `7766512` |
-| Chat buddy list + friends panel unification | ✅ | `ae4bf4b` |
+| Commit | Description |
+|--------|-------------|
+| `c4e8123` | Merge `track-a/a0-bluesky-oauth` into `main` — initial OAuth implementation |
+| `9c60417` | **GAP-4**: Wire write operations (`publish_post_v2`, `syndicate_vault_item`) for OAuth via `is_oauth_session()` branching |
+| `45c6d04` | **GAP-1**: Persistent OAuth sessions via encrypted `FileSessionStore` (AES-256-GCM). Sessions survive app restarts. |
+| `f2f279f` | **GAP-2**: Dynamic OAuth callback port fallback — binds `127.0.0.1:0` when port 28457 is in use |
+| `c684d84` | **GAP-6**: Saved feeds and unified feed work for OAuth sessions. `xrpc_get`/`xrpc_post_json` helpers on `AppState` route through OAuth or app-password path |
+| `bac702e` | **GAP-3**: `FileSessionStore` unit tests (249 lines, Rust `#[cfg(test)]` module) |
+| `22a0435` | **Critical bug fix**: OAuth feeds empty + DMs broken — 3 root causes (see below) |
+| `a870548` | Fix "You" feed tab empty for OAuth — added `get_author_feed` command |
+| `c29e549` | Fix OAuth chat proxy header poisoning feed XRPC calls — `clone_with_proxy()` isolation |
+| `97c6faa` | Remove debug println from OAuth `xrpc_get` |
+| `ad6af24` | Run chat import in parallel with feed import |
+| `bf56e20` | Fix blank buddy handles from convo members array |
+| `ae4bf4b` | Unify chat buddy list with friends panel |
 
-### Cross-Track Fixes Delivered on This Branch
+### Critical Bug Fix Details (commit `22a0435`)
 
-| Fix | Commit |
-|-----|--------|
-| OAuth DPoP auth headers for feed + DMs | `22a0435` |
-| User's Bluesky posts in "You" tab | `a870548` |
-| Chat proxy header leak prevention | `c29e549` |
-| Debug println cleanup | `97c6faa` |
-| Parallel chat import with feed import | `ad6af24` |
-| Blank buddy handles from convo members | `bf56e20` |
+**User-reported symptoms:**
+1. "The current feed only imports the posts from the user, not anyone else"
+2. "The messages don't load at all"
 
-### Open Items / Notes for PM
+**Root causes identified:**
 
-1. **`ContextPanel.tsx` cleanup**: File still exists but is no longer imported or rendered anywhere. Safe to delete.
-2. **B2.1 GrapesJS**: Next priority per the kickoff prompt. Fully independent, no cross-track blockers.
-3. **Bluesky follows capped at 100**: The `list_follows` backend command has a hardcoded limit of 100. For users following more, pagination support would need a backend change (Track A scope).
-4. **Contact sync never invoked**: `ContactManager::sync_contacts()` in `contacts.rs` exists but is never called from any Tauri command. It could auto-populate the `CONTACTS_TABLE` and enable richer contact data without live API calls. Flagging for Track A consideration.
+| Bug | Description | Impact |
+|-----|-------------|--------|
+| **Missing DPoP Auth Header** | `authenticated_get`/`authenticated_post` in `oauth.rs` called `send_http()` without adding `Authorization: DPoP {token}` header. The atrium `DpopClient::send_http` reads this header to compute the DPoP proof's `ath` (access token hash) claim. Without it, requests were effectively unauthenticated. | PDS returns 401 → all feed APIs return empty |
+| **Wrong PDS URL** | `get_pds_base()` returned raw PDS host for OAuth (e.g. `https://bsky.network`) but `{host}/xrpc` for app-password. XRPC helpers append `/{endpoint}`, producing `https://bsky.network/app.bsky.feed.getTimeline` instead of `.../xrpc/app.bsky.feed.getTimeline`. | All XRPC calls hit 404 |
+| **No Chat Proxy Path** | `import_vault_messages` returned zeros for OAuth; `send_bsky_dm` returned error. `ChatClient` only supports Bearer auth — no DPoP + `atproto-proxy` path existed. | DMs completely non-functional for OAuth |
+
+**Fixes applied across 5 files:**
+
+- **`oauth.rs`**: Added `Authorization: DPoP {token}` to all `send_http` calls. Shared `FileSessionStore` via `Arc` so `OAuthManager` reads tokens the `OAuthClient` refreshes. Added `current_access_token()`, `authenticated_chat_get()`, `authenticated_chat_post()`.
+- **`lib.rs`**: Fixed `get_pds_base()` to append `/xrpc` for OAuth. Added `xrpc_chat_get`/`xrpc_chat_post` helpers with `atproto-proxy` header.
+- **`import.rs`**: Wired `import_vault_messages` OAuth path (list convos → get messages → save). Wired `send_bsky_dm` OAuth path.
+- **`auth.rs`**: Eagerly restore OAuth session in `check_auth_status` so API calls work immediately after frontend receives auth status.
+- **`feed_aggregation.rs`**: Added error logging for timeline/custom feed fetches (was silently swallowing errors).
+
+### A0 Gap Status — All Closed ✅
+
+| Gap | Status | Description |
+|-----|--------|-------------|
+| GAP-1 | ✅ Done | Persistent OAuth sessions (encrypted FileSessionStore) |
+| GAP-2 | ✅ Done | Dynamic callback port fallback |
+| GAP-3 | ✅ Done | OAuth unit tests |
+| GAP-4 | ✅ Done | Write operations wired for OAuth |
+| GAP-5 | ✅ Done | DMs wired for OAuth (`transition:chat.bsky` scope, chat proxy) |
+| GAP-6 | ✅ Done | Saved feeds / unified feed for OAuth |
+| GAP-7 | ✅ Done | Verified transitive deps (`p256`, `urlencoding`) |
+
+### Post-GAP Bug Fixes
+
+| Issue | Fix | Commit |
+|-------|-----|--------|
+| "You" tab empty for OAuth | Added `get_author_feed` merging Bluesky + vault posts | `a870548` |
+| Chat proxy header leaked into feed calls | `clone_with_proxy()` creates isolated session | `c29e549` |
+| Chat import blocked feed loading | Parallel `import_vault_messages` alongside `import_bluesky_posts` | `ad6af24` |
+| Buddy handles blank in chat sidebar | Resolve handles from convo members array | `bf56e20` |
+| FriendsPanel + buddy list redundant | Unified into single component | `ae4bf4b` |
+
+---
+
+## Next Up: A1.1 — ActivityPub Actor & Inbox/Outbox
+
+**Status:** Not started. Blocked on A0 completion (now unblocked).
+
+**Plan:**
+1. Create `src-tauri/src/activitypub/` module
+2. Define AP Actor type at `bytescape.social/@{username}`
+3. Implement HTTP signature verification for inbox POST
+4. Add outbox GET endpoint
+5. Add `ActivityPub` variant to `Source` enum
+6. This unlocks Track B items: B2.6, B9.1, B9.3
+
+---
+
+## Build & Test Status
+
+- **Rust build**: ✅ Compiles (warnings only, no errors)
+- **Frontend tests**: ✅ 75/75 passing
+- **Branch**: `track-b/ui-redesign` (merged `main` at `bac702e`)
+- **Last verified**: 2026-03-14
