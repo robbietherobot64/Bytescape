@@ -264,14 +264,17 @@ async fn resolve_handle_to_did(
         return Ok(clean.to_string());
     }
 
+    // Use public API for handle resolution — works without auth
     let url = format!(
-        "https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle={}",
+        "https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={}",
         clean
     );
 
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", access_jwt))
+    let mut req = client.get(&url);
+    if !access_jwt.is_empty() && access_jwt != "oauth_session" {
+        req = req.header("Authorization", format!("Bearer {}", access_jwt));
+    }
+    let response = req
         .send()
         .await
         .map_err(|e| format!("resolveHandle request failed: {}", e))?;

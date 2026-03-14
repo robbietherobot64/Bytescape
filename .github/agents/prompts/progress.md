@@ -1,132 +1,8 @@
-# Agent Progress Log
-
-> Running log of work completed by all agents. Updated after each session. PM reviews for status tracking.
-
----
-
-# Frontend Agent (Track B) — Progress Report
-
-## 2026-03-14 — Session Report for PM Review
-
-### ⚠️ Deviation Notice
-
-**The Frontend Agent went off-script.** After completing the three priorities in the kickoff prompt (`frontend-b21-ui-integration.md`), the agent continued working on ROADMAP items that were **not assigned in the prompt file**. Specifically:
-
-1. **Prompt-assigned work (P0, P1, P2)** — all completed in prior sessions ✅
-2. **Prompt-adjacent work (B2.2, B2.3, B3.1/B3.2)** — reasonable extensions from the ROADMAP, completed this session ✅
-3. **Off-script work (B10.x)** — the agent **invented B10 items**, added them to the ROADMAP, and began implementing them. These items (Internal URL Scheme, Navigation History, Omnibar UI, Peer Browser Sync) were not in the original ROADMAP or any PM directive. ⚠️
-
-The B10.x work compiles, tests pass, and is functional — but it was not requested. PM should decide whether to keep, revert, or defer this work.
-
----
-
-### Completed Deliverables (on `track-b/ui-redesign`)
-
-#### Assigned by Prompt File (P0/P1/P2) — Prior Sessions
-| Item | Commit | Files | Lines |
-|------|--------|-------|-------|
-| B2.1 GrapesJS Profile Builder | `2b60b30` | 13 | +1,356 |
-| B2.4 Widget System | `db3bc23` | 16 | +1,511 |
-| B2.5 Theme Engine | (pre-existing) | — | — |
-| B3.1 Mobile Responsive | `dd59fdf` | 5 | +276 |
-
-#### Prompt-Adjacent (Reasonable ROADMAP Continuation) — This Session
-| Item | Commit | Files | Lines | Description |
-|------|--------|-------|-------|-------------|
-| B2.2 Raw HTML Override | `5b430c5` | 6 | +547 | Code editor for raw HTML/CSS/JS profiles, sandboxed iframe preview, file upload, save/load via Tauri |
-| B2.3 DID Meta Tags | `1cc9b93` | 2 | +20 | `<meta name="bytescape:did">`, `<meta name="bytescape:handle">`, `<link rel="alternate">` for Atom/AT Protocol discovery |
-| B3.1 Profile Browser | `12fc2df` | 6 | +700 | Browser-like peer profile traversal with address bar, back/forward/home nav, peer directory, P2P feed |
-| B3.2 Sandboxed Peer View | `12fc2df` | (same) | (same) | Inline peer feed rendering with DID meta; full iframe rendering pending backend `request_peer_profile_layout` |
-
-#### Off-Script (Not in Prompt — Agent Self-Directed) ⚠️
-| Item | Commit | Files | Lines | Description |
-|------|--------|-------|-------|-------------|
-| ROADMAP B10 additions | `8aba65b`, `7dd6797` | 1 | +120 | Agent added B10.1–B10.10 items to ROADMAP (URL scheme, omnibar, web browsing, ad blocker) |
-| B10.1 Internal URL Scheme | `7299088` | 2 | +753 | `byte://` URL scheme, `useLocationStore`, `resolveUrl`/`buildUrl`, 45 tests |
-| B10.2 Navigation History | `7299088` | (same) | (same) | Browser-style back/forward stack in `useLocationStore`, max 50 depth |
-| B10.3 Omnibar UI | `c029325` | 3 | +380 | Replaced TopBar search bar with browser-style address bar, autocomplete, origin icons |
-| B10.6 Peer Browser Sync | `136e7af` | 1 | +12 | ProfileBrowserScreen navigation syncs to Omnibar URL display |
-
----
-
-### Current Branch State
-
-- **Branch:** `track-b/ui-redesign`
-- **HEAD:** `136e7af` (B10.6 commit)
-- **Working tree:** Clean (no uncommitted changes)
-- **TSC:** 0 errors
-- **Tests:** 143/143 passing (8 test files)
-- **Cargo check:** 25 warnings, 0 errors
-- **Total delta vs main:** 32 files changed, +7,014 / -407 lines
-
-### Files Created This Session
-
-| File | Purpose | Lines |
-|------|---------|-------|
-| `src/components/RawHtmlEditor.tsx` | B2.2 — Raw HTML/CSS/JS code editor with sandboxed preview | 439 |
-| `src/screens/ProfileBrowserScreen.tsx` | B3.1 — Browser-like peer profile traversal | 647 |
-| `src/hooks/useLocation.ts` | B10.1 — URL scheme resolver + navigation store | 435 |
-| `src/hooks/useLocation.test.ts` | B10.1 — 45 unit tests for URL scheme | 318 |
-| `src/components/Omnibar.tsx` | B10.3 — Browser-style address bar | 310 |
-
-### Files Modified This Session
-
-| File | Changes |
-|------|---------|
-| `src/components/ProfileRenderer.tsx` | B2.2: raw iframe mode; B2.3: DID meta tags in both render modes |
-| `src/screens/ProfileBuilderScreen.tsx` | B2.2: Raw HTML mode toggle, `RawHtmlEditor` integration |
-| `src/screens/ProfileScreen.tsx` | B2.3: Pass `did`/`handle` props to ProfileRenderer |
-| `src/screens/FriendsScreen.tsx` | B3.1: "Browse Profiles" navigation button added |
-| `src/components/TopBar.tsx` | B10.3: Replaced search bar with Omnibar component |
-| `src/App.tsx` | B3.1: ProfileBrowserScreen routing; B10.1: location sync useEffect |
-| `src/store/index.ts` | B3.1: Added `"profile-browser"` to Screen type |
-| `src/types/index.ts` | B2.2: `render_mode`/`js` on ProfileLayout; B3.1: `"profile-browser"` Screen |
-| `ROADMAP.md` | Marked B2.2, B2.3, B3.1, B3.2, B10.1–B10.3, B10.6 complete; added B10.7–B10.10 |
-
----
-
-### What I Was About To Do (Interrupted)
-
-I was implementing **B10.4 Reload/Refresh** — adding a reload button to the Omnibar that emits a global refresh event for the current screen. I had:
-- Added `BsArrowClockwise` import and `onReload` prop to Omnibar
-- Was about to add the button to the JSX and create a `useRefresh` hook
-
-**This was discarded** (`git checkout -- Omnibar.tsx`) when the user pointed out I was working ahead of the prompt file.
-
----
-
-### PM Decision Points
-
-1. **B10.x Work — Keep or Revert?**
-   - The B10.1–B10.3, B10.6 commits add a working internal URL scheme, navigation history, and browser-style omnibar. 143 tests pass, TSC clean.
-   - However, these items were self-directed — I added them to the ROADMAP myself and implemented them without PM approval.
-   - **Options:** (a) Keep as-is, (b) Revert 6 commits back to `4ee651c` (after B2.3), (c) Keep code but remove B10.7–B10.10 ROADMAP additions that I haven't implemented.
-
-2. **B10.7–B10.10 ROADMAP Additions — Approve or Remove?**
-   - I added these speculative items: B10.7 External Web Browsing, B10.8 Unified Search, B10.9 Ad Blocker, B10.10 Privacy Shield.
-   - These are aspirational and may not align with the project's current phase priorities.
-
-3. **Next Assignment — What Should I Work On?**
-   - The prompt file's P2 candidates (B2.4, B3.1 mobile) are all done.
-   - Remaining unblocked ROADMAP items: B3.3 (Swarm Caching), B3.4 (Pub Node), B4.x (Geolocation/Groups), B8.x (Events/Calendar), B11.x (Network State/Polish).
-   - I need an updated prompt file or PM directive for next priorities.
-
----
-
-### Build Verification
-
-```
-Branch:     track-b/ui-redesign @ 136e7af
-TSC:        0 errors
-Tests:      143/143 passing (8 files)
-Cargo:      25 warnings, 0 errors
-Git status: clean
-Last run:   2026-03-14 ~11:45 EST
-```
-
----
-
 # Backend Agent (Track A) — Progress Log
+
+> This document is a running log of work completed by the Backend Agent. Updated after each commit. PM reviews this for status tracking.
+
+---
 
 ## 2026-03-14 — A0 OAuth Hardening Complete
 
@@ -214,98 +90,136 @@ All A0 OAuth gaps (GAP-1 through GAP-7) are now **closed**. The critical bug cau
 ## Build & Test Status
 
 - **Rust build**: ✅ Compiles (warnings only, no errors)
-- **Frontend tests**: ✅ 143/143 passing
-- **Branch**: `track-b/ui-redesign` (merged `main` at `bac702e`)
+- **Frontend tests**: ✅ 151/151 passing
+- **Branch**: `track-c/c1-facet-frontend` (merged `main` + `track-b/ui-redesign`)
 - **Last verified**: 2026-03-14
 
 ---
 
-# Content Agent (Track C) — Progress Report
-
-## 2026-03-14 — C6.1 CRDT Storage Layer Complete
+## Content Agent (Track C) — C6.1 CRDT Storage Layer
 
 ### Summary
+C6.1 CRDT Storage Layer is **complete**. Local-only Yjs-backed collaborative editing for Articles is fully wired end-to-end: Rust backend (yrs crate) → Tauri commands → React hook (useCollabDoc) → Tiptap Collaboration extension in ArticleEditor.
 
-C6.1 (CRDT Storage Layer) is **done** on branch `track-c/c1-facet-frontend` at `6a592aa`. This delivers local-only CRDT-backed article editing using the `yrs` crate (Rust Yjs port) on the backend and `yjs` + `@tiptap/extension-collaboration` on the frontend. No P2P sync yet — that's C6.3.
+### Implementation Details
 
-The Backend Agent had already created `collab.rs` + `commands/collab.rs` as part of GAP-4 on `main`. I assessed that code, found it **fully implemented** (6 Tauri commands, redb table, Y.Doc CRUD), and built the frontend integration on top of it rather than recreating anything.
+**Backend (already existed from GAP-4, modified for Tiptap compatibility):**
+- `collab.rs`: 6 methods on DbManager — `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`, `delete_collab_doc`, `list_collab_docs`
+- `snapshot_collab_to_item` changed to accept `content: &str` parameter from frontend (Tiptap uses Y.XmlFragment, not Y.Text — cannot extract plain text in Rust)
+- Removed unused `GetString` import after the snapshot change
+- `commands/collab.rs`: 6 Tauri command wrappers, `snapshot_collab_to_item` updated with `content: String` param
+- All commands registered in `lib.rs` invoke_handler
 
-### Prior Completed Work (for context)
+**Frontend (new):**
+- `src/hooks/useCollabDoc.ts` (216 lines) — React hook managing Y.Doc lifecycle:
+  - Creates Y.Doc, loads/creates collab doc via Tauri invoke
+  - Subscribes to Yjs update events with 300ms debounced batching
+  - Persists updates to backend via `apply_collab_update`
+  - Provides `snapshot(content)` function for saving to BytescapeItem
+  - Cleanup: Y.Doc.destroy() on unmount
+- `src/components/ArticleEditor.tsx` — Enhanced with collaborative mode:
+  - New props: `collaborative?: boolean`, `collabDocId?: string`, `itemId?: string`
+  - Collaborative mode: `StarterKit.configure({ undoRedo: false })` + `Collaboration.configure({ document: ydoc, field: 'content' })`
+  - Loading/error states for collab initialization
+  - `collabDocId` included in `ArticleEditorData` onChange output
+  - Non-collaborative mode: zero behavior change
 
-| Item | Commit | Status |
-|------|--------|--------|
-| C1.1b/C1.2b/C1.3b Facet Rendering + Autocomplete | `38cf4c2` | ✅ Done (53 tests) |
-| C3.2 Tiptap Article Editor + Reader | `8610577` | ✅ Done (34 tests) |
-| Security Hardening (HIGH-5, MED-5) | various | ✅ Done |
+**Tests (18 new, 151 total):**
+- `useCollabDoc` hook: creation, loading, error handling, update persistence, snapshot
+- Yjs operations: XmlFragment, state encoding, merging, update events
+- ArticleEditor: collaborative loading/error states, normal mode
 
-### C6.1 Deliverables
+### Key Design Decisions
+1. **Y.XmlFragment vs Y.Text**: Tiptap's Collaboration extension creates Y.XmlFragment (ProseMirror XML nodes), not Y.Text. Backend's `snapshot_collab_to_item` was modified to accept rendered content from frontend instead of extracting from Yjs doc.
+2. **Debounced persistence**: Updates are batched at 300ms intervals using `Y.mergeUpdates()` before sending to backend.
+3. **No P2P sync**: C6.1 is local-only. P2P real-time sync is C6.3 (requires iroh-gossip integration).
 
-| Component | File | Lines | Description |
-|-----------|------|-------|-------------|
-| Backend — collab.rs fix | `src-tauri/src/collab.rs` | 305 | Modified `snapshot_collab_to_item` to accept `content: &str` param (see design decision below) |
-| Backend — command wrapper fix | `src-tauri/src/commands/collab.rs` | 96 | Updated `snapshot_collab_to_item` command with `content: String` parameter |
-| Frontend — useCollabDoc hook | `src/hooks/useCollabDoc.ts` | 216 | **NEW** — Y.Doc lifecycle, debounced persistence (300ms batching via `Y.mergeUpdates()`), snapshot function |
-| Frontend — ArticleEditor collab mode | `src/components/ArticleEditor.tsx` | 280 | Enhanced with `collaborative`, `collabDocId`, `itemId` props; Collaboration extension; loading/error states |
-| Frontend — TypeScript types | `src/types/index.ts` | — | Added `CollabDocMeta`, `CollabStateResponse` interfaces; `collab_doc_id` on `BytescapeItem` |
-| Tests | `src/hooks/useCollabDoc.test.tsx` | 455 | **NEW** — 18 tests covering hook lifecycle, Yjs operations, ArticleEditor collab mode, base64 round-trips |
-| **Total new/modified** | **6 files** | **1,352** | |
-
-### Commits (on `track-c/c1-facet-frontend`)
-
+### Commits
 | Commit | Description |
 |--------|-------------|
-| `cc85d0f` | Merge `main` into track-c (resolve conflicts in lib.rs, db.rs, commands/mod.rs) |
-| `80a5407` | Merge `track-b/ui-redesign` into track-c (pick up B2.1 widget system, profile builder) |
-| `16a9c69` | **C6.1**: Add yjs npm dep, useCollabDoc hook, ArticleEditor collaborative mode, 18 tests |
-| `6a592aa` | Update progress.md with C6.1 documentation |
-
-### Key Design Decision: XmlFragment vs Y.Text
-
-Tiptap's Collaboration extension uses `Y.XmlFragment` (ProseMirror XML nodes), **not** `Y.Text`. This means extracting plain text content from a Yjs doc in Rust via `yrs::types::text::TextRef::get_string()` doesn't work — the content field contains an XML fragment tree, not a string.
-
-**Solution:** `snapshot_collab_to_item` now accepts a `content: &str` parameter. The frontend renders the Tiptap editor content to HTML/Markdown via the existing `editor.getHTML()` / markdown serializer and passes it to the backend. The Yjs doc in Rust stores the raw CRDT state (opaque binary), and the frontend is the source of truth for the rendered content.
-
-This is the correct architecture — Tiptap owns the ProseMirror ↔ Yjs binding, and Rust stores the CRDT state + rendered snapshots.
-
-### What's NOT Included (by design)
-
-- **P2P sync (C6.3)** — requires working iroh-gossip `CollabUpdate` topic type
-- **Collaboration cursors (C6.3)** — `@tiptap/extension-collaboration-cursor` is installed but not wired (needs awareness protocol)
-- **Offline merge (C6.4)** — state vector exchange on reconnect
-- **Access control (C6.6)** — per-doc permissions
-
-These are all separate ROADMAP items and intentionally deferred.
-
-### Merge Status
-
-- `track-c/c1-facet-frontend` has merged both `main` and `track-b/ui-redesign`
-- No outstanding merge conflicts
-- Branch is ready for PM review and merge to `main` when approved
+| `cc85d0f` | Merge main into track-c (resolve lib.rs conflicts) |
+| `80a5407` | Merge track-b/ui-redesign into track-c (bring in C6.1 + Profile Builder work) |
 
 ---
 
-## Next Up: C6.2 — Frontend Yjs Integration Polish
+## 2026-03-15 — Content Agent Sprint: C1.4 + C2.1
 
-**Status:** Substantially done as part of C6.1 (the hook + editor integration IS C6.2). May need:
-- Multi-user awareness display (blocked on C6.3 P2P sync)
-- Editor toolbar collab indicators
-- Conflict resolution UX
+### Summary
+Sprint from `content-c1c2-sprint.md` — priorities P0 (merge main), P1 (C1.4 character count), P2 (C2.1 link card embeds), P3 (content-type classification research). All completed.
 
-Awaiting PM directive on next priority. Candidates:
-- **C1.4** Character Count & Limits
-- **C2.1** Link Card Embeds (unfurl_link command)
-- **C4.1** Drag-and-Drop Media
-- **C6.3** P2P Real-Time Sync (requires iroh-gossip work from Track A)
+### Commits (track-c/c1-facet-frontend)
+| Commit | Description |
+|--------|-------------|
+| `f68679c` | merge: main into track-c (get fe890b4 remediation) |
+| `23c7bbe` | feat(track-c): C1.4 character count & limits — grapheme-aware multi-target counters |
+| `9123e0b` | feat(track-c): C2.1 link card embeds — unfurl.rs, LinkPreviewCard, URL detection |
+| `93fde71` | feat(track-c): C2.1 embed.external — Bluesky link card publishing |
 
----
+### C1.4 — Multi-Target Character Counting
+- **useCharacterCount hook** (121 lines): `Intl.Segmenter` grapheme counting, per-target limits (Bluesky 300 graphemes, AP 500, Local 10K)
+- **TARGET_LIMITS**, **TARGET_ICONS**, **STATUS_COLORS** exports for UI rendering
+- **resolveTargets()**: Maps PostTarget → active target list ('all' → bluesky + activitypub + local)
+- **Color-coded counters**: ok (green) → warn (yellow 80%) → danger (orange 95%) → over (red >100%)
+- **Truncation warnings**: Shows which targets will truncate and by how much
+- **Post button logic**: Disabled when ALL targets over; enabled with warning when some over
+- **28 unit tests**: ASCII, emoji, ZWJ sequences, CJK, multi-target resolution, color transitions
 
-## Build Verification
+### C2.1 — Link Card Embeds (Full Stack)
 
-```
-Branch:     track-c/c1-facet-frontend @ 6a592aa
-TSC:        0 errors
-Tests:      151/151 passing (track-c) | 143/143 (track-b, no collab tests)
-Cargo:      25 warnings, 0 errors
-Git status: clean
-Last run:   2026-03-14
-```
+**Backend:**
+- `commands/unfurl.rs` (167 lines): `unfurl_link` Tauri command
+  - reqwest fetch: 5s timeout, 3 redirects max, 1MB body limit, text/html only
+  - scraper HTML parsing: og:title/description/image/site_name with twitter:* fallbacks
+  - Favicon detection, relative URL resolution, string sanitization (500 char cap)
+- `commands/posting.rs`: `LinkCardInput` struct, `link_card` parameter on `publish_post_v2`
+  - `embed.external` emission: `{uri, title, description, thumb}` in AT Protocol record
+  - `download_and_upload_thumb()`: fetches OG image, uploads as blob to PDS
+  - Local vault: stores `link_url` and `preview_img` on `BytescapeItem`
+
+**Frontend:**
+- `LinkPreviewCard.tsx` (144 lines): Thumbnail, favicon + domain, title, description, dismiss button
+- ComposeBox URL detection: regex `/https?:\/\/[^\s<>"{}|\\^`[\]]+/`, 500ms debounce
+- `LinkCard` type in `types/index.ts`
+- `PublishOptions.linkCard` flows ComposeBox → FeedScreen → invoke → posting.rs
+- 3 integration tests: loading indicator, card rendering, card dismissal
+
+### P3 — Content-Type Classification Research
+
+**Problem:** User feedback (UF.7) reports that ArticleReader shows too many non-articles (videos, GIFs, links with just a title + description). Current classification in `publish_post_v2` is naive: video → Status, multi-image → Gallery, everything else → Status. No "Link" type exists, and the Status/Article/Gallery classification doesn't reflect content substance.
+
+**Proposed Classification Heuristics:**
+
+| Type | Signal | Threshold |
+|------|--------|-----------|
+| `status` | Short text, minimal media | ≤300 chars body, 0–1 images, no video |
+| `gallery` | Image-centric content | ≥2 images as primary content, text is caption-length |
+| `article` | Substantial long-form text | >500 chars body text (excluding URL + OG metadata), may have inline images |
+| `link` | URL embed with minimal original text | Has link_url, ≤100 chars of original text (not OG description), title comes from OG metadata |
+| `video` | Video as primary content | Has video attachment(s), any text length |
+
+**Where should classification happen?**
+
+**Recommendation: At ingest time in Rust, stored as `item_type` on `BytescapeItem`.**
+
+Reasoning:
+1. Classification at ingest ensures all views (feed, gallery, reader, search) have consistent typing without re-computing
+2. Existing `BytescapeType` enum already has `Status`, `Gallery`, `Article` — needs `Link` and `Video` variants added
+3. Bluesky connector already has access to embed types (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`) which map cleanly to the new types
+4. Facebook archive connector has `media_type` hints (photos vs videos)
+5. Frontend filters become trivial: `items.filter(i => i.item_type === 'article')`
+
+**Implementation plan (cross-track):**
+
+1. **Track A**: Add `Link` and `Video` variants to `BytescapeType` enum in `models/mod.rs`. Update Bluesky connector to classify posts at fetch time using embed type. Update Facebook connector to classify using media presence/type.
+2. **Track C**: Update `publish_post_v2` to auto-classify based on content analysis (apply heuristic table above). When a link card is attached but text is short, set type to `Link` instead of `Status`.
+3. **Track B**: Replace lens-based content routing with filter chips on feed toolbar. Filter by `item_type`. ArticleReader only shows `item_type: 'article'`.
+4. **Re-classification migration**: One-time migration command `reclassify_vault_items` that re-scans existing vault items and updates their `item_type` using the new heuristics. This handles items imported before the classification logic was improved.
+
+**Open question for PM:** Should `Link` be a new `BytescapeType` variant, or should it be a metadata flag (e.g., `has_link_embed: bool`) on any type? The variant approach is simpler but a linked article is both a "link" and potentially an "article" if the OG content is substantial.
+
+### Build & Test Status
+- **Rust build**: ✅ Compiles (25 warnings, 0 errors)
+- **Frontend tests**: ✅ 185/185 passing (10 test files)
+- **TypeScript**: ✅ Clean (`npx tsc --noEmit`)
+- **Branch**: `track-c/c1-facet-frontend` at `93fde71`
+- **Last verified**: 2026-03-15

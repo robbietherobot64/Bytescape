@@ -47,6 +47,7 @@ pub struct AppState {
     pub media_port: u16,
     pub oauth_manager: oauth::OAuthManager,
     /// Shared HTTP client for connection pooling across all API calls.
+    /// Reusing a single client avoids redundant TLS handshakes per request.
     pub http_client: reqwest::Client,
     /// Guard to ensure `restore_session` runs at most once per app lifetime.
     pub session_restored: AtomicBool,
@@ -472,6 +473,7 @@ pub fn run() {
             commands::profile::list_guestbook_entries,
             commands::profile::delete_guestbook_entry,
             // Link unfurling (C2.1)
+            commands::unfurl::unfurl_link,
             
             // ActivityPub commands (A1.1)
             commands::ap::create_ap_actor,

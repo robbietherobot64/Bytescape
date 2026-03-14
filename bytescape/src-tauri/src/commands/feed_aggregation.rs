@@ -195,29 +195,50 @@ pub async fn get_timeline_unified(
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
 
-    // ── 1. Live timeline ──
-    match crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await {
-        Ok((posts, nc)) => {
-            println!("get_timeline_unified: live timeline returned {} posts", posts.len());
-            next_cursor = nc;
-            feed.extend(posts.into_iter().map(FeedEntry::from));
-        }
-        Err(e) => {
-            eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
-        }
-    }
+    // ── 1 + 2. Live timeline + custom feeds — in parallel ──
+    let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
-    // ── 2. Custom / subscribed feeds ──
-    if !tags.is_empty() || !feed_uris.is_empty() {
-        match crate::commands::import::get_unified_feed(
+    let timeline_fut = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone());
+
+    if has_custom {
+        let custom_fut = crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
-        ).await {
+        );
+
+        let (timeline_result, custom_result) = tokio::join!(timeline_fut, custom_fut);
+
+        match timeline_result {
+            Ok((posts, nc)) => {
+                #[cfg(debug_assertions)]
+                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
+                next_cursor = nc;
+                feed.extend(posts.into_iter().map(FeedEntry::from));
+            }
+            Err(e) => {
+                eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
+            }
+        }
+
+        match custom_result {
             Ok((posts, _)) => {
+                #[cfg(debug_assertions)]
                 println!("get_timeline_unified: custom feeds returned {} posts", posts.len());
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
+            }
+        }
+    } else {
+        match timeline_fut.await {
+            Ok((posts, nc)) => {
+                #[cfg(debug_assertions)]
+                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
+                next_cursor = nc;
+                feed.extend(posts.into_iter().map(FeedEntry::from));
+            }
+            Err(e) => {
+                eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
             }
         }
     }

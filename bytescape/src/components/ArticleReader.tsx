@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { sanitizeHtml } from '../utils/sanitize';
 import { markdownToHtml, countWords, readingTime } from '../utils/markdown';
+import { linkifyFacetsInHtml } from '../utils/richtext';
 
 export interface ArticleReaderProps {
     title: string;
@@ -14,7 +15,7 @@ export function ArticleReader({ title, content, source, createdAt, updatedAt }: 
     const [scrollProgress, setScrollProgress] = useState(0);
     const contentRef = useRef<HTMLDivElement>(null);
 
-    const html = sanitizeHtml(markdownToHtml(content));
+    const html = linkifyFacetsInHtml(sanitizeHtml(markdownToHtml(content)));
     const wc = countWords(content);
     const rt = readingTime(wc);
 
