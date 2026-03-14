@@ -290,7 +290,21 @@ function App() {
     setImportStatus("Connecting to Bluesky...");
     setError("");
     try {
-      console.log("App: Starting Bluesky import...");
+      console.log("App: Starting Bluesky import + chat import in parallel...");
+
+      // Launch chat import in parallel — don't block on feed import
+      // (feed import can take minutes downloading media for many posts)
+      const chatPromise = invoke<any>("import_vault_messages")
+        .then((chatResult) => {
+          console.log("App: Chat import result:", chatResult);
+          if (chatResult?.error === "chat_scope_missing") {
+            console.warn("App: Chat scope missing — user needs to re-login for chat support");
+          }
+        })
+        .catch((chatErr: any) => {
+          console.error("App: Chat import FAILED:", chatErr);
+        });
+
       const count = await invoke<number>("import_bluesky_posts");
       console.log(`App: Import finished. Found ${count} new posts.`);
 
@@ -300,8 +314,8 @@ function App() {
         setImportStatus(`✅ Up to date — no new posts.`);
       }
 
-      // Pull latest messages in same import flow (ChatScreen will pick up new data via polling)
-      try { await invoke<any>("import_vault_messages"); } catch { /* chat handles its own errors */ }
+      // Wait for chat import to finish too (it likely already has)
+      await chatPromise;
 
       // Ensure stats and feed are reloaded AFTER the import is confirmed finished
       console.log("App: Reloading archive stats and feed posts...");

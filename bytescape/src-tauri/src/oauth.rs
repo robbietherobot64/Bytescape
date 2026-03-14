@@ -336,6 +336,7 @@ impl OAuthManager {
                 scopes: Some(vec![
                     Scope::Known(KnownScope::Atproto),
                     Scope::Known(KnownScope::TransitionGeneric),
+                    Scope::Known(KnownScope::TransitionChatBsky),
                 ]),
             },
             keys: None,
@@ -432,6 +433,7 @@ impl OAuthManager {
                     scopes: vec![
                         Scope::Known(KnownScope::Atproto),
                         Scope::Known(KnownScope::TransitionGeneric),
+                        Scope::Known(KnownScope::TransitionChatBsky),
                     ],
                     state: Some(handle.to_string()),
                     redirect_uri: Some(redirect_uri),
@@ -897,7 +899,9 @@ impl OAuthManager {
         use atrium_xrpc::XrpcClient;
         use atrium_api::agent::CloneWithProxy;
 
+        println!("authenticated_chat_get: url={}", url);
         let (nsid, query) = Self::parse_xrpc_url(url)?;
+        println!("authenticated_chat_get: nsid={}, query={:?}", nsid, query);
 
         let session_guard = self.session.lock().await;
         let session = session_guard

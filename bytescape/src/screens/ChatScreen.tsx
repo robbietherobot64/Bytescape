@@ -62,9 +62,14 @@ export function ChatScreen() {
         if (!auth) return;
         const poll = async () => {
             try {
-                await invoke<any>('import_vault_messages');
+                const result = await invoke<any>('import_vault_messages');
+                if (result?.error === 'chat_scope_missing') {
+                    console.warn('ChatScreen: Chat scope missing — re-login required');
+                }
                 await loadMessages();
-            } catch { /* silent */ }
+            } catch (e) {
+                console.error('ChatScreen: import_vault_messages failed:', e);
+            }
         };
         poll();
         const interval = setInterval(poll, 30000);
