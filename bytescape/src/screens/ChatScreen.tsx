@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useAuthStore } from '../store';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openBlueskyProfile } from '../utils/openInApp';
 import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
@@ -592,7 +592,7 @@ export function ChatScreen() {
                                             <button
                                                 className="friend-item-action-btn"
                                                 onClick={() => {
-                                                    openUrl(`https://bsky.app/profile/${buddy.handle}`).catch(console.error);
+                                                    openBlueskyProfile(buddy.handle);
                                                 }}
                                                 title={`${buddy.handle}'s profile`}
                                             >

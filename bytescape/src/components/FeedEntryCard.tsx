@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openBlueskyProfile } from '../utils/openInApp';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { FeedEntry, TaggedPerson, Audience, LikeResult, ThreadReply } from '../types';
@@ -353,7 +353,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                     className="avatar"
                     onClick={() => {
                         if (entry.author_handle && entry.author_handle !== 'You') {
-                            openUrl(`https://bsky.app/profile/${entry.author_handle}`).catch(console.error);
+                            openBlueskyProfile(entry.author_handle);
                         }
                     }}
                     style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
@@ -370,7 +370,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                         className="author-name"
                         onClick={() => {
                             if (entry.author_handle && entry.author_handle !== 'You') {
-                                openUrl(`https://bsky.app/profile/${entry.author_handle}`).catch(console.error);
+                                openBlueskyProfile(entry.author_handle);
                             }
                         }}
                         style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
