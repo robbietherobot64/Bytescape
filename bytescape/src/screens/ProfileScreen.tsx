@@ -6,7 +6,7 @@ import { Win98Box } from '../components/Win98Box';
 import { ProfileRenderer } from '../components/ProfileRenderer';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { useNavStore } from '../store';
-import { BsPersonFill, BsPalette2 } from 'react-icons/bs';
+import { BsPersonFill, BsPencilFill } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -141,20 +141,22 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         top: 12,
                         right: 12,
                         display: 'flex',
+                        flexDirection: 'column',
                         alignItems: 'center',
-                        gap: 6,
-                        padding: '6px 14px',
+                        gap: 2,
+                        padding: '8px 14px',
                         border: '1px solid var(--accent-purple, #7c3aed)',
                         borderRadius: 'var(--border-radius, 4px)',
                         background: 'rgba(124, 58, 237, 0.2)',
                         color: 'var(--accent-purple, #7c3aed)',
                         cursor: 'pointer',
-                        fontSize: 13,
+                        fontSize: 11,
                         fontWeight: 600,
                         zIndex: 10,
                     } as React.CSSProperties}
                 >
-                    <BsPalette2 /> {hasCustomLayout ? 'Edit Layout' : 'Customize'}
+                    <BsPencilFill size={16} />
+                    <span>Customize</span>
                 </button>
             </div>
 
@@ -166,7 +168,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             ) : (
             <>
             {/* ═══ Profile Tabs & Content ═══ */}
-            <div className="profile-tabs" style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border-outset-dark)', margin: '0 16px' } as React.CSSProperties}>
+            <div className="profile-tabs" style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border-outset-dark)', margin: '0 auto', maxWidth: 560, padding: '0 16px' } as React.CSSProperties}>
                 <button
                     className={`wall-filter-btn ${profileTab === 'wall' ? 'active' : ''}`}
                     onClick={() => setProfileTab('wall')}
@@ -185,8 +187,32 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
             <div className="profile-content-narrow" style={{ maxWidth: 560, margin: '16px auto', padding: '0 16px' } as React.CSSProperties}>
                 {profileTab === 'wall' ? (
-                    /* Wall tab — guestbook-style posts by/to the user */
-                    <div>
+                    /* Wall tab — bio sections + guestbook */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 } as React.CSSProperties}>
+                        {/* About Me */}
+                        <Win98Box variant="window" title="About Me">
+                            <div className="profile-about-body">
+                                <p className="profile-about-text" style={{ color: 'var(--text-muted)', fontStyle: 'italic' } as React.CSSProperties}>
+                                    Tell the world about yourself. Click Customize to edit.
+                                </p>
+                            </div>
+                        </Win98Box>
+
+                        {/* Connections */}
+                        <Win98Box variant="window" title="Connections">
+                            <div className="profile-about-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 } as React.CSSProperties}>
+                                {auth?.source === 'bluesky' && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--bg-toolbar)', border: 'var(--border-default)', fontSize: '0.82rem' } as React.CSSProperties}>
+                                        🦋 {auth.handle}
+                                    </span>
+                                )}
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--bg-toolbar)', border: 'var(--border-default)', fontSize: '0.82rem', color: 'var(--text-muted)' } as React.CSSProperties}>
+                                    + Add a link
+                                </span>
+                            </div>
+                        </Win98Box>
+
+                        {/* Guestbook */}
                         <Win98Box variant="window" title="Guestbook">
                             <div className="profile-about-body">
                                 <p className="profile-about-text">

@@ -136,7 +136,7 @@ export interface ParsedPost {
     location?: PostLocation | null;
 }
 
-export type BytescapeType = 'Status' | 'Gallery' | 'Article';
+export type BytescapeType = 'Status' | 'Gallery' | 'Article' | 'Link' | 'Video';
 export type SyndicationStatus = 'LocalOnly' | 'PendingSyndication' | 'Syndicated';
 export type Audience = 'Local' | 'Bluesky' | 'P2p' | 'Activitypub';
 
@@ -444,7 +444,7 @@ export interface DocTicketInfo {
 export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
 
 // ─── Theme ───
-export type ThemeId = 'geocities' | 'win98' | 'midnight';
+export type ThemeId = 'geocities' | 'win98' | 'midnight' | 'hacker';
 
 // ─── Profile Builder & Widget Types (B2.1 / B2.4) ───
 export interface ProfileLayout {

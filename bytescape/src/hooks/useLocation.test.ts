@@ -19,9 +19,9 @@ describe('B10.1 — resolveUrl()', () => {
         expect(route!.feedTab).toBe('following');
     });
 
-    it('resolves byte://feed/subscribed to feed with all tab (removed tab, fallback)', () => {
+    it('resolves byte://feed/subscribed to feed with subscribed tab', () => {
         const route = resolveUrl('byte://feed/subscribed');
-        expect(route!.feedTab).toBe('all');
+        expect(route!.feedTab).toBe('subscribed');
     });
 
     it('resolves byte://feed/you to feed with you tab', () => {

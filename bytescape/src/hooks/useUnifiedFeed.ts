@@ -41,13 +41,14 @@ function nestOwnerReplies(entries: FeedEntry[]): FeedEntry[] {
     return entries.filter((_, i) => !replyIndices.has(i));
 }
 
-export type FeedTab = 'all' | 'following' | 'you';
+export type FeedTab = 'all' | 'following' | 'subscribed' | 'you';
 
-export const LIVE_TABS: FeedTab[] = ['all', 'following'];
+export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed'];
 
 export const FEED_TAB_LABELS: Record<FeedTab, string> = {
     all: 'All',
     following: 'Following',
+    subscribed: 'Subscribed',
     you: 'You',
 };
 export const FEED_FILTER_ALL = '__all__';
@@ -184,6 +185,42 @@ export function useUnifiedFeed({
                 setCursor(bskyCursor);
                 setCache('you', dedupedYou, bskyCursor);
 
+            } else if (tab === 'subscribed') {
+                // ── Subscribed tab: only custom feeds + hashtags (curated content) ──
+                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
+                const feedUris = customFeedUris(feedsData);
+                const tags = await invoke<string[]>('list_followed_hashtags').catch((): string[] => []);
+                setFollowedHashtags(tags);
+
+                if (feedUris.length > 0 || tags.length > 0) {
+                    const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                        tags,
+                        feedUris,
+                        limit: 30,
+                        cursor: null,
+                        vaultOffset: 0,
+                    }).catch(() => null);
+
+                    if (isStale()) return;
+                    setSavedFeeds(feedsData);
+                    setCachedSavedFeeds(feedsData);
+
+                    if (response) {
+                        const deduped = deduplicateFeedEntries(response.items);
+                        setFeedEntries(deduped);
+                        setCursor(response.next_cursor);
+                        setCache('subscribed', deduped, response.next_cursor);
+                    } else {
+                        setFeedEntries([]);
+                        setCursor(null);
+                    }
+                } else {
+                    if (isStale()) return;
+                    setSavedFeeds(feedsData);
+                    setFeedEntries([]);
+                    setCursor(null);
+                }
+
             } else if (tab === 'all') {
                 // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
                 const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
@@ -309,6 +346,20 @@ export function useUnifiedFeed({
                 setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...newEntries])));
                 setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
                 setCursor(bskyCursor);
+
+            } else if (activeTab === 'subscribed' && cursor) {
+                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                    tags: followedHashtags || [],
+                    feedUris: customFeedUris(savedFeeds),
+                    limit: 30,
+                    cursor,
+                    vaultOffset: 0,
+                }).catch(() => null);
+
+                if (response) {
+                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...response.items]));
+                    setCursor(response.next_cursor);
+                }
 
             } else if (activeTab === 'all') {
                 const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {

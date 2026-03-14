@@ -33,6 +33,13 @@ const THEME_OPTIONS: ThemeOption[] = [
         description: 'Deep blues and soft purples for late-night browsing. Easy on the eyes.',
         swatches: ['#0f0f1a', '#1a1a2e', '#16213e', '#7c3aed', '#06b6d4'],
     },
+    {
+        id: 'hacker',
+        label: 'Hacker Mode',
+        icon: '🖥️',
+        description: 'Off-black & green console aesthetic. Monospace font, zero rounded corners.',
+        swatches: ['#0a0a0a', '#0d0d0d', '#111111', '#00ff41', '#0d6f2d'],
+    },
 ];
 
 /**

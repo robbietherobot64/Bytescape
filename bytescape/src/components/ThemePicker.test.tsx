@@ -44,10 +44,10 @@ describe('ThemePicker', () => {
         expect(screen.getByText(/late-night browsing/)).toBeTruthy();
     });
 
-    it('renders 3 theme buttons', () => {
+    it('renders 4 theme buttons', () => {
         const { container } = render(<ThemePicker />);
         // Count only the top-level theme selection buttons (with aria-pressed)
         const themeButtons = container.querySelectorAll('button[aria-pressed]');
-        expect(themeButtons.length).toBe(3);
+        expect(themeButtons.length).toBe(4);
     });
 });

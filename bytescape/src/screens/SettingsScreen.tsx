@@ -135,8 +135,8 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
                         Linked Accounts
                     </div>
-                    {auth?.source === 'bluesky' ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                    {auth?.source === 'bluesky' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', marginBottom: 8 }}>
                             <span style={{ fontSize: '1.2rem' }}>🦋</span>
                             <div style={{ flex: 1 }}>
                                 <strong style={{ fontSize: '0.9rem' }}>{auth.handle}</strong>
@@ -144,57 +144,68 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                             </div>
                             <span style={{ color: 'var(--accent-green)', fontSize: '0.82rem', fontWeight: 600 }}>✓ Linked</span>
                         </div>
+                    )}
+
+                    {/* Green Plus — Connect Account */}
+                    {!showLinkBluesky ? (
+                        <button
+                            onClick={() => setShowLinkBluesky(true)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                                padding: '12px 18px',
+                                background: 'rgba(34, 197, 94, 0.1)',
+                                border: '2px dashed #22c55e',
+                                cursor: 'pointer',
+                                width: '100%',
+                                fontFamily: 'inherit',
+                                fontSize: '0.9rem',
+                                fontWeight: 600,
+                                color: '#22c55e',
+                                transition: 'background 0.15s',
+                            } as React.CSSProperties}
+                        >
+                            <span style={{ fontSize: '1.4rem', lineHeight: 1 } as React.CSSProperties}>＋</span>
+                            Connect Account
+                        </button>
                     ) : (
-                        <>
-                            {linkSuccess && (
-                                <p className="text-sm" style={{ color: 'var(--accent-green)', marginBottom: 12 }}>{linkSuccess}</p>
-                            )}
-                            {!showLinkBluesky ? (
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={() => setShowLinkBluesky(true)}
-                                    style={{ padding: '10px 18px' }}
-                                >
-                                    + Link New Account
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
+                                <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setLinkError(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                    Cancel
                                 </button>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
-                                        <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setLinkError(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
-                                            Cancel
-                                        </button>
-                                    </div>
-                                    <input
-                                        className="input-field"
-                                        type="text"
-                                        placeholder="Handle (e.g. user.bsky.social)"
-                                        value={linkIdentifier}
-                                        onChange={(e) => setLinkIdentifier(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
-                                    />
-                                    <input
-                                        className="input-field"
-                                        type="password"
-                                        placeholder="App Password"
-                                        value={linkPassword}
-                                        onChange={(e) => setLinkPassword(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
-                                    />
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={handleLinkBluesky}
-                                        disabled={linkLoading}
-                                    >
-                                        {linkLoading ? "Linking..." : "Connect & Link"}
-                                    </button>
-                                    {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
-                                    <p className="text-xs text-muted" style={{ margin: 0 }}>
-                                        Use an App Password from Bluesky Settings → Privacy → App Passwords.
-                                    </p>
-                                </div>
-                            )}
-                        </>
+                            </div>
+                            <input
+                                className="input-field"
+                                type="text"
+                                placeholder="Handle (e.g. user.bsky.social)"
+                                value={linkIdentifier}
+                                onChange={(e) => setLinkIdentifier(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
+                            />
+                            <input
+                                className="input-field"
+                                type="password"
+                                placeholder="App Password"
+                                value={linkPassword}
+                                onChange={(e) => setLinkPassword(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
+                            />
+                            <button
+                                className="btn btn-primary"
+                                onClick={handleLinkBluesky}
+                                disabled={linkLoading}
+                            >
+                                {linkLoading ? "Linking..." : "Connect & Link"}
+                            </button>
+                            {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
+                            {linkSuccess && <p className="text-sm" style={{ color: 'var(--accent-green)', margin: 0 }}>{linkSuccess}</p>}
+                            <p className="text-xs text-muted" style={{ margin: 0 }}>
+                                Use an App Password from Bluesky Settings → Privacy → App Passwords.
+                            </p>
+                        </div>
                     )}
                 </div>
             </div>
@@ -208,58 +219,37 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                 <ThemePicker />
             </div>
 
-            {/* P2P Connections */}
+            {/* P2P Sync — simplified */}
             <div className="card" style={{ marginTop: 16 }}>
-                <h3>🔗 P2P Connections</h3>
-                <p className="text-muted text-sm" style={{ marginBottom: 16 }}>
-                    Connect devices to sync your vault peer-to-peer.
+                <h3>🔗 Device Sync</h3>
+                <p className="text-muted text-sm" style={{ marginBottom: 12 }}>
+                    Sync your vault across devices using peer-to-peer tickets.
                 </p>
-                
-                <div style={{ display: 'grid', gap: 16 }}>
-                    <div style={{ padding: 12, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
-                        <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Create New Group</h4>
-                        <button className="btn btn-primary" onClick={createSyncDoc} disabled={loadingSync}>
-                            {loadingSync ? 'Creating...' : 'Generate New Sync Ticket'}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' } as React.CSSProperties}>
+                    <button className="btn btn-primary" onClick={createSyncDoc} disabled={loadingSync} style={{ flex: 1, minWidth: 120 } as React.CSSProperties}>
+                        {loadingSync ? 'Working...' : '🎟️ Create Ticket'}
+                    </button>
+                    <div style={{ display: 'flex', gap: 4, flex: 2, minWidth: 200 } as React.CSSProperties}>
+                        <input
+                            className="input-field"
+                            type="text"
+                            placeholder="Paste ticket to join..."
+                            value={joinTicket}
+                            onChange={e => setJoinTicket(e.target.value)}
+                            style={{ flex: 1 } as React.CSSProperties}
+                        />
+                        <button className="btn btn-primary" onClick={joinSyncDoc} disabled={!joinTicket || loadingSync}>
+                            Join
                         </button>
-                        {createdTicket && (
-                            <div style={{ marginTop: 12 }}>
-                                <p className="text-xs text-muted">Share this ticket with another device:</p>
-                                <div style={{ 
-                                    background: 'var(--bg-toolbar)', 
-                                    padding: 8, 
-                                    wordBreak: 'break-all',
-                                    fontSize: '0.8rem',
-                                    fontFamily: 'monospace',
-                                    userSelect: 'all',
-                                    cursor: 'pointer',
-                                    border: 'var(--border-default)',
-                                } as React.CSSProperties} onClick={() => copyToClipboard(createdTicket)}>
-                                    {createdTicket}
-                                </div>
-                                <p className="text-xs" style={{ marginTop: 4, color: 'var(--accent-green)' }}>
-                                    (Click to copy)
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div style={{ padding: 12, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
-                        <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem' }}>Join Existing Group</h4>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                           <input 
-                                className="input-field"
-                                type="text" 
-                                placeholder="Paste ticket here..." 
-                                value={joinTicket}
-                                onChange={e => setJoinTicket(e.target.value)}
-                           />
-                           <button className="btn btn-primary" onClick={joinSyncDoc} disabled={!joinTicket || loadingSync}>
-                                {loadingSync ? 'Joining...' : 'Join'}
-                           </button>
-                        </div>
                     </div>
                 </div>
-                {syncStatus && <p className="text-sm" style={{ marginTop: 12, color: syncStatus.includes('Error') ? 'var(--accent-red)' : 'var(--accent-green)' }}>{syncStatus}</p>}
+                {createdTicket && (
+                    <div style={{ marginTop: 10, background: 'var(--bg-toolbar)', padding: 8, fontFamily: 'monospace', fontSize: '0.75rem', wordBreak: 'break-all', cursor: 'pointer', border: 'var(--border-default)' } as React.CSSProperties} onClick={() => copyToClipboard(createdTicket)}>
+                        {createdTicket}
+                        <span style={{ color: 'var(--accent-green)', marginLeft: 8, fontSize: '0.7rem' } as React.CSSProperties}>📋 click to copy</span>
+                    </div>
+                )}
+                {syncStatus && <p className="text-sm" style={{ marginTop: 8, color: syncStatus.includes('Error') ? 'var(--accent-red)' : 'var(--accent-green)' }}>{syncStatus}</p>}
             </div>
 
             {/* Data Management */}

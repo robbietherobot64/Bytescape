@@ -11,34 +11,34 @@ interface FriendsScreenProps {
 }
 
 export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreenProps) {
-    const [subview, setSubview] = useState<'peers' | 'following' | 'followers'>('peers');
+    const [subview, setSubview] = useState<'following' | 'followers' | 'peers'>('following');
 
     return (
         <div className="friends-screen">
             <div className="friends-sidebar">
                 <h3>Social</h3>
-                <button
-                    className={`nav-item ${subview === 'peers' ? 'active' : ''}`}
-                    onClick={() => setSubview('peers')}
-                >
-                    🌐 P2P Network
-                </button>
                 {auth?.source === 'bluesky' && (
                     <>
                         <button
                             className={`nav-item ${subview === 'following' ? 'active' : ''}`}
                             onClick={() => setSubview('following')}
                         >
-                            Following
+                            👥 Following
                         </button>
                         <button
                             className={`nav-item ${subview === 'followers' ? 'active' : ''}`}
                             onClick={() => setSubview('followers')}
                         >
-                            Followers
+                            👤 Followers
                         </button>
                     </>
                 )}
+                <button
+                    className={`nav-item ${subview === 'peers' ? 'active' : ''}`}
+                    onClick={() => setSubview('peers')}
+                >
+                    🌐 P2P Peers
+                </button>
             </div>
 
             <div className="friends-content">
@@ -585,7 +585,16 @@ function BlueskyFollowsView({ auth, subview }: { auth: AuthStatus | null; subvie
 
             <div className="friends-list">
                 {people.map(person => (
-                    <div key={person.did} className="friend-card">
+                    <div
+                        key={person.did}
+                        className="friend-card"
+                        onClick={() => {
+                            if (person.handle) {
+                                window.open(`https://bsky.app/profile/${person.handle}`, '_blank');
+                            }
+                        }}
+                        title={`View @${person.handle}'s profile`}
+                    >
                         <div className="friend-avatar">
                             {person.avatar ? (
                                 <img src={person.avatar} alt={person.handle} />

@@ -41,7 +41,8 @@ export function FeedRightPanel({
 }: FeedRightPanelProps) {
 
     const panelTitle =
-        activeTab === 'following' ? 'My Contacts' :
+        activeTab === 'following' ? 'Following' :
+        activeTab === 'subscribed' ? 'Subscriptions' :
         activeTab === 'you' ? 'Your Posts' :
         'Discovery Tools';
 
@@ -54,20 +55,99 @@ export function FeedRightPanel({
             <div className="right-panel-body sidebar-list">
                 {activeTab === 'following' ? (
                     <div>
-                        {followingList.map(profile => (
-                            <Win98Box key={profile.did} variant="raised" className="contact-item-card">
-                                <div className="contact-avatar">
-                                    {profile.handle?.[0]?.toUpperCase()}
+                        {/* Recently active follows — compact summary */}
+                        <div className="panel-section">
+                            <div className="panel-section-label">Active Follows</div>
+                        </div>
+                        {followingList.slice(0, 12).map(profile => (
+                            <div
+                                key={profile.did}
+                                className="contact-mini-row"
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', cursor: 'pointer' } as React.CSSProperties}
+                                onClick={() => {
+                                    if (profile.handle) {
+                                        window.open(`https://bsky.app/profile/${profile.handle}`, '_blank');
+                                    }
+                                }}
+                                title={`@${profile.handle}`}
+                            >
+                                <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--bg-toolbar)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0, overflow: 'hidden' } as React.CSSProperties}>
+                                    {profile.avatar ? (
+                                        <img src={profile.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' } as React.CSSProperties} />
+                                    ) : (
+                                        profile.handle?.[0]?.toUpperCase()
+                                    )}
                                 </div>
-                                <div className="contact-info">
-                                    <div className="contact-name">{profile.displayName || profile.handle}</div>
-                                    <div className="contact-handle">{profile.handle}</div>
-                                </div>
-                            </Win98Box>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--link-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as React.CSSProperties}>
+                                    {profile.displayName || profile.handle}
+                                </span>
+                            </div>
                         ))}
                         {followingList.length === 0 && (
-                            <div className="empty-state panel-empty">No contacts found.</div>
+                            <div className="empty-state panel-empty">No follows found.</div>
                         )}
+                        {followingList.length > 12 && (
+                            <div className="panel-hint" style={{ marginTop: 8 } as React.CSSProperties}>
+                                +{followingList.length - 12} more
+                            </div>
+                        )}
+                    </div>
+                ) : activeTab === 'subscribed' ? (
+                    <div>
+                        {/* Subscribed tab — curated feed sources + hashtags */}
+                        <div className="panel-section">
+                            <div className="panel-section-label">Feed Sources</div>
+                            <select
+                                className="input-field"
+                                value={selectedFeedUri}
+                                onChange={e => setSelectedFeedUri(e.target.value)}
+                            >
+                                <option value={FEED_FILTER_ALL}>All Subscribed Feeds</option>
+                                {savedFeeds
+                                    .filter(feed => !feed.uri.includes('app.bsky.feed.generator/following'))
+                                    .map(feed => (
+                                        <option key={feed.uri} value={feed.uri}>
+                                            {feed.displayName || 'Custom Feed'}
+                                        </option>
+                                    ))}
+                            </select>
+                            {savedFeeds.filter(f => !f.uri.includes('app.bsky.feed.generator/following')).length === 0 && (
+                                <div className="panel-hint" style={{ marginTop: 8 } as React.CSSProperties}>
+                                    No custom feeds found. Subscribe to feeds on Bluesky to see them here.
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Hashtag management */}
+                        <div className="panel-section">
+                            <div className="panel-section-label">Followed Tags</div>
+                            <div className="hashtag-input-row">
+                                <input
+                                    className="input-field"
+                                    value={hashtagInput}
+                                    onChange={e => setHashtagInput(e.target.value)}
+                                    onKeyDown={e => e.key === 'Enter' && handleAddHashtag()}
+                                    placeholder="#topic"
+                                />
+                                <button className="btn btn-primary hashtag-add-btn" onClick={handleAddHashtag}>+</button>
+                            </div>
+                            <div className="hashtag-pills">
+                                {followedHashtags.map(tag => (
+                                    <div key={tag} className="hashtag-pill">
+                                        <span>#{tag}</span>
+                                        <button
+                                            className="hashtag-remove-btn"
+                                            onClick={() => handleRemoveHashtag(tag)}
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            {followedHashtags.length === 0 && (
+                                <div className="panel-hint">No tags followed yet.</div>
+                            )}
+                        </div>
                     </div>
                 ) : activeTab === 'you' ? (
                     <div>

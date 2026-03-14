@@ -31,6 +31,7 @@ interface OmnibarProps {
 const KNOWN_ROUTES = [
     { url: 'byte://feed', label: 'Feed — All', icon: '🏠' },
     { url: 'byte://feed/following', label: 'Feed — Following', icon: '🏠' },
+    { url: 'byte://feed/subscribed', label: 'Feed — Subscribed', icon: '🏠' },
     { url: 'byte://feed/you', label: 'Feed — Your Posts', icon: '🏠' },
     { url: 'byte://chat', label: 'Chat', icon: '🏠' },
     { url: 'byte://vault', label: 'Vault', icon: '🏠' },

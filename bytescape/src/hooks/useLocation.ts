@@ -64,7 +64,7 @@ export function resolveUrl(url: string): ResolvedRoute | null {
     switch (base) {
         case 'feed': {
             const tab = (segments[1] as FeedTab) || 'all';
-            const validTabs: FeedTab[] = ['all', 'following', 'you'];
+            const validTabs: FeedTab[] = ['all', 'following', 'subscribed', 'you'];
             return {
                 screen: 'feed',
                 sidebar: 'feed',
