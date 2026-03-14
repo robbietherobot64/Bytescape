@@ -563,3 +563,89 @@ Sprint focused on user feedback items the PM flagged as unaddressed. Three prior
 | Commit | Description |
 |--------|-------------|
 | `5f72a4c`→`d6108a8` | Previous session's classify.rs + classification types + this session's feed_entry tests |
+---
+
+## 2026-03-15 — Frontend Agent: User Feedback Blitz ✅
+
+### Summary
+Sprint from `frontend-b10-b11-sprint.md` — 6 UF items addressed in a single commit. All user feedback priorities P1–P6 completed.
+
+### Commit
+
+| Commit | Description |
+|--------|-------------|
+| `4989f10` | **feat(track-b): UF.1/UF.5/UF.6/UF.9/UF.11/UF.12** — user feedback blitz |
+
+### UF.1 — Full-Width + Maximized Window ✅
+- Added `"maximized": true` to `tauri.conf.json` window config
+- Changed `--content-max-width` from `960px` to `100%` in `App.css`
+- Window now launches maximized, content fills full width
+
+### UF.5 — Following/Subscribed Tab Cleanup ✅
+- Removed `subscribed` tab entirely (was duplicate of All tab)
+- 3 tabs remain: All / Following / You
+- Cleaned up all references across 7 files: FeedScreen, useUnifiedFeed, FeedRightPanel, ContextPanel, Omnibar, useLocation, useLocation.test
+- Removed subscribed fetch/loadMore branches from useUnifiedFeed hook
+- Removed subscribed panel content from FeedRightPanel
+
+### UF.6 — Feed Content-Type Filter Chips ✅
+- Replaced Gallery/Reader/List lens toggles with content-type filter chips
+- 5 chip filters: 📝 All · 📸 Images · 🎬 Video · 📰 Articles · 🔗 Links
+- Filters use `item_type` from FeedEntry (wired by Content Agent's classification)
+- Shows "No content" empty state when filter matches nothing
+- Added `.feed-content-type-filters` and `.content-type-chip` CSS with GeoCities bevel styling
+
+### UF.9 — Profile Page Rework ✅
+- Removed stats bar (Total Posts, With Media, Vault Files, Storage)
+- Removed Networks sidebar box, visitor counter
+- Added Wall/Posts tab switcher
+- Wall tab: Guestbook placeholder (future feature)
+- Posts tab: User's posts with source/network filter
+- Narrowed post cards to max-width 560px, centered
+- Removed unused VaultStats fetch from loadInitial
+
+### UF.11 — Settings Consolidation ✅
+- Merged Account + Connected Accounts → single "🪪 Identity" section with linked accounts inline
+- Removed "🦋 Bluesky Feeds" section entirely (was read-only list of saved feeds)
+- Renamed "🔄 Device Sync (Beta)" → "🔗 P2P Connections"
+- Renamed "Data" / "🗑️ Clear Vault" → "📦 Data Management" / "🗑️ Delete Account"
+- Added "📤 Export Data" placeholder button (shows alert "coming soon")
+- Removed unused `savedFeeds`, `loadingFeeds`, `fetchSavedFeeds`, `GeneratorView` import, `isLocalOnly`
+
+### UF.12 — Import/Audit Screen Text ✅
+- "🔥 Shredding..." → "🔥 Importing..."
+- "🗑️ Shred Surveillance & Save Memories" → "🗑️ Remove Trackers & Save Memories"
+- "✅ Exorcism Complete" → "✅ Import Complete"
+
+### Files Modified (12 files, -421/+220 lines)
+
+| File | Changes |
+|------|---------|
+| `src-tauri/tauri.conf.json` | Added `"maximized": true` |
+| `src/App.css` | `--content-max-width: 100%`, replaced lens CSS with filter chip CSS |
+| `src/components/ContextPanel.tsx` | Removed subscribed from tab array |
+| `src/components/FeedRightPanel.tsx` | Removed subscribed panel branch (-60 lines) |
+| `src/components/Omnibar.tsx` | Removed subscribed route |
+| `src/hooks/useLocation.test.ts` | Updated subscribed test to verify fallback to 'all' |
+| `src/hooks/useLocation.ts` | Removed subscribed from valid tabs |
+| `src/hooks/useUnifiedFeed.ts` | Removed FeedTab subscribed type, fetch/loadMore branches (-53 lines) |
+| `src/screens/AuditScreen.tsx` | Fixed "Exorcism" and "Shred Surveillance" text |
+| `src/screens/FeedScreen.tsx` | Replaced lens toggles with content-type filter chips |
+| `src/screens/ProfileScreen.tsx` | Narrow cards, Wall/Posts tabs, removed stats |
+| `src/screens/SettingsScreen.tsx` | Merged Identity, removed Bluesky Feeds/Device Sync |
+
+### Verification
+- `npx tsc --noEmit`: 0 errors
+- `pnpm test -- --run`: 247/247 tests pass (12 test files)
+- `cargo check`: 0 errors, 25 warnings (pre-existing)
+
+### Definition of Done Checklist
+- [x] Window launches maximized, no fixed content-width cap
+- [x] AuditScreen: no "Exorcism" or "Shred Surveillance" text, trackers classified
+- [x] Feed has 3 tabs (all/following/you), no "subscribed"
+- [x] Feed has content-type filter chips, no lens toggles
+- [x] Settings: merged identity section, no Bluesky Feeds, no Device Sync
+- [x] Profile: narrow cards, Wall/Posts tabs, no stats bar
+- [x] `pnpm tauri dev` compiles without errors (TypeScript + Rust verified)
+- [x] `pnpm test` passes (247/247)
+- [x] Committed to `main` with semantic message
