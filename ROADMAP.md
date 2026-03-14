@@ -333,18 +333,17 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 ## 🐛 Open Issues
 - [ ] **Type Duplication**: `BlueskyPost` vs `BytescapeItem` in frontend—normalize into shared `FeedEntry` adapter (currently handled per-tab in `FeedScreen`).
-- [ ] **Bluesky Buddy Names Missing in Chat Sidebar**: Chat right-panel buddy list doesn't show Bluesky user display names; clicking buddies does nothing.
 
 ### A0 OAuth — Known Gaps (post-merge follow-ups)
 *Identified by PM audit of Track A delivery. These are not bugs — they are documented scope gaps in the initial OAuth implementation that need follow-up work.*
 
-- [ ] **A0-GAP-1 Ephemeral OAuth Sessions**: `OAuthManager` uses `MemorySessionStore` — if the app restarts, the OAuth session is lost and the user must re-authenticate. Migrate to persistent storage (redb or encrypted keychain) so OAuth sessions survive app restarts. *(Backend agent — `oauth.rs`)*
-- [ ] **A0-GAP-2 Fixed Callback Port**: `OAUTH_CALLBACK_PORT` is hardcoded to `28457`. If the port is in use, the OAuth flow fails silently. Consider falling back to OS-assigned port (`127.0.0.1:0`) and constructing the redirect URI dynamically. Verify that `AtprotoLocalhostClientMetadata` supports dynamic ports. *(Backend agent — `oauth.rs`)*
-- [ ] **A0-GAP-3 No OAuth Rust Tests**: `oauth.rs` is 601 lines with zero test coverage. Add unit tests for at minimum: `OAuthManager::new()` construction, callback URL parsing (`OAuthCallbackQuery`), `process_callback` error paths, `is_oauth_session()` sentinel detection. *(Backend agent — `oauth.rs`, `src-tauri/tests/`)*
-- [ ] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` still use the old Bearer token path. They need the same `is_oauth_session()` branching pattern already applied in `import.rs`. Without this, OAuth users can read but not post. *(Backend agent — `commands/posting.rs`, `commands/syndicate.rs`)*
-- [ ] **A0-GAP-5 DMs Skipped for OAuth Sessions**: Bluesky DM APIs have separate OAuth scopes. The backend agent correctly documented this as out-of-scope for A0, but it means OAuth users cannot access DMs until scope is expanded. *(Backend agent — `commands/import.rs`)*
-- [ ] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: The backend agent reported that saved feeds and unified feed return empty results for OAuth sessions. Likely a PDS URL vs AppView routing issue similar to the one fixed in commit `3b01559`. *(Backend agent — `connectors/bluesky.rs`)*
-- [ ] **A0-GAP-7 Verify Transitive Crate Dependencies**: `oauth.rs` uses `p256` (ECDSA DPoP proofs) and `urlencoding` — confirm these come transitively from `atrium-oauth` or add explicit Cargo.toml entries. Missing deps would cause builds to fail on clean machines. *(Backend agent — `Cargo.toml`)*
+- [x] **A0-GAP-1 Ephemeral OAuth Sessions**: Persistent `FileSessionStore` with AES-256-GCM encryption. OAuth sessions survive app restarts. *(Commit: `45c6d04`)*
+- [x] **A0-GAP-2 Fixed Callback Port**: Dynamic fallback to OS-assigned port (`127.0.0.1:0`) when `28457` is in use. *(Commit: `f2f279f`)*
+- [x] **A0-GAP-3 No OAuth Rust Tests**: `FileSessionStore` unit tests added. *(Commit: `bac702e`)*
+- [x] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` now use `is_oauth_session()` branching. *(Commit: `9c60417`)*
+- [x] **A0-GAP-5 DMs for OAuth Sessions**: Added `transition:chat.bsky` OAuth scope, `clone_with_proxy()` for isolated chat proxy headers, parallel chat import. *(Commits: `c29e549`, `ad6af24`)*
+- [x] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: Fixed PDS URL vs AppView routing. *(Commit: `c684d84`)*
+- [x] **A0-GAP-7 Verify Transitive Crate Dependencies**: Confirmed `p256` and `urlencoding` are transitive via `atrium-oauth`. Explicit entries added to `Cargo.toml` for build safety. *(Commit: `9c60417`)*
 
 <details>
 <summary>✅ Resolved Issues (click to expand)</summary>
@@ -358,6 +357,11 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [x] Facebook HTML Import: HTML format detection, scraper-based parsing, media extraction, tracker audit.
 - [x] Media Pipeline Fixes: Tokio runtime handle, path resolution, data:/https URI filtering.
 - [x] Feed Tab Restructure: Tabs aligned as All / Following / Feeds / #Hashtags / RSS / Archives.
+- [x] Bluesky Buddy Names Missing in Chat Sidebar: Resolved sender handles from convo members array; unified buddy list with friends panel. *(Commits: `bf56e20`, `ae4bf4b`)*
+- [x] OAuth Chat Proxy Header Leak: `clone_with_proxy()` prevents chat proxy from poisoning feed XRPC calls. *(Commit: `c29e549`)*
+- [x] "You" Feed Tab Empty: Added `get_author_feed` command merging Bluesky author feed with local vault posts. *(Commit: `a870548`)*
+- [x] Chat Import Never Completes: Parallel import so `import_vault_messages` runs alongside `import_bluesky_posts`. *(Commit: `ad6af24`)*
+- [x] OAuth Feeds Empty / DMs Broken: Three root causes — missing `Authorization: DPoP` header on `send_http`, wrong PDS URL construction (`/xrpc` suffix missing), no chat proxy path for OAuth. All fixed with shared `FileSessionStore` (Arc), `xrpc_chat_get/post` helpers, and DM wiring. *(Commit: `22a0435`)*
 - [x] Cross-Account Message Leakage: Fixed by owner-scoping vault messages.
 - [x] Deletion Path Coverage: `clear_vault` + `logout` wipe local user-scoped tables.
 - [x] Live Feed Semantics: Feed tabs aligned with live Bluesky subscribed-feed fetching.
