@@ -26,12 +26,16 @@ interface AppLayoutProps {
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-/** Application shell: top bar + friends panel (always visible) + main content. */
+/** Screens that already have their own buddy/contact list — don't double-up. */
+const SCREENS_WITH_OWN_BUDDY_LIST: ReadonlySet<Screen> = new Set(['chat', 'friends']);
+
+/** Application shell: top bar + friends panel (conditionally visible) + main content. */
 export function AppLayout({
     children,
     activeSidebar,
     onNavigate,
     mainStyle,
+    screen,
     searchQuery,
     onSearchChange,
     onSearchSubmit,
@@ -39,6 +43,8 @@ export function AppLayout({
     onOpenChat,
     onViewProfile,
 }: AppLayoutProps) {
+    const showFriendsPanel = !SCREENS_WITH_OWN_BUDDY_LIST.has(screen);
+
     return (
         <div className="app-layout">
             <TopBar
@@ -53,10 +59,12 @@ export function AppLayout({
                 <main className="main-content" style={mainStyle}>
                     {children}
                 </main>
-                <FriendsPanel
-                    onOpenChat={onOpenChat}
-                    onViewProfile={onViewProfile}
-                />
+                {showFriendsPanel && (
+                    <FriendsPanel
+                        onOpenChat={onOpenChat}
+                        onViewProfile={onViewProfile}
+                    />
+                )}
             </div>
         </div>
     );
