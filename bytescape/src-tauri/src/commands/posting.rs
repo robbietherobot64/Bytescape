@@ -117,26 +117,16 @@ pub async fn publish_post_v2(
             let item_id = uuid::Uuid::new_v4().to_string();
             local_item_id = Some(item_id.clone());
             
-            // Determine item type (allow override from frontend, else auto-classify)
+            // Determine item type (allow override from frontend)
             let resolved_item_type = match item_type.as_deref() {
                 Some("Article") => BytescapeType::Article,
                 Some("Gallery") => BytescapeType::Gallery,
-                Some("Link") => BytescapeType::Link,
-                Some("Video") => BytescapeType::Video,
                 _ => {
                     let has_video = media_mimes.iter().any(|m| m.starts_with("video/"));
-                    let image_count = media_mimes.iter().filter(|m| m.starts_with("image/")).count();
-                    let effective_images = if media_mimes.is_empty() { media_blobs.len() } else { image_count };
-                    let body_len = content.trim().len();
-
                     if has_video {
-                        BytescapeType::Video
-                    } else if effective_images >= 2 && body_len <= 300 {
+                        BytescapeType::Status
+                    } else if media_blobs.len() > 1 {
                         BytescapeType::Gallery
-                    } else if body_len > 500 {
-                        BytescapeType::Article
-                    } else if link_card.is_some() && body_len <= 100 {
-                        BytescapeType::Link
                     } else {
                         BytescapeType::Status
                     }
@@ -227,27 +217,20 @@ pub async fn publish_post_v2(
             };
 
             if let Ok(data) = sync.get_media(hash).await {
-                let upload_url = format!("{}/com.atproto.repo.uploadBlob", pds_base);
-                if let Ok(resp) = client.post_blob(&upload_url, &mime, data.to_vec()).await {
-                    if resp.status().is_success() {
-                        if let Ok(upload_res) = resp.json::<serde_json::Value>().await {
-                            if let Some(blob_ref) = upload_res.get("blob") {
-                                if mime.starts_with("video/") {
-                                    video_embed = Some(json!({
-                                        "$type": "app.bsky.embed.video",
-                                        "video": blob_ref
-                                    }));
-                                    // Normally video upload to Bluesky also wants a thumbnail, 
-                                    // but we'll keep it simple for now as PDS might accept it without.
-                                    break; 
-                                } else {
-                                    images_embed.push(json!({
-                                        "alt": "",
-                                        "image": blob_ref
-                                    }));
-                                    if images_embed.len() >= 4 { break; }
-                                }
-                            }
+                if let Ok(upload_res) = state.xrpc_upload_blob(data.to_vec(), &mime).await {
+                    if let Some(blob_ref) = upload_res.get("blob") {
+                        if mime.starts_with("video/") {
+                            video_embed = Some(json!({
+                                "$type": "app.bsky.embed.video",
+                                "video": blob_ref
+                            }));
+                            break; 
+                        } else {
+                            images_embed.push(json!({
+                                "alt": "",
+                                "image": blob_ref
+                            }));
+                            if images_embed.len() >= 4 { break; }
                         }
                     }
                 }
@@ -256,7 +239,9 @@ pub async fn publish_post_v2(
         drop(sync_guard);
 
         // Parse rich text facets (mentions → DID resolution, hashtags, links)
-        let facets = richtext::parse_facets_for_bluesky(content, &access_jwt).await;
+        // For OAuth sessions, pass empty string — facet resolution uses public API
+        let facet_jwt = state.get_fresh_access_jwt().await.unwrap_or_default();
+        let facets = richtext::parse_facets_for_bluesky(content, &facet_jwt).await;
 
         let mut record = json!({
             "$type": "app.bsky.feed.post",
@@ -296,15 +281,12 @@ pub async fn publish_post_v2(
             });
         }
 
-        let create_url = format!("{}/com.atproto.repo.createRecord", pds_base);
-        let resp = client.create_record(&create_url, json!({
+        match state.xrpc_post_json("com.atproto.repo.createRecord", json!({
             "repo": user_did,
             "collection": "app.bsky.feed.post",
             "record": record
-        })).await?;
-
-        if resp.status().is_success() {
-            if let Ok(res) = resp.json::<serde_json::Value>().await {
+        })).await {
+            Ok(res) => {
                 if let Some(uri) = res["uri"].as_str() {
                     result.bluesky = true;
                     result.bluesky_uri = Some(uri.to_string());
@@ -335,8 +317,9 @@ pub async fn publish_post_v2(
                     }
                 }
             }
-        } else {
-             result.errors.push(format!("Bluesky publish failed: {}", resp.status()));
+            Err(e) => {
+                result.errors.push(format!("Bluesky publish failed: {}", e));
+            }
         }
     }
 
