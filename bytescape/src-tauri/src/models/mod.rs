@@ -43,6 +43,8 @@ pub enum BytescapeType {
     Status,
     Gallery,
     Article,
+    Link,
+    Video,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -372,6 +374,103 @@ pub fn default_item_type() -> BytescapeType {
     BytescapeType::Status
 }
 
+/// Classify a BytescapeItem based on its content.
+/// Priority order (most specific first): Video > Gallery > Article > Link > Status
+pub fn classify_item(item: &BytescapeItem) -> BytescapeType {
+    let has_video = item.media_mimes.iter().any(|m| m.starts_with("video/"));
+    let image_count = item.media_mimes.iter().filter(|m| m.starts_with("image/")).count();
+    // Fallback: count non-video media as images if no MIME info
+    let effective_image_count = if item.media_mimes.is_empty() {
+        item.media_blobs.len() + item.media_paths.len()
+    } else {
+        image_count
+    };
+    let body_len = item.content.trim().len();
+
+    // 1. Video: has video attachment(s)
+    if has_video {
+        return BytescapeType::Video;
+    }
+
+    // 2. Gallery: >=2 images and text <=300 chars
+    if effective_image_count >= 2 && body_len <= 300 {
+        return BytescapeType::Gallery;
+    }
+
+    // 3. Article: >500 chars body text
+    if body_len > 500 {
+        return BytescapeType::Article;
+    }
+
+    // 4. Link: has link_url and <=100 chars original text
+    if item.link_url.is_some() && body_len <= 100 {
+        return BytescapeType::Link;
+    }
+
+    // 5. Default: Status
+    BytescapeType::Status
+}
+
+/// Classify a FeedEntry for live timeline display.
+/// Classifies a Bluesky feed item from its fields (before BytescapeItem creation).
+pub fn classify_bluesky_post(
+    text: &str,
+    image_count: usize,
+    has_video: bool,
+    has_external_url: bool,
+) -> BytescapeType {
+    if has_video {
+        return BytescapeType::Video;
+    }
+
+    if image_count >= 2 && text.len() <= 300 {
+        return BytescapeType::Gallery;
+    }
+
+    if text.trim().len() > 500 {
+        return BytescapeType::Article;
+    }
+
+    if has_external_url && text.trim().len() <= 100 {
+        return BytescapeType::Link;
+    }
+
+    if image_count == 1 && text.trim().len() <= 100 {
+        return BytescapeType::Gallery;
+    }
+
+    BytescapeType::Status
+}
+
+/// Classify a FeedEntry (used for live Bluesky timeline items that don't have a BytescapeItem).
+pub fn classify_feed_entry(entry: &FeedEntry) -> BytescapeType {
+    let has_video = entry.media_kinds.iter().any(|k| k == "video");
+    if has_video {
+        return BytescapeType::Video;
+    }
+
+    let image_count = entry.media_kinds.iter().filter(|k| *k == "image").count()
+        .max(if entry.media_kinds.is_empty() { entry.media_urls.len() } else { 0 });
+
+    if image_count >= 2 && entry.content.len() <= 300 {
+        return BytescapeType::Gallery;
+    }
+
+    if entry.content.trim().len() > 500 {
+        return BytescapeType::Article;
+    }
+
+    if entry.link_url.is_some() && entry.content.trim().len() <= 100 {
+        return BytescapeType::Link;
+    }
+
+    if image_count == 1 && entry.content.trim().len() <= 100 {
+        return BytescapeType::Gallery;
+    }
+
+    BytescapeType::Status
+}
+
 /// A location or check-in attached to a post — universal across all connectors.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PostLocation {
@@ -425,6 +524,8 @@ pub fn canonical_willow_path(item: &BytescapeItem) -> String {
         BytescapeType::Status => "status",
         BytescapeType::Gallery => "gallery",
         BytescapeType::Article => "article",
+        BytescapeType::Link => "link",
+        BytescapeType::Video => "video",
     };
 
     let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(item.original_timestamp, 0)

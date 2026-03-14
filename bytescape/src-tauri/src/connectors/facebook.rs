@@ -292,11 +292,52 @@ pub struct ParseProgress {
     pub current_file: String,
 }
 
+
+/// Classify a tracker by name into a human-readable category.
+fn classify_tracker(name: &str) -> String {
+    let lower = name.to_lowercase();
+
+    if lower.contains("ad") || lower.contains("advertising")
+        || lower.contains("sponsor") || lower.contains("promotion")
+        || lower.contains("marketing") || lower.contains("campaign")
+    {
+        return "ad_tracking".to_string();
+    }
+    if lower.contains("location") || lower.contains("places")
+        || lower.contains("check-in") || lower.contains("checkin")
+        || lower.contains("geo") || lower.contains("map")
+    {
+        return "location_tracking".to_string();
+    }
+    if lower.contains("off-facebook") || lower.contains("off_facebook")
+        || lower.contains("off meta") || lower.contains("apps and websites")
+        || lower.contains("cookie") || lower.contains("pixel")
+        || lower.contains("third-party") || lower.contains("third_party")
+    {
+        return "cross_site_tracking".to_string();
+    }
+    if lower.contains("device") || lower.contains("session")
+        || lower.contains("login") || lower.contains("ip address")
+        || lower.contains("browser") || lower.contains("security")
+    {
+        return "data_collection".to_string();
+    }
+    if lower.contains("friend") || lower.contains("contact")
+        || lower.contains("interaction") || lower.contains("follower")
+        || lower.contains("following") || lower.contains("social")
+    {
+        return "social_tracking".to_string();
+    }
+
+    "general".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TrackerEntry {
     pub name: String,
     pub event_count: usize,
     pub event_types: Vec<String>,
+    pub category: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -914,10 +955,12 @@ pub fn parse_facebook_zip(
                             .into_iter()
                             .collect();
 
+                        let cat = classify_tracker(&activity.name);
                         trackers.push(TrackerEntry {
                             name: activity.name.clone(),
                             event_count: activity.events.len(),
                             event_types,
+                            category: cat,
                         });
                     }
                     #[cfg(debug_assertions)]
@@ -931,10 +974,12 @@ pub fn parse_facebook_zip(
                         .into_iter()
                         .collect();
 
+                    let cat = classify_tracker(&activity.name);
                     trackers.push(TrackerEntry {
                         name: activity.name.clone(),
                         event_count: activity.events.len(),
                         event_types,
+                        category: cat,
                     });
                 }
             }
@@ -2399,10 +2444,12 @@ fn parse_html_trackers(html: &str, file_name: &str) -> Vec<TrackerEntry> {
                     .unwrap_or(&trimmed)
                     .trim().to_string();
 
+                let cat = classify_tracker(&name);
                 trackers.push(TrackerEntry {
                     name,
                     event_count: count,
                     event_types: types,
+                    category: cat,
                 });
             }
         }
@@ -2457,10 +2504,12 @@ fn parse_html_trackers(html: &str, file_name: &str) -> Vec<TrackerEntry> {
 
             let count = extract_event_count(&trimmed);
 
+            let cat = classify_tracker(&trimmed);
             trackers.push(TrackerEntry {
                 name: trimmed,
                 event_count: count,
                 event_types: vec!["UNKNOWN".to_string()],
+                category: cat,
             });
         }
     }
@@ -2484,10 +2533,12 @@ fn parse_html_trackers(html: &str, file_name: &str) -> Vec<TrackerEntry> {
             }
             seen_names.insert(trimmed.clone());
             let count = extract_event_count(&trimmed);
+            let cat = classify_tracker(&trimmed);
             trackers.push(TrackerEntry {
                 name: trimmed,
                 event_count: count,
                 event_types: vec!["UNKNOWN".to_string()],
+                category: cat,
             });
         }
     }

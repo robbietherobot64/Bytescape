@@ -1,5 +1,5 @@
-import { useRef, useEffect } from 'react';
-import { ParseProgress, ParseResult, SidebarItem } from '../types';
+import { useMemo, useRef, useEffect } from 'react';
+import { ParseProgress, ParseResult, SidebarItem, TrackerEntry } from '../types';
 
 interface AuditScreenProps {
     progress: ParseProgress | null;
@@ -30,6 +30,38 @@ export function AuditScreen({
             terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
         }
     }, [logs]);
+
+    // Category labels and icons for tracker classification
+    const CATEGORY_LABELS: Record<string, { label: string; icon: string }> = {
+        ad_tracking: { label: 'Ad Tracking', icon: '📢' },
+        location_tracking: { label: 'Location Tracking', icon: '📍' },
+        cross_site_tracking: { label: 'Cross-Site Tracking', icon: '🌐' },
+        data_collection: { label: 'Data Collection', icon: '💾' },
+        social_tracking: { label: 'Social Tracking', icon: '👥' },
+        commerce_tracking: { label: 'Commerce Tracking', icon: '🛒' },
+        behavioral_tracking: { label: 'Behavioral Tracking', icon: '👁️' },
+        general: { label: 'General Tracking', icon: '🔍' },
+        general_tracking: { label: 'General Tracking', icon: '🔍' },
+    };
+
+    // Group trackers by category
+    const groupedTrackers = useMemo(() => {
+        if (!parseResult) return new Map<string, TrackerEntry[]>();
+        const groups = new Map<string, TrackerEntry[]>();
+        for (const t of parseResult.trackers) {
+            const cat = t.category || 'general_tracking';
+            if (!groups.has(cat)) groups.set(cat, []);
+            groups.get(cat)!.push(t);
+        }
+        // Sort groups by total event count descending
+        return new Map(
+            [...groups.entries()].sort((a, b) => {
+                const sumA = a[1].reduce((s, t) => s + t.event_count, 0);
+                const sumB = b[1].reduce((s, t) => s + t.event_count, 0);
+                return sumB - sumA;
+            })
+        );
+    }, [parseResult]);
 
     return (
         <>
@@ -69,21 +101,40 @@ export function AuditScreen({
                         <div className={`tracker-list ${isShredding ? "shredding" : ""}`}>
                             {parseResult ? (
                                 <>
-                                    {parseResult.trackers.slice(0, 100).map((t, i) => (
-                                        <div
-                                            key={t.name}
-                                            className="tracker-item"
-                                            style={{ animationDelay: `${Math.min(i, 50) * 0.05}s` }}
-                                        >
-                                            <span className="tracker-name">{t.name}</span>
-                                            <span className="tracker-events">{t.event_count.toLocaleString()} events</span>
-                                        </div>
-                                    ))}
-                                    {parseResult.trackers.length > 100 && (
-                                        <div className="text-muted text-sm" style={{ padding: 12, textAlign: 'center' }}>
-                                            ...and {(parseResult.trackers.length - 100).toLocaleString()} more trackers
-                                        </div>
-                                    )}
+                                    {[...groupedTrackers.entries()].map(([category, trackers]) => {
+                                        const catInfo = CATEGORY_LABELS[category] || { label: category, icon: '🔍' };
+                                        const totalEvents = trackers.reduce((s, t) => s + t.event_count, 0);
+                                        return (
+                                            <div key={category} style={{ marginBottom: 12 }}>
+                                                <div style={{
+                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                                    padding: '6px 8px', marginBottom: 4,
+                                                    background: 'var(--bg-tertiary)', borderRadius: 4, fontSize: '0.85rem',
+                                                    fontWeight: 600, color: 'var(--text-primary)',
+                                                }}>
+                                                    <span>{catInfo.icon} {catInfo.label}</span>
+                                                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                                                        {trackers.length} trackers · {totalEvents.toLocaleString()} events
+                                                    </span>
+                                                </div>
+                                                {trackers.slice(0, 20).map((t, i) => (
+                                                    <div
+                                                        key={t.name}
+                                                        className="tracker-item"
+                                                        style={{ animationDelay: `${Math.min(i, 50) * 0.05}s` } as React.CSSProperties}
+                                                    >
+                                                        <span className="tracker-name">{t.name}</span>
+                                                        <span className="tracker-events">{t.event_count.toLocaleString()} events</span>
+                                                    </div>
+                                                ))}
+                                                {trackers.length > 20 && (
+                                                    <div className="text-muted text-sm" style={{ padding: '4px 8px', fontSize: '0.8rem' }}>
+                                                        ...and {(trackers.length - 20).toLocaleString()} more in this category
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </>
                             ) : (
                                 <div className="text-muted text-sm" style={{ padding: 12 }}>

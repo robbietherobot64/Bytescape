@@ -117,16 +117,26 @@ pub async fn publish_post_v2(
             let item_id = uuid::Uuid::new_v4().to_string();
             local_item_id = Some(item_id.clone());
             
-            // Determine item type (allow override from frontend)
+            // Determine item type (allow override from frontend, else auto-classify)
             let resolved_item_type = match item_type.as_deref() {
                 Some("Article") => BytescapeType::Article,
                 Some("Gallery") => BytescapeType::Gallery,
+                Some("Link") => BytescapeType::Link,
+                Some("Video") => BytescapeType::Video,
                 _ => {
                     let has_video = media_mimes.iter().any(|m| m.starts_with("video/"));
+                    let image_count = media_mimes.iter().filter(|m| m.starts_with("image/")).count();
+                    let effective_images = if media_mimes.is_empty() { media_blobs.len() } else { image_count };
+                    let body_len = content.trim().len();
+
                     if has_video {
-                        BytescapeType::Status
-                    } else if media_blobs.len() > 1 {
+                        BytescapeType::Video
+                    } else if effective_images >= 2 && body_len <= 300 {
                         BytescapeType::Gallery
+                    } else if body_len > 500 {
+                        BytescapeType::Article
+                    } else if link_card.is_some() && body_len <= 100 {
+                        BytescapeType::Link
                     } else {
                         BytescapeType::Status
                     }

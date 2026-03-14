@@ -15,6 +15,7 @@ pub mod interactions;
 pub mod peers;
 pub mod collab;
 pub mod ap;
+pub mod classify;
 pub mod profile;
 pub mod unfurl;
 
@@ -30,5 +31,6 @@ pub use interactions::*;
 pub use peers::*;
 pub use collab::*;
 pub use ap::*;
+pub use classify::*;
 pub use profile::*;
 pub use unfurl::*;

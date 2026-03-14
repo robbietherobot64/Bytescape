@@ -38,7 +38,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
-        FeedEntry {
+        let mut entry = FeedEntry {
             id: post.uri.clone(),
             cid: Some(post.cid.clone()),
             viewer_like: post.viewer_like,
@@ -65,7 +65,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             reply_parent_handle: post.reply_parent_handle,
             reply_parent_uri: post.reply_parent_uri,
             quoted_post: post.quoted_post.map(|q| Box::new(FeedEntry::from(*q))),
-            item_type: Some(BytescapeType::Status),
+            item_type: None, // Classified below
             syndication_status: None,
             audiences: vec![Audience::Local, Audience::Bluesky],
             share_history: vec![
@@ -80,7 +80,11 @@ impl From<BlueskyImportedPost> for FeedEntry {
             tagged_people: vec![],
             title: None,
             original_url: Some(post.uri),
-        }
+        };
+
+        // Classify the entry based on content
+        entry.item_type = Some(crate::models::classify_feed_entry(&entry));
+        entry
     }
 }
 
@@ -190,7 +194,8 @@ pub async fn get_timeline_unified(
     feed_uris: Vec<String>,
     limit: Option<u8>,
     cursor: Option<String>,
-    vault_offset: Option<usize>
+    vault_offset: Option<usize>,
+    item_type_filter: Option<String>,
 ) -> Result<UnifiedFeedResponse, String> {
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
@@ -308,6 +313,25 @@ pub async fn get_timeline_unified(
             true
         }
     });
+
+    // ── 7. Item type filter ──
+    if let Some(ref filter) = item_type_filter {
+        let filter_lower = filter.to_lowercase();
+        feed.retain(|entry| {
+            if let Some(ref it) = entry.item_type {
+                let type_str = match it {
+                    BytescapeType::Status => "status",
+                    BytescapeType::Gallery => "gallery",
+                    BytescapeType::Article => "article",
+                    BytescapeType::Link => "link",
+                    BytescapeType::Video => "video",
+                };
+                type_str == filter_lower
+            } else {
+                false
+            }
+        });
+    }
 
     Ok(UnifiedFeedResponse {
         items: feed,

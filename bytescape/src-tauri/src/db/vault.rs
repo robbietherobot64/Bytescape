@@ -518,6 +518,8 @@ impl DbManager {
                 BytescapeType::Status => "status",
                 BytescapeType::Gallery => "gallery",
                 BytescapeType::Article => "article",
+                BytescapeType::Link => "link",
+                BytescapeType::Video => "video",
             };
             *by_type.entry(type_str.to_string()).or_insert(0) += 1;
             if h.has_media {

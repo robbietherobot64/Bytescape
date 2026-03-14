@@ -23,6 +23,7 @@ const MPL25: usize = 1024;
 use crate::error::BytescapeError;
 use crate::models::VaultMessage;
 use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport, Audience};
+use crate::models::classify_bluesky_post;
 use crate::connectors::{Source, facebook};
 use crate::sync::{Hash, SyncManager};
 use crate::AppState;
@@ -55,6 +56,8 @@ fn willow_item_kind(item_type: BytescapeType) -> &'static str {
         BytescapeType::Status => "status",
         BytescapeType::Gallery => "gallery",
         BytescapeType::Article => "article",
+        BytescapeType::Link => "link",
+        BytescapeType::Video => "video",
     }
 }
 
@@ -641,10 +644,19 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             });
 
         // Determine item type based on content
-        let item_type = if !post.media_uris.is_empty() {
+        let has_video_media = media_mimes.iter().any(|m| m.starts_with("video/"));
+        let body_len = post.content.trim().len();
+        let has_url = post.content.contains("http://") || post.content.contains("https://");
+        let item_type = if has_video_media {
+            BytescapeType::Video
+        } else if !post.media_uris.is_empty() && post.media_uris.len() >= 2 && body_len <= 300 {
             BytescapeType::Gallery
-        } else if post.title.as_ref().map_or(false, |t| t.len() > 100) {
+        } else if body_len > 500 {
             BytescapeType::Article
+        } else if has_url && body_len <= 100 {
+            BytescapeType::Link
+        } else if !post.media_uris.is_empty() {
+            BytescapeType::Gallery
         } else {
             BytescapeType::Status
         };
@@ -920,13 +932,12 @@ async fn save_posts(
         let media_blobs: Vec<String> = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
         let media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
 
-        let item_type = if !post.image_urls.is_empty() {
-            BytescapeType::Gallery
-        } else if post.external_url.is_some() {
-            BytescapeType::Article
-        } else {
-            BytescapeType::Status
-        };
+        let item_type = classify_bluesky_post(
+            &post.text,
+            post.image_urls.len(),
+            post.video_url.is_some(),
+            post.external_url.is_some(),
+        );
 
         let item = BytescapeItem {
             id: post.cid.clone(),
