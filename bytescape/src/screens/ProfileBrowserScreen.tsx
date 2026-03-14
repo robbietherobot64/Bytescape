@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Win98Box } from '../components/Win98Box';
 import { useNavStore, usePeerStore } from '../store';
+import { useLocationStore } from '../hooks/useLocation';
 import { PeerInfo, PeerProfile, BytescapeItem, PeerFeedResponse } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
@@ -80,6 +81,9 @@ export function ProfileBrowserScreen() {
         setFeedError(null);
         setConnected(false);
         offsetRef.current = 0;
+
+        // B10.6: Sync Omnibar URL to show byte://peer/{nodeId}
+        useLocationStore.getState().navigate(`byte://peer/${nodeId}`, { replace: true });
     }, [historyIdx]);
 
     // Load peer feed when currentNodeId changes
@@ -179,6 +183,8 @@ export function ProfileBrowserScreen() {
         setPeerItems([]);
         setAddressInput('');
         setFeedError(null);
+        // B10.6: Sync Omnibar URL back to profile-browser home
+        useLocationStore.getState().navigate('byte://profile-browser', { replace: true });
     }, []);
 
     // Handle address bar submit
