@@ -48,7 +48,8 @@ describe('ComposeBox', () => {
         render(<ComposeBox {...defaultProps} />);
         const textarea = screen.getByPlaceholderText(/Share something/);
         fireEvent.change(textarea, { target: { value: 'Test post' } });
-        expect(screen.getByText(`9 / ${INPUT_LIMITS.MAX_LOCAL_CHARS.toLocaleString()}`)).toBeTruthy();
+        // Default target is 'local', so shows 💾 9/10000
+        expect(screen.getByText('💾 9/10000')).toBeTruthy();
     });
 
     it('disables Post button when over character limit', () => {
@@ -65,7 +66,9 @@ describe('ComposeBox', () => {
         const textarea = screen.getByPlaceholderText(/Share something/);
         const overLimitText = 'a'.repeat(INPUT_LIMITS.MAX_LOCAL_CHARS + 1);
         fireEvent.change(textarea, { target: { value: overLimitText } });
-        expect(screen.getByText(/over limit/)).toBeTruthy();
+        // When all targets are over, the post button tooltip says "exceeds character limit"
+        const postBtn = screen.getByText('Post');
+        expect(postBtn.title).toMatch(/exceeds character limit/);
     });
 
     it('shows posting status when isPosting is true', () => {
@@ -104,5 +107,43 @@ describe('ComposeBox', () => {
     it('has a Media button', () => {
         render(<ComposeBox {...defaultProps} />);
         expect(screen.getByText(/Media/)).toBeTruthy();
+    });
+
+    // C1.4 — Multi-target character counting
+    it('shows bluesky counter when Bluesky target selected', () => {
+        render(<ComposeBox {...defaultProps} />);
+        // Click Bluesky target
+        const bskyBtn = screen.getByText('🦋 Bluesky');
+        fireEvent.click(bskyBtn);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        fireEvent.change(textarea, { target: { value: 'Hello world' } });
+        // Should show both bluesky and local counters
+        expect(screen.getByText('🦋 11/300')).toBeTruthy();
+        expect(screen.getByText('💾 11/10000')).toBeTruthy();
+    });
+
+    it('shows all network counters when All target selected', () => {
+        render(<ComposeBox {...defaultProps} />);
+        const allBtn = screen.getByText('🌐 All Networks');
+        fireEvent.click(allBtn);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        fireEvent.change(textarea, { target: { value: 'Test' } });
+        expect(screen.getByText('🦋 4/300')).toBeTruthy();
+        expect(screen.getByText('🌐 4/500')).toBeTruthy();
+        expect(screen.getByText('💾 4/10000')).toBeTruthy();
+    });
+
+    it('shows truncation warning when Bluesky limit exceeded but local OK', () => {
+        render(<ComposeBox {...defaultProps} />);
+        const bskyBtn = screen.getByText('🦋 Bluesky');
+        fireEvent.click(bskyBtn);
+        const textarea = screen.getByPlaceholderText(/Share something/);
+        const longText = 'a'.repeat(310); // Over 300 for Bluesky, under 10K for local
+        fireEvent.change(textarea, { target: { value: longText } });
+        // Should show truncation warning
+        expect(screen.getByText(/Text exceeds limit on/)).toBeTruthy();
+        // Post button should still be enabled (only Bluesky is over, local is fine)
+        const postBtn = screen.getByText('Post');
+        expect(postBtn).not.toBeDisabled();
     });
 });
