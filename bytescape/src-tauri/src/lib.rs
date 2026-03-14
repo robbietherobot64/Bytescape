@@ -51,9 +51,6 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Guard to ensure `restore_session` runs at most once per app lifetime.
     pub session_restored: AtomicBool,
-    /// Shared HTTP client for connection pooling across all API calls.
-    /// Reusing a single client avoids redundant TLS handshakes per request.
-    pub http_client: reqwest::Client,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -584,7 +581,6 @@ pub fn run() {
                 oauth_manager,
                 http_client: reqwest::Client::new(),
                 session_restored: AtomicBool::new(false),
-                http_client: reqwest::Client::new(),
             };
 
             app.manage(state);
