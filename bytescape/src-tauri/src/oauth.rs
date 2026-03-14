@@ -783,8 +783,6 @@ impl OAuthManager {
             nsid.to_string()
         };
 
-        println!("OAuth xrpc_get: base_uri={}, nsid={}, effective_nsid={}", session.base_uri(), nsid, effective_nsid);
-
         let request = atrium_xrpc::XrpcRequest::<(), ()> {
             method: atrium_xrpc::http::Method::GET,
             nsid: effective_nsid,
