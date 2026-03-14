@@ -1765,7 +1765,7 @@ fn parse_html_posts(html: &str, file_name: &str, _top_prefix: &Option<String>) -
                         continue;
                     }
 
-                    if !decoded_content.is_empty() || !media_uris.is_empty() {
+                    if !decoded_content.trim().is_empty() || !media_uris.is_empty() {
                         // Use header as title, or detect photo changes
                         let title = header_text
                             .filter(|h| !h.is_empty())
@@ -1935,6 +1935,10 @@ fn parse_html_posts(html: &str, file_name: &str, _top_prefix: &Option<String>) -
             true
         });
     }
+
+    // === FINAL CLEANUP: Remove blank posts ===
+    // Posts with empty/whitespace-only content AND no media are noise
+    posts.retain(|p| !p.content.trim().is_empty() || !p.media_uris.is_empty());
     
     #[cfg(debug_assertions)]
     println!("facebook: parse_html_posts found {} posts with {} total media refs in {}",

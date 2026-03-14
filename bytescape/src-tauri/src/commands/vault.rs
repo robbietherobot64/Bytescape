@@ -423,15 +423,71 @@ pub async fn count_archive_posts(state: State<'_, AppState>) -> std::result::Res
         .map_err(|e| e.to_string())
 }
 
-/// List cached contacts from local DB.
+/// List contacts — merges DB contacts with Bluesky follows so the chat
+/// friends panel shows everyone the user can potentially chat with,
+/// not just people they've already chatted with.
 #[tauri::command]
 pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Vec<crate::db::Contact>, String> {
-    let db_guard = state.db_manager.read().await;
-    let db = db_guard.as_ref()
-        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+    let mut contacts: std::collections::HashMap<String, crate::db::Contact> = std::collections::HashMap::new();
 
-    db.list_contacts().await
-        .map_err(|e| e.to_string())
+    // ── 1. DB contacts (existing chat participants) ──
+    {
+        let db_guard = state.db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            if let Ok(db_contacts) = db.list_contacts().await {
+                for c in db_contacts {
+                    contacts.entry(c.did.clone()).or_insert(c);
+                }
+            }
+        }
+    }
+
+    // ── 2. Bluesky follows ──
+    {
+        let actor_did = state.keychain.get_did()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        if !actor_did.is_empty() {
+            let access_jwt = if state.is_oauth_session() {
+                String::new()
+            } else {
+                state.get_fresh_access_jwt().await.unwrap_or_default()
+            };
+
+            let mut cursor: Option<String> = None;
+            for _ in 0..10 {
+                match crate::connectors::bluesky::get_follows(
+                    &access_jwt, &actor_did, 100, cursor.clone()
+                ).await {
+                    Ok((profiles, next_cursor)) => {
+                        for p in profiles {
+                            contacts.entry(p.did.clone()).or_insert_with(|| crate::db::Contact {
+                                did: p.did,
+                                handle: p.handle,
+                                p2p_capable: false,
+                                node_id: None,
+                                last_polled_at: 0,
+                            });
+                        }
+                        cursor = next_cursor;
+                        if cursor.is_none() { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    // ── 3. Sort: P2P-capable first, then alphabetically by handle ──
+    let mut result: Vec<crate::db::Contact> = contacts.into_values().collect();
+    result.sort_by(|a, b| {
+        b.p2p_capable.cmp(&a.p2p_capable)
+            .then_with(|| a.handle.to_lowercase().cmp(&b.handle.to_lowercase()))
+    });
+
+    Ok(result)
 }
 
 /// Unified contact list — merges DB contacts with Bluesky follows AND followers.
