@@ -200,22 +200,36 @@ pub async fn get_timeline_unified(
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
 
-    // ── 1 + 2. Live timeline + custom feeds — in parallel ──
+    // ── 1 + 2 + 3. Live timeline + custom feeds + vault — ALL in parallel ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
+    let effective_limit = limit.unwrap_or(30) as usize;
 
     let timeline_fut = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone());
+
+    // Vault future: runs concurrently with network calls
+    let vault_state = state.clone();
+    let vault_off = vault_offset.unwrap_or(0);
+    let vault_fut = async move {
+        let db_guard = vault_state.db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            if let Ok(Some((did, _))) = vault_state.keychain.load_session() {
+                return db.list_my_items_paged(&did, None, effective_limit.max(50), vault_off).await.ok();
+            }
+        }
+        None
+    };
+
+    let mut vault_entries: Vec<FeedEntry> = Vec::new();
 
     if has_custom {
         let custom_fut = crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         );
 
-        let (timeline_result, custom_result) = tokio::join!(timeline_fut, custom_fut);
+        let (timeline_result, custom_result, vault_result) = tokio::join!(timeline_fut, custom_fut, vault_fut);
 
         match timeline_result {
             Ok((posts, nc)) => {
-                #[cfg(debug_assertions)]
-                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
                 next_cursor = nc;
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
@@ -226,19 +240,21 @@ pub async fn get_timeline_unified(
 
         match custom_result {
             Ok((posts, _)) => {
-                #[cfg(debug_assertions)]
-                println!("get_timeline_unified: custom feeds returned {} posts", posts.len());
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
             }
         }
+
+        if let Some((items, _)) = vault_result {
+            vault_entries.extend(items.into_iter().map(FeedEntry::from));
+        }
     } else {
-        match timeline_fut.await {
+        let (timeline_result, vault_result) = tokio::join!(timeline_fut, vault_fut);
+
+        match timeline_result {
             Ok((posts, nc)) => {
-                #[cfg(debug_assertions)]
-                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
                 next_cursor = nc;
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
@@ -246,20 +262,9 @@ pub async fn get_timeline_unified(
                 eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
             }
         }
-    }
 
-    // ── 3. Vault items ──
-    let mut vault_entries: Vec<FeedEntry> = Vec::new();
-    {
-        let db_manager = state.db_manager.clone();
-        let db_guard = db_manager.read().await;
-        if let Some(db) = db_guard.as_ref() {
-            let offset = vault_offset.unwrap_or(0);
-            if let Ok(Some((did, _))) = state.keychain.load_session() {
-                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, offset).await {
-                    vault_entries.extend(items.into_iter().map(FeedEntry::from));
-                }
-            }
+        if let Some((items, _)) = vault_result {
+            vault_entries.extend(items.into_iter().map(FeedEntry::from));
         }
     }
 

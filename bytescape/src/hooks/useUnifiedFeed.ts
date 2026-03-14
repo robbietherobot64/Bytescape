@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
+import { useFeedCacheStore } from '../store';
 
 /**
  * Nest owner replies under their parent posts.
@@ -95,6 +96,7 @@ export function useUnifiedFeed({
         try {
             const follows = await invoke<ProfileView[]>('list_follows', { actor: actorDid });
             setFollowingList(follows);
+            setCachedFollowingList(follows);
         } catch (e) {
             console.error('Failed to fetch follows:', e);
             try {
@@ -114,14 +116,26 @@ export function useUnifiedFeed({
     // All paths end with deduplicateFeedEntries to collapse duplicates
     // while preserving reposts as distinct events.
 
+    const { setCache, getCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
+
     const fetchFeed = useCallback(async (tab: FeedTab, background = false) => {
         if (!auth) return;
 
         const requestId = ++fetchTokenRef.current;
         const isStale = () => fetchTokenRef.current !== requestId;
 
+        // Cache-first: show stale data immediately while refreshing in background
         if (!background) {
-            setIsLoading(true);
+            const cached = getCache(tab);
+            if (cached) {
+                // Instant render from cache — no loading spinner
+                setFeedEntries(cached.entries);
+                setCursor(cached.cursor);
+                // Still fetch fresh data in background (stale-while-revalidate)
+                background = true;
+            } else {
+                setIsLoading(true);
+            }
             setFeedError(null);
             verifiedIdsRef.current.clear();
         }
@@ -137,6 +151,7 @@ export function useUnifiedFeed({
 
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
+                setCache('following', deduped, nextCursor);
                 await fetchFollowingList(auth.did);
 
             } else if (tab === 'you') {
@@ -164,8 +179,10 @@ export function useUnifiedFeed({
                 const merged = [...bskyEntries, ...vaultEntries].sort(
                     (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
                 );
-                setFeedEntries(deduplicateFeedEntries(merged));
+                const dedupedYou = deduplicateFeedEntries(merged);
+                setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
+                setCache('you', dedupedYou, bskyCursor);
 
             } else if (tab === 'all') {
                 // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
@@ -182,12 +199,14 @@ export function useUnifiedFeed({
 
                 if (isStale()) return;
                 setSavedFeeds(feedsData);
+                setCachedSavedFeeds(feedsData);
 
                 if (response) {
                     const deduped = deduplicateFeedEntries(response.items);
 
                     setFeedEntries(deduped);
                     setCursor(response.next_cursor);
+                    setCache('all', deduped, response.next_cursor);
                     setArchiveOffset(200);
                 } else {
                     setFeedEntries([]);

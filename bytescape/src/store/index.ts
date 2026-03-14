@@ -135,6 +135,63 @@ export const useChatStore = create<ChatState>((set) => ({
     setIsSending: (sending) => set({ isSending: sending }),
 }));
 
+// ─── Feed Cache Store ───
+// Persists feed data across tab switches and screen navigation.
+// Enables cache-first rendering (stale-while-revalidate pattern).
+
+import { FeedEntry, GeneratorView, ProfileView } from '../types';
+
+interface FeedCacheEntry {
+    entries: FeedEntry[];
+    cursor: string | null;
+    fetchedAt: number; // epoch ms
+}
+
+interface FeedCacheState {
+    /** Cached feed data keyed by tab name */
+    cache: Record<string, FeedCacheEntry>;
+    setCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
+    getCache: (tab: string, maxAgeMs?: number) => FeedCacheEntry | null;
+    appendCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
+
+    /** Cached context data */
+    cachedSavedFeeds: GeneratorView[];
+    setCachedSavedFeeds: (feeds: GeneratorView[]) => void;
+    cachedFollowingList: ProfileView[];
+    setCachedFollowingList: (list: ProfileView[]) => void;
+}
+
+export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
+    cache: {},
+    setCache: (tab, entries, cursor) => set((state) => ({
+        cache: {
+            ...state.cache,
+            [tab]: { entries, cursor, fetchedAt: Date.now() },
+        },
+    })),
+    getCache: (tab, maxAgeMs = 120_000) => {
+        const entry = get().cache[tab];
+        if (!entry) return null;
+        if (Date.now() - entry.fetchedAt > maxAgeMs) return null;
+        return entry;
+    },
+    appendCache: (tab, newEntries, cursor) => set((state) => {
+        const existing = state.cache[tab];
+        const merged = existing ? [...existing.entries, ...newEntries] : newEntries;
+        return {
+            cache: {
+                ...state.cache,
+                [tab]: { entries: merged, cursor, fetchedAt: existing?.fetchedAt ?? Date.now() },
+            },
+        };
+    }),
+
+    cachedSavedFeeds: [],
+    setCachedSavedFeeds: (feeds) => set({ cachedSavedFeeds: feeds }),
+    cachedFollowingList: [],
+    setCachedFollowingList: (list) => set({ cachedFollowingList: list }),
+}));
+
 // ─── Theme Store ───
 interface ThemeState {
     activeTheme: ThemeId;

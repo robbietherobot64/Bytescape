@@ -37,6 +37,8 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        // Invalidate header cache on write
+        *self.headers_cache.write().await = None;
         Ok(true) // was new
     }
 
@@ -95,6 +97,8 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        // Invalidate header cache on write
+        *self.headers_cache.write().await = None;
         Ok(())
     }
 
@@ -280,6 +284,8 @@ impl DbManager {
             }
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        // Invalidate header cache after deleting items
+        *self.headers_cache.write().await = None;
 
         Ok(keys_to_delete.len())
     }
@@ -336,7 +342,8 @@ impl DbManager {
     ///  - author_did matches the user's DID, OR
     ///  - author_did is None (archive imports like Facebook that don't have a DID)
     ///  - is_liked is true (posts the user explicitly liked/saved)
-    pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
+    /// Build the full header list from DB (uncached path).
+    async fn build_all_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
@@ -344,27 +351,44 @@ impl DbManager {
         let mut headers = Vec::new();
         for row in table.iter().map_err(|e| e.to_string())? {
             let (_key, value) = row.map_err(|e| e.to_string())?;
-            // Partially deserialize or just deserialize full then convert, 
-            // but we avoid keeping the full item in the final Vec.
             let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            
-            let is_mine = if item.is_liked {
-                true
-            } else if item.reposted_by_did.as_deref() == Some(owner_did) {
-                true
-            } else {
-                match &item.author_did {
-                    Some(did) => did == owner_did,
-                    None => true,
-                }
-            };
-
-            if is_mine {
-                headers.push(item.header());
-            }
+            headers.push(item.header());
         }
 
         headers.sort_by(|a, b| b.effective_timestamp.cmp(&a.effective_timestamp));
+        Ok(headers)
+    }
+
+    /// Get all headers, using the in-memory cache when available.
+    /// The cache is invalidated on save/upsert/delete writes.
+    async fn get_cached_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
+        // Fast path: cache hit
+        {
+            let cache = self.headers_cache.read().await;
+            if let Some(ref cached) = *cache {
+                return Ok(cached.clone());
+            }
+        }
+        // Slow path: build from DB and cache
+        let headers = self.build_all_headers().await?;
+        {
+            let mut cache = self.headers_cache.write().await;
+            *cache = Some(headers.clone());
+        }
+        Ok(headers)
+    }
+
+    pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
+        let all_headers = self.get_cached_headers().await?;
+        let headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|item| {
+            if item.is_liked {
+                true
+            } else if item.author_did.as_deref() == Some(owner_did) {
+                true
+            } else {
+                item.author_did.is_none()
+            }
+        }).collect();
         Ok(headers)
     }
 
@@ -404,15 +428,55 @@ impl DbManager {
         let total = header_all.len();
         let page_headers: Vec<BytescapeItemHeader> = header_all.into_iter().skip(offset).take(limit).collect();
         
-        // Now fetch full items only for this page
-        let mut full_items = Vec::new();
-        for h in page_headers {
-            if let Ok(Some(item)) = self.get_item_by_id(&h.id).await {
-                full_items.push(item);
+        if page_headers.is_empty() {
+            return Ok((vec![], total));
+        }
+
+        // Bulk fetch: collect IDs needed, then single-pass table scan
+        let needed_ids: std::collections::HashSet<String> = page_headers.iter().map(|h| h.id.clone()).collect();
+        let full_items = self.bulk_get_items_by_ids(&needed_ids).await?;
+
+        // Re-sort to match header order (newest first)
+        let id_to_pos: std::collections::HashMap<&str, usize> = page_headers.iter().enumerate().map(|(i, h)| (h.id.as_str(), i)).collect();
+        let mut sorted = full_items;
+        sorted.sort_by_key(|item| id_to_pos.get(item.id.as_str()).copied().unwrap_or(usize::MAX));
+
+        Ok((sorted, total))
+    }
+
+    /// Fetch multiple items by ID in a single table scan.
+    /// Much faster than calling get_item_by_id N times.
+    async fn bulk_get_items_by_ids(&self, ids: &std::collections::HashSet<String>) -> Result<Vec<BytescapeItem>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        let mut items = Vec::with_capacity(ids.len());
+
+        // Try direct key lookups first (O(1) each for redb B-tree)
+        let mut remaining: std::collections::HashSet<String> = ids.clone();
+        for id in ids {
+            if let Some(val) = table.get(id.as_str()).map_err(|e| e.to_string())? {
+                let item: BytescapeItem = serde_json::from_str(val.value()).map_err(|e| e.to_string())?;
+                remaining.remove(&item.id);
+                items.push(item);
             }
         }
 
-        Ok((full_items, total))
+        // Fallback scan only for items not found by direct key
+        // (keys stored as source:original_id instead of item.id)
+        if !remaining.is_empty() {
+            for row in table.iter().map_err(|e| e.to_string())? {
+                if remaining.is_empty() { break; }
+                let (_, value) = row.map_err(|e| e.to_string())?;
+                let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+                if remaining.remove(&item.id) {
+                    items.push(item);
+                }
+            }
+        }
+
+        Ok(items)
     }
 
     /// Path-prefix paginated query for Willow migration compatibility.
