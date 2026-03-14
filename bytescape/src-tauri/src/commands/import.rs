@@ -1054,6 +1054,82 @@ pub async fn get_timeline(
     Ok((posts, next_cursor))
 }
 
+/// Get the current user's Bluesky author feed (their own posts)
+#[tauri::command]
+pub async fn get_author_feed(
+    state: State<'_, AppState>,
+    limit: Option<u8>,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    let session = state.keychain.load_session()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+    let limit_val = limit.unwrap_or(50);
+
+    if state.is_oauth_session() {
+        let pds_url = state.oauth_manager.get_pds_url().await?;
+        let mut url = format!(
+            "{}/xrpc/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+            pds_url, urlencoding::encode(&user_did), limit_val
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let json = state.oauth_manager.authenticated_get(&url).await?;
+        let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+        return Ok((posts, next_cursor));
+    }
+
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
+
+    let client = reqwest::Client::new();
+    let token = access_jwt.trim();
+
+    let mut feed_res = None;
+    let mut last_error = String::new();
+
+    for base in crate::connectors::bluesky::authenticated_xrpc_candidates(token, false) {
+        let mut url = format!(
+            "{}/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+            base, urlencoding::encode(&user_did), limit_val
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if resp.status().is_success() {
+            let body_text = resp.text().await.map_err(|e| e.to_string())?;
+            let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&body_text)?;
+            feed_res = Some((posts, next_cursor));
+            break;
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        last_error = format!("Failed to fetch author feed from {}: {} {}", base, status, body);
+        println!("{}", last_error);
+    }
+
+    feed_res.ok_or_else(|| {
+        if last_error.is_empty() {
+            "Failed to fetch author feed: unknown error".to_string()
+        } else {
+            last_error
+        }
+    })
+}
+
 /// Import Bluesky DM messages
 #[tauri::command]
 pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {

@@ -92,6 +92,7 @@ function App() {
 
   // Feed / Archive
   const [isImporting, setIsImporting] = useState(false);
+  const importGuardRef = React.useRef(false);
 
   // Search state (top bar)
   const [searchQuery, setSearchQuery] = useState('');
@@ -281,6 +282,8 @@ function App() {
 
   // === Bluesky Import ===
   async function importBluesky() {
+    if (importGuardRef.current) return;
+    importGuardRef.current = true;
     setIsImporting(true);
     setImportStatus("Connecting to Bluesky...");
     setError("");
@@ -309,6 +312,7 @@ function App() {
       setImportStatus("");
     } finally {
       setIsImporting(false);
+      importGuardRef.current = false;
     }
   }
 
