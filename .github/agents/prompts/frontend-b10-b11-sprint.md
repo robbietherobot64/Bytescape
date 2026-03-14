@@ -22,6 +22,18 @@ Your B10.x work was high quality and aligned with the PM's roadmap design. Howev
 
 ---
 
+## 🔥 USER FEEDBACK — CRITICAL PRIORITY SHIFT
+
+The user has provided extensive feedback on the current state of the app. **User-facing UX issues now take absolute priority over new features.** Read [ROADMAP.md](../../../ROADMAP.md) section "UF. User Feedback — Critical UX Overhaul" for the full list.
+
+Key design philosophy changes:
+1. **Lenses are dead. Feed filters are in.** Gallery/Reader views are being replaced with content-type filter chips on the feed toolbar.
+2. **Social module needs a complete rethink.** The current ProfileBrowserScreen opens a redundant second browser bar. The whole module should focus on friend management, discovery, and cross-platform contacts.
+3. **Layout wastes space.** App should default to fullscreen, fill width, respond to resize.
+4. **Several "completed" features are broken from the user's perspective.** GrapesJS shows a blank screen. Friends list only shows chatted users. Profile clicks do nothing.
+
+---
+
 ## Priority 0 — Merge `main` Into Your Branch (REQUIRED FIRST)
 
 Your branch `track-b/ui-redesign` is **missing 1 critical commit from `main`**:
@@ -55,73 +67,96 @@ Verify: `pnpm tauri dev` builds, `pnpm test` passes.
 
 ---
 
-## Priority 1 — B10.4: Reload / Refresh
+## Priority 1 — UF.1 Layout & Spacing Overhaul ⚡
 
-You were already starting this when interrupted. Complete it now.
+**User feedback:** *"Let's equalize the use of space on the screen. Default to full screen upon opening, then have full width used by the side bars and center content row..."*
 
 ### Requirements
-- Add a reload button (🔄) to the Omnibar, next to back/forward buttons
-- Create a global refresh mechanism — each screen exports a `refresh()` callback or listens for a refresh event
-- When the reload button is clicked:
-  - **FeedScreen**: Re-fetch timeline from Bluesky + local vault
-  - **ChatScreen**: Re-poll conversations
-  - **VaultScreen**: Re-query blob list
-  - **ProfileScreen**: Re-fetch actor data
-  - **ProfileBrowserScreen**: Re-fetch peer data
-  - **SettingsScreen**: No-op or re-read settings
-- Use a Zustand store action or a custom event (`byte://reload`) that screens subscribe to
-- The Omnibar reload button should show a spinning animation while refresh is in progress
+1. **Fullscreen by default**: Set the Tauri window to launch maximized (check `tauri.conf.json` window config — `fullscreen: false, maximized: true`).
+2. **Full-width layout**: The CSS grid/flex layout in `AppLayout.tsx` and `App.css` must fill 100% of the viewport width. Sidebars and content should expand proportionally.
+3. **Feed tabs alignment**: Feed tab bar and filter chips should align their left/right edges with the content column edges, not float in the middle.
+4. **Responsive resize**: When the user resizes the window, all panels adapt fluidly. No fixed pixel widths — use `fr` units, `%`, `min()`/`max()` in the grid.
+5. **Sidebar fill**: Left sidebar and right panel should fill their available vertical space. No dead gaps at the bottom.
 
-### Implementation Approach
-Option A: Add `refresh` action to `useLocationStore` — when called, screens react via `useEffect` watching a `refreshCounter` value.
-Option B: Use a lightweight event bus (`mitt` or custom `EventTarget`) — screens register refresh handlers on mount.
-
-Choose whichever is simpler. Option A keeps everything in Zustand. Option B is more decoupled.
-
-### Tests
-- Reload button renders in Omnibar
-- Clicking reload increments refresh counter (or emits event)
-- Navigation to a new page resets refresh state
+### Files to Touch
+- `src/App.css` — grid template, column widths, spacing
+- `src/components/AppLayout.tsx` — layout wrapper
+- `bytescape/src-tauri/tauri.conf.json` — window `maximized` flag
+- Various screen components if they have fixed widths
 
 ---
 
-## Priority 2 — Navigation Unification (Tech Debt)
+## Priority 2 — UF.2 + UF.4: Feed Post Cards & Friend Actions ⚡
 
-The codebase currently has **two navigation systems**:
-1. `useNavStore` (original, in `store/index.ts`) — `currentScreen`, `setScreen()`, `navigateTo()`
-2. `useLocationStore` (B10.1, in `hooks/useLocation.ts`) — `currentUrl`, `navigate()`, `syncFromNavStore()`
+### UF.2 — Post Card Sizing
+**User feedback:** *"Posts are too narrow in height, they should be a symmetrical square, and/or show the whole image/video preview."*
 
-They sync via `syncFromNavStore()` bridge called in `App.tsx`. This works but is **fragile** — if a component calls `useNavStore.setScreen()` directly, the URL won't update until the next sync cycle.
+- Adjust `FeedEntryCard` to use a more square aspect ratio for cards with media
+- Image/video previews should not crop — show the full media within the card
+- Consider `object-fit: contain` instead of `cover` for media thumbnails
 
-### Task
-1. Audit all callers of `useNavStore.setScreen()` and `useNavStore.navigateTo()` — there may be 10-20 call sites across screens and components
-2. Create a `useNavigate()` convenience hook that wraps `useLocationStore.navigate()` with the same API as the old nav store
-3. Replace all `useNavStore.setScreen()` / `navigateTo()` calls with the new hook
-4. Remove the `syncFromNavStore()` bridge from App.tsx
-5. Keep `useNavStore.currentScreen` as a **read-only derived value** from `useLocationStore.currentUrl` (for backward compatibility with components that read it)
-6. Mark `useNavStore.setScreen()` and `navigateTo()` as deprecated with a console.warn in dev mode
+### UF.4 — Feed Friends Panel Actions
+**User feedback:** *"No chat option next to user names on feed. Clicking profile does nothing."*
 
-### Definition of Done
-- All navigation goes through `useLocationStore` — URL always reflects current page
-- No more `syncFromNavStore()` bridge
-- `useNavStore.currentScreen` is derived, not independently set
-- Tests pass, TSC clean
+- Add a 💬 chat icon button next to each user in the sidebar friends/contacts list → opens DM with that user
+- Make user profile names/avatars clickable → navigate to the user's profile page (Bluesky profile, AP actor, or Bytescape peer profile)
+- Use `useLocationStore.navigate()` for the profile navigation
 
 ---
 
-## Priority 3 — B11.1: Network State Feed (If Time Permits)
+## Priority 3 — UF.12: Import Screen UX Fix ⚡
 
-Low priority. Only start if P1 and P2 are complete.
+**User feedback:** *"Everything is crushed off to the upper left side. The 'shred surveillance' has to go."*
 
-- `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created)
-- Feed injection with distinct visual treatment (different card style from regular posts)
-- Define TypeScript interface, add to `types/index.ts`
+### Changes
+1. **Center the import flow** in the screen (both horizontally and vertically when content is short)
+2. **Remove** the "View Feed" button (redundant — user can click Feed in sidebar)
+3. **Change copy:**
+   - "Shred Surveillance & Save Memories" → "Import Archive"
+   - "Exorcism Complete" → "Import Complete"
+   - Make the tracker classification more descriptive — instead of just a count, show categories: "Ad tracking (12), Location tracking (3), Cross-site tracking (8)" etc.
+4. **Fix centering**: The content should be in the center of the available space, not stuck in the upper-left corner
+
+### Files to Touch
+- `src/screens/ImportScreen.tsx` — layout, copy text, tracker display
+- `src/App.css` — ImportScreen layout CSS if applicable
+
+---
+
+## Priority 4 — UF.8: Fix Profile Builder (GrapesJS) ⚡
+
+**User feedback:** *"Just a blank screen that says 'Body' when you scroll over it."*
+
+- Debug why GrapesJS is not rendering its editor panels
+- Ensure the GrapesJS toolbar, block sidebar, and style panel are visible and functional
+- The user expects: add-block buttons, dropdown menus for customization, drag-and-drop panels, size/shape configuration options
+- Test that the builder actually produces HTML output when blocks are placed
+
+### Files to Touch
+- `src/screens/ProfileBuilderScreen.tsx`
+- Check GrapesJS initialization options, canvas element mounting, CSS loading
+
+---
+
+## Deferred to Next Sprint (Do NOT Start)
+
+These items are important but require more design discussion. Do NOT implement them this sprint — just note any dependencies you discover while working on the above:
+
+- **UF.5** Following/Subscribed tab dedup
+- **UF.6** Feed content-type filters (replaces lenses) — major rework, needs PM design spec
+- **UF.9** Profile page rework (wall vs posts, narrow cards, badges)
+- **UF.10** Social module redesign — major rework, needs PM design spec
+- **UF.11** Settings consolidation
+- **UF.14** Theme customization enhancement
+- **UF.15** Export manager & account deletion
+- **B10.4** Reload/Refresh
+- **Navigation Unification** (useNavStore → useLocationStore migration)
 
 ---
 
 ## Branch & Commit Strategy
 - Stay on `track-b/ui-redesign`
-- Commit after each priority: `merge: ...`, `feat(track-b): B10.4 Reload/Refresh`, `refactor(track-b): unify navigation stores`
+- Commit after each priority: `merge: ...`, `fix(track-b): UF.1 layout & spacing overhaul`, `fix(track-b): UF.2+UF.4 post cards & friend actions`, etc.
 - Update `progress.md` at the end of your session
 
 ## Anti-Patterns

@@ -20,6 +20,12 @@ A0 is **fully closed**. All 7 GAPs resolved, critical 3-root-cause OAuth bug fix
 
 ---
 
+## 🔥 USER FEEDBACK — CRITICAL BUG PRIORITIES
+
+The user has reported several backend-affecting issues that need attention **alongside** A1.1 work. See [ROADMAP.md](../../../ROADMAP.md) section "UF. User Feedback — Critical UX Overhaul" for the full list.
+
+---
+
 ## Priority 0 — Branch State (REQUIRED FIRST)
 
 You are working on **`main`** at commit `fe890b4`. This is correct — stay on `main`.
@@ -28,7 +34,54 @@ You are working on **`main`** at commit `fe890b4`. This is correct — stay on `
 
 ---
 
-## Priority 1 — A1.1: ActivityPub Actor & Inbox/Outbox 🌐
+## Priority 1 — UF.16: Feed Refresh Performance ⚡
+
+**User feedback:** *"Feed takes a while to refresh...like a really really long while, tens of seconds that it seems like its stalled out."*
+
+This is the most user-visible backend issue. Investigate and fix:
+
+### Investigation Steps
+1. **Profile the timeline fetch path**: Time each step — OAuth token retrieval, XRPC call to `app.bsky.feed.getTimeline`, response deserialization, vault query, merge/sort, return to frontend. Where is the bottleneck?
+2. **Check for redundant API calls**: Is the app fetching the same data multiple times during a single refresh? Check `import_bluesky_posts`, `get_timeline`, and any auto-refresh logic.
+3. **Check pagination**: Are we fetching too many items in one call? The Bluesky API supports `cursor`-based pagination — are we using it properly or trying to load everything at once?
+4. **Check DM import blocking**: You fixed parallel chat import (`ad6af24`) — verify this is actually running in parallel and not blocking the feed load.
+5. **Consider progressive loading**: Return cached/local vault items immediately to the frontend while the Bluesky API call is in-flight. The frontend can display cached items first, then update when fresh data arrives.
+
+### Implementation
+- Add timing instrumentation (gated behind `#[cfg(debug_assertions)]`) to the feed fetch pipeline
+- If the bottleneck is network: implement cached-first rendering — return local items immediately, then emit an event when fresh data arrives
+- If the bottleneck is deserialization: consider streaming/chunked responses
+- Target: feed should feel responsive within 2-3 seconds maximum
+
+---
+
+## Priority 2 — UF.13: Facebook Import Quality ⚡
+
+**User feedback:** *"The facebook import totally glitches out the import screen. It also doesn't really work at all, it just shows random activity rather than actual posts or media."*
+
+### Investigation & Fix
+1. **Audit `connectors/facebook.rs`**: What content types is it currently extracting? The user says it shows "random activity" — likely it's importing activity log entries (likes, reactions, login events, ad interactions, page visits) instead of actual posts.
+2. **Prioritize real content**: The Facebook export contains many HTML files. Focus on:
+   - `your_facebook_activity/posts/your_posts_*.html` — user's actual posts with text and media
+   - `your_facebook_activity/comments/comments.html` — user's comments
+   - Media files in `files/` directory
+3. **Exclude low-value activity**: Skip these categories entirely (or mark as `activity_log` not `post`):
+   - Ad interactions, ad preferences
+   - Login/session history
+   - Reactions on other people's posts
+   - Page likes, group joins
+   - Notification settings
+4. **Fix the import screen glitch**: The import process may be returning malformed data that crashes the frontend display. Add validation before returning parsed items.
+
+### Reference
+The user has a Facebook export at `/home/korendian/Downloads/facebook-rabiezaater-2025-01-12-TwiR2QHB/` in the workspace. You can inspect the HTML structure to understand what needs parsing:
+- Check `your_facebook_activity/` for post HTML files
+- Check `files/` for media
+- Look at the HTML structure to understand what the parser should extract vs skip
+
+---
+
+## Priority 3 — A1.1: ActivityPub Actor & Inbox/Outbox 🌐
 
 **This is the most critical item in the project.** A1.1 unblocks 7 items across all three tracks:
 - Track B: B2.6 (Dual-Format Serving), B9.1 (AP Group Threading), B9.3 (WASM Web Portal), B10.5 (URL Deep Linking)
@@ -125,9 +178,16 @@ Register in `lib.rs` invoke_handler.
 
 ---
 
-## Priority 2 — A1.2 Research (Read Only)
+## Also Needed — UF.3 Friends List Backend (Quick Fix)
 
-While working on A1.1, research what A1.2 (Basic Mastodon/Lemmy Support) will require. Don't implement — just note what endpoints, activity types, and authentication patterns you'll need. This informs the next sprint.
+**User feedback:** *"Friends list only has users you have chatted with, rather than all of your connected people you can chat with."*
+
+The `list_contacts` or `list_friends` command may only be returning users from the chat table. It should also include:
+- Bluesky follows (from `list_follows`)
+- P2P peers (from Iroh peer discovery)
+- Imported contacts from archives
+
+Check what the frontend is calling and ensure the backend returns a **unified contact list** across all sources.
 
 ---
 

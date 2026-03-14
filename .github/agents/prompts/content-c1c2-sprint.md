@@ -46,6 +46,32 @@ Verify: `pnpm tauri dev` builds, `pnpm test` passes.
 
 ---
 
+## 🔥 USER FEEDBACK — Content Quality Issues
+
+The user has reported that **content-type classification is weak** (see [ROADMAP.md](../../../ROADMAP.md) section "UF. User Feedback — Critical UX Overhaul", specifically UF.7).
+
+**User feedback:** *"Article reader is cool but shows a lot of content that isn't really articles. Videos, gifs, even links...I see a few legit articles/longform posts but there are also ones that are just link + description."*
+
+### Why This Matters to Track C
+The Frontend is moving from "Lenses" (Gallery/Reader views) to **Feed Content Filters** (filter chips on the feed toolbar). For filters to work, every `BytescapeItem` needs a reliable `content_type` classification. This classification logic lives at the boundary between content and backend — you own the content intelligence side.
+
+### What to Do (P3 — Research & Prototype)
+This is **not a full implementation** this sprint. But as you work on C1.4 and C2.1, keep in mind:
+1. **Link Card vs Article distinction**: When you build C2.1 Link Card Embeds, a post with ONLY a link and a title/description is a "link card" — NOT an article. Articles have substantial body text (>500 chars of actual content, not just a URL + OG description).
+2. **Content type heuristic**: Start thinking about what signals distinguish content types:
+   - `status`: Short text, ≤300 chars, no substantial media
+   - `gallery`: Has image/video attachments as primary content
+   - `article`: Has substantial text (>500 chars body), may have images inline
+   - `link`: Has URL embed but minimal original text
+   - `video`: Has video as primary content
+3. **Surface area**: Where should this classification happen? Options:
+   - At ingest time (in Rust connectors — Track A territory, but you can propose the schema)
+   - At render time (in frontend — Track B territory)
+   - As a field on `BytescapeItem` (needs Track A to add to schema)
+4. **Document your proposal**: In your progress report, include a section on content-type classification recommendations. The PM will use this to create a cross-track task for the next sprint.
+
+---
+
 ## Priority 1 — C1.4: Character Count & Limits
 
 ### Context
