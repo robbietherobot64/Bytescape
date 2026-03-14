@@ -1,5 +1,4 @@
 import { useEditor, EditorContent } from '@tiptap/react';
-import type { AnyExtension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -80,28 +79,21 @@ export function ArticleEditor({
     }, [activeCollabDocId]);
 
     // Build Tiptap extensions based on mode
-    const extensions = useMemo(() => {
-        const exts = [
-            Placeholder.configure({
-                placeholder: 'Write your article...',
-            }),
-        ];
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extensions = useMemo((): any[] => {
         if (collaborative && ydoc) {
-            // Collaborative mode: Yjs manages undo history
-            exts.unshift(StarterKit.configure({ history: false }));
-            exts.push(
-                Collaboration.configure({
-                    document: ydoc,
-                    field: 'content',
-                }),
-            );
-        } else {
-            // Standard mode: local history
-            exts.unshift(StarterKit);
+            // Collaborative mode: Yjs manages undo/redo
+            return [
+                StarterKit.configure({ undoRedo: false }),
+                Placeholder.configure({ placeholder: 'Write your article...' }),
+                Collaboration.configure({ document: ydoc, field: 'content' }),
+            ];
         }
-
-        return exts;
+        // Standard mode: local history
+        return [
+            StarterKit,
+            Placeholder.configure({ placeholder: 'Write your article...' }),
+        ];
     }, [collaborative, ydoc]);
 
     // Wait for collab state to load before creating the editor
@@ -154,6 +146,26 @@ export function ArticleEditor({
     }, [editor, emitChange]);
 
     const rt = readingTime(wordCount);
+
+    // Show loading state while collaborative doc state loads
+    if (collaborative && !collabLoaded) {
+        return (
+            <div className="article-editor-container" data-testid="article-editor-loading">
+                <div className="article-editor-footer">Loading collaborative document…</div>
+            </div>
+        );
+    }
+
+    // Show error state
+    if (collabError) {
+        return (
+            <div className="article-editor-container" data-testid="article-editor-error">
+                <div className="article-editor-footer" style={{ color: 'var(--error-red, #ff4444)' } as React.CSSProperties}>
+                    Collab error: {collabError}
+                </div>
+            </div>
+        );
+    }
 
     if (!editor) return null;
 
@@ -257,6 +269,11 @@ export function ArticleEditor({
 
             <div className="article-editor-footer" data-testid="article-footer">
                 {wordCount} {wordCount === 1 ? 'word' : 'words'} · {rt} min read
+                {collaborative && activeCollabDocId && (
+                    <span style={{ marginLeft: '8px', opacity: 0.6 } as React.CSSProperties}>
+                        · CRDT synced
+                    </span>
+                )}
             </div>
         </div>
     );

@@ -548,7 +548,7 @@ impl OAuthManager {
     }
 
     /// Parse OAuth callback query string parameters.
-    fn parse_query_string(qs: &str) -> OAuthCallbackQuery {
+    pub(crate) fn parse_query_string(qs: &str) -> OAuthCallbackQuery {
         let mut code = None;
         let mut state = None;
         let mut iss = None;
@@ -879,7 +879,7 @@ impl OAuthManager {
     ///
     /// Input: `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`
     /// Output: `("app.bsky.feed.getTimeline", Some("limit=50"))`
-    fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
+    pub(crate) fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
         // Find /xrpc/ in the URL
         let xrpc_idx = url.find("/xrpc/")
             .ok_or_else(|| format!("URL is not an XRPC endpoint: {}", url))?;
@@ -999,10 +999,10 @@ impl OAuthManager {
 }
 
 /// Query parameters from the OAuth callback redirect.
-struct OAuthCallbackQuery {
-    code: Option<String>,
-    state: Option<String>,
-    iss: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
+pub(crate) struct OAuthCallbackQuery {
+    pub(crate) code: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) iss: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) error_description: Option<String>,
 }
