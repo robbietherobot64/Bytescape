@@ -174,21 +174,32 @@ export function useUnifiedFeed({
                 }
 
             } else if (tab === 'you') {
-                // ── You tab: local vault items ──
-                const [result, sources] = await Promise.all([
+                // ── You tab: user's own posts (Bluesky author feed + local vault) ──
+                const [bskyResult, vaultResult, sources] = await Promise.all([
+                    invoke<[BlueskyPost[], string | null]>('get_author_feed', { limit: 50 })
+                        .catch((): [BlueskyPost[], string | null] => [[], null]),
                     invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
                         limit: ARCHIVE_PAGE_SIZE,
                         offset: 0,
-                        source: archiveSourceFilter || null,
+                        source: archiveSourceFilter || 'Manual',
                     }),
                     invoke<string[]>('list_vault_sources').catch((): string[] => []),
                 ]);
                 if (isStale()) return;
                 setArchiveOffset(ARCHIVE_PAGE_SIZE);
-                setArchiveTotal(result.total);
+                setArchiveTotal(vaultResult.total);
                 setVaultSources(sources);
-                setFeedEntries(nestOwnerReplies(result.items.map(adaptBytescapeItem)));
-                setCursor(null);
+
+                const [bskyPosts, bskyCursor] = bskyResult;
+                const bskyEntries = bskyPosts.map(adaptBlueskyPost);
+                const vaultEntries = nestOwnerReplies(vaultResult.items.map(adaptBytescapeItem));
+
+                // Merge both sources, newest first, then deduplicate
+                const merged = [...bskyEntries, ...vaultEntries].sort(
+                    (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+                );
+                setFeedEntries(deduplicateFeedEntries(merged));
+                setCursor(bskyCursor);
 
             } else if (tab === 'all') {
                 // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
@@ -304,13 +315,28 @@ export function useUnifiedFeed({
                 setCursor(nextCursor);
 
             } else if (activeTab === 'you') {
-                const result = await invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
-                    limit: ARCHIVE_PAGE_SIZE,
-                    offset: archiveOffset,
-                    source: archiveSourceFilter || null,
-                });
-                setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...result.items.map(adaptBytescapeItem)])));
+                // Load more from both Bluesky author feed and vault
+                const [bskyResult, vaultResult] = await Promise.all([
+                    cursor
+                        ? invoke<[BlueskyPost[], string | null]>('get_author_feed', { limit: 30, cursor })
+                            .catch((): [BlueskyPost[], string | null] => [[], null])
+                        : Promise.resolve([[], null] as [BlueskyPost[], string | null]),
+                    invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
+                        limit: ARCHIVE_PAGE_SIZE,
+                        offset: archiveOffset,
+                        source: archiveSourceFilter || 'Manual',
+                    }),
+                ]);
+
+                const [bskyPosts, bskyCursor] = bskyResult;
+                const bskyEntries = bskyPosts.map(adaptBlueskyPost);
+                const vaultEntries = vaultResult.items.map(adaptBytescapeItem);
+                const newEntries = [...bskyEntries, ...vaultEntries].sort(
+                    (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+                );
+                setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...newEntries])));
                 setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
+                setCursor(bskyCursor);
 
             } else if (activeTab === 'all') {
                 const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {

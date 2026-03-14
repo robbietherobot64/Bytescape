@@ -11,13 +11,18 @@
 //! 4. Callback server exchanges code for tokens via DPoP + PKCE
 //! 5. Session stored, Tauri event emitted → frontend updates
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use base64::Engine;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, oneshot};
 
+use atrium_api::types::string::Did;
+use atrium_common::store::Store;
 use atrium_identity::{
     did::{CommonDidResolver, CommonDidResolverConfig, DEFAULT_PLC_DIRECTORY_URL},
     handle::{AtprotoHandleResolver, AtprotoHandleResolverConfig, DnsTxtResolver},
@@ -25,12 +30,19 @@ use atrium_identity::{
 use atrium_oauth::{
     AtprotoLocalhostClientMetadata, AuthorizeOptions, CallbackParams, DefaultHttpClient,
     KnownScope, OAuthClient, OAuthClientConfig, OAuthResolverConfig, OAuthSession, Scope,
-    store::{session::MemorySessionStore, state::MemoryStateStore},
+    store::{
+        session::{Session, SessionStore},
+        state::MemoryStateStore,
+    },
 };
 
-/// Fixed port for the OAuth callback server.
+/// Preferred port for the OAuth callback server.
 /// The browser redirects here after authentication.
-const OAUTH_CALLBACK_PORT: u16 = 28457;
+const OAUTH_PREFERRED_PORT: u16 = 28457;
+
+/// Fallback ports tried if the preferred port is already in use.
+/// All ports are registered in the OAuth client metadata's redirect_uris.
+const OAUTH_FALLBACK_PORTS: &[u16] = &[28458, 28459, 28460, 38457];
 
 // ─── DNS TXT Resolver via Cloudflare DNS-over-HTTPS (JSON API) ──────────────
 //
@@ -80,6 +92,190 @@ impl DnsTxtResolver for CloudflareDnsTxtResolver {
     }
 }
 
+// ─── Persistent Session Store (encrypted file-backed) ───────────────────────
+//
+// Replaces MemorySessionStore so OAuth sessions survive app restarts.
+// Uses ChaCha20-Poly1305 + Argon2id (same primitives as EncryptedKeychain).
+
+const SESSION_FILE_NAME: &str = "oauth_sessions.enc";
+const SESSION_SALT_LEN: usize = 16;
+const SESSION_NONCE_LEN: usize = 12;
+
+/// File-backed session store with at-rest encryption.
+///
+/// Implements `Store<Did, Session>` + `SessionStore` for atrium-oauth.
+/// Sessions are held in an in-memory HashMap for fast access and flushed
+/// to an encrypted file on every mutation (`set`, `del`, `clear`).
+pub struct FileSessionStore {
+    /// In-memory cache of all sessions (DID → Session).
+    cache: tokio::sync::Mutex<HashMap<String, Session>>,
+    /// Path to the encrypted session file.
+    file_path: PathBuf,
+    /// Master password for Argon2id key derivation.
+    master_password: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("session store error: {0}")]
+pub struct FileSessionStoreError(String);
+
+impl FileSessionStore {
+    /// Create a new FileSessionStore, loading any existing sessions from disk.
+    pub fn new(data_dir: PathBuf, master_password: String) -> Self {
+        let file_path = data_dir.join(SESSION_FILE_NAME);
+        let sessions = Self::load_from_disk(&file_path, &master_password)
+            .unwrap_or_default();
+        println!(
+            "FileSessionStore: Loaded {} persisted OAuth session(s) from {:?}",
+            sessions.len(),
+            file_path
+        );
+        Self {
+            cache: tokio::sync::Mutex::new(sessions),
+            file_path,
+            master_password,
+        }
+    }
+
+    /// Derive a 256-bit encryption key from the master password + salt using Argon2id.
+    fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], FileSessionStoreError> {
+        use argon2::Argon2;
+        let argon2 = Argon2::default();
+        let mut key = [0u8; 32];
+        argon2
+            .hash_password_into(password.as_bytes(), salt, &mut key)
+            .map_err(|e| FileSessionStoreError(format!("KDF failed: {}", e)))?;
+        Ok(key)
+    }
+
+    /// Encrypt and persist the current session map to disk.
+    fn flush_to_disk(
+        sessions: &HashMap<String, Session>,
+        file_path: &PathBuf,
+        master_password: &str,
+    ) -> Result<(), FileSessionStoreError> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
+        use rand::RngCore;
+
+        let json = serde_json::to_string(sessions)
+            .map_err(|e| FileSessionStoreError(format!("Serialize: {}", e)))?;
+
+        let mut salt = vec![0u8; SESSION_SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; SESSION_NONCE_LEN];
+        rand::rng().fill_bytes(&mut nonce_bytes);
+
+        let key = Self::derive_key(master_password, &salt)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| FileSessionStoreError(format!("Cipher init: {}", e)))?;
+
+        let nonce = Nonce::from(nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(&nonce, json.as_bytes())
+            .map_err(|e| FileSessionStoreError(format!("Encrypt: {}", e)))?;
+
+        // Wire format: salt || nonce || ciphertext → base64-encoded JSON wrapper
+        let mut blob = salt;
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&blob);
+        let wrapper = serde_json::json!({ "encrypted_sessions": encoded });
+        let content = serde_json::to_string_pretty(&wrapper)
+            .map_err(|e| FileSessionStoreError(format!("JSON wrap: {}", e)))?;
+
+        std::fs::write(file_path, content)
+            .map_err(|e| FileSessionStoreError(format!("Write: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load and decrypt sessions from disk. Returns empty map on any failure.
+    fn load_from_disk(
+        file_path: &PathBuf,
+        master_password: &str,
+    ) -> Result<HashMap<String, Session>, FileSessionStoreError> {
+        use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
+
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(HashMap::new());
+            }
+            Err(e) => return Err(FileSessionStoreError(format!("Read: {}", e))),
+        };
+
+        let wrapper: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| FileSessionStoreError(format!("JSON parse: {}", e)))?;
+
+        let encoded = wrapper["encrypted_sessions"]
+            .as_str()
+            .ok_or_else(|| FileSessionStoreError("Missing encrypted_sessions field".into()))?;
+
+        let blob = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| FileSessionStoreError(format!("Decode: {}", e)))?;
+
+        if blob.len() <= SESSION_SALT_LEN + SESSION_NONCE_LEN {
+            return Err(FileSessionStoreError("Blob too short".into()));
+        }
+
+        let salt = &blob[..SESSION_SALT_LEN];
+        let nonce_bytes = &blob[SESSION_SALT_LEN..SESSION_SALT_LEN + SESSION_NONCE_LEN];
+        let ciphertext = &blob[SESSION_SALT_LEN + SESSION_NONCE_LEN..];
+
+        let key = Self::derive_key(master_password, salt)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| FileSessionStoreError(format!("Cipher init: {}", e)))?;
+
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| FileSessionStoreError("Decryption failed — wrong password?".into()))?;
+
+        let sessions: HashMap<String, Session> = serde_json::from_slice(&plaintext)
+            .map_err(|e| FileSessionStoreError(format!("Deserialize: {}", e)))?;
+
+        Ok(sessions)
+    }
+}
+
+impl Store<Did, Session> for FileSessionStore {
+    type Error = FileSessionStoreError;
+
+    async fn get(&self, key: &Did) -> Result<Option<Session>, Self::Error> {
+        let cache = self.cache.lock().await;
+        Ok(cache.get(key.as_str()).cloned())
+    }
+
+    async fn set(&self, key: Did, value: Session) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.insert(key.as_str().to_string(), value);
+        Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
+        println!("FileSessionStore: Persisted session for {}", key.as_str());
+        Ok(())
+    }
+
+    async fn del(&self, key: &Did) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.remove(key.as_str());
+        Self::flush_to_disk(&cache, &self.file_path, &self.master_password)?;
+        println!("FileSessionStore: Removed session for {}", key.as_str());
+        Ok(())
+    }
+
+    async fn clear(&self) -> Result<(), Self::Error> {
+        let mut cache = self.cache.lock().await;
+        cache.clear();
+        // Delete the file entirely
+        let _ = std::fs::remove_file(&self.file_path);
+        println!("FileSessionStore: Cleared all sessions");
+        Ok(())
+    }
+}
+
+impl SessionStore for FileSessionStore {}
+
 // ─── Concrete Type Aliases ──────────────────────────────────────────────────
 //
 // The atrium-oauth crate is heavily generic. These aliases pin the concrete
@@ -91,7 +287,7 @@ type OAuthHandleResolver = AtprotoHandleResolver<CloudflareDnsTxtResolver, OAuth
 
 type ConcreteOAuthClient = OAuthClient<
     MemoryStateStore,
-    MemorySessionStore,
+    FileSessionStore,
     OAuthDidResolver,
     OAuthHandleResolver,
     OAuthHttp,
@@ -101,7 +297,7 @@ type ConcreteOAuthSession = OAuthSession<
     OAuthHttp,
     OAuthDidResolver,
     OAuthHandleResolver,
-    MemorySessionStore,
+    FileSessionStore,
 >;
 
 // ─── OAuth Manager ─────────────────────────────────────────────────────────
@@ -114,21 +310,33 @@ pub struct OAuthManager {
     /// The live OAuth session after successful authentication.
     /// Used for DPoP-authenticated API calls.
     /// Access via `clear_session()`, `has_session()`, etc.
-    session: Mutex<Option<ConcreteOAuthSession>>,
+    pub(crate) session: Mutex<Option<ConcreteOAuthSession>>,
 }
 
 impl OAuthManager {
-    /// Create a new OAuthManager with the AT Protocol localhost client metadata.
-    pub fn new() -> Result<Self, String> {
+    /// Create a new OAuthManager with persistent file-backed session storage.
+    ///
+    /// `data_dir` is the Tauri app data directory where `oauth_sessions.enc` will be stored.
+    /// `master_password` is the same password used by `EncryptedKeychain`.
+    pub fn new(data_dir: PathBuf, master_password: String) -> Result<Self, String> {
         let http_client = Arc::new(DefaultHttpClient::default());
-        let redirect_uri = format!("http://127.0.0.1:{}/callback", OAUTH_CALLBACK_PORT);
+
+        // Register redirect URIs for all candidate ports
+        let mut redirect_uris: Vec<String> = Vec::with_capacity(1 + OAUTH_FALLBACK_PORTS.len());
+        redirect_uris.push(format!("http://127.0.0.1:{}/callback", OAUTH_PREFERRED_PORT));
+        for &port in OAUTH_FALLBACK_PORTS {
+            redirect_uris.push(format!("http://127.0.0.1:{}/callback", port));
+        }
+
+        let session_store = FileSessionStore::new(data_dir, master_password);
 
         let config = OAuthClientConfig {
             client_metadata: AtprotoLocalhostClientMetadata {
-                redirect_uris: Some(vec![redirect_uri]),
+                redirect_uris: Some(redirect_uris),
                 scopes: Some(vec![
                     Scope::Known(KnownScope::Atproto),
                     Scope::Known(KnownScope::TransitionGeneric),
+                    Scope::Known(KnownScope::TransitionChatBsky),
                 ]),
             },
             keys: None,
@@ -147,7 +355,7 @@ impl OAuthManager {
                 protected_resource_metadata: Default::default(),
             },
             state_store: MemoryStateStore::default(),
-            session_store: MemorySessionStore::default(),
+            session_store,
         };
 
         let client =
@@ -160,10 +368,32 @@ impl OAuthManager {
         })
     }
 
+    /// Restore a previously persisted OAuth session by DID.
+    ///
+    /// Called on app startup when the keychain indicates an OAuth session was active.
+    /// The `FileSessionStore` already has the session data loaded from disk;
+    /// `client.restore()` reads from it and rebuilds a live `OAuthSession`
+    /// with working DPoP credentials and automatic token refresh.
+    pub async fn restore_session(&self, did: &str) -> Result<(), String> {
+        let did: Did = did
+            .parse()
+            .map_err(|_| format!("Invalid DID for session restore: {}", did))?;
+
+        let session = self
+            .client
+            .restore(&did)
+            .await
+            .map_err(|e| format!("OAuth session restore failed: {}", e))?;
+
+        *self.session.lock().await = Some(session);
+        println!("OAuth: Restored persisted session for {}", did.as_str());
+        Ok(())
+    }
+
     /// Start the OAuth authorization flow for a given Bluesky handle.
     ///
-    /// 1. Spins up a temporary callback server on `127.0.0.1:{OAUTH_CALLBACK_PORT}`
-    /// 2. Calls the authorization server to get an auth URL
+    /// 1. Binds a callback server (preferred port, then fallbacks)
+    /// 2. Calls the authorization server to get an auth URL with the correct redirect_uri
     /// 3. Returns the URL for the frontend to open in the system browser
     pub async fn start_auth(
         &self,
@@ -173,20 +403,28 @@ impl OAuthManager {
         // Stop any previous callback server
         self.stop_callback_server().await;
 
-        // Spawn raw TCP callback server (avoids warp HRTB lifetime issues with tokio::spawn)
+        // Try binding to ports in order: preferred, then fallbacks
+        let listener = Self::bind_callback_server().await?;
+        let actual_port = listener
+            .local_addr()
+            .map_err(|e| format!("Failed to get listener address: {}", e))?
+            .port();
+        let redirect_uri = format!("http://127.0.0.1:{}/callback", actual_port);
+
+        println!("OAuth: Callback server bound on port {}", actual_port);
+
+        // Spawn the callback server with the already-bound listener
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let client = Arc::clone(&self.client);
         let app = app_handle.clone();
 
         tokio::spawn(async move {
-            Self::run_callback_server(client, shutdown_rx, app).await;
+            Self::run_callback_server(listener, client, shutdown_rx, app).await;
         });
 
         *self.callback_shutdown.lock().await = Some(shutdown_tx);
 
-        // Get authorization URL.
-        // Pass the handle as `state` so we get it back in the callback
-        // (the library stores it alongside PKCE state internally).
+        // Get authorization URL with the actual redirect URI for the bound port
         let url = self
             .client
             .authorize(
@@ -195,8 +433,10 @@ impl OAuthManager {
                     scopes: vec![
                         Scope::Known(KnownScope::Atproto),
                         Scope::Known(KnownScope::TransitionGeneric),
+                        Scope::Known(KnownScope::TransitionChatBsky),
                     ],
                     state: Some(handle.to_string()),
+                    redirect_uri: Some(redirect_uri),
                     ..Default::default()
                 },
             )
@@ -206,39 +446,45 @@ impl OAuthManager {
         Ok(url)
     }
 
-    /// Run the callback server using raw TCP.
+    /// Try binding to the preferred port, then fallback ports.
+    ///
+    /// Returns the first successfully bound `TcpListener`.
+    async fn bind_callback_server() -> Result<tokio::net::TcpListener, String> {
+        // Build candidate list: preferred port first, then fallbacks
+        let mut ports = Vec::with_capacity(1 + OAUTH_FALLBACK_PORTS.len());
+        ports.push(OAUTH_PREFERRED_PORT);
+        ports.extend_from_slice(OAUTH_FALLBACK_PORTS);
+
+        for &port in &ports {
+            match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
+                Ok(listener) => return Ok(listener),
+                Err(e) => {
+                    eprintln!(
+                        "OAuth: Port {} unavailable ({}), trying next...",
+                        port, e
+                    );
+                }
+            }
+        }
+
+        Err(format!(
+            "OAuth: All callback ports unavailable ({:?}). Close the conflicting application and try again.",
+            ports
+        ))
+    }
+
+    /// Run the callback server using a pre-bound TCP listener.
     ///
     /// Accepts connections and dispatches each to `handle_tcp_connection`.
     /// Stops when the shutdown signal is received.
     async fn run_callback_server(
+        listener: tokio::net::TcpListener,
         client: Arc<ConcreteOAuthClient>,
         mut shutdown_rx: oneshot::Receiver<()>,
         app_handle: AppHandle,
     ) {
-        let listener = match tokio::net::TcpListener::bind(format!(
-            "127.0.0.1:{}",
-            OAUTH_CALLBACK_PORT
-        ))
-        .await
-        {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!(
-                    "OAuth: Failed to bind callback server on port {}: {}",
-                    OAUTH_CALLBACK_PORT, e
-                );
-                let _ = app_handle.emit(
-                    "oauth-error",
-                    format!("Failed to start callback server: {}", e),
-                );
-                return;
-            }
-        };
-
-        println!(
-            "OAuth: Callback server listening on http://127.0.0.1:{}",
-            OAUTH_CALLBACK_PORT
-        );
+        let addr = listener.local_addr().unwrap();
+        println!("OAuth: Callback server listening on http://{}", addr);
 
         loop {
             tokio::select! {
@@ -511,83 +757,242 @@ impl OAuthManager {
         Ok(session.base_uri())
     }
 
-    /// Make an authenticated GET request using the OAuth session's DPoP credentials.
+    /// Make an authenticated XRPC GET request using `send_xrpc` which properly
+    /// handles DPoP Authorization headers, proof generation, and automatic
+    /// token refresh on `invalid_token` responses.
     ///
-    /// The `OAuthSession` implements `atrium_xrpc::HttpClient` which automatically
-    /// adds the `Authorization: DPoP {token}` and `DPoP: {proof}` headers.
-    /// Returns the response body as a UTF-8 string.
-    pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
+    /// `nsid` is the XRPC method name, e.g. `"app.bsky.feed.getTimeline"`.
+    /// `query_params` is an optional pre-serialized query string (without `?`).
+    /// Returns the response body as a JSON string.
+    pub async fn xrpc_get(
+        &self,
+        nsid: &str,
+        query_params: Option<&str>,
+    ) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
 
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        let request = http::Request::builder()
-            .method(http::Method::GET)
-            .uri(url)
-            .header("Accept", "application/json")
-            .body(Vec::new())
-            .map_err(|e| format!("Failed to build request: {}", e))?;
+        // Build a raw XrpcRequest with no typed params/input.
+        // We'll manually append query params to the nsid since the serde
+        // serialization path requires a concrete Serialize type.
+        let effective_nsid = if let Some(qs) = query_params {
+            format!("{}?{}", nsid, qs)
+        } else {
+            nsid.to_string()
+        };
 
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth request failed: {}", e))?;
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::GET,
+            nsid: effective_nsid,
+            parameters: None,
+            input: None,
+            encoding: None,
+        };
 
-        let status = response.status();
-        let body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
 
-        if !status.is_success() {
-            return Err(format!("API returned {}: {}", status, body));
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC request failed: {}", e)),
         }
-
-        Ok(body)
     }
 
-    /// Make an authenticated POST request using the OAuth session's DPoP credentials.
+    /// Make an authenticated XRPC POST request with a JSON body.
     ///
-    /// `content_type` should be `"application/json"` for XRPC calls.
-    /// Returns the response body as a UTF-8 string.
+    /// Uses `send_xrpc` for proper DPoP auth and automatic token refresh.
+    pub async fn xrpc_post(
+        &self,
+        nsid: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::POST,
+            nsid: nsid.to_string(),
+            parameters: None,
+            input: Some(atrium_xrpc::InputDataOrBytes::Bytes(body)),
+            encoding: Some(content_type.to_string()),
+        };
+
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            session.send_xrpc(&request).await;
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC request failed: {}", e)),
+        }
+    }
+
+    /// Legacy authenticated_get — delegates to xrpc_get by parsing the URL.
+    ///
+    /// Callers pass a full URL like `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`.
+    /// We extract the NSID and query string, then use `xrpc_get` for proper DPoP auth.
+    pub async fn authenticated_get(&self, url: &str) -> Result<String, String> {
+        let (nsid, query) = Self::parse_xrpc_url(url)?;
+        self.xrpc_get(&nsid, query.as_deref()).await
+    }
+
+    /// Legacy authenticated_post — delegates to xrpc_post by parsing the URL.
     pub async fn authenticated_post(
         &self,
         url: &str,
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<String, String> {
-        use atrium_xrpc::HttpClient;
-        use atrium_xrpc::http;
+        let (nsid, _query) = Self::parse_xrpc_url(url)?;
+        self.xrpc_post(&nsid, body, content_type).await
+    }
+
+    /// Parse a full XRPC URL into (nsid, optional_query_string).
+    ///
+    /// Input: `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`
+    /// Output: `("app.bsky.feed.getTimeline", Some("limit=50"))`
+    fn parse_xrpc_url(url: &str) -> Result<(String, Option<String>), String> {
+        // Find /xrpc/ in the URL
+        let xrpc_idx = url.find("/xrpc/")
+            .ok_or_else(|| format!("URL is not an XRPC endpoint: {}", url))?;
+        let after_xrpc = &url[xrpc_idx + 6..]; // skip "/xrpc/"
+
+        // Split on '?' for query string
+        if let Some(q_idx) = after_xrpc.find('?') {
+            let nsid = after_xrpc[..q_idx].to_string();
+            let query = after_xrpc[q_idx + 1..].to_string();
+            Ok((nsid, Some(query)))
+        } else {
+            Ok((after_xrpc.to_string(), None))
+        }
+    }
+
+    /// Make a DPoP-authenticated GET request routed through the Bluesky chat proxy.
+    ///
+    /// Adds `atproto-proxy: did:web:api.bsky.chat#bsky_chat` header so the PDS
+    /// forwards the request to the chat service.
+    pub async fn authenticated_chat_get(&self, url: &str) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
+        use atrium_api::agent::CloneWithProxy;
+
+        println!("authenticated_chat_get: url={}", url);
+        let (nsid, query) = Self::parse_xrpc_url(url)?;
+        println!("authenticated_chat_get: nsid={}, query={:?}", nsid, query);
 
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        let request = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(url)
-            .header("Content-Type", content_type)
-            .header("Accept", "application/json")
-            .body(body)
-            .map_err(|e| format!("Failed to build request: {}", e))?;
+        // Clone the session with the chat proxy header — this creates a
+        // separate client that routes through the chat service without
+        // polluting the main session's proxy_header state.
+        let chat_session = session.clone_with_proxy(
+            "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
+            "bsky_chat",
+        );
 
-        let response = session
-            .send_http(request)
-            .await
-            .map_err(|e| format!("OAuth request failed: {}", e))?;
+        let effective_nsid = if let Some(qs) = query {
+            format!("{}?{}", nsid, qs)
+        } else {
+            nsid.clone()
+        };
 
-        let status = response.status();
-        let resp_body = String::from_utf8(response.into_body())
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))?;
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::GET,
+            nsid: effective_nsid,
+            parameters: None,
+            input: None,
+            encoding: None,
+        };
 
-        if !status.is_success() {
-            return Err(format!("API returned {}: {}", status, resp_body));
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            chat_session.send_xrpc(&request).await;
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("Chat API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC chat request failed: {}", e)),
         }
+    }
 
-        Ok(resp_body)
+    /// Make a DPoP-authenticated POST request routed through the Bluesky chat proxy.
+    pub async fn authenticated_chat_post(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<String, String> {
+        use atrium_xrpc::XrpcClient;
+        use atrium_api::agent::CloneWithProxy;
+        let (nsid, _query) = Self::parse_xrpc_url(url)?;
+
+        let session_guard = self.session.lock().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+
+        // Clone the session with the chat proxy header — keeps the main
+        // session clean so subsequent feed/timeline calls aren't affected.
+        let chat_session = session.clone_with_proxy(
+            "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
+            "bsky_chat",
+        );
+
+        let request = atrium_xrpc::XrpcRequest::<(), ()> {
+            method: atrium_xrpc::http::Method::POST,
+            nsid: nsid.to_string(),
+            parameters: None,
+            input: Some(atrium_xrpc::InputDataOrBytes::Bytes(body)),
+            encoding: Some(content_type.to_string()),
+        };
+
+        let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
+            chat_session.send_xrpc(&request).await;
+
+        match result {
+            Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
+                serde_json::to_string(&v).map_err(|e| format!("JSON serialize error: {}", e))
+            }
+            Ok(atrium_xrpc::OutputDataOrBytes::Bytes(b)) => {
+                String::from_utf8(b).map_err(|e| format!("Invalid UTF-8 response: {}", e))
+            }
+            Err(atrium_xrpc::Error::XrpcResponse(e)) => {
+                Err(format!("Chat API returned {}: {:?}", e.status, e.error))
+            }
+            Err(e) => Err(format!("XRPC chat request failed: {}", e)),
+        }
     }
 }
 

@@ -1054,31 +1054,243 @@ pub async fn get_timeline(
     Ok((posts, next_cursor))
 }
 
-/// Import Bluesky DM messages
+/// Get the current user's Bluesky author feed (their own posts)
 #[tauri::command]
-pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
-    use crate::db::VaultMessage;
-    
+pub async fn get_author_feed(
+    state: State<'_, AppState>,
+    limit: Option<u8>,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     let session = state.keychain.load_session()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
-    // DMs require authenticated access — OAuth DPoP not yet wired for chat API
+    let limit_val = limit.unwrap_or(50);
+
     if state.is_oauth_session() {
-        println!("import_vault_messages: Skipping DMs for OAuth session (DPoP chat API not yet supported)");
-        return Ok(serde_json::json!({
-            "conversations": 0,
-            "threads": 0,
-            "parsed": 0,
-            "new": 0
-        }));
+        let pds_url = state.oauth_manager.get_pds_url().await?;
+        let mut url = format!(
+            "{}/xrpc/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+            pds_url, urlencoding::encode(&user_did), limit_val
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let json = state.oauth_manager.authenticated_get(&url).await?;
+        let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+        return Ok((posts, next_cursor));
     }
 
     let access_jwt = state.get_fresh_access_jwt().await
         .map_err(|e| BytescapeError::AuthFailed(e))?;
 
-    let chat_client = state.chat_client.clone();
+    let client = reqwest::Client::new();
+    let token = access_jwt.trim();
+
+    let mut feed_res = None;
+    let mut last_error = String::new();
+
+    for base in crate::connectors::bluesky::authenticated_xrpc_candidates(token, false) {
+        let mut url = format!(
+            "{}/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+            base, urlencoding::encode(&user_did), limit_val
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if resp.status().is_success() {
+            let body_text = resp.text().await.map_err(|e| e.to_string())?;
+            let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&body_text)?;
+            feed_res = Some((posts, next_cursor));
+            break;
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        last_error = format!("Failed to fetch author feed from {}: {} {}", base, status, body);
+        println!("{}", last_error);
+    }
+
+    feed_res.ok_or_else(|| {
+        if last_error.is_empty() {
+            "Failed to fetch author feed: unknown error".to_string()
+        } else {
+            last_error
+        }
+    })
+}
+
+/// Import Bluesky DM messages
+#[tauri::command]
+pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
+    use crate::db::VaultMessage;
+    
+    println!("import_vault_messages: ENTER");
+    
+    let session = state.keychain.load_session()
+        .map_err(|e| {
+            eprintln!("import_vault_messages: keychain load_session failed: {}", e);
+            BytescapeError::Keychain(e.to_string())
+        })?;
+    let (user_did, _user_handle) = session.ok_or_else(|| {
+        eprintln!("import_vault_messages: No session found (unauthenticated)");
+        BytescapeError::Unauthenticated
+    })?;
+
+    println!("import_vault_messages: user_did={}, is_oauth={}", user_did, state.is_oauth_session());
     let db_manager = state.db_manager.clone();
+
+    if state.is_oauth_session() {
+        // OAuth path: use xrpc_chat_get with DPoP + atproto-proxy
+        println!("import_vault_messages: OAuth path — calling listConvos...");
+        let convos_resp = match state.xrpc_chat_get("chat.bsky.convo.listConvos").await {
+            Ok(resp) => resp,
+            Err(e) => {
+                eprintln!("import_vault_messages: listConvos FAILED: {}", e);
+                // If the scope is missing, the user needs to re-authenticate
+                // with the updated OAuth scopes. Return a non-error response
+                // so polling doesn't spam the logs.
+                if e.contains("ScopeMissing") || e.contains("scope") {
+                    println!("import_vault_messages: Chat scope missing — user needs to re-authenticate");
+                    return Ok(serde_json::json!({
+                        "new": 0,
+                        "convos": 0,
+                        "error": "chat_scope_missing",
+                        "message": "Please log out and log back in to enable chat import. Your existing session was created before chat support was added."
+                    }));
+                }
+                return Err(format!("Failed to list conversations: {}", e));
+            }
+        };
+
+        let convos = convos_resp.get("convos")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        println!("import_vault_messages: Found {} conversations", convos.len());
+
+        let db_guard = db_manager.read().await;
+        let db = db_guard.as_ref()
+            .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+        let mut new_count = 0;
+
+        for convo_val in &convos {
+            let convo_id = convo_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+            if convo_id.is_empty() { continue; }
+
+            let members = convo_val.get("members")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let peer = members.iter().find(|m| {
+                m.get("did").and_then(|d| d.as_str()) != Some(&user_did)
+            });
+            let peer_did = peer.and_then(|p| p.get("did").and_then(|d| d.as_str()).map(|s| s.to_string()));
+            let peer_handle = peer.and_then(|p| p.get("handle").and_then(|h| h.as_str()).map(|s| s.to_string()));
+
+            // Build did→handle map from members so we can resolve sender handles
+            // (getMessages sender object only has `did`, not `handle`)
+            let member_handle_map: std::collections::HashMap<String, String> = members.iter()
+                .filter_map(|m| {
+                    let did = m.get("did").and_then(|d| d.as_str())?.to_string();
+                    let handle = m.get("handle").and_then(|h| h.as_str())?.to_string();
+                    if handle.is_empty() { return None; }
+                    Some((did, handle))
+                })
+                .collect();
+
+            let endpoint = format!("chat.bsky.convo.getMessages?convoId={}&limit=100", convo_id);
+            let msgs_resp = match state.xrpc_chat_get(&endpoint).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("import_vault_messages: Failed to get messages for convo {}: {}", convo_id, e);
+                    continue;
+                }
+            };
+
+            let messages = msgs_resp.get("messages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for msg_val in &messages {
+                // Only process actual chat messages (skip deletions etc.)
+                let msg_type = msg_val.get("$type").and_then(|t| t.as_str()).unwrap_or("");
+                if msg_type != "chat.bsky.convo.defs#messageView" && !msg_type.is_empty() {
+                    continue;
+                }
+
+                let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                if msg_id.is_empty() { continue; }
+
+                let sender_did = msg_val.get("sender")
+                    .and_then(|s| s.get("did"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let sender_handle = msg_val.get("sender")
+                    .and_then(|s| s.get("handle"))
+                    .and_then(|h| h.as_str())
+                    .filter(|h| !h.is_empty())
+                    .map(|h| h.to_string())
+                    .or_else(|| member_handle_map.get(&sender_did).cloned())
+                    .unwrap_or_default();
+                let text = msg_val.get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let sent_at = msg_val.get("sentAt")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let vault_msg = VaultMessage {
+                    id: msg_id.to_string(),
+                    owner_did: Some(user_did.clone()),
+                    convo_id: convo_id.to_string(),
+                    sender_did,
+                    sender_handle,
+                    text,
+                    sent_at,
+                    source: "bluesky".to_string(),
+                    imported_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as u64,
+                    peer_did: peer_did.clone(),
+                    peer_handle: peer_handle.clone(),
+                };
+
+                if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                    new_count += 1;
+                }
+            }
+        }
+
+        println!("import_vault_messages: OAuth import done — {} new msgs from {} convos", new_count, convos.len());
+        return Ok(serde_json::json!({
+            "new": new_count,
+            "convos": convos.len()
+        }));
+    }
+
+    // App-password path: use ChatClient with Bearer auth
+    let access_jwt = state.get_fresh_access_jwt().await
+        .map_err(|e| BytescapeError::AuthFailed(e))?;
+
+    let chat_client = state.chat_client.clone();
     
     // List conversations
     let convos = chat_client.list_convos(&access_jwt, &user_did).await
@@ -1437,7 +1649,47 @@ pub async fn send_bsky_dm(
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
     if state.is_oauth_session() {
-        return Err("Sending DMs requires App Password login. OAuth DPoP chat support is coming soon.".to_string());
+        // OAuth path: use xrpc_chat_post with DPoP + atproto-proxy
+        let body = serde_json::json!({
+            "convoId": convo_id,
+            "message": {
+                "text": content.clone()
+            }
+        });
+        let resp = state.xrpc_chat_post("chat.bsky.convo.sendMessage", body).await
+            .map_err(|e| format!("Failed to send DM: {}", e))?;
+
+        let msg_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // Save to local DB
+        let db_guard = state.db_manager.read().await;
+        let db = db_guard.as_ref()
+            .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+        let vault_msg = crate::db::VaultMessage {
+            id: msg_id.clone(),
+            owner_did: Some(user_did.clone()),
+            convo_id: convo_id.clone(),
+            sender_did: user_did.clone(),
+            sender_handle: _user_handle.clone(),
+            text: content,
+            sent_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis().to_string(),
+            source: "bluesky".to_string(),
+            imported_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as u64,
+            peer_did: _recipient_did,
+            peer_handle: None,
+        };
+
+        let _ = db.save_vault_message(&vault_msg).await;
+
+        return Ok(serde_json::json!({
+            "id": msg_id,
+            "convo_id": convo_id,
+            "sent": true
+        }));
     }
 
     let access_jwt = state.get_fresh_access_jwt().await
@@ -1485,12 +1737,111 @@ pub async fn send_bsky_dm(
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
     if state.is_oauth_session() {
-        // Saved feeds require getPreferences which needs DPoP auth on the user's PDS.
-        // For now, return an empty list — the timeline still works via get_timeline.
-        return Ok(Vec::new());
+        // OAuth path: use DPoP-authenticated XRPC helpers
+        return list_saved_feeds_oauth(&state).await;
     }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+}
+
+/// OAuth-aware implementation of saved feeds fetching.
+///
+/// Uses the unified XRPC helpers to make DPoP-authenticated requests
+/// for getPreferences and getFeedGenerators.
+async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
+    use crate::connectors::bluesky::GeneratorView;
+
+    // 1. Fetch preferences via OAuth
+    let prefs_json = state
+        .xrpc_get("app.bsky.actor.getPreferences")
+        .await?;
+
+    // 2. Extract feed URIs from preferences
+    fn collect_feed_uris(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => {
+                if s.starts_with("at://") && s.contains("/app.bsky.feed.generator/") {
+                    out.push(s.to_string());
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr { collect_feed_uris(v, out); }
+            }
+            serde_json::Value::Object(map) => {
+                if let Some(v) = map.get("value").and_then(|v| v.as_str()) {
+                    if v.starts_with("at://") && v.contains("/app.bsky.feed.generator/") {
+                        out.push(v.to_string());
+                    }
+                }
+                if let Some(v) = map.get("uri").and_then(|v| v.as_str()) {
+                    if v.starts_with("at://") && v.contains("/app.bsky.feed.generator/") {
+                        out.push(v.to_string());
+                    }
+                }
+                for v in map.values() { collect_feed_uris(v, out); }
+            }
+            _ => {}
+        }
+    }
+
+    let mut feed_uris = Vec::new();
+    if let Some(prefs) = prefs_json.get("preferences").and_then(|p| p.as_array()) {
+        for pref in prefs {
+            collect_feed_uris(pref, &mut feed_uris);
+        }
+    }
+
+    // Deduplicate
+    let mut seen = std::collections::HashSet::new();
+    feed_uris.retain(|uri| seen.insert(uri.clone()));
+
+    if feed_uris.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 3. Resolve feed generators in batches via OAuth
+    let mut resolved_feeds: Vec<GeneratorView> = Vec::new();
+    for chunk in feed_uris.chunks(10) {
+        let params: Vec<String> = chunk.iter().map(|uri| format!("feeds={}", urlencoding::encode(uri))).collect();
+        let query = params.join("&");
+        let endpoint = format!("app.bsky.feed.getFeedGenerators?{}", query);
+
+        match state.xrpc_get(&endpoint).await {
+            Ok(resp) => {
+                if let Some(feeds) = resp.get("feeds").and_then(|f| f.as_array()) {
+                    for feed in feeds {
+                        if let Ok(view) = serde_json::from_value::<GeneratorView>(feed.clone()) {
+                            resolved_feeds.push(view);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("OAuth: getFeedGenerators batch error: {}", e);
+            }
+        }
+    }
+
+    // 4. Synthetic fallback for unresolved URIs
+    let resolved_uris: std::collections::HashSet<String> = resolved_feeds.iter().map(|f| f.uri.clone()).collect();
+    for uri in feed_uris {
+        if resolved_uris.contains(&uri) { continue; }
+        let trimmed = uri.trim_start_matches("at://");
+        let mut parts = trimmed.split('/');
+        let did = parts.next().unwrap_or_default().to_string();
+        let _collection = parts.next();
+        let rkey = parts.next().unwrap_or("feed");
+        resolved_feeds.push(GeneratorView {
+            uri: uri.clone(),
+            cid: String::new(),
+            did,
+            display_name: Some(rkey.replace('-', " ")),
+            description: None,
+            avatar: None,
+        });
+    }
+
+    Ok(resolved_feeds)
 }
 
 /// List profiles this actor follows.
@@ -1533,12 +1884,183 @@ pub async fn get_unified_feed(
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     if state.is_oauth_session() {
-        // Unified feed aggregation requires multiple auth-dependent calls.
-        // Fall back to basic timeline for OAuth sessions.
-        return Err("Unified feed requires App Password login. Use the timeline instead.".to_string());
+        // OAuth path: use DPoP-authenticated XRPC for each sub-query
+        return get_unified_feed_oauth(&state, tags, feed_uris, limit, cursor).await;
     }
     let access_jwt = state.get_fresh_access_jwt().await?;
     crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+}
+
+/// OAuth-aware unified feed aggregation.
+///
+/// Fetches hashtag search results and custom feed posts via DPoP-authenticated
+/// XRPC helpers, then merges and deduplicates by URI.
+async fn get_unified_feed_oauth(
+    state: &AppState,
+    tags: Vec<String>,
+    feed_uris: Vec<String>,
+    limit: u8,
+    cursor: Option<String>,
+) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    use crate::connectors::bluesky::BlueskyImportedPost;
+
+    let parsed_cursor: crate::connectors::bluesky::UnifiedCursor = cursor
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+
+    let mut all_posts: Vec<BlueskyImportedPost> = Vec::new();
+    let mut next_cursor = crate::connectors::bluesky::UnifiedCursor::default();
+
+    // 1. Hashtag search — get raw JSON via OAuth, then parse with existing parsers
+    if !tags.is_empty() {
+        let tag_query = tags.join(" OR ");
+        let mut search_endpoint = format!(
+            "app.bsky.feed.searchPosts?q={}&limit={}",
+            urlencoding::encode(&tag_query),
+            limit
+        );
+        if let Some(ref c) = parsed_cursor.hashtag_cursor {
+            search_endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        match state.xrpc_get(&search_endpoint).await {
+            Ok(resp) => {
+                // searchPosts returns { posts: [...], cursor: ... }
+                // Convert to the feed format that parse_feed_json expects
+                if let Some(posts_arr) = resp.get("posts").and_then(|p| p.as_array()) {
+                    let strict_tags: Vec<String> = tags.iter()
+                        .map(|t| t.trim_start_matches('#').to_lowercase())
+                        .collect();
+                    for post_val in posts_arr {
+                        // Parse each post using manual extraction (search results are FeedPost, not FeedItem)
+                        if let Some(post) = parse_search_post_json(post_val) {
+                            let post_text = post.text.to_lowercase();
+                            if strict_tags.iter().any(|t| post_text.contains(t)) {
+                                all_posts.push(post);
+                            }
+                        }
+                    }
+                }
+                next_cursor.hashtag_cursor = resp
+                    .get("cursor")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string());
+            }
+            Err(e) => eprintln!("OAuth unified feed: hashtag search error: {}", e),
+        }
+    }
+
+    // 2. Custom feed posts — get raw JSON via OAuth, parse with parse_feed_json
+    let uris = if feed_uris.is_empty() {
+        match list_saved_feeds_oauth(state).await {
+            Ok(views) => views.into_iter()
+                .map(|v| v.uri)
+                .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        feed_uris
+    };
+
+    for feed_uri in &uris {
+        let mut endpoint = format!(
+            "app.bsky.feed.getFeed?feed={}&limit={}",
+            urlencoding::encode(feed_uri),
+            limit
+        );
+        if let Some(c) = parsed_cursor.feed_cursors.get(feed_uri.as_str()) {
+            endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        match state.xrpc_get(&endpoint).await {
+            Ok(resp) => {
+                // getFeed returns { feed: [...], cursor: ... } — same shape as getTimeline
+                let json_str = serde_json::to_string(&resp).unwrap_or_default();
+                if let Ok((posts, _)) = crate::connectors::bluesky::parse_feed_json(&json_str) {
+                    all_posts.extend(posts);
+                }
+                if let Some(c) = resp.get("cursor").and_then(|c| c.as_str()) {
+                    next_cursor.feed_cursors.insert(feed_uri.clone(), c.to_string());
+                }
+            }
+            Err(e) => eprintln!("OAuth unified feed: getFeed error for {}: {}", feed_uri, e),
+        }
+    }
+
+    // 3. Deduplicate by URI
+    let mut seen = std::collections::HashSet::new();
+    all_posts.retain(|p| seen.insert(p.uri.clone()));
+
+    // Sort by timestamp descending
+    all_posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all_posts.truncate(limit as usize);
+
+    let cursor_str = serde_json::to_string(&next_cursor).ok();
+    Ok((all_posts, cursor_str))
+}
+
+/// Parse a single search result post (FeedPost shape) into a BlueskyImportedPost.
+///
+/// Search results have a flat structure unlike timeline items which wrap posts in FeedItem.
+fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connectors::bluesky::BlueskyImportedPost> {
+    use crate::connectors::bluesky::BlueskyImportedPost;
+
+    let uri = post_val.get("uri")?.as_str()?.to_string();
+    let cid = post_val.get("cid").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+    let author = post_val.get("author")?;
+    let author_did = author.get("did")?.as_str()?.to_string();
+    let author_handle = author.get("handle").and_then(|h| h.as_str()).unwrap_or_default().to_string();
+    let author_avatar = author.get("avatar").and_then(|a| a.as_str()).map(|s| s.to_string());
+
+    let record = post_val.get("record")?;
+    let text = record.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+    let created_at = record.get("createdAt")
+        .and_then(|c| c.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    let reply_count = post_val.get("replyCount").and_then(|v| v.as_i64());
+    let repost_count = post_val.get("repostCount").and_then(|v| v.as_i64());
+    let like_count = post_val.get("likeCount").and_then(|v| v.as_i64());
+
+    let viewer_like = post_val.get("viewer")
+        .and_then(|v| v.get("like"))
+        .and_then(|l| l.as_str())
+        .map(|s| s.to_string());
+    let viewer_repost = post_val.get("viewer")
+        .and_then(|v| v.get("repost"))
+        .and_then(|r| r.as_str())
+        .map(|s| s.to_string());
+
+    Some(BlueskyImportedPost {
+        uri,
+        cid,
+        text,
+        created_at,
+        image_urls: Vec::new(),
+        image_local_paths: Vec::new(),
+        author_did,
+        author_handle,
+        author_avatar,
+        reply_count,
+        repost_count,
+        like_count,
+        video_url: None,
+        video_thumbnail: None,
+        external_url: None,
+        external_title: None,
+        external_description: None,
+        external_thumb: None,
+        reposted_by: None,
+        reposted_by_handle: None,
+        reply_parent_handle: None,
+        reply_parent_uri: None,
+        quoted_post: None,
+        viewer_like,
+        viewer_repost,
+    })
 }
 
 /// Publish a new post with explicit destination routing.
