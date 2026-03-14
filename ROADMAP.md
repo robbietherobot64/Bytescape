@@ -181,7 +181,7 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 
 #### B2. Profile Builder & Theming
 - [x] **B2.1 GrapesJS Integration**: Embed GrapesJS drag-and-drop module builder in `ProfileBuilderScreen`. Outputs clean HTML/CSS stored locally in user's Willow store. Requires `grapesjs` npm package.
-- [ ] **B2.2 Raw HTML Override**: Upload custom HTML/CSS/JS directly to Willow store. Rendered in a sandboxed `<iframe>` to prevent XSS.
+- [x] **B2.2 Raw HTML Override**: Upload custom HTML/CSS/JS directly to Willow store. Rendered in a sandboxed `<iframe>` to prevent XSS.
 - [ ] **B2.3 DID Meta Tags**: Emit `<meta name="bytescape:did">` and cross-platform subscription link tags for client-side DID resolution.
 - [x] **B2.4 Widget System**: Away message, music player, friends list, guestbook, visitor counter, post feed, media grid — live React widget hydration from GrapesJS blocks, with persistent configuration via Tauri commands and redb storage.
 - [x] **B2.5 Theme Engine**: Three built-in themes — **Cozy Mode** (GeoCities default), **Desktop Mode** (Win98 silver/teal, sharper bevels, system font, no stars), **Midnight Mode** (deep blues, soft purples, rounded corners). `ThemeId` type, `useThemeStore` (Zustand + localStorage persistence), `useTheme()` hook applies `data-theme` attribute on `<html>`. `ThemePicker` component in SettingsScreen Appearance card with swatch previews and instant switching. Ghost CSS variables (`--accent-purple`, `--bg-primary`, etc.) defined with defaults. 5 ThemePicker tests.
