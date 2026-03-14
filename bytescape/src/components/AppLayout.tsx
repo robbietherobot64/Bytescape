@@ -26,10 +26,7 @@ interface AppLayoutProps {
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-/** Screens that already have their own buddy/contact list — don't double-up. */
-const SCREENS_WITH_OWN_BUDDY_LIST: ReadonlySet<Screen> = new Set(['chat', 'friends']);
-
-/** Application shell: top bar + friends panel (conditionally visible) + main content. */
+/** Application shell: top bar + friends panel (feed only) + main content. */
 export function AppLayout({
     children,
     activeSidebar,
@@ -43,7 +40,7 @@ export function AppLayout({
     onOpenChat,
     onViewProfile,
 }: AppLayoutProps) {
-    const showFriendsPanel = !SCREENS_WITH_OWN_BUDDY_LIST.has(screen);
+    const showFriendsPanel = screen === 'feed';
 
     return (
         <div className="app-layout">
