@@ -3,6 +3,10 @@ import { TopBar } from './TopBar';
 import { FriendsPanel } from './FriendsPanel';
 import { SidebarItem } from '../types';
 import { Screen } from '../store';
+import {
+    BsHouseFill, BsChatDotsFill, BsPeopleFill,
+    BsFolderFill, BsPersonFill
+} from 'react-icons/bs';
 
 interface AppLayoutProps {
     /** Screen content rendered in the primary pane. */
@@ -26,7 +30,16 @@ interface AppLayoutProps {
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
-/** Application shell: top bar + friends panel (feed only) + main content. */
+/** Bottom navigation items for mobile. */
+const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
+    { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
+    { id: 'social', icon: <BsPeopleFill />, label: 'Social' },
+    { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
+    { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
+];
+
+/** Application shell: top bar + friends panel (feed only) + main content + mobile bottom nav. */
 export function AppLayout({
     children,
     activeSidebar,
@@ -63,6 +76,22 @@ export function AppLayout({
                     />
                 )}
             </div>
+
+            {/* Mobile bottom navigation bar — visible only on small screens via CSS */}
+            <nav className="mobile-bottom-nav" aria-label="Main navigation">
+                {BOTTOM_NAV_ITEMS.map(item => (
+                    <button
+                        key={item.id}
+                        className={`mobile-bottom-nav-item ${activeSidebar === item.id ? 'active' : ''}`}
+                        onClick={() => onNavigate(item.id)}
+                        aria-label={item.label}
+                        aria-current={activeSidebar === item.id ? 'page' : undefined}
+                    >
+                        <span className="mobile-bottom-nav-icon">{item.icon}</span>
+                        <span className="mobile-bottom-nav-label">{item.label}</span>
+                    </button>
+                ))}
+            </nav>
         </div>
     );
 }

@@ -495,6 +495,36 @@ export function ProfileBuilderScreen() {
             height: '100%',
             background: 'var(--bg-primary, #0f0f23)',
         } as React.CSSProperties}>
+            {/* Mobile warning — shown only on small screens via CSS */}
+            <div className="profile-builder-mobile-warning">
+                <Win98Box variant="raised">
+                    <div style={{
+                        padding: '24px 16px',
+                        textAlign: 'center',
+                    } as React.CSSProperties}>
+                        <div style={{ fontSize: 32, marginBottom: 12 }}>🖥️</div>
+                        <h3 style={{ color: 'var(--accent-yellow)', margin: '0 0 8px 0' } as React.CSSProperties}>
+                            Desktop Recommended
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5, margin: '0 0 16px 0' } as React.CSSProperties}>
+                            The Profile Builder uses a drag-and-drop canvas that works best on larger screens.
+                            For the best experience, switch to a desktop or tablet in landscape mode.
+                        </p>
+                        <button
+                            onClick={() => { setScreen('profile'); setActiveSidebar('profile'); }}
+                            style={{
+                                ...btnStyle,
+                                background: 'var(--accent-purple, #7c3aed)',
+                                borderColor: 'var(--accent-purple, #7c3aed)',
+                                color: '#fff',
+                            } as React.CSSProperties}
+                        >
+                            <BsArrowLeft /> Back to Profile
+                        </button>
+                    </div>
+                </Win98Box>
+            </div>
+
             {/* ═══ Toolbar ═══ */}
             <Win98Box variant="raised" style={{ borderRadius: 0 } as React.CSSProperties}>
                 <div style={toolbarStyle}>
