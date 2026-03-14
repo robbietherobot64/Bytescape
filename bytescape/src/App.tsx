@@ -54,6 +54,7 @@ import { ProfileBuilderScreen } from "./screens/ProfileBuilderScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
+import { ProfileBrowserScreen } from "./screens/ProfileBrowserScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 import { RecoverySetupModal } from "./components/RecoverySetupModal";
 import { useTheme } from "./hooks/useTheme";
@@ -493,7 +494,7 @@ function App() {
         setScreen("peer-profile");
         setActiveSidebar("social");
       }}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder") ? {
+      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder" || screen === "profile-browser") ? {
         padding: 0,
         height: '100%',
         overflow: 'hidden',
@@ -549,6 +550,10 @@ function App() {
 
         {screen === "profile-builder" && (
           <ProfileBuilderScreen />
+        )}
+
+        {screen === "profile-browser" && (
+          <ProfileBrowserScreen />
         )}
 
         {screen === "chat" && (

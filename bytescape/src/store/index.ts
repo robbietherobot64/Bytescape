@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 // ─── Navigation Store ───
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
 interface NavState {
     screen: Screen;

@@ -169,6 +169,42 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 - [ ] **A4.2 Connector: RSS/Atom**: Add `feed-rs` crate, create `connectors/rss.rs` for blog/newsletter subscriptions. Add `Rss` variant to `Source` enum.
 - [ ] **A4.3 Connector: Article Extraction**: Add `readability` crate for sanitized HTML from arbitrary URLs → stored as `BytescapeType::Article`.
 
+#### A5. Platform Integrity & Anti-Bot 🛡️
+*Bytescape is 100% user-generated content. No AI bots, no spam accounts, no automated posting. These measures apply to Bytescape-native accounts and to federated content ingested from external protocols.*
+
+> **Philosophy**: We can't control what happens on Bluesky or Mastodon, but we can control what Bytescape amplifies. Federated content from external sources passes through the same detection pipeline — flagged content is demoted or hidden, not displayed alongside human posts.
+
+- [ ] **A5.1 Identity Verification Gate**: New Bytescape identities (local or hosted on `bytescape.social`) must pass a proof-of-humanity step during registration. Options (implement at least two, configurable):
+  1. **Interactive CAPTCHA**: Locally-rendered challenge (no third-party CAPTCHA service — keep it privacy-respecting). E.g., image-based puzzle, drag-to-solve, or audio challenge. Rendered in the app UI, verified by the Rust backend.
+  2. **Invite-only onboarding**: New accounts require an invite code from an existing user. Each user gets N invite codes (configurable, default 5). Invite tree is tracked for abuse tracing.
+  3. **Email verification** *(for hosted accounts)*: When `bytescape.social` is live, require email confirmation. Rate-limit registrations per email domain. Block known disposable email providers.
+  4. **Vouching system**: Existing users can vouch for new accounts. Unvouched accounts have limited posting visibility until vouched by ≥2 peers.
+  *(Backend — Track A)*
+- [ ] **A5.2 Rate Limiting & Behavioral Analysis**: Detect and throttle bot-like posting patterns on Bytescape-native accounts:
+  1. **Posting rate limits**: Max posts per hour/day (configurable, default 30/hr, 200/day). Burst detection — flag accounts that post >5 times in 60 seconds.
+  2. **Content similarity detection**: BLAKE3-hash the text content of each post. If an account posts >3 near-identical items within 24 hours, flag for review. Use Levenshtein distance or n-gram similarity for fuzzy matching.
+  3. **Engagement ratio monitoring**: Accounts that post heavily but never interact (no likes, replies, or DMs) get flagged. Pure broadcast accounts are suspicious.
+  4. **New account probation**: Fresh accounts (first 7 days) have reduced posting limits (10/hr, 50/day) and cannot DM non-contacts.
+  *(Backend — Track A)*
+- [ ] **A5.3 Federated Content Filtering**: Apply bot/spam detection to content ingested from Bluesky, AP, and other federated sources:
+  1. **AT Protocol labeler integration**: Subscribe to community bot-detection labelers on Bluesky. Content labeled as bot-generated is hidden by default (user can override in settings).
+  2. **AP actor heuristics**: Check inbound AP actors for bot signals — missing `summary`/bio, default avatar, account age <24h with >100 posts, `bot: true` flag in actor metadata (Mastodon sets this).
+  3. **Content-level signals**: Detect AI slop patterns — repetitive phrasing, excessive hashtag stuffing (>10 per post), URL-only posts from unknown domains, identical text posted to multiple targets.
+  4. **User-level block/report**: Users can flag accounts as bots. Aggregated reports (≥3 unique reporters) auto-hide the account's content platform-wide pending review.
+  *(Backend — Track A, builds on A1.1 and A0)*
+- [ ] **A5.4 AI Scraping Prevention (Hosted)** *(unlocked by A1.1 + hosting)*: Protect Bytescape user content from AI training data harvesting when served via `bytescape.social`:
+  1. **`robots.txt`**: Block all known AI crawlers — GPTBot, CCBot, Google-Extended, anthropic-ai, Bytespider, etc. Maintain an updatable blocklist.
+  2. **`X-Robots-Tag` headers**: Serve `noai, noimageai` on all user content pages.
+  3. **`ai.txt`** *(emerging spec)*: Publish machine-readable AI usage policy at `bytescape.social/ai.txt`.
+  4. **Rate limiting**: Aggressive rate limiting on `bytescape.social` — max 60 req/min per IP, CAPTCHA challenge on sustained high-frequency access patterns.
+  5. **Hotlink protection**: Prevent direct embedding/scraping of user media. Serve images via signed, time-limited URLs when accessed from non-Bytescape referrers.
+  *(Backend — Track A, hosted infrastructure)*
+- [ ] **A5.5 Content Provenance & Attestation** *(stretch)*: Cryptographic proof that content was created by a human using the Bytescape app:
+  1. **Signed posts**: Every `BytescapeItem` created locally is signed with the user's Iroh ed25519 key. The signature covers the content hash + timestamp. Federated recipients can verify the signature against the user's published `did:key`.
+  2. **Device attestation** *(research)*: Investigate platform-specific attestation (Android SafetyNet/Play Integrity, Apple DeviceCheck) to prove content originated from a real device, not a script. Privacy implications need careful evaluation.
+  3. **C2PA metadata** *(stretch)*: For photos/videos, embed C2PA (Content Credentials) provenance data proving the media was captured on a real camera and not AI-generated. Requires integration with the C2PA Rust SDK.
+  *(Backend — Track A, research phase)*
+
 ---
 
 ### Track B — Profile, Lenses & Communities 🎨
@@ -255,6 +291,14 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
   3. **Web** (lowest priority): Falls back to a configurable search engine (default: DuckDuckGo) for general web results. Results open in the content webview (B10.7 on desktop) or in-app browser (mobile).
   Results render in a unified dropdown below the omnibar, grouped by source with clear section headers (🏠 Bytescape · 🌐 Fediverse · 🔍 Web). **Filters**: User can prefix queries to constrain scope — `@linkinpark` (people only), `#rockmusic` (hashtags only), `site:bandcamp.com linkin park` (specific site via web search), or toggle filter chips: "Bytescape only", "Fediverse only", "Web only". **Example**: Searching "Linkin Park" → ① Linkin Park's Bytescape profile → ② Linkin Park fan page on Bytescape → ③ Linkin Park Bluesky/AP profiles → ④ linkinpark.com (web result). *(Cross-track — A + B + C)*
 - [ ] **B10.9 Built-in Ad Blocker (Desktop)**: Bytescape is ad-free by philosophy — this extends to external web content viewed in the content webview (B10.7). Implement content filtering on the Rust side by intercepting the webview's resource requests (WebKitGTK `WebView::resource-load-started` / WebView2 `add_WebResourceRequested`) and blocking requests matching known ad/tracker domains. Ship a bundled filter list (EasyList subset or similar — curated for size). Block ad iframes, tracking pixels, and video pre-rolls where possible. **Scope**: Desktop only (mobile uses platform in-app browsers which have their own ad handling). **Research items**: Evaluate WebKitGTK vs WebView2 interception APIs for feasibility, determine filter list update mechanism (bundled vs. periodic fetch), assess performance impact of request-level filtering. *(Backend — Track B, research phase)*
+- [ ] **B10.10 Privacy Shield (Desktop)**: Comprehensive anti-tracking for the content webview, layered on top of the ad blocker (B10.9). Bytescape protects user privacy even when browsing external sites:
+  1. **Third-party cookie blocking**: Configure the webview cookie policy to reject all third-party cookies (WebKitGTK `WEBKIT_COOKIE_POLICY_ACCEPT_NO_THIRD_PARTY` / WebView2 equivalent). First-party cookies preserved so logins work.
+  2. **Tracker filter list**: Extend B10.9 filter lists with EasyPrivacy or Disconnect.me tracker list — blocks known analytics endpoints (Google Analytics, Meta Pixel, etc.), tracking pixels (1×1 images with query-string IDs), and beacon requests.
+  3. **Referrer stripping**: Set `Referrer-Policy: no-referrer` on the content webview so external sites can't see where the user came from.
+  4. **URL hygiene**: Before navigating, strip known tracking parameters from URLs — `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `fbclid`, `gclid`, `mc_eid`, `igshid`, `twclid`. Implement as a URL-cleaning pass in the Rust navigate handler.
+  5. **Fingerprint resistance** *(research)*: Investigate spoofing or randomizing canvas fingerprint, WebGL renderer strings, `AudioContext` output, and `navigator.hardwareConcurrency` in the content webview. This is cat-and-mouse territory — start with canvas noise injection via JS injection on page load. Evaluate impact on site functionality.
+  6. **DNS-over-HTTPS** *(stretch)*: Route content webview DNS through a DoH resolver (Cloudflare `1.1.1.1` or NextDNS) to prevent ISP-level tracking. Requires system-level or webview-level DNS override — feasibility varies by platform.
+  **Scope**: Desktop content webview only. Internal `byte://` screens don't load external resources, so they're inherently tracking-free. *(Backend — Track B, builds on B10.9)*
 
 #### B11. Network & Interaction Polish
 - [ ] **B11.1 Network State Feed**: `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created). Feed injection with distinct visual treatment.

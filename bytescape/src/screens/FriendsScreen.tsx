@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
-import { usePeerStore } from '../store';
+import { usePeerStore, useNavStore } from '../store';
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
@@ -270,6 +270,40 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
                         </p>
                     </div>
                 )}
+            </div>
+
+            {/* ── Browse Profiles ── */}
+            <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--accent-purple)' }}>
+                        🌐 Profile Browser
+                    </h3>
+                    <button
+                        onClick={() => {
+                            const { setScreen } = useNavStore.getState();
+                            setScreen('profile-browser');
+                        }}
+                        style={{
+                            padding: '6px 16px',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            background: 'var(--accent-purple)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 4,
+                        }}
+                    >
+                        Browse Profiles
+                    </button>
+                </div>
+                <p style={{
+                    margin: '8px 0 0',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted)',
+                    fontStyle: 'italic',
+                }}>
+                    Visit peer profiles with a browser-like interface. Navigate between peers and discover connections.
+                </p>
             </div>
 
             {/* ── Add Peer ── */}
