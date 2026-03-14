@@ -1,5 +1,6 @@
 import type { ThemeId } from '../types';
 import { useTheme } from '../hooks/useTheme';
+import { ThemeCustomizer } from './ThemeCustomizer';
 
 interface ThemeOption {
     id: ThemeId;
@@ -103,6 +104,9 @@ export function ThemePicker() {
                     </button>
                 );
             })}
+
+            {/* ─── Customizer: per-colour editing + backgrounds ─── */}
+            <ThemeCustomizer />
         </div>
     );
 }

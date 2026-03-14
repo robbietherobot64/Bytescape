@@ -193,12 +193,36 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
 }));
 
 // ─── Theme Store ───
+
+/** Per-variable color overrides keyed by CSS variable name (e.g. "--bg-sidebar") */
+export type ColorOverrides = Record<string, string>;
+
 interface ThemeState {
     activeTheme: ThemeId;
+    /** Per-CSS-variable colour overrides applied on top of the active theme */
+    customOverrides: ColorOverrides;
+    /** Background image/gif URL or CSS gradient for the app root */
+    customBackground: string | null;
     setTheme: (theme: ThemeId) => void;
+    setColorOverride: (variable: string, value: string) => void;
+    removeColorOverride: (variable: string) => void;
+    resetAllOverrides: () => void;
+    setCustomBackground: (bg: string | null) => void;
 }
 
 export const useThemeStore = create<ThemeState>((set) => ({
     activeTheme: 'geocities',
+    customOverrides: {},
+    customBackground: null,
     setTheme: (theme) => set({ activeTheme: theme }),
+    setColorOverride: (variable, value) =>
+        set((s) => ({ customOverrides: { ...s.customOverrides, [variable]: value } })),
+    removeColorOverride: (variable) =>
+        set((s) => {
+            const next = { ...s.customOverrides };
+            delete next[variable];
+            return { customOverrides: next };
+        }),
+    resetAllOverrides: () => set({ customOverrides: {}, customBackground: null }),
+    setCustomBackground: (bg) => set({ customBackground: bg }),
 }));

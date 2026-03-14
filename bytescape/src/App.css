@@ -374,6 +374,17 @@ a:hover {
         linear-gradient(180deg, var(--bg-content) 0%, #ece5d5 100%);
 }
 
+/* Custom background overlay — applied via useTheme when user sets a background */
+.has-custom-bg .main-content {
+    background:
+        var(--custom-bg-image, none),
+        var(--stars-bg),
+        linear-gradient(180deg, var(--bg-content) 0%, #ece5d5 100%);
+    background-size: cover, auto, auto;
+    background-position: center, left top, left top;
+    background-attachment: fixed, scroll, scroll;
+}
+
 /* Default container for non-full-bleed screens */
 .app-container {
     max-width: 100%;
