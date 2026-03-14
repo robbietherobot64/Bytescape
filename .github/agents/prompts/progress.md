@@ -649,3 +649,72 @@ Sprint from `frontend-b10-b11-sprint.md` — 6 UF items addressed in a single co
 - [x] `pnpm tauri dev` compiles without errors (TypeScript + Rust verified)
 - [x] `pnpm test` passes (247/247)
 - [x] Committed to `main` with semantic message
+
+---
+
+## 2026-03-15 — Content Agent: USER FEEDBACK v3 — Appearance Customization ✅
+
+### Commit: `ce5e130`
+
+### Summary
+Implemented per-color customization and background presets per user feedback. Every theme color swatch is now clickable with a native color picker. Users can apply 6 default background presets or paste a custom image/GIF URL. All customizations persist across sessions via localStorage.
+
+### What Was Built
+
+#### P1 — Appearance Color Customization ✅
+- Extended `useThemeStore` with `customOverrides: ColorOverrides`, `customBackground: string | null`, and 4 actions
+- Extended `useTheme` hook with localStorage persistence (`bytescape-theme-overrides`, `bytescape-theme-bg`) and DOM application
+- Created `ThemeCustomizer.tsx` (488 lines) — 4 collapsible colour groups:
+  - **Backgrounds** (8 tokens): `--bg-primary`, `--bg-secondary`, `--bg-tertiary`, `--bg-card`, `--bg-header`, `--bg-input`, `--bg-hover`, `--bg-content`
+  - **Accents** (6 tokens): `--accent-purple`, `--accent-blue`, `--accent-green`, `--accent-orange`, `--accent-red`, `--accent-pink`
+  - **Text** (4 tokens): `--text-primary`, `--text-secondary`, `--text-tertiary`, `--text-muted`
+  - **Links** (3 tokens): `--link-color`, `--link-hover`, `--link-visited`
+- Each swatch clickable → native HTML5 `<input type="color">` picker
+- Modified swatches show teal border + red ✕ reset button
+- "↺ Reset All" button when any overrides exist
+- Group-level "● modified" and "● active" indicators
+
+#### P2 — Default Background Presets ✅
+- 6 CSS gradient presets: Aurora, Sunset, Ocean, Warm Mesh, Matrix, Retro Grid
+- Thumbnail previews in a grid layout
+- "None" preset to remove custom background
+- Custom URL input for images/GIFs
+- Background applied as `--custom-bg-image` CSS variable with `background-size: cover`, `background-position: center`, `background-attachment: fixed`
+
+#### P3 — ComposeBox Regression Check ✅
+- All 18 ComposeBox tests pass
+- Link preview unfurling, rich text formatting, multi-platform targets — no regressions
+
+### Files Created (2 files, +627 lines)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/components/ThemeCustomizer.tsx` | 488 | Per-colour picker + background presets + custom URL |
+| `src/components/ThemeCustomizer.test.tsx` | 139 | 14 tests covering all customizer features |
+
+### Files Modified (5 files, +118/-4 lines)
+
+| File | Changes |
+|------|---------|
+| `src/store/index.ts` | Added `ColorOverrides` type, extended `ThemeState` with 4 new properties/actions |
+| `src/hooks/useTheme.ts` | Added localStorage persistence, DOM application for overrides and backgrounds |
+| `src/components/ThemePicker.tsx` | Imported and renders `<ThemeCustomizer />` below theme cards |
+| `src/components/ThemePicker.test.tsx` | Fixed button count assertion to use `button[aria-pressed]` selector |
+| `src/App.css` | Added `.has-custom-bg .main-content` CSS rule for background overlay |
+
+### Test Coverage (14 new tests)
+- Renders colour group sections (Backgrounds, Accents, Text, Links)
+- Expand/collapse behaviour for colour groups
+- Background presets (Aurora click, None click)
+- Custom URL input submission
+- Reset All functionality
+- Modified/active indicators
+- No Reset All when clean state
+
+### Verification
+- `npx tsc --noEmit`: 0 errors
+- `pnpm test -- --run`: 244/244 tests pass (12 test files)
+- `cargo check`: 0 errors, 26 warnings (pre-existing)
+
+### Anomalous Unstaged Changes Noted
+Found 4 unstaged Rust file changes (`feed_aggregation.rs`, `commands/mod.rs`, `vault.rs`, `lib.rs`) adding `classify` and `export` modules. These are outside Track C scope and were NOT committed. Origin: likely from another agent's stashed/crashed session. Left for PM investigation.
