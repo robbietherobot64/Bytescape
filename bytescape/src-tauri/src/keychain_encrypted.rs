@@ -1,10 +1,11 @@
 //! Encrypted Keychain Module
 //!
-//! Provides secure storage for sensitive credentials using AES-256-GCM encryption.
-//! The encryption key is derived from a master password using Argon2id.
+//! Provides secure storage for sensitive credentials using ChaCha20-Poly1305
+//! authenticated encryption. The encryption key is derived from a master
+//! password using Argon2id.
 //!
 //! # Security Features
-//! - AES-256-GCM authenticated encryption
+//! - ChaCha20-Poly1305 authenticated encryption (256-bit key)
 //! - Argon2id key derivation (memory-hard, resistant to GPU attacks)
 //! - Random salt per encryption
 //! - Nonce stored with ciphertext

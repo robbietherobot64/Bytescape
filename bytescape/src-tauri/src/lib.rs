@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 use iroh::Endpoint;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 pub mod error;
 pub mod db;
@@ -45,6 +45,8 @@ pub struct AppState {
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
     pub media_port: u16,
     pub oauth_manager: oauth::OAuthManager,
+    /// Guard to ensure `restore_session` runs at most once per app lifetime.
+    pub session_restored: AtomicBool,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -469,13 +471,45 @@ pub fn run() {
             });
 
             // Initialize encrypted keychain
-            // Note: In production, the master password should come from:
-            // 1. User input at startup (most secure)
-            // 2. OS keychain (convenient, still secure)
-            // 3. Environment variable (for testing only)
+            //
+            // Priority order for master password:
+            // 1. BYTESCAPE_MASTER_PASSWORD env var (explicit config)
+            // 2. Persisted random key from a prior run (stored in data dir)
+            // 3. Freshly generated random 32-byte key (persisted for next run)
+            //
+            // Option 3 means first launch generates a machine-local key that
+            // survives restarts but is never hardcoded in source code.
             let keychain_path = app_data_dir.join("keychain.json");
-            let master_password = std::env::var("BYTESCAPE_MASTER_PASSWORD")
-                .unwrap_or_else(|_| "default_dev_password_CHANGE_IN_PRODUCTION".to_string());
+            let master_key_file = app_data_dir.join(".master_key");
+            let master_password = if let Ok(pw) = std::env::var("BYTESCAPE_MASTER_PASSWORD") {
+                pw
+            } else if let Ok(existing) = std::fs::read_to_string(&master_key_file) {
+                existing.trim().to_string()
+            } else {
+                // Generate a cryptographically random 32-byte key and persist it
+                use rand::RngCore;
+                use base64::Engine;
+                let mut key_bytes = [0u8; 32];
+                rand::rng().fill_bytes(&mut key_bytes);
+                let key_str = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(key_bytes);
+                // Persist the key so sessions survive app restarts
+                if let Err(e) = std::fs::write(&master_key_file, &key_str) {
+                    eprintln!("WARN: Could not persist master key to {:?}: {}. \
+                              Sessions will not survive restarts.", master_key_file, e);
+                }
+                // Restrict file permissions on Unix
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &master_key_file,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
+                println!("Startup: Generated new master key (persisted to app data dir)");
+                key_str
+            };
             let keychain = keychain_encrypted::EncryptedKeychain::new(
                 keychain_path,
                 master_password.clone(),
@@ -521,6 +555,7 @@ pub fn run() {
                 pending_import: Mutex::new(None),
                 media_port,
                 oauth_manager,
+                session_restored: AtomicBool::new(false),
             };
 
             app.manage(state);
@@ -531,19 +566,25 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 let state = restore_handle.state::<AppState>();
                 if state.is_oauth_session() {
+                    // Guard: only restore once per app lifetime
+                    if state.session_restored.swap(true, Ordering::SeqCst) {
+                        return; // already restored by check_auth_status
+                    }
                     match state.get_user_did() {
                         Ok(did) => {
-                            println!("Startup: Restoring OAuth session for {}...", did);
                             match state.oauth_manager.restore_session(&did).await {
                                 Ok(()) => println!("Startup: OAuth session restored successfully"),
                                 Err(e) => {
                                     eprintln!("Startup: OAuth session restore failed: {}", e);
                                     eprintln!("Startup: User will need to re-authenticate");
+                                    // Reset guard so check_auth_status can retry
+                                    state.session_restored.store(false, Ordering::SeqCst);
                                 }
                             }
                         }
                         Err(e) => {
                             eprintln!("Startup: Cannot restore OAuth — no DID in keychain: {}", e);
+                            state.session_restored.store(false, Ordering::SeqCst);
                         }
                     }
                 }

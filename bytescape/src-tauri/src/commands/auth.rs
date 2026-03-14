@@ -50,9 +50,18 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         // restore task may not have completed yet, causing "No OAuth session"
         // errors on the first feed fetch.
         if state.is_oauth_session() {
-            match state.oauth_manager.restore_session(&did).await {
-                Ok(()) => println!("check_auth_status: OAuth session restored for {}", did),
-                Err(e) => eprintln!("check_auth_status: OAuth restore failed (will retry in background): {}", e),
+            // Guard: only restore once per app lifetime. The background task
+            // in lib.rs also calls restore_session; this prevents redundant
+            // (and potentially racy) duplicate restores.
+            if !state.session_restored.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                match state.oauth_manager.restore_session(&did).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("check_auth_status: OAuth restore failed (will retry in background): {}", e);
+                        // Reset guard so the background task can retry
+                        state.session_restored.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
             }
         }
 

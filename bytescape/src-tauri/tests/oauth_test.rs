@@ -1,13 +1,15 @@
 //! OAuth module tests
 //!
-//! Tests for FileSessionStore (GAP-3: oauth.rs test coverage).
-//! The OAuthManager itself requires network access, so we focus on
-//! the persistent session store which is fully testable offline.
+//! Tests for FileSessionStore (GAP-1 scope) and OAuth flow components (GAP-3 scope).
+//!
+//! GAP-1 tests: Persistent session store (encryption, persistence, CRUD).
+//! GAP-3 tests: OAuthManager construction, callback parsing, sentinel detection,
+//! XRPC URL parsing, and error handling.
 //!
 //! Note: We construct `Session` via serde_json deserialization to avoid
 //! depending on private types (OAuthTokenType) from atrium-oauth.
 
-use bytescape_lib::oauth::FileSessionStore;
+use bytescape_lib::oauth::{FileSessionStore, OAuthManager};
 use atrium_api::types::string::Did;
 use atrium_common::store::Store;
 use atrium_oauth::store::session::{Session, SessionStore};
@@ -246,4 +248,188 @@ async fn test_file_session_store_empty_dir_loads_empty() {
 fn assert_session_store_impl() {
     fn _requires_session_store<T: SessionStore>() {}
     _requires_session_store::<FileSessionStore>();
+}
+
+// ─── GAP-3: Real OAuth Flow Tests ───────────────────────────────────────────
+
+// ── OAuthManager::new() construction tests ──
+
+#[test]
+fn test_oauth_manager_new_succeeds() {
+    let dir = tempdir().unwrap();
+    let result = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test_password".to_string(),
+    );
+    assert!(result.is_ok(), "OAuthManager::new() should succeed with valid dir");
+}
+
+#[test]
+fn test_oauth_manager_new_creates_session_store() {
+    let dir = tempdir().unwrap();
+    let _manager = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test_password".to_string(),
+    ).unwrap();
+    // The manager should exist and not panic — construction is the test
+}
+
+#[test]
+fn test_oauth_manager_new_with_empty_password() {
+    let dir = tempdir().unwrap();
+    let result = OAuthManager::new(
+        dir.path().to_path_buf(),
+        String::new(),
+    );
+    assert!(result.is_ok(), "OAuthManager::new() should accept empty password");
+}
+
+// ── parse_query_string tests ──
+
+#[test]
+fn test_parse_query_string_full() {
+    let qs = "code=abc123&state=xyz&iss=https%3A%2F%2Fexample.com";
+    let result = OAuthManager::parse_query_string(qs);
+    assert_eq!(result.code.as_deref(), Some("abc123"));
+    assert_eq!(result.state.as_deref(), Some("xyz"));
+    assert_eq!(result.iss.as_deref(), Some("https://example.com"));
+    assert!(result.error.is_none());
+    assert!(result.error_description.is_none());
+}
+
+#[test]
+fn test_parse_query_string_error_response() {
+    let qs = "error=access_denied&error_description=User%20denied%20access";
+    let result = OAuthManager::parse_query_string(qs);
+    assert!(result.code.is_none());
+    assert_eq!(result.error.as_deref(), Some("access_denied"));
+    assert_eq!(result.error_description.as_deref(), Some("User denied access"));
+}
+
+#[test]
+fn test_parse_query_string_empty() {
+    let result = OAuthManager::parse_query_string("");
+    assert!(result.code.is_none());
+    assert!(result.state.is_none());
+    assert!(result.iss.is_none());
+    assert!(result.error.is_none());
+    assert!(result.error_description.is_none());
+}
+
+#[test]
+fn test_parse_query_string_unknown_keys_ignored() {
+    let qs = "code=abc&unknown_key=value&state=xyz";
+    let result = OAuthManager::parse_query_string(qs);
+    assert_eq!(result.code.as_deref(), Some("abc"));
+    assert_eq!(result.state.as_deref(), Some("xyz"));
+}
+
+#[test]
+fn test_parse_query_string_url_decoding() {
+    let qs = "code=a%20b%2Bc&state=x%26y";
+    let result = OAuthManager::parse_query_string(qs);
+    assert_eq!(result.code.as_deref(), Some("a b+c"));
+    assert_eq!(result.state.as_deref(), Some("x&y"));
+}
+
+// ── Sentinel detection test ──
+
+#[test]
+fn test_oauth_sentinel_constant() {
+    assert_eq!(bytescape_lib::OAUTH_SESSION_SENTINEL, "oauth_session");
+}
+
+// ── Callback validation tests ──
+
+#[test]
+fn test_parse_query_string_missing_code() {
+    let qs = "state=xyz&iss=https%3A%2F%2Fexample.com";
+    let result = OAuthManager::parse_query_string(qs);
+    assert!(result.code.is_none(), "Missing code should be None");
+    assert!(result.state.is_some());
+}
+
+#[test]
+fn test_parse_query_string_missing_state() {
+    let qs = "code=abc123&iss=https%3A%2F%2Fexample.com";
+    let result = OAuthManager::parse_query_string(qs);
+    assert!(result.state.is_none(), "Missing state should be None");
+    assert!(result.code.is_some());
+}
+
+#[test]
+fn test_parse_query_string_error_takes_precedence() {
+    let qs = "code=abc&error=server_error&error_description=Something%20broke";
+    let result = OAuthManager::parse_query_string(qs);
+    assert!(result.error.is_some());
+    assert!(result.code.is_some());
+}
+
+// ── parse_xrpc_url tests ──
+
+#[test]
+fn test_parse_xrpc_url_with_query() {
+    let url = "https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50";
+    let (nsid, query) = OAuthManager::parse_xrpc_url(url).unwrap();
+    assert_eq!(nsid, "app.bsky.feed.getTimeline");
+    assert_eq!(query.as_deref(), Some("limit=50"));
+}
+
+#[test]
+fn test_parse_xrpc_url_without_query() {
+    let url = "https://pds.example.com/xrpc/com.atproto.server.getSession";
+    let (nsid, query) = OAuthManager::parse_xrpc_url(url).unwrap();
+    assert_eq!(nsid, "com.atproto.server.getSession");
+    assert!(query.is_none());
+}
+
+#[test]
+fn test_parse_xrpc_url_invalid() {
+    let url = "https://example.com/api/some-endpoint";
+    let result = OAuthManager::parse_xrpc_url(url);
+    assert!(result.is_err(), "Non-XRPC URL should return error");
+}
+
+#[test]
+fn test_parse_xrpc_url_complex_query() {
+    let url = "https://pds.example.com/xrpc/app.bsky.feed.getAuthorFeed?actor=did%3Aplc%3Aabc&limit=100&cursor=xyz";
+    let (nsid, query) = OAuthManager::parse_xrpc_url(url).unwrap();
+    assert_eq!(nsid, "app.bsky.feed.getAuthorFeed");
+    assert!(query.as_deref().unwrap().contains("actor="));
+    assert!(query.as_deref().unwrap().contains("limit=100"));
+}
+
+// ── No-session error handling tests ──
+
+#[tokio::test]
+async fn test_xrpc_get_without_session_returns_error() {
+    let dir = tempdir().unwrap();
+    let manager = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test".to_string(),
+    ).unwrap();
+    let result = manager.xrpc_get("app.bsky.feed.getTimeline", Some("limit=10")).await;
+    assert!(result.is_err(), "xrpc_get without session should error");
+}
+
+#[tokio::test]
+async fn test_xrpc_post_without_session_returns_error() {
+    let dir = tempdir().unwrap();
+    let manager = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test".to_string(),
+    ).unwrap();
+    let result = manager.xrpc_post("com.atproto.repo.createRecord", b"{}".to_vec(), "application/json").await;
+    assert!(result.is_err(), "xrpc_post without session should error");
+}
+
+#[tokio::test]
+async fn test_restore_session_with_invalid_did_returns_error() {
+    let dir = tempdir().unwrap();
+    let manager = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test".to_string(),
+    ).unwrap();
+    let result = manager.restore_session("not-a-valid-did").await;
+    assert!(result.is_err(), "restore_session with invalid DID should error");
 }

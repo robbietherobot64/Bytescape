@@ -3,7 +3,7 @@
 //! Commands for importing data from external sources (Facebook, Bluesky).
 
 use serde::{Deserialize, Serialize};
-use tauri::{State, Emitter, Manager};
+use tauri::{AppHandle, State, Emitter, Manager};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -698,6 +698,117 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
     Ok(saved_count)
 }
 
+/// Import a user's Bluesky feed via OAuth (DPoP-authenticated).
+///
+/// Uses `OAuthManager::xrpc_get()` for proper DPoP auth so followers-only
+/// posts are included. Media is downloaded from public CDN URLs.
+async fn import_bluesky_feed_oauth(
+    state: &AppState,
+    user_did: &str,
+    media_dir: &Path,
+    app_handle: &AppHandle,
+    sync_manager: Option<Arc<SyncManager>>,
+) -> Result<Vec<crate::connectors::bluesky::BlueskyImportedPost>, String> {
+    std::fs::create_dir_all(media_dir)
+        .map_err(|e| format!("Failed to create media dir: {}", e))?;
+
+    let mut all_posts: Vec<crate::connectors::bluesky::BlueskyImportedPost> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let limit = 100u8;
+    let max_pages = 20usize;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {}", e))?;
+
+    for page in 1..=max_pages {
+        let _ = app_handle.emit("import-progress", crate::connectors::bluesky::ImportProgress {
+            source: Source::Bluesky.as_str().to_string(),
+            stage: "fetching".to_string(),
+            posts_imported: all_posts.len(),
+            photos_downloaded: all_posts.iter().map(|p| p.image_local_paths.len()).sum(),
+            current_item: format!("Fetching page {} (OAuth)...", page),
+        });
+
+        let mut qs = format!("actor={}&limit={}", urlencoding::encode(user_did), limit);
+        if let Some(ref c) = cursor {
+            qs.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+        }
+
+        let json = state.oauth_manager
+            .xrpc_get("app.bsky.feed.getAuthorFeed", Some(&qs))
+            .await?;
+
+        let (mut posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+
+        if posts.is_empty() {
+            break;
+        }
+
+        // Download media from CDN URLs (public, no auth required)
+        for post in &mut posts {
+            // Only import the user's own posts and reposts
+            let is_users_repost = post.author_did != user_did && post.reposted_by.as_deref() == Some(user_did);
+            if post.author_did != user_did && !is_users_repost {
+                continue;
+            }
+
+            for (i, img_url) in post.image_urls.iter().enumerate() {
+                let ext = if img_url.contains(".png") { "png" } else { "jpg" };
+                let filename = format!("bsky_{}_{}.{}", post.cid, i, ext);
+                let dest = media_dir.join(&filename);
+
+                match client.get(img_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(bytes) = resp.bytes().await {
+                            if let Some(ref sync) = sync_manager {
+                                match sync.store_media_with_thumbnail(bytes.clone(), 256).await {
+                                    Ok((media_hash, _thumb_hash)) => {
+                                        post.image_local_paths.push(format!("blob:{}", media_hash));
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("OAuth import: Iroh store failed, falling back: {}", e);
+                                    }
+                                }
+                            }
+                            if std::fs::write(&dest, &bytes).is_ok() {
+                                let fname = dest.file_name().unwrap().to_string_lossy().to_string();
+                                post.image_local_paths.push(format!("media/{}", fname));
+                            }
+                        }
+                    }
+                    _ => {
+                        eprintln!("OAuth import: Failed to download image: {}", img_url);
+                    }
+                }
+            }
+        }
+
+        // Filter to user's own posts/reposts
+        let user_posts: Vec<_> = posts.into_iter().filter(|p| {
+            p.author_did == user_did
+                || p.reposted_by.as_deref() == Some(user_did)
+        }).collect();
+        all_posts.extend(user_posts);
+
+        match next_cursor {
+            Some(c) if !c.is_empty() => cursor = Some(c),
+            _ => break,
+        }
+    }
+
+    let _ = app_handle.emit("import-progress", crate::connectors::bluesky::ImportProgress {
+        source: Source::Bluesky.as_str().to_string(),
+        stage: "complete".to_string(),
+        posts_imported: all_posts.len(),
+        photos_downloaded: all_posts.iter().map(|p| p.image_local_paths.len()).sum(),
+        current_item: format!("Done! {} posts imported (OAuth).", all_posts.len()),
+    });
+
+    Ok(all_posts)
+}
+
 /// Import Bluesky posts from the authenticated user's feed.
 /// 
 /// Fetches the user's feed and downloads embedded media.
@@ -737,27 +848,31 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     // For OAuth sessions, use empty JWT — the public API (getAuthorFeed) works
     // without authentication for public profiles.
     // For app-password sessions, use the real JWT for full access.
-    let access_jwt = if state.is_oauth_session() {
-        String::new()
+    let imported_posts = if state.is_oauth_session() {
+        // OAuth path: use DPoP-authenticated xrpc_get for feed access.
+        // This ensures followers-only posts are included (unlike public API).
+        import_bluesky_feed_oauth(&state, &user_did, &media_dir, &app_handle, sync_manager.clone()).await
+            .unwrap_or_else(|e| {
+                eprintln!("OAuth feed import failed: {}", e);
+                Vec::new()
+            })
     } else {
-        state.get_fresh_access_jwt().await
-            .map_err(|e| BytescapeError::AuthFailed(e))?
-    };
+        let access_jwt = state.get_fresh_access_jwt().await
+            .map_err(|e| BytescapeError::AuthFailed(e))?;
 
-    let imported_posts = match crate::connectors::bluesky::import_bluesky_feed(
-        &user_did,
-        &access_jwt,
-        media_dir.clone(),
-        &app_handle,
-        None,
-        None,
-        sync_manager.clone(),
-    ).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Own feed import failed: {}", e);
-            Vec::new()
-        }
+        crate::connectors::bluesky::import_bluesky_feed(
+            &user_did,
+            &access_jwt,
+            media_dir.clone(),
+            &app_handle,
+            None,
+            None,
+            sync_manager.clone(),
+        ).await
+            .unwrap_or_else(|e| {
+                eprintln!("Own feed import failed: {}", e);
+                Vec::new()
+            })
     };
 
     // Save to database
@@ -1152,33 +1267,49 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
 
     if state.is_oauth_session() {
         // OAuth path: use xrpc_chat_get with DPoP + atproto-proxy
-        println!("import_vault_messages: OAuth path — calling listConvos...");
-        let convos_resp = match state.xrpc_chat_get("chat.bsky.convo.listConvos").await {
-            Ok(resp) => resp,
-            Err(e) => {
-                eprintln!("import_vault_messages: listConvos FAILED: {}", e);
-                // If the scope is missing, the user needs to re-authenticate
-                // with the updated OAuth scopes. Return a non-error response
-                // so polling doesn't spam the logs.
-                if e.contains("ScopeMissing") || e.contains("scope") {
-                    println!("import_vault_messages: Chat scope missing — user needs to re-authenticate");
-                    return Ok(serde_json::json!({
-                        "new": 0,
-                        "convos": 0,
-                        "error": "chat_scope_missing",
-                        "message": "Please log out and log back in to enable chat import. Your existing session was created before chat support was added."
-                    }));
+        // Paginate through all conversations using cursor-based pagination.
+        let mut all_convos: Vec<serde_json::Value> = Vec::new();
+        let mut convo_cursor: Option<String> = None;
+
+        loop {
+            let endpoint = match &convo_cursor {
+                Some(c) => format!("chat.bsky.convo.listConvos?limit=100&cursor={}", urlencoding::encode(c)),
+                None => "chat.bsky.convo.listConvos?limit=100".to_string(),
+            };
+
+            let convos_resp = match state.xrpc_chat_get(&endpoint).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    eprintln!("import_vault_messages: listConvos FAILED: {}", e);
+                    if e.contains("ScopeMissing") || e.contains("scope") {
+                        return Ok(serde_json::json!({
+                            "new": 0,
+                            "convos": 0,
+                            "error": "chat_scope_missing",
+                            "message": "Please log out and log back in to enable chat import. Your existing session was created before chat support was added."
+                        }));
+                    }
+                    return Err(format!("Failed to list conversations: {}", e));
                 }
-                return Err(format!("Failed to list conversations: {}", e));
+            };
+
+            let page_convos = convos_resp.get("convos")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            if page_convos.is_empty() {
+                break;
             }
-        };
+            all_convos.extend(page_convos);
 
-        let convos = convos_resp.get("convos")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+            match convos_resp.get("cursor").and_then(|c| c.as_str()).filter(|c| !c.is_empty()) {
+                Some(c) => convo_cursor = Some(c.to_string()),
+                None => break,
+            }
+        }
 
-        println!("import_vault_messages: Found {} conversations", convos.len());
+        println!("import_vault_messages: Found {} conversations (all pages)", all_convos.len());
 
         let db_guard = db_manager.read().await;
         let db = db_guard.as_ref()
@@ -1186,7 +1317,7 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
 
         let mut new_count = 0;
 
-        for convo_val in &convos {
+        for convo_val in &all_convos {
             let convo_id = convo_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
             if convo_id.is_empty() { continue; }
 
@@ -1200,8 +1331,6 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
             let peer_did = peer.and_then(|p| p.get("did").and_then(|d| d.as_str()).map(|s| s.to_string()));
             let peer_handle = peer.and_then(|p| p.get("handle").and_then(|h| h.as_str()).map(|s| s.to_string()));
 
-            // Build did→handle map from members so we can resolve sender handles
-            // (getMessages sender object only has `did`, not `handle`)
             let member_handle_map: std::collections::HashMap<String, String> = members.iter()
                 .filter_map(|m| {
                     let did = m.get("did").and_then(|d| d.as_str())?.to_string();
@@ -1211,78 +1340,101 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
                 })
                 .collect();
 
-            let endpoint = format!("chat.bsky.convo.getMessages?convoId={}&limit=100", convo_id);
-            let msgs_resp = match state.xrpc_chat_get(&endpoint).await {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("import_vault_messages: Failed to get messages for convo {}: {}", convo_id, e);
-                    continue;
-                }
-            };
-
-            let messages = msgs_resp.get("messages")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-
-            for msg_val in &messages {
-                // Only process actual chat messages (skip deletions etc.)
-                let msg_type = msg_val.get("$type").and_then(|t| t.as_str()).unwrap_or("");
-                if msg_type != "chat.bsky.convo.defs#messageView" && !msg_type.is_empty() {
-                    continue;
-                }
-
-                let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                if msg_id.is_empty() { continue; }
-
-                let sender_did = msg_val.get("sender")
-                    .and_then(|s| s.get("did"))
-                    .and_then(|d| d.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let sender_handle = msg_val.get("sender")
-                    .and_then(|s| s.get("handle"))
-                    .and_then(|h| h.as_str())
-                    .filter(|h| !h.is_empty())
-                    .map(|h| h.to_string())
-                    .or_else(|| member_handle_map.get(&sender_did).cloned())
-                    .unwrap_or_default();
-                let text = msg_val.get("text")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let sent_at = msg_val.get("sentAt")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-
-                let vault_msg = VaultMessage {
-                    id: msg_id.to_string(),
-                    owner_did: Some(user_did.clone()),
-                    convo_id: convo_id.to_string(),
-                    sender_did,
-                    sender_handle,
-                    text,
-                    sent_at,
-                    source: "bluesky".to_string(),
-                    imported_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as u64,
-                    peer_did: peer_did.clone(),
-                    peer_handle: peer_handle.clone(),
+            // Paginate through all messages in this conversation
+            let mut msg_cursor: Option<String> = None;
+            loop {
+                let endpoint = match &msg_cursor {
+                    Some(c) => format!(
+                        "chat.bsky.convo.getMessages?convoId={}&limit=100&cursor={}",
+                        urlencoding::encode(convo_id),
+                        urlencoding::encode(c)
+                    ),
+                    None => format!(
+                        "chat.bsky.convo.getMessages?convoId={}&limit=100",
+                        urlencoding::encode(convo_id)
+                    ),
                 };
 
-                if let Ok(true) = db.save_vault_message(&vault_msg).await {
-                    new_count += 1;
+                let msgs_resp = match state.xrpc_chat_get(&endpoint).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("import_vault_messages: Failed to get messages for convo {}: {}", convo_id, e);
+                        break;
+                    }
+                };
+
+                let messages = msgs_resp.get("messages")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                if messages.is_empty() {
+                    break;
+                }
+
+                for msg_val in &messages {
+                    let msg_type = msg_val.get("$type").and_then(|t| t.as_str()).unwrap_or("");
+                    if msg_type != "chat.bsky.convo.defs#messageView" && !msg_type.is_empty() {
+                        continue;
+                    }
+
+                    let msg_id = msg_val.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                    if msg_id.is_empty() { continue; }
+
+                    let sender_did = msg_val.get("sender")
+                        .and_then(|s| s.get("did"))
+                        .and_then(|d| d.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let sender_handle = msg_val.get("sender")
+                        .and_then(|s| s.get("handle"))
+                        .and_then(|h| h.as_str())
+                        .filter(|h| !h.is_empty())
+                        .map(|h| h.to_string())
+                        .or_else(|| member_handle_map.get(&sender_did).cloned())
+                        .unwrap_or_default();
+                    let text = msg_val.get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let sent_at = msg_val.get("sentAt")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+
+                    let vault_msg = VaultMessage {
+                        id: msg_id.to_string(),
+                        owner_did: Some(user_did.clone()),
+                        convo_id: convo_id.to_string(),
+                        sender_did,
+                        sender_handle,
+                        text,
+                        sent_at,
+                        source: "bluesky".to_string(),
+                        imported_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as u64,
+                        peer_did: peer_did.clone(),
+                        peer_handle: peer_handle.clone(),
+                    };
+
+                    if let Ok(true) = db.save_vault_message(&vault_msg).await {
+                        new_count += 1;
+                    }
+                }
+
+                match msgs_resp.get("cursor").and_then(|c| c.as_str()).filter(|c| !c.is_empty()) {
+                    Some(c) => msg_cursor = Some(c.to_string()),
+                    None => break,
                 }
             }
         }
 
-        println!("import_vault_messages: OAuth import done — {} new msgs from {} convos", new_count, convos.len());
+        println!("import_vault_messages: OAuth import done — {} new msgs from {} convos", new_count, all_convos.len());
         return Ok(serde_json::json!({
             "new": new_count,
-            "convos": convos.len()
+            "convos": all_convos.len()
         }));
     }
 
