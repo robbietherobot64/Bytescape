@@ -198,27 +198,23 @@ export function useUnifiedFeed({
                     : allFeedUris;
 
                 if (activeFeedUris.length > 0 || tags.length > 0) {
-                    const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                    // Use get_unified_feed directly — does NOT include main timeline
+                    const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                         tags,
                         feedUris: activeFeedUris,
                         limit: 30,
                         cursor: null,
-                        vaultOffset: 0,
-                    }).catch(() => null);
+                    }).catch((): [BlueskyPost[], string | null] => [[], null]);
 
                     if (isStale()) return;
                     setSavedFeeds(feedsData);
                     setCachedSavedFeeds(feedsData);
 
-                    if (response) {
-                        const deduped = deduplicateFeedEntries(response.items);
-                        setFeedEntries(deduped);
-                        setCursor(response.next_cursor);
-                        setCache('subscribed', deduped, response.next_cursor);
-                    } else {
-                        setFeedEntries([]);
-                        setCursor(null);
-                    }
+                    const adapted = posts.map(adaptBlueskyPost);
+                    const deduped = deduplicateFeedEntries(adapted);
+                    setFeedEntries(deduped);
+                    setCursor(nextCur);
+                    setCache('subscribed', deduped, nextCur);
                 } else {
                     if (isStale()) return;
                     setSavedFeeds(feedsData);
@@ -353,17 +349,16 @@ export function useUnifiedFeed({
                 setCursor(bskyCursor);
 
             } else if (activeTab === 'subscribed' && cursor) {
-                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                     tags: followedHashtags || [],
                     feedUris: customFeedUris(savedFeeds),
                     limit: 30,
                     cursor,
-                    vaultOffset: 0,
-                }).catch(() => null);
+                }).catch((): [BlueskyPost[], string | null] => [[], null]);
 
-                if (response) {
-                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...response.items]));
-                    setCursor(response.next_cursor);
+                if (posts.length > 0) {
+                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
+                    setCursor(nextCur);
                 }
 
             } else if (activeTab === 'all') {
