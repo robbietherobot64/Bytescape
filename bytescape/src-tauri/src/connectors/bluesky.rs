@@ -506,6 +506,7 @@ pub async fn import_bluesky_timeline(
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         last_error = format!("Failed to fetch timeline from {}: {} {}", base, status, body);
+        #[cfg(debug_assertions)]
         println!("{}", last_error);
     }
 
