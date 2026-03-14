@@ -1,5 +1,6 @@
 import { ProfileView, GeneratorView } from '../types';
 import { Win98Box } from './Win98Box';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface FeedRightPanelProps {
     activeTab: string;
@@ -66,7 +67,7 @@ export function FeedRightPanel({
                                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', cursor: 'pointer' } as React.CSSProperties}
                                 onClick={() => {
                                     if (profile.handle) {
-                                        window.open(`https://bsky.app/profile/${profile.handle}`, '_blank');
+                                        openUrl(`https://bsky.app/profile/${profile.handle}`).catch(console.error);
                                     }
                                 }}
                                 title={`@${profile.handle}`}

@@ -417,6 +417,25 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                 </div>
             </div>
 
+            {/* Feed context panel — right side */}
+            <FeedRightPanel
+                activeTab={activeTab}
+                followingList={followingList}
+                savedFeeds={savedFeeds}
+                selectedFeedUri={selectedFeedUri}
+                setSelectedFeedUri={setSelectedFeedUri}
+                FEED_FILTER_ALL={FEED_FILTER_ALL}
+                hashtagInput={hashtagInput}
+                setHashtagInput={setHashtagInput}
+                handleAddHashtag={handleAddHashtag}
+                followedHashtags={followedHashtags || []}
+                handleRemoveHashtag={handleRemoveHashtag}
+                archiveSourceFilter={archiveSourceFilter}
+                setArchiveSourceFilter={setArchiveSourceFilter}
+                vaultSources={vaultSources}
+                archiveTotal={archiveTotal}
+                position="right"
+            />
         </div>
     );
 }

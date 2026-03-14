@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { FeedEntry, TaggedPerson, Audience, LikeResult, ThreadReply } from '../types';
@@ -352,7 +353,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                     className="avatar"
                     onClick={() => {
                         if (entry.author_handle && entry.author_handle !== 'You') {
-                            window.open(`https://bsky.app/profile/${entry.author_handle}`, '_blank');
+                            openUrl(`https://bsky.app/profile/${entry.author_handle}`).catch(console.error);
                         }
                     }}
                     style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
@@ -369,7 +370,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                         className="author-name"
                         onClick={() => {
                             if (entry.author_handle && entry.author_handle !== 'You') {
-                                window.open(`https://bsky.app/profile/${entry.author_handle}`, '_blank');
+                                openUrl(`https://bsky.app/profile/${entry.author_handle}`).catch(console.error);
                             }
                         }}
                         style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}

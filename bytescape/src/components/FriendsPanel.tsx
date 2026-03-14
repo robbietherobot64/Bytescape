@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { BsChatDotsFill, BsPersonFill } from 'react-icons/bs';
 import { usePeerStore, useAuthStore } from '../store';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { PeerInfo, ProfileView } from '../types';
 
 interface FriendsPanelProps {
@@ -268,8 +269,8 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
         if (isP2p && friend.nodeId && onProfile) {
             onProfile(friend.nodeId, friend.displayName);
         } else if (isBsky && friend.handle) {
-            // Open Bluesky profile in new tab
-            window.open(`https://bsky.app/profile/${friend.handle}`, '_blank');
+            // Open Bluesky profile externally
+            openUrl(`https://bsky.app/profile/${friend.handle}`).catch(console.error);
         }
     };
 

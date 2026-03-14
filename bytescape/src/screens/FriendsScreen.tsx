@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
 import { usePeerStore, useNavStore } from '../store';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
@@ -590,7 +591,7 @@ function BlueskyFollowsView({ auth, subview }: { auth: AuthStatus | null; subvie
                         className="friend-card"
                         onClick={() => {
                             if (person.handle) {
-                                window.open(`https://bsky.app/profile/${person.handle}`, '_blank');
+                                openUrl(`https://bsky.app/profile/${person.handle}`).catch(console.error);
                             }
                         }}
                         title={`View @${person.handle}'s profile`}

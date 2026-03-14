@@ -7,7 +7,7 @@ Feedback:
 - Not opening in full screen
 - Feed filter went back to "list/gallery/article" rather than the rich variousi media filtering types we had (image, video, short form text, long form text, etc)
 
--Outstanding issues-
+**Outstanding issues**
 
 - Chat - friends list only has users you have chatted with, rather than all of your connected people you can chat with.
 - Feed take a while to refresh...like a really really long while, tens of seconds that it seems like its stalled out.  Backend worked on this for a bit, but it's still 16 seconds to load the feed, which is a while.

@@ -1115,7 +1115,7 @@ a:hover {
 .feed-main {
     flex: 0 1 var(--content-max-width);
     max-width: var(--content-max-width);
-    min-width: 0;
+    min-width: 480px;
     display: flex;
     flex-direction: column;
     height: 100%;
