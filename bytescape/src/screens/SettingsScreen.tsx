@@ -143,6 +143,21 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                                 <p className="text-xs text-muted" style={{ margin: 0 }}>Bluesky · Connected</p>
                             </div>
                             <span style={{ color: 'var(--accent-green)', fontSize: '0.82rem', fontWeight: 600 }}>✓ Linked</span>
+                            <button
+                                onClick={() => alert('Disconnect & remove Bluesky data — coming soon.')}
+                                style={{
+                                    padding: '4px 10px',
+                                    fontSize: '0.75rem',
+                                    background: 'transparent',
+                                    border: '1px solid var(--accent-red, #ff5555)',
+                                    color: 'var(--accent-red, #ff5555)',
+                                    cursor: 'pointer',
+                                    fontFamily: 'inherit',
+                                    fontWeight: 500,
+                                } as React.CSSProperties}
+                            >
+                                Disconnect
+                            </button>
                         </div>
                     )}
 

@@ -55,8 +55,7 @@ export function AuditScreen({
         padding: 0,
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 300,
-        maxHeight: 'calc(100vh - 260px)',
+        height: 220,
     };
 
     const termHeaderStyle: React.CSSProperties = {
@@ -84,8 +83,8 @@ export function AuditScreen({
             </div>
 
             <div className="audit-screen" style={{ padding: '0 16px 20px' } as React.CSSProperties}>
-                {/* 3-Terminal Layout */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 } as React.CSSProperties}>
+                {/* 3-Terminal Layout — Stacked rows */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16, maxWidth: 700, margin: '0 auto 16px' } as React.CSSProperties}>
 
                     {/* Terminal 1: Import Progress */}
                     <div style={termStyle}>

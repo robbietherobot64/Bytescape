@@ -188,14 +188,19 @@ export function useUnifiedFeed({
             } else if (tab === 'subscribed') {
                 // ── Subscribed tab: only custom feeds + hashtags (curated content) ──
                 const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
-                const feedUris = customFeedUris(feedsData);
+                const allFeedUris = customFeedUris(feedsData);
                 const tags = await invoke<string[]>('list_followed_hashtags').catch((): string[] => []);
                 setFollowedHashtags(tags);
 
-                if (feedUris.length > 0 || tags.length > 0) {
+                // Respect selectedFeedUri — filter to a single feed if selected
+                const activeFeedUris = selectedFeedUri !== FEED_FILTER_ALL && allFeedUris.includes(selectedFeedUri)
+                    ? [selectedFeedUri]
+                    : allFeedUris;
+
+                if (activeFeedUris.length > 0 || tags.length > 0) {
                     const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                         tags,
-                        feedUris,
+                        feedUris: activeFeedUris,
                         limit: 30,
                         cursor: null,
                         vaultOffset: 0,

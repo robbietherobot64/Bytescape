@@ -348,7 +348,16 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
 
             {/* Header */}
             <div className="feed-entry-header">
-                <div className="avatar">
+                <div
+                    className="avatar"
+                    onClick={() => {
+                        if (entry.author_handle && entry.author_handle !== 'You') {
+                            window.open(`https://bsky.app/profile/${entry.author_handle}`, '_blank');
+                        }
+                    }}
+                    style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
+                    title={entry.author_handle ? `View @${entry.author_handle}'s profile` : undefined}
+                >
                     {entry.author_avatar ? (
                         <img src={entry.author_avatar} alt="" />
                     ) : (
@@ -356,7 +365,18 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                     )}
                 </div>
                 <div className="author-info">
-                    <div className="author-name">{authorName}</div>
+                    <div
+                        className="author-name"
+                        onClick={() => {
+                            if (entry.author_handle && entry.author_handle !== 'You') {
+                                window.open(`https://bsky.app/profile/${entry.author_handle}`, '_blank');
+                            }
+                        }}
+                        style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
+                        title={entry.author_handle ? `View @${entry.author_handle}'s profile` : undefined}
+                    >
+                        {authorName}
+                    </div>
                     <div className="post-time">{formatTimestamp(entry.timestamp)}</div>
                 </div>
                 {!isQuote && (

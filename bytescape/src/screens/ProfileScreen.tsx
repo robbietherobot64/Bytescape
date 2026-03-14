@@ -32,7 +32,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [hasCustomLayout, setHasCustomLayout] = useState(false);
-    const [profileTab, setProfileTab] = useState<ProfileTab>('posts');
+    const [profileTab, setProfileTab] = useState<ProfileTab>('wall');
     const offsetRef = useRef(0);
     const { setScreen, setActiveSidebar } = useNavStore();
 
