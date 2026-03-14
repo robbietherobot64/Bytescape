@@ -1,179 +1,163 @@
-# Content Agent — Sprint Kickoff (2026-03-15)
+# Content Agent — Sprint: UF.7 Classification + ComposeBox Polish (2026-03-15)
 
-## PM Sprint Review Summary
+## 🚨 PM AUDIT FINDINGS — READ THIS FIRST
 
-### ✅ Accepted Work
-All deliverables verified and accepted:
-- **C1.1b/C1.2b/C1.3b**: Facet rendering + autocomplete frontend — 53 tests, commit `38cf4c2` ✅
-- **C6.1 CRDT Storage Layer**: `yrs` backend + `useCollabDoc` hook + ArticleEditor collab mode — 18 tests, commit `16a9c69` ✅
-- **C6.2 Frontend Yjs Integration**: Delivered within C6.1 scope — `useCollabDoc` hook IS the frontend integration ✅
+### ✅ Verified Completions — Excellent Work
+- **C1.4 Character Count** ✅ — `useCharacterCount.ts` (121 lines), 28 tests, Bluesky grapheme segmentation correct. *(Commit: `23c7bbe`)*
+- **C2.1 Link Card Embeds** ✅ — `unfurl.rs` (166 lines), `LinkPreviewCard.tsx` (144 lines), integrated into ComposeBox. *(Commits: `9123e0b`, `93fde71`)*
+- **P3 Content Classification Research** ✅ — Thorough, well-reasoned analysis. PM is acting on your recommendations this sprint.
 
-### ✅ Good Decisions
-- **XmlFragment vs Y.Text**: Correct architecture — Tiptap owns ProseMirror↔Yjs binding, Rust stores CRDT state + rendered snapshots from frontend. The `snapshot_collab_to_item(content: &str)` parameter design is clean.
-- **Building on Backend's GAP-4 collab.rs**: Good call assessing and extending rather than recreating.
-- **Merging both main and track-b**: Your branch has the widest integration — good merge hygiene.
+### ✅ Process — Clean
+Your work was solid. No major process issues. The cross-branch commit of C1.4 appearing on track-b (`cf205df`) was likely a merge artifact, not intentional.
 
-### ⚠️ Note on C6.2
-PM has marked C6.2 as complete in the ROADMAP since your C6.1 delivery covers the full frontend integration. The remaining C6 items (C6.3 P2P Sync, C6.4 Offline Merge, C6.5 Station Relay, C6.6 Access Control) are all future sprints and require Track A dependencies.
+### Current State
+All branches merged to **`main`** at `0f9f0a6`. All work happens on `main` going forward. No more feature branches.
 
 ---
 
-## Priority 0 — Merge `main` Into Your Branch (REQUIRED FIRST)
+## Priority 1 — UF.7: Content-Type Classification (Cross-Track Implementation)
 
-Your branch `track-c/c1-facet-frontend` is **missing 1 critical commit from `main`**:
+Your P3 research proposed a clean classification scheme. Now implement it. This is the most impactful content quality improvement we can make.
 
-```
-fe890b4 fix(a0): PM audit remediation — master password, OAuth tests, DM pagination, feed auth, debug cleanup, restore guard
-```
+### 1a. Add `BytescapeType` Variants (Rust)
 
-Your branch previously merged an **older** version of main. This remediation commit landed on main AFTER your last merge.
+In `db.rs` (or wherever `BytescapeType` is defined), add `Link` and `Video` variants:
 
-### Merge Instructions
-
-```bash
-git checkout track-c/c1-facet-frontend
-git merge main
-```
-
-**Expected conflicts:** Likely minimal — your branch already has most of main's code from the prior merge (`cc85d0f`). The remediation commit (`fe890b4`) touches `lib.rs`, `oauth.rs`, and `oauth_test.rs`. Your prior merge already resolved `lib.rs` conflicts, so this should be a cleaner merge. If conflicts occur in `lib.rs`, accept the main version for OAuth-related code blocks while preserving your collab command registrations.
-
-After resolving:
-```bash
-git add -A && git commit -m "merge: main into track-c (get fe890b4 remediation)"
+```rust
+pub enum BytescapeType {
+    Status,
+    Gallery,
+    Article,
+    Link,    // NEW — URL embed with minimal original text
+    Video,   // NEW — video as primary content
+}
 ```
 
-Verify: `pnpm tauri dev` builds, `pnpm test` passes.
+Also update `src/types/index.ts` to add `'Link' | 'Video'` to the `BytescapeType` union.
+
+### 1b. Classification Heuristic (Rust)
+
+Create a `classify_item(item: &BytescapeItem) -> BytescapeType` function that applies your proposed heuristic table:
+
+| Type | Signal | Threshold |
+|------|--------|-----------|
+| `video` | Has video attachment(s) | Any video embed/attachment |
+| `gallery` | Image-centric | ≥2 images, text ≤300 chars |
+| `article` | Substantial text | >500 chars body (excluding URL + OG metadata) |
+| `link` | URL embed + minimal text | Has link_url, ≤100 chars original text |
+| `status` | Everything else | Default fallback |
+
+**Check order matters**: video → gallery → article → link → status (most specific first).
+
+### 1c. Wire Into Connectors
+
+- **Bluesky connector** (`connectors/bluesky.rs`): When fetching timeline items, apply classification using embed type (`app.bsky.embed.images`, `app.bsky.embed.video`, `app.bsky.embed.external`). This is Track A territory — **coordinate with the Backend agent** or propose a clean interface. If the Backend agent is busy with UF.16, you may add the classification call at the point where `BytescapeItem` is constructed, but document what you touched.
+- **`publish_post_v2`**: When publishing, auto-classify based on content + attachments.
+
+### 1d. Re-classification Command
+
+Create a `reclassify_vault_items` Tauri command that re-scans ALL existing vault items and updates their `item_type`. This handles items imported before classification was improved. Register in `lib.rs`.
+
+### 1e. Tests
+- Classification heuristic: test each type boundary (short text→status, 2 images→gallery, long text→article, link+short text→link, video→video)
+- Edge cases: empty text, text exactly at boundaries, mixed content (video + long text)
+
+### PM Decision on Your Open Question
+> "Should `Link` be a new `BytescapeType` variant, or a metadata flag?"
+
+**Decision: New variant.** Simpler, cleaner, better for filtering. If a linked URL has substantial body content (>500 chars of original text, not OG description), classify it as `article`, not `link`. The heuristic handles the ambiguity.
 
 ---
 
-## 🔥 USER FEEDBACK — Content Quality Issues
-
-The user has reported that **content-type classification is weak** (see [ROADMAP.md](../../../ROADMAP.md) section "UF. User Feedback — Critical UX Overhaul", specifically UF.7).
-
-**User feedback:** *"Article reader is cool but shows a lot of content that isn't really articles. Videos, gifs, even links...I see a few legit articles/longform posts but there are also ones that are just link + description."*
-
-### Why This Matters to Track C
-The Frontend is moving from "Lenses" (Gallery/Reader views) to **Feed Content Filters** (filter chips on the feed toolbar). For filters to work, every `BytescapeItem` needs a reliable `content_type` classification. This classification logic lives at the boundary between content and backend — you own the content intelligence side.
-
-### What to Do (P3 — Research & Prototype)
-This is **not a full implementation** this sprint. But as you work on C1.4 and C2.1, keep in mind:
-1. **Link Card vs Article distinction**: When you build C2.1 Link Card Embeds, a post with ONLY a link and a title/description is a "link card" — NOT an article. Articles have substantial body text (>500 chars of actual content, not just a URL + OG description).
-2. **Content type heuristic**: Start thinking about what signals distinguish content types:
-   - `status`: Short text, ≤300 chars, no substantial media
-   - `gallery`: Has image/video attachments as primary content
-   - `article`: Has substantial text (>500 chars body), may have images inline
-   - `link`: Has URL embed but minimal original text
-   - `video`: Has video as primary content
-3. **Surface area**: Where should this classification happen? Options:
-   - At ingest time (in Rust connectors — Track A territory, but you can propose the schema)
-   - At render time (in frontend — Track B territory)
-   - As a field on `BytescapeItem` (needs Track A to add to schema)
-4. **Document your proposal**: In your progress report, include a section on content-type classification recommendations. The PM will use this to create a cross-track task for the next sprint.
-
----
-
-## Priority 1 — C1.4: Character Count & Limits
-
-### Context
-A basic 10K char counter already exists from the MED-4 security hardening (input length validation in ComposeBox). Your job is to make it **platform-aware and intelligent**.
-
-### Requirements
-
-#### Per-Target Character Counting
-- **Bluesky**: 300 **graphemes** (not characters, not bytes). Use `Intl.Segmenter` with `granularity: 'grapheme'` for accurate counting. Emoji like 👨‍👩‍👧‍👦 count as 1 grapheme.
-- **ActivityPub**: Configurable per-server, default 500 characters. For now, hardcode 500.
-- **Local vault**: 10K characters (existing MED-4 limit).
-
-#### UI Components
-1. **Live counter** below the ComposeBox text area — shows `{current}/{limit}` for each active target
-2. **Color coding**: Green (0-80%), Yellow (80-95%), Red (95-100%), Disabled/error (>100%)
-3. **Multi-target display**: When posting to "All", show counters for each target side-by-side:
-   ```
-   🦋 142/300  🌐 142/500  💾 142/10000
-   ```
-4. **Truncation warning**: If text exceeds a target's limit, show which targets will truncate. E.g., "Text exceeds Bluesky limit by 42 graphemes — post will be truncated on Bluesky."
-5. **Post button state**: Disable the Post button if ALL targets exceed their limits. If only some targets exceed, allow posting but show a confirmation modal.
-
-#### Implementation Notes
-- Create a `useCharacterCount(text: string, targets: string[])` hook that returns counts per target
-- The hook should handle grapheme segmentation (Bluesky), character counting (AP), and byte counting if needed
-- Integrate into `ComposeBox.tsx` — this is your component to modify
-- Don't break the existing MED-4 hardening (10K overall limit, 8K warning)
-
-### Tests
-- Grapheme counting: ASCII, emoji, ZWJ sequences, CJK characters
-- Multi-target counter display
-- Color state transitions
-- Truncation warning logic
-- Post button disable state
-
----
-
-## Priority 2 — C2.1: Link Card Embeds
+## Priority 2 — C2.2: GIF Picker
 
 ### Backend (Rust)
 
-Create a new Tauri command for URL unfurling:
+Create `src-tauri/src/commands/gif.rs`:
 
 ```rust
-// src-tauri/src/commands/unfurl.rs
-
 #[derive(Serialize, Deserialize, Clone)]
-pub struct LinkCard {
-    pub url: String,
+pub struct GifResult {
+    pub id: String,
+    pub preview_url: String,    // Low-res preview
+    pub full_url: String,       // Full-res GIF/MP4
+    pub width: u32,
+    pub height: u32,
     pub title: Option<String>,
-    pub description: Option<String>,
-    pub image_url: Option<String>,
-    pub site_name: Option<String>,
-    pub favicon_url: Option<String>,
 }
 
 #[tauri::command]
-pub async fn unfurl_link(url: String) -> Result<LinkCard, String> {
-    // 1. GET the URL with reqwest (already in Cargo.toml)
-    // 2. Parse HTML with scraper (already in Cargo.toml)
-    // 3. Extract: og:title, og:description, og:image, og:site_name
-    // 4. Fallback to twitter:title, twitter:description, twitter:image
-    // 5. Fallback to <title> tag and first <meta name="description">
-    // 6. Return LinkCard
-}
+pub async fn search_gifs(query: String, limit: Option<u32>) -> Result<Vec<GifResult>, String>
+
+#[tauri::command]
+pub async fn get_trending_gifs(limit: Option<u32>) -> Result<Vec<GifResult>, String>
 ```
 
-Register in `lib.rs` invoke_handler. Add `LinkCard` to `src/types/index.ts`.
+Use the **Tenor API v2** (free tier, 50 req/min). The API key can be stored in app config (hardcode a dev key for now — PM will provide a production key later).
 
-**Safety:**
-- Set a timeout (5s) on the fetch
-- Limit response body to 1MB (don't download entire pages)
-- Only fetch `text/html` content types
-- Don't follow more than 3 redirects
-- Sanitize all extracted strings (strip HTML tags, limit lengths)
+Register both commands in `lib.rs`.
 
 ### Frontend (React)
 
-1. **URL detection**: In ComposeBox, detect URLs as the user types (debounced, 500ms after last keystroke). Use a simple regex: `https?://[^\s]+`
-2. **Preview card**: Below the ComposeBox text area, render a `LinkPreviewCard` component with the unfurled metadata — thumbnail, title, description, domain
-3. **Remove action**: User can dismiss the link card preview (X button)
-4. **On publish**: Include the link card data in the post payload:
-   - For Bluesky: emit `app.bsky.embed.external` with `{uri, title, description, thumb}`
-   - For local vault: store as structured metadata on `BytescapeItem`
-   - For AP: emit as `attachment` with `type: Link`
+1. **GIF button**: Add a GIF icon button to the ComposeBox toolbar (next to media attach)
+2. **Picker modal**: Clicking opens a searchable grid modal:
+   - Search bar at top
+   - Trending GIFs shown by default (via `get_trending_gifs`)
+   - Results update on search (debounced 300ms, via `search_gifs`)
+   - Grid layout, 2-3 columns, lazy-loaded previews
+3. **Selection**: Click a GIF → inserts it as a media attachment on the post
+4. **For Bluesky**: Upload the GIF as a blob and attach as `app.bsky.embed.images` (Bluesky renders GIFs as static images, but we send the full URL)
+5. **For local vault**: Store as media attachment with `image/gif` MIME type
 
 ### Tests
-- URL regex matches valid URLs, rejects invalid ones
-- LinkPreviewCard renders title, description, image
-- Dismiss action removes the preview
-- Handles unfurl errors gracefully (show URL-only fallback)
+- GIF search returns results
+- Picker renders grid
+- Selection adds attachment to compose state
+- Handles API errors gracefully
 
 ---
 
-## Branch & Commit Strategy
-- Stay on `track-c/c1-facet-frontend`
-- Commit after each priority: `merge: ...`, `feat(track-c): C1.4 character count & limits`, `feat(track-c): C2.1 link card embeds`
-- Update `progress.md` at the end of your session
+## Priority 3 — C2.3: Emoji Picker
+
+### Frontend (React)
+
+Use an existing emoji picker library (e.g., `emoji-mart` or `@emoji-mart/react`) to avoid reimplementing the Unicode emoji database.
+
+1. **Emoji button**: Add to ComposeBox toolbar (smiley face icon)
+2. **Picker popover**: Clicking opens the emoji picker:
+   - Full Unicode emoji grid with categories
+   - Search by name/keyword
+   - Skin tone selector
+   - Recently-used section (persist in localStorage)
+3. **Selection**: Click an emoji → insert Unicode character at cursor position in compose text
+4. **Integration**: Must work alongside the existing `@mention` and `#hashtag` autocomplete without conflicts
+
+### Tests
+- Emoji insertion at cursor position
+- Search functionality
+- Skin tone selection persists
+- No interference with mention/hashtag autocomplete
+
+---
 
 ## Anti-Patterns
 - Do NOT modify `ProfileBuilderScreen`, `ProfileBrowserScreen`, or lens components — Track B owns those
-- Do NOT modify Rust connector files (`connectors/*.rs`) — Track A owns those
+- Do NOT modify Rust connector files (`connectors/*.rs`) beyond adding classification calls — Track A owns those. Coordinate with Backend agent.
 - Do NOT add items to ROADMAP.md — PM scope only
 - Do NOT start unassigned items after completing these priorities — report back via progress.md
-- Do NOT break the existing MED-4 input validation when adding character counting
+- All work on `main` — no feature branches
+- **Always run `git branch --show-current` before committing**
+- Do NOT hallucinate npm packages — check `package.json` before importing
+
+---
+
+## Definition of Done (This Sprint)
+- [ ] `BytescapeType::Link` and `BytescapeType::Video` variants added (Rust + TypeScript)
+- [ ] `classify_item` heuristic implemented with all 5 type paths
+- [ ] `reclassify_vault_items` command registered and working
+- [ ] GIF picker: search + trending + selection + attachment
+- [ ] Emoji picker: full grid + search + insertion
+- [ ] Classification tests cover each type boundary + edge cases
+- [ ] `cargo check` passes (0 errors)
+- [ ] `pnpm test` passes
+- [ ] Committed to `main` with semantic messages

@@ -66,13 +66,23 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
+## ✅ C1.4 + C2.1 — Complete (2026-03-15 PM Audit)
+
+- C1.4 Character Count: `useCharacterCount.ts` (121 lines), 28 tests, grapheme segmentation verified. *(Commit: `23c7bbe`)*
+- C2.1 Link Card Embeds: `unfurl.rs` (166 lines), `LinkPreviewCard.tsx` (144 lines), ComposeBox integration verified. *(Commits: `9123e0b`, `93fde71`)*
+- P3 Content Classification Research: Excellent analysis — PM is acting on your recommendations.
+
+**Do not redo any of this work.**
+
 ## 🎯 Current Assignment (2026-03-15)
+
+⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
 
 Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
 
-**Priority 0 — Merge `main` into `track-c/c1-facet-frontend`** (get `fe890b4` remediation commit)
-**Priority 1 — C1.4 Character Count & Limits** (platform-aware grapheme counting)
-**Priority 2 — C2.1 Link Card Embeds** (unfurl_link backend + LinkPreviewCard frontend)
+**Priority 1 — UF.7 Content-Type Classification** (add Link/Video variants, classification heuristic, reclassify command)
+**Priority 2 — C2.2 GIF Picker** (Tenor API backend + searchable picker UI)
+**Priority 3 — C2.3 Emoji Picker** (emoji-mart integration + ComposeBox insertion)
 
 ## Prime Directive
 

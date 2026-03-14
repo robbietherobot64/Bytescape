@@ -61,12 +61,13 @@ All prior work verified and accepted:
 
 ## 🎯 Current Assignment (2026-03-15)
 
+⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
+
 Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
 
-**Priority 0 — Merge `main` into `track-b/ui-redesign`** (resolve lib.rs, oauth.rs, oauth_test.rs conflicts)
-**Priority 1 — B10.4 Reload/Refresh**
-**Priority 2 — Navigation Unification** (migrate callers from useNavStore → useLocationStore)
-**Priority 3 — B11.1 Network State Feed** (if time permits)
+**Priority 1 — Fix UF.1** (window maximized in tauri.conf.json + true full-width layout)
+**Priority 2 — Complete UF.12** (tracker content classification for Memories tab)
+**Priority 3 — UF.5** (Following/Subscribed tab dedup cleanup)
 
 ## Prime Directive
 

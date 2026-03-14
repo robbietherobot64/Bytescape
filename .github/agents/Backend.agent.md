@@ -46,12 +46,21 @@ All 7 GAPs resolved. Critical 3-root-cause OAuth bug fixed. Post-GAP fixes shipp
 
 See [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the original audit.
 
+## ✅ A1.1 AP Actor — Complete (2026-03-15 PM Audit)
+
+8 files, 1,636 lines, 22 Rust tests. ActivityPub module, actor CRUD, HTTP signatures, WebFinger, activity types all verified. Committed across `7c58c40`, `a4e4062`, `28a6b8c`.
+
+**Do not redo any of this work.**
+
 ## 🎯 Current Assignment (2026-03-15)
+
+⚠️ **All work is on `main` now.** Feature branches have been merged. Always verify with `git branch --show-current` before committing.
 
 Read your full kickoff prompt: [prompts/backend-a1-ap-actor.md](prompts/backend-a1-ap-actor.md)
 
-**Priority 1 — A1.1 AP Actor & Inbox/Outbox** — the most critical path item in the project. Unblocks 7 items across all tracks.
-**Priority 2 — A1.2 Research** (read only, inform next sprint)
+**Priority 1 — UF.16 Feed Performance** (cached-first rendering + timing instrumentation)
+**Priority 2 — UF.3 Unified Contacts** (extend ContactManager to include imported contacts)
+**Priority 3 — A1.2 Research** (Mastodon/Lemmy requirements — research only, document in progress.md)
 
 ## Prime Directive
 
