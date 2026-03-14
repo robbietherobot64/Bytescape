@@ -237,10 +237,22 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **B9.2 Webrings & Forums**: `com.platform.webring.member` AT Protocol Lexicon, `publish_webring_membership` command, AppView Indexer subscribing to firehose, webring UI with prev/next navigation.
 - [ ] **B9.3 WASM Web Portal** *(unlocked by Track A — A1.1 + hosting)*: Public profiles serve blurred preview to scrapers; full content via WebAssembly Iroh node in browser.
 
-#### B10. Network & Interaction Polish
-- [ ] **B10.1 Network State Feed**: `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created). Feed injection with distinct visual treatment.
-- [ ] **B10.2 Friend Zoom**: Per-connection closeness slider that filters feed by relationship strength.
-- [ ] **B10.3 Haptics & Audio**: "Mechanical" (crisp clicks) and "Organic" (wood taps, paper) sound profiles via `tauri-plugin-haptics`.
+#### B10. Browser Chrome & Navigation 🌐
+*Every Bytescape page is addressable by URL — whether served locally on desktop or mirrored on a relay. The app shell leans into a browser-within-a-browser aesthetic: omnibar, back/forward, reload.*
+
+> **URL Scheme Design:** Locally, pages use path-based addresses like `bytescape://feed/following` or `bytescape://profile/@alice.bsky.social`. When a user mirrors content via a relay (Phase 5 Station or `bytescape.social`), the same paths resolve at `https://bytescape.social/@{user}/feed/following`. The omnibar shows whichever form is canonical — local by default, relay URL when mirrored. Peer profiles visited over P2P use `bytescape://peer/{nodeId}/profile`.
+
+- [ ] **B10.1 Internal URL Scheme**: Define and register internal URL addressing for all Bytescape screens. Mapping: `/feed`, `/feed/following`, `/feed/feeds/{feedUri}`, `/feed/hashtags/{tag}`, `/chat/bsky/{convoId}`, `/chat/p2p/{nodeId}`, `/vault`, `/vault/{blobHash}`, `/profile`, `/profile/@{handle}`, `/profile-builder`, `/import`, `/settings`, `/article/{itemId}`, `/map`. Create a `useLocation()` hook (Zustand) that exposes `currentUrl` and `navigate(url)`. All screen transitions go through this hook so the URL always reflects the visible page. *(Frontend agent — Track B)*
+- [ ] **B10.2 Navigation History Stack**: Browser-style forward/backward navigation. `useNavigationHistory` Zustand store maintaining a stack of visited URLs with a cursor index. `goBack()`, `goForward()`, `canGoBack`, `canGoForward` exposed to the UI. Max depth ~50 entries. Each `navigate()` call pushes onto the stack. *(Frontend agent — Track B)*
+- [ ] **B10.3 Omnibar UI**: Evolve the existing `TopBar` search bar into a browser-style omnibar. Shows the current page URL (from B10.1 scheme) in a styled address bar. Editable — user can type a URL to navigate directly, or type text to search. Auto-completes known routes and recent URLs. Flanked by ◀ Back / ▶ Forward / 🔄 Reload buttons. Shows a 🏠 local / 🌐 relay / 🔗 peer icon indicating content origin. The bar should have the classic beveled-inset browser field look consistent with the GeoCities aesthetic. *(Frontend agent — Track B)*
+- [ ] **B10.4 Reload / Refresh**: Reload button next to the omnibar triggers a full re-fetch of the current screen's data sources. Each screen exports a `refresh()` callback (or listens for a `bytescape://reload` event). Feed screens re-fetch timeline, vault re-queries blob list, profile re-fetches actor data, chat re-polls conversations. *(Frontend agent — Track B)*
+- [ ] **B10.5 URL Deep Linking** *(unlocked by Track A — A1.1 + hosting)*: When `bytescape.social` is live, the internal URL scheme maps to public HTTP URLs. `bytescape://profile/@alice` → `https://bytescape.social/@alice`. The omnibar shows the public URL when the user's relay mirror is active. Clicking "Copy Link" copies the public URL. Incoming links from external browsers resolve via the WASM portal (B9.3) or redirect to the app via `bytescape://` protocol handler. *(Cross-track — A + B)*
+- [ ] **B10.6 URL Bar for Peer Browsing**: When visiting a peer's profile (B3.1), the omnibar shows `bytescape://peer/{nodeId}/profile`. Users can type a peer's node ID or `did:key` into the omnibar to navigate directly to their profile. Integrates with the Peer Profile Browser — omnibar becomes the primary navigation surface for traversing the peer graph. *(Frontend agent — Track B, builds on B3.1)*
+
+#### B11. Network & Interaction Polish
+- [ ] **B11.1 Network State Feed**: `NetworkStateEntry` event type (profile updated, webring joined, import completed, group created). Feed injection with distinct visual treatment.
+- [ ] **B11.2 Friend Zoom**: Per-connection closeness slider that filters feed by relationship strength.
+- [ ] **B11.3 Haptics & Audio**: "Mechanical" (crisp clicks) and "Organic" (wood taps, paper) sound profiles via `tauri-plugin-haptics`.
 
 ---
 

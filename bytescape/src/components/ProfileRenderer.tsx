@@ -161,6 +161,49 @@ export function ProfileRenderer({ editable = false }: ProfileRendererProps) {
         );
     }
 
+    // ─── Raw HTML mode: render in sandboxed iframe (B2.2) ───
+    if (layout.render_mode === 'raw') {
+        const srcDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+    background: #0f0f23;
+    color: #e2e8f0;
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    margin: 0;
+    padding: 16px;
+}
+* { box-sizing: border-box; }
+${sanitizeCss(layout.css || '')}
+</style>
+</head>
+<body>
+${DOMPurify.sanitize(layout.html, { ADD_TAGS: ['marquee'], WHOLE_DOCUMENT: false })}
+<script>${layout.js || ''}<\/script>
+</body>
+</html>`;
+        return (
+            <div className="profile-renderer profile-renderer-raw">
+                <iframe
+                    sandbox="allow-scripts"
+                    title="Custom Profile"
+                    srcDoc={srcDoc}
+                    style={{
+                        width: '100%',
+                        minHeight: 600,
+                        border: 'none',
+                        background: '#0f0f23',
+                        borderRadius: 'var(--border-radius, 4px)',
+                    } as React.CSSProperties}
+                />
+            </div>
+        );
+    }
+
+    // ─── GrapesJS widget hydration mode (default) ───
+
     const segments = parseLayoutIntoSegments(layout.html);
     const sanitizedCss = sanitizeCss(layout.css || '');
 

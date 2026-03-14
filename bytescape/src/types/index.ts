@@ -455,6 +455,10 @@ export interface ProfileLayout {
     styles_json?: string | null;
     /** Widget configuration data (away message, music playlist, etc.) as JSON */
     widget_data?: string | null;
+    /** Render mode: null/"grapesjs" = widget hydration, "raw" = sandboxed iframe */
+    render_mode?: string | null;
+    /** Optional custom JavaScript for raw HTML mode (sandboxed only) */
+    js?: string | null;
     updated_at: number;
 }
 

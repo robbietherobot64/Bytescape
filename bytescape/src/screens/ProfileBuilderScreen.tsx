@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { Editor } from 'grapesjs';
 import { Win98Box } from '../components/Win98Box';
+import { RawHtmlEditor } from '../components/RawHtmlEditor';
 import { useNavStore } from '../store';
-import { BsPalette2, BsEye, BsPencilSquare, BsSave, BsTrash, BsArrowLeft } from 'react-icons/bs';
+import { BsPalette2, BsEye, BsPencilSquare, BsSave, BsTrash, BsArrowLeft, BsCodeSlash } from 'react-icons/bs';
 import type { ProfileLayout } from '../types';
 
 /**
@@ -24,7 +25,17 @@ export function ProfileBuilderScreen() {
     const [saveStatus, setSaveStatus] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
     const [hasLayout, setHasLayout] = useState(false);
+    const [rawMode, setRawMode] = useState(false);
     const { setScreen, setActiveSidebar } = useNavStore();
+
+    // Check if existing layout is raw mode on mount
+    useEffect(() => {
+        invoke<ProfileLayout | null>('get_profile_layout').then((layout) => {
+            if (layout && layout.render_mode === 'raw') {
+                setRawMode(true);
+            }
+        }).catch(() => {});
+    }, []);
 
     // Initialize GrapesJS editor
     useEffect(() => {
@@ -401,6 +412,8 @@ export function ProfileBuilderScreen() {
                 componentsJson,
                 stylesJson,
                 widgetData: null,
+                renderMode: null,
+                js: null,
             });
 
             setHasLayout(true);
@@ -496,6 +509,15 @@ export function ProfileBuilderScreen() {
             height: '100%',
             background: 'var(--bg-primary, #0f0f23)',
         } as React.CSSProperties}>
+            {/* If raw mode, render the Raw HTML Editor instead of GrapesJS */}
+            {rawMode ? (
+                <RawHtmlEditor onBack={() => {
+                    setRawMode(false);
+                    // If user switches back from raw mode, they may want GrapesJS
+                    // Don't auto-navigate — let them choose
+                }} />
+            ) : (
+            <>
             {/* Mobile warning — shown only on small screens via CSS */}
             <div className="profile-builder-mobile-warning">
                 <Win98Box variant="raised">
@@ -576,6 +598,14 @@ export function ProfileBuilderScreen() {
                         </button>
                     )}
 
+                    <button
+                        style={btnStyle}
+                        onClick={() => setRawMode(true)}
+                        title="Switch to Raw HTML Editor"
+                    >
+                        <BsCodeSlash /> Raw HTML
+                    </button>
+
                     {saveStatus && (
                         <span style={{
                             color: saveStatus.startsWith('✅') || saveStatus.startsWith('🗑️')
@@ -617,6 +647,8 @@ export function ProfileBuilderScreen() {
                     display: loaded ? 'block' : 'none',
                 } as React.CSSProperties}
             />
+            </>
+            )}
         </div>
     );
 }

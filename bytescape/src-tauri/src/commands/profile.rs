@@ -20,6 +20,12 @@ pub struct ProfileLayout {
     pub styles_json: Option<String>,
     /// Widget configuration data (away message, music playlist, etc.) as JSON
     pub widget_data: Option<String>,
+    /// Render mode: None or "grapesjs" = widget hydration, "raw" = sandboxed iframe
+    #[serde(default)]
+    pub render_mode: Option<String>,
+    /// Optional custom JavaScript for raw HTML mode (sandboxed only)
+    #[serde(default)]
+    pub js: Option<String>,
     /// Unix timestamp when the layout was last saved
     pub updated_at: u64,
 }
@@ -43,6 +49,8 @@ pub async fn save_profile_layout(
     components_json: Option<String>,
     styles_json: Option<String>,
     widget_data: Option<String>,
+    render_mode: Option<String>,
+    js: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let db_guard = state.db_manager.read().await;
@@ -54,6 +62,8 @@ pub async fn save_profile_layout(
         components_json,
         styles_json,
         widget_data,
+        render_mode,
+        js,
         updated_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -101,6 +111,8 @@ pub async fn save_widget_data(
         components_json: None,
         styles_json: None,
         widget_data: None,
+        render_mode: None,
+        js: None,
         updated_at: 0,
     });
 
