@@ -897,25 +897,19 @@ impl OAuthManager {
     /// forwards the request to the chat service.
     pub async fn authenticated_chat_get(&self, url: &str) -> Result<String, String> {
         use atrium_xrpc::XrpcClient;
+        use atrium_api::agent::CloneWithProxy;
 
-        // Chat proxy requests need a special header that send_xrpc doesn't support
-        // directly. We still need send_http here but we get the access token from
-        // the internal session store via a fresh xrpc_get to warm the nonce, then
-        // fall back to send_http with the proxy header.
-        // For now, reuse the xrpc_get approach but we need proxy support.
-        // TODO: The chat proxy needs atproto-proxy header — for now, keep send_http
-        // but read access token from the OAuthSession's internal store.
         let (nsid, query) = Self::parse_xrpc_url(url)?;
 
-        // Use send_xrpc but configure proxy first
         let session_guard = self.session.lock().await;
         let session = session_guard
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        // Configure the proxy header for chat
-        use atrium_api::agent::Configure;
-        session.configure_proxy_header(
+        // Clone the session with the chat proxy header — this creates a
+        // separate client that routes through the chat service without
+        // polluting the main session's proxy_header state.
+        let chat_session = session.clone_with_proxy(
             "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
             "bsky_chat",
         );
@@ -935,10 +929,7 @@ impl OAuthManager {
         };
 
         let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
-            session.send_xrpc(&request).await;
-
-        // Reset proxy header so non-chat requests aren't affected
-        session.configure_endpoint(session.base_uri());
+            chat_session.send_xrpc(&request).await;
 
         match result {
             Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
@@ -962,7 +953,7 @@ impl OAuthManager {
         content_type: &str,
     ) -> Result<String, String> {
         use atrium_xrpc::XrpcClient;
-        use atrium_api::agent::Configure;
+        use atrium_api::agent::CloneWithProxy;
         let (nsid, _query) = Self::parse_xrpc_url(url)?;
 
         let session_guard = self.session.lock().await;
@@ -970,8 +961,9 @@ impl OAuthManager {
             .as_ref()
             .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
 
-        // Configure the proxy header for chat
-        session.configure_proxy_header(
+        // Clone the session with the chat proxy header — keeps the main
+        // session clean so subsequent feed/timeline calls aren't affected.
+        let chat_session = session.clone_with_proxy(
             "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
             "bsky_chat",
         );
@@ -985,10 +977,7 @@ impl OAuthManager {
         };
 
         let result: Result<atrium_xrpc::OutputDataOrBytes<serde_json::Value>, atrium_xrpc::Error<serde_json::Value>> =
-            session.send_xrpc(&request).await;
-
-        // Reset proxy header
-        session.configure_endpoint(session.base_uri());
+            chat_session.send_xrpc(&request).await;
 
         match result {
             Ok(atrium_xrpc::OutputDataOrBytes::Data(v)) => {
