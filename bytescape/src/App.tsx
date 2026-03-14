@@ -58,6 +58,7 @@ import { ProfileBrowserScreen } from "./screens/ProfileBrowserScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 import { RecoverySetupModal } from "./components/RecoverySetupModal";
 import { useTheme } from "./hooks/useTheme";
+import { useLocationStore } from "./hooks/useLocation";
 
 function App() {
   // ─── Theme (applies data-theme attribute on <html>) ───
@@ -78,6 +79,13 @@ function App() {
     peerProfileName, setPeerProfileName
   } = useNavStore();
   const chatStore = useChatStore();
+
+  // ─── B10.1 / B10.2: Sync NavStore → Location URL ───
+  // Whenever screen, feedTab, or peer context changes, update the byte:// URL
+  // and push onto the navigation history stack.
+  useEffect(() => {
+    useLocationStore.getState().syncFromNavStore();
+  }, [screen, feedActiveTab, peerProfileNodeId]);
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
