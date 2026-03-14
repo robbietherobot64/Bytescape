@@ -19,9 +19,9 @@ describe('B10.1 — resolveUrl()', () => {
         expect(route!.feedTab).toBe('following');
     });
 
-    it('resolves byte://feed/subscribed to feed with subscribed tab', () => {
+    it('resolves byte://feed/subscribed to feed with all tab (removed tab, fallback)', () => {
         const route = resolveUrl('byte://feed/subscribed');
-        expect(route!.feedTab).toBe('subscribed');
+        expect(route!.feedTab).toBe('all');
     });
 
     it('resolves byte://feed/you to feed with you tab', () => {
@@ -300,7 +300,7 @@ describe('B10.2 — Navigation History Stack', () => {
         const store = useLocationStore.getState();
         // Navigate 55 times (beyond max of 50)
         for (let i = 0; i < 55; i++) {
-            store.navigate(`byte://feed/${i % 4 === 0 ? 'all' : i % 4 === 1 ? 'following' : i % 4 === 2 ? 'subscribed' : 'you'}`);
+            store.navigate(`byte://feed/${i % 3 === 0 ? 'all' : i % 3 === 1 ? 'following' : 'you'}`);
         }
 
         const state = useLocationStore.getState();

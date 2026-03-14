@@ -49,7 +49,7 @@ export function ContextPanel({ screen, feedActiveTab, setFeedActiveTab, activeLe
                 <div className="context-panel-section">
                     <div className="context-panel-section-label">View</div>
                     <div className="context-panel-nav">
-                        {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
+                        {(['all', 'following', 'you'] as FeedTab[]).map(tab => (
                             <button
                                 key={tab}
                                 className={`context-nav-item ${feedActiveTab === tab ? 'active' : ''}`}

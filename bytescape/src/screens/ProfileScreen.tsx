@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BytescapeItem, VaultStats } from '../types';
+import { AuthStatus, BytescapeItem } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { Win98Box } from '../components/Win98Box';
 import { ProfileRenderer } from '../components/ProfileRenderer';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { useNavStore } from '../store';
-import { BsPersonFill, BsGlobe, BsStar, BsBookmark, BsPalette2 } from 'react-icons/bs';
+import { BsPersonFill, BsPalette2 } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -21,17 +21,18 @@ interface ProfileScreenProps {
 }
 
 type SourceFilter = 'all' | string;
+type ProfileTab = 'wall' | 'posts';
 
-export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
+export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [items, setItems] = useState<BytescapeItem[]>([]);
     const [total, setTotal] = useState(0);
-    const [stats, setStats] = useState<VaultStats | null>(null);
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
     const [sources, setSources] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [hasCustomLayout, setHasCustomLayout] = useState(false);
+    const [profileTab, setProfileTab] = useState<ProfileTab>('posts');
     const offsetRef = useRef(0);
     const { setScreen, setActiveSidebar } = useNavStore();
 
@@ -49,11 +50,7 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
         setError(null);
         offsetRef.current = 0;
         try {
-            const [vaultStats, vaultSources] = await Promise.all([
-                invoke<VaultStats>('get_vault_stats'),
-                invoke<string[]>('list_vault_sources'),
-            ]);
-            setStats(vaultStats);
+            const vaultSources = await invoke<string[]>('list_vault_sources');
             setSources(vaultSources);
 
             const result = await invoke<PagedResult>('list_vault_posts_paged', {
@@ -135,9 +132,6 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                         <div className="profile-did">{auth?.did}</div>
                     </div>
                 </div>
-                <div className="profile-visitor-counter">
-                    Visitors: {stats ? String(stats.total + 1337).padStart(6, '0') : '001337'}
-                </div>
                 <button
                     className="profile-edit-btn"
                     onClick={() => { setScreen('profile-builder'); setActiveSidebar('profile'); }}
@@ -171,68 +165,45 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                 </div>
             ) : (
             <>
-            {/* ═══ GeoCities Content Grid ═══ */}
-            <div className="profile-content-grid">
-                {/* Left Column: About Boxes */}
-                <div className="profile-sidebar-boxes">
-                    <Win98Box variant="window" title="About Me">
-                        <div className="profile-about-body">
-                            <p className="profile-about-text">
-                                Welcome to my corner of the internet! 🌐
-                            </p>
-                            <p className="profile-about-text">
-                                This is where I keep my digital memories safe from
-                                corporate surveillance. All data stored locally.
-                            </p>
-                        </div>
-                    </Win98Box>
+            {/* ═══ Profile Tabs & Content ═══ */}
+            <div className="profile-tabs" style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border-outset-dark)', margin: '0 16px' } as React.CSSProperties}>
+                <button
+                    className={`wall-filter-btn ${profileTab === 'wall' ? 'active' : ''}`}
+                    onClick={() => setProfileTab('wall')}
+                    style={{ padding: '8px 20px', fontSize: '0.9rem' } as React.CSSProperties}
+                >
+                    📋 Wall
+                </button>
+                <button
+                    className={`wall-filter-btn ${profileTab === 'posts' ? 'active' : ''}`}
+                    onClick={() => setProfileTab('posts')}
+                    style={{ padding: '8px 20px', fontSize: '0.9rem' } as React.CSSProperties}
+                >
+                    📝 Posts
+                </button>
+            </div>
 
-                    {stats && (
-                        <Win98Box variant="window" title="My Stats">
-                            <div className="profile-stats-list">
-                                <div className="profile-stat-row">
-                                    <BsBookmark size={12} />
-                                    <span className="profile-stat-label">Total Posts</span>
-                                    <span className="profile-stat-value">{stats.total}</span>
-                                </div>
-                                <div className="profile-stat-row">
-                                    <BsStar size={12} />
-                                    <span className="profile-stat-label">With Media</span>
-                                    <span className="profile-stat-value">{stats.media_count}</span>
-                                </div>
-                                <div className="profile-stat-row">
-                                    <BsGlobe size={12} />
-                                    <span className="profile-stat-label">Vault Files</span>
-                                    <span className="profile-stat-value">{archiveCount}</span>
-                                </div>
-                                <div className="profile-stat-row">
-                                    <span>🛡️</span>
-                                    <span className="profile-stat-label">Storage</span>
-                                    <span className="profile-stat-value">Local Only</span>
-                                </div>
+            <div className="profile-content-narrow" style={{ maxWidth: 560, margin: '16px auto', padding: '0 16px' } as React.CSSProperties}>
+                {profileTab === 'wall' ? (
+                    /* Wall tab — guestbook-style posts by/to the user */
+                    <div>
+                        <Win98Box variant="window" title="Guestbook">
+                            <div className="profile-about-body">
+                                <p className="profile-about-text">
+                                    Welcome to my corner of the internet! 🌐
+                                </p>
+                                <p className="profile-about-text" style={{ fontStyle: 'italic', color: 'var(--text-muted)' } as React.CSSProperties}>
+                                    Leave a message on the guestbook — coming soon.
+                                </p>
                             </div>
                         </Win98Box>
-                    )}
-
-                    {sources.length > 0 && (
-                        <Win98Box variant="window" title="My Networks">
-                            <div className="profile-networks">
-                                {sources.map(s => (
-                                    <div key={s} className="profile-network-badge">
-                                        {sourceEmoji(s)} {s}
-                                    </div>
-                                ))}
-                            </div>
-                        </Win98Box>
-                    )}
-                </div>
-
-                {/* Right Column: Post Wall */}
-                <div className="profile-wall-column">
-                    <Win98Box variant="window" title={`My Wall (${total} posts)`}>
-                        {/* Source filter pills */}
+                    </div>
+                ) : (
+                    /* Posts tab — user's posts across platforms */
+                    <div>
+                        {/* Source/network filter */}
                         {sources.length > 1 && (
-                            <div className="wall-filters">
+                            <div className="wall-filters" style={{ marginBottom: 12 } as React.CSSProperties}>
                                 <button
                                     className={`wall-filter-btn ${sourceFilter === 'all' ? 'active' : ''}`}
                                     onClick={() => handleSourceFilter('all')}
@@ -254,7 +225,7 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                         {loading && (
                             <div className="wall-empty">
                                 <div className="wall-empty-icon">⏳</div>
-                                <p>Loading your wall...</p>
+                                <p>Loading your posts...</p>
                             </div>
                         )}
 
@@ -270,27 +241,29 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
                                 <p>No posts yet. Import your data from the Import screen!</p>
                             </div>
                         )}
-                    </Win98Box>
 
-                    {!loading && items.map(item => (
-                        <FeedEntryCard key={item.id} entry={adaptBytescapeItem(item)} />
-                    ))}
+                        {!loading && items.map(item => (
+                            <div key={item.id} style={{ marginBottom: 10 } as React.CSSProperties}>
+                                <FeedEntryCard entry={adaptBytescapeItem(item)} />
+                            </div>
+                        ))}
 
-                    {!loading && hasMore && (
-                        <div className="profile-load-more">
-                            <button
-                                className="wall-filter-btn"
-                                onClick={loadMore}
-                                disabled={loadingMore}
-                            >
-                                {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
-                            </button>
-                        </div>
-                    )}
-                </div>
+                        {!loading && hasMore && (
+                            <div className="profile-load-more">
+                                <button
+                                    className="wall-filter-btn"
+                                    onClick={loadMore}
+                                    disabled={loadingMore}
+                                >
+                                    {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
-            {/* ═══ Footer Guestbook ═══ */}
+            {/* ═══ Footer ═══ */}
             <div className="profile-footer">
                 <div className="profile-marquee">
                     ⭐ Thanks for visiting my page! ⭐ Built with Bytescape ⭐ Best viewed on any screen ⭐

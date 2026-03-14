@@ -160,7 +160,7 @@ export function AuditScreen({
                             onClick={onShred}
                             disabled={isShredding}
                         >
-                            {isShredding ? "🔥 Shredding..." : "🗑️ Shred Surveillance & Save Memories"}
+                            {isShredding ? "🔥 Importing..." : "🗑️ Remove Trackers & Save Memories"}
                         </button>
                         <p className="text-muted text-sm mt-8">
                             This will permanently discard {parseResult.total_tracker_events.toLocaleString()} tracker events
@@ -173,7 +173,7 @@ export function AuditScreen({
                 {/* Success */}
                 {importComplete && (
                     <div className="card card-glow" style={{ textAlign: "center" }}>
-                        <h2>✅ Exorcism Complete</h2>
+                        <h2>✅ Import Complete</h2>
                         <p className="text-muted" style={{ marginBottom: 16 }}>
                             Your memories are safe. The surveillance is gone.
                         </p>

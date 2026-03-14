@@ -40,14 +40,13 @@ function nestOwnerReplies(entries: FeedEntry[]): FeedEntry[] {
     return entries.filter((_, i) => !replyIndices.has(i));
 }
 
-export type FeedTab = 'all' | 'following' | 'subscribed' | 'you';
+export type FeedTab = 'all' | 'following' | 'you';
 
-export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed'];
+export const LIVE_TABS: FeedTab[] = ['all', 'following'];
 
 export const FEED_TAB_LABELS: Record<FeedTab, string> = {
     all: 'All',
     following: 'Following',
-    subscribed: 'Subscribed',
     you: 'You',
 };
 export const FEED_FILTER_ALL = '__all__';
@@ -110,10 +109,7 @@ export function useUnifiedFeed({
     // === Fetch Feed ===
     //
     // Each tab has a distinct data source:
-    //   'following'  → get_timeline (Bluesky getTimeline API)
-    //   'subscribed' → get_unified_feed (merged custom feeds + hashtag search)
-    //   'you'        → list_vault_posts_paged (local vault items)
-    //   'all'        → get_timeline_unified (Rust merges timeline + feeds + vault)
+    //   'following'  → get_timeline (Bluesky getTimeline API)\n    //   'you'        → list_vault_posts_paged (local vault items)\n    //   'all'        → get_timeline_unified (Rust merges timeline + feeds + vault)
     //
     // All paths end with deduplicateFeedEntries to collapse duplicates
     // while preserving reposts as distinct events.
@@ -142,36 +138,6 @@ export function useUnifiedFeed({
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
                 await fetchFollowingList(auth.did);
-
-            } else if (tab === 'subscribed') {
-                // ── Subscribed tab: custom feeds + followed hashtags ──
-                const [feeds, tags] = await Promise.all([
-                    invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []),
-                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
-                ]);
-                if (isStale()) return;
-                setSavedFeeds(feeds);
-                setFollowedHashtags(tags);
-
-                const allUris = customFeedUris(feeds);
-                const targetUris = selectedFeedUri === FEED_FILTER_ALL
-                    ? allUris
-                    : allUris.filter(uri => uri === selectedFeedUri);
-
-                if (targetUris.length > 0 || tags.length > 0) {
-                    const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                        tags,
-                        feedUris: targetUris,
-                        limit: 50,
-                        cursor: null,
-                    });
-                    if (isStale()) return;
-                    setFeedEntries(deduplicateFeedEntries(posts.map(adaptBlueskyPost)));
-                    setCursor(nextCursor);
-                } else {
-                    setFeedEntries([]);
-                    setCursor(null);
-                }
 
             } else if (tab === 'you') {
                 // ── You tab: user's own posts (Bluesky author feed + local vault) ──
@@ -298,19 +264,6 @@ export function useUnifiedFeed({
         try {
             if (activeTab === 'following' && cursor) {
                 const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
-                setCursor(nextCursor);
-
-            } else if (activeTab === 'subscribed' && cursor) {
-                const uris = selectedFeedUri === FEED_FILTER_ALL
-                    ? customFeedUris(savedFeeds)
-                    : [selectedFeedUri];
-                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                    tags: followedHashtags,
-                    feedUris: uris,
-                    limit: 30,
-                    cursor,
-                });
                 setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
                 setCursor(nextCursor);
 

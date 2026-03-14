@@ -7,7 +7,6 @@
  * URL Scheme:
  *   byte://feed                        → Feed (all)
  *   byte://feed/following              → Feed (following tab)
- *   byte://feed/subscribed             → Feed (subscribed tab)
  *   byte://feed/you                    → Feed (your posts)
  *   byte://chat                        → Chat (no convo selected)
  *   byte://chat/bsky/{convoId}         → Chat with Bluesky conversation
@@ -65,7 +64,7 @@ export function resolveUrl(url: string): ResolvedRoute | null {
     switch (base) {
         case 'feed': {
             const tab = (segments[1] as FeedTab) || 'all';
-            const validTabs: FeedTab[] = ['all', 'following', 'subscribed', 'you'];
+            const validTabs: FeedTab[] = ['all', 'following', 'you'];
             return {
                 screen: 'feed',
                 sidebar: 'feed',

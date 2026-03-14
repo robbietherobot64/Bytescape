@@ -42,7 +42,6 @@ export function FeedRightPanel({
 
     const panelTitle =
         activeTab === 'following' ? 'My Contacts' :
-        activeTab === 'subscribed' ? 'Subscriptions' :
         activeTab === 'you' ? 'Your Posts' :
         'Discovery Tools';
 
@@ -69,65 +68,6 @@ export function FeedRightPanel({
                         {followingList.length === 0 && (
                             <div className="empty-state panel-empty">No contacts found.</div>
                         )}
-                    </div>
-                ) : activeTab === 'subscribed' ? (
-                    <div>
-                        {/* Feed Source Selector */}
-                        <div className="panel-section">
-                            <div className="panel-section-label">Curated Feed Source</div>
-                            <select
-                                className="input-field"
-                                value={selectedFeedUri}
-                                onChange={e => setSelectedFeedUri(e.target.value)}
-                            >
-                                <option value={FEED_FILTER_ALL}>All Subscribed Feeds</option>
-                                {savedFeeds
-                                    .filter(feed => !feed.uri.includes('app.bsky.feed.generator/following'))
-                                    .map(feed => (
-                                        <option key={feed.uri} value={feed.uri}>
-                                            {feed.displayName || 'Custom Feed'}
-                                        </option>
-                                    ))}
-                            </select>
-                        </div>
-
-                        {/* Hashtag Management */}
-                        <div className="panel-section">
-                            <div className="panel-section-label">Subscribe to Tags</div>
-                            <div className="hashtag-input-row">
-                                <input
-                                    className="input-field"
-                                    value={hashtagInput}
-                                    onChange={e => setHashtagInput(e.target.value)}
-                                    onKeyDown={e => e.key === 'Enter' && handleAddHashtag()}
-                                    placeholder="#discovery"
-                                />
-                                <button className="btn btn-primary hashtag-add-btn" onClick={handleAddHashtag}>+</button>
-                            </div>
-
-                            <div className="hashtag-pills">
-                                {followedHashtags.map(tag => (
-                                    <div key={tag} className="hashtag-pill">
-                                        <span>#{tag}</span>
-                                        <button
-                                            className="hashtag-remove-btn"
-                                            onClick={() => handleRemoveHashtag(tag)}
-                                        >
-                                            ✕
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                            {followedHashtags.length === 0 && (
-                                <div className="panel-hint">No tags followed yet.</div>
-                            )}
-                        </div>
-
-                        {/* RSS placeholder */}
-                        <div className="panel-section">
-                            <div className="panel-section-label">RSS Feeds</div>
-                            <div className="panel-hint">Coming soon — add RSS feed URLs to subscribe.</div>
-                        </div>
                     </div>
                 ) : activeTab === 'you' ? (
                     <div>
