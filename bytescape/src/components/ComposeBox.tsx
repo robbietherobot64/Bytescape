@@ -27,6 +27,7 @@ export interface PublishOptions {
     itemType?: 'Status' | 'Article';
     title?: string;
     contentJson?: object;
+    linkCard?: LinkCard;
 }
 
 interface ComposeBoxProps {
@@ -211,10 +212,11 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                 itemType: 'Article',
                 title,
                 contentJson,
+                linkCard: linkCard ?? undefined,
             });
             articleDataRef.current = null;
         } else {
-            await onPublish(composeText, postTarget, attachments);
+            await onPublish(composeText, postTarget, attachments, linkCard ? { linkCard } : undefined);
         }
         setComposeText('');
         setAttachments([]);

@@ -133,6 +133,12 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting }: FeedS
                 destination: target,
                 itemType: options?.itemType || 'Status',
                 title: options?.title || null,
+                linkCard: options?.linkCard ? {
+                    url: options.linkCard.url,
+                    title: options.linkCard.title ?? null,
+                    description: options.linkCard.description ?? null,
+                    image_url: options.linkCard.image_url ?? null,
+                } : null,
             });
 
             const okTargets = [

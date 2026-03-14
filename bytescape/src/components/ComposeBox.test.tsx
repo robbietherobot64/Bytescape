@@ -88,7 +88,7 @@ describe('ComposeBox', () => {
         fireEvent.change(textarea, { target: { value: 'My post' } });
         const postBtn = screen.getByText('Post');
         fireEvent.click(postBtn);
-        expect(onPublish).toHaveBeenCalledWith('My post', 'local', []);
+        expect(onPublish).toHaveBeenCalledWith('My post', 'local', [], undefined);
     });
 
     it('uses initialText prop', () => {

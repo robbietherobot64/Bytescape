@@ -17,6 +17,15 @@ pub struct Attachment {
     pub mime_type: Option<String>,
 }
 
+/// Link card metadata for embed.external (passed from frontend after unfurl).
+#[derive(Debug, Deserialize)]
+pub struct LinkCardInput {
+    pub url: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+}
+
 /// Enhanced publish command supporting multiple media attachments and P2P/Bluesky routing.
 #[tauri::command]
 pub async fn publish_post_v2(
@@ -25,6 +34,7 @@ pub async fn publish_post_v2(
     destination: String,
     item_type: Option<String>,
     title: Option<String>,
+    link_card: Option<LinkCardInput>,
     state: State<'_, AppState>,
 ) -> Result<PublishResult, String> {
     let content = text.trim();
@@ -147,9 +157,9 @@ pub async fn publish_post_v2(
                 quote_count: None,
                 item_type: resolved_item_type,
                 url: None,
-                link_url: None,
+                link_url: link_card.as_ref().map(|lc| lc.url.clone()),
                 content_html: None,
-                preview_img: None,
+                preview_img: link_card.as_ref().and_then(|lc| lc.image_url.clone()),
                 media_blobs: media_blobs.clone(),
                 thumbnail_blobs: vec![],
                 media_mimes: media_mimes.clone(),
@@ -255,6 +265,25 @@ pub async fn publish_post_v2(
                 "$type": "app.bsky.embed.images",
                 "images": images_embed
             });
+        } else if let Some(ref lc) = link_card {
+            // Build app.bsky.embed.external from link card
+            let mut external = json!({
+                "uri": lc.url,
+                "title": lc.title.as_deref().unwrap_or(""),
+                "description": lc.description.as_deref().unwrap_or(""),
+            });
+
+            // If there's a thumbnail URL, download and upload it as a blob
+            if let Some(ref img_url) = lc.image_url {
+                if let Ok(thumb_blob_ref) = download_and_upload_thumb(&state, img_url).await {
+                    external["thumb"] = thumb_blob_ref;
+                }
+            }
+
+            record["embed"] = json!({
+                "$type": "app.bsky.embed.external",
+                "external": external
+            });
         }
 
         let create_url = format!("{}/com.atproto.repo.createRecord", pds_base);
@@ -302,6 +331,58 @@ pub async fn publish_post_v2(
     }
 
     Ok(result)
+}
+
+/// Downloads a thumbnail image from a URL and uploads it to the Bluesky PDS.
+/// Returns the blob ref JSON on success.
+async fn download_and_upload_thumb(
+    state: &State<'_, AppState>,
+    image_url: &str,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client.get(image_url)
+        .header("User-Agent", "Bytescape/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch thumbnail: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Thumbnail fetch returned {}", resp.status()));
+    }
+
+    // Infer MIME from content-type header or fall back to jpeg
+    let content_type = resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_string();
+
+    let mime = if content_type.contains("png") {
+        "image/png"
+    } else if content_type.contains("webp") {
+        "image/webp"
+    } else if content_type.contains("gif") {
+        "image/gif"
+    } else {
+        "image/jpeg"
+    };
+
+    // Limit to 1MB
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read thumbnail: {}", e))?;
+    if bytes.len() > 1_000_000 {
+        return Err("Thumbnail too large (>1MB)".to_string());
+    }
+
+    let upload_res = state.xrpc_upload_blob(bytes.to_vec(), mime).await
+        .map_err(|e| format!("Failed to upload thumbnail: {}", e))?;
+
+    upload_res.get("blob").cloned()
+        .ok_or_else(|| "Upload response missing blob ref".to_string())
 }
 
 // ── Autocomplete Commands ────────────────────────────────────────────────
