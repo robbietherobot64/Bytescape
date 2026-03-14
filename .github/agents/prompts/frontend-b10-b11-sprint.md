@@ -1,128 +1,197 @@
-# Frontend Agent — Sprint: USER FEEDBACK BLITZ (2026-03-15)
+# Frontend Agent — Sprint: USER FEEDBACK v2 (2026-03-15)
 
-## 🚨 CRITICAL CONTEXT — THE USER IS UNHAPPY
+## 🚨 READ FIRST — User Reverted Agent Work
 
-The user gave 16 feedback items. After a full sprint, only 3 were completed (UF.2, UF.4, UF.8). The user says "literally none of my feedback has been listened to." They are correct — 81% of their requests were not addressed.
+The user manually reverted several changes from the last sprint. **Do NOT re-implement reverted features.** Respect their design choices:
 
-**This sprint is 100% user feedback. No roadmap items. No new features. Only fixing what the user asked for.**
+### What was reverted (DO NOT REDO):
+- ❌ Content-type filter chips → User restored **lens toggle buttons** (List/Gallery/Reader). Keep lenses.
+- ❌ `--content-max-width: 100%` → User restored `960px`. They want a width LIMIT, not full-bleed.
+- ❌ `"maximized": true` → User removed it. Don't add it back.
+- ❌ `Link`/`Video` removed from TypeScript `BytescapeType` — only 3 types: `Status | Gallery | Article`
+- ❌ `ReclassifyResult` removed from types — don't reference it
+- ❌ `category` removed from `TrackerEntry` — don't add it back to the type
+- ❌ `subscribed` tab was RE-ADDED by user — they want it but with better purpose
 
-All work is on **`main`**. Verify with `git branch --show-current` before every commit.
+### What these reverts mean:
+- The user prefers **lenses** (view modes) over **filter chips** (content type filtering)
+- The user wants screen width **controlled, not maximized** — sidebars + content should fill space proportionally within a limit
+- The `ReaderLens` is broken because `item_type` is hardcoded to `Status` for all Bluesky posts — classify needs to be restored (see P1 below)
+
+All work on **`main`**. Run `git branch --show-current` before every commit.
+
+Read the user's latest feedback at `.github/agents/prompts/user-feedback` before starting.
 
 ---
 
-## Priority 1 — UF.1: Full-Width + Maximized Window ⚡
+## Priority 1 — Article Reader Broken (CRITICAL BUG) ⚡⚡⚡
 
-**User:** *"Default to full screen upon opening, full width used by the side bars and center content row...they should also adapt to window size if I happen to resize things."*
+**User:** *"Article reader view is somehow even more busted than it was. It doesn't load any content whatsoever, when I know I should have posts with articles linked that should show up in this feed."*
 
-**What's wrong now:** Window launches at a fixed size. `--content-max-width: 960px` in App.css. Content area is cramped.
+**Root cause:** In `feed_aggregation.rs`, `item_type` was hardcoded to `Some(BytescapeType::Status)` for all Bluesky posts. The `classify_feed_entry` function still exists in `models/mod.rs` but is no longer called. The ReaderLens filters on `e.item_type === 'Article'` (with fallback to content length ≥300 or link_url).
 
 ### Fix:
-1. **`bytescape/src-tauri/tauri.conf.json`** — Add `"maximized": true` to the window config object.
-2. **`bytescape/src/App.css`** — Change `--content-max-width: 960px` to `--content-max-width: 100%` or remove it entirely. The feed content area, sidebars, and panels should fill the full viewport width using flexbox/grid proportional sizing. No fixed pixel caps.
-3. **Test at multiple sizes** — Resize window and verify everything scales. No dead space. Sidebars and center column should be fluid.
+1. In `src-tauri/src/commands/feed_aggregation.rs`, restore the `classify_feed_entry` call:
+   - Change `item_type: Some(BytescapeType::Status)` back to `item_type: None`
+   - After building the FeedEntry, call: `entry.item_type = Some(crate::models::classify_feed_entry(&entry));`
+2. The Rust BytescapeType enum has 5 variants (including Link/Video) but TypeScript only has 3. This is fine — the lenses use client-side heuristics as fallback. Any Link/Video items from Rust will appear as unrecognized types and fall through to the list view.
+3. Verify the ReaderLens shows articles after the fix.
 
 ---
 
-## Priority 2 — UF.12: Import Screen + Audit Screen UX ⚡
+## Priority 2 — Post Height / Aspect Ratio
 
-**User:** *"I hate the import screen. Everything is crushed off to the upper left. 'Shred surveillance & save memories' has to go. Change 'Exorcism Complete' to 'Import Complete'. Be more specific about trackers."*
-
-### What's still broken:
-- `AuditScreen.tsx` line 112: Still says `"🗑️ Shred Surveillance & Save Memories"` — change to `"🗑️ Remove Trackers & Save Memories"` or similar non-scary text
-- `AuditScreen.tsx` line 125: Still says `"✅ Exorcism Complete"` — change to `"✅ Import Complete"`
-- `AuditScreen.tsx` line ~69-84: Tracker list shows name + event count, but no **category/classification**. Each tracker should show what TYPE of tracking it does (ad tracking, location tracking, cross-site tracking, data collection, etc.)
-- Verify the import wizard content is centered in the viewport, not cramped to upper-left
-
----
-
-## Priority 3 — UF.5: Following/Subscribed Tab Cleanup 🔄
-
-**User:** *"My contacts section on the following view is bad. It's just literally a worse version of the friends tab. Subscribed is just a copy of the All sidebar."*
-
-### What's wrong now:
-`FeedScreen.tsx` line 264 renders 4 tabs: `all`, `following`, `subscribed`, `you`.
+**User:** *"Posts are too narrow in height, they should be a symmetrical square, and/or show the whole image/video preview."*
 
 ### Fix:
-1. **Remove the "subscribed" tab entirely** — its content is identical to "all"
-2. **Restructure the "following" tab** — remove the "My Contacts" section (it duplicates the Social/Friends tab). Instead, show posts only from accounts you follow, without a contacts sidebar clone.
-3. Keep `all`, `following`, `you` as the 3 remaining tabs. "All" = discovery feed. "Following" = only followed accounts' posts. "You" = your posts + mentions.
+- In the feed card CSS, ensure image/video previews render at their natural aspect ratio (not cropped/clipped to a fixed height)
+- For images: show the full image. If very tall, cap at a reasonable max-height with "click to expand"
+- Posts with only text should have adequate padding
 
 ---
 
-## Priority 4 — UF.6: Feed Content-Type Filters (Replace Lenses) 🔄
+## Priority 3 — Profile Click Navigation
 
-**User:** *"Gallery view sucks. Let's think about feed filters rather than views. For images, filter just image posts. Same for videos, articles, short form text."*
-
-### What's wrong now:
-`FeedScreen.tsx` still has Gallery and Reader "lens" toggles (lines 283-285). The user explicitly rejected this paradigm.
+**User:** *"Clicking profile does nothing for users in your friends list, should take you to the user's profile."*
 
 ### Fix:
-1. **Remove the lens toggle buttons** (Gallery/Reader icons)
-2. **Add content-type filter chips** on the feed toolbar: `📝 All · 📸 Images · 🎬 Video · 📰 Articles · 🔗 Links`
-3. When a filter is active, only show `BytescapeItem` entries whose `item_type` matches. The Content agent is adding `Link` and `Video` to `BytescapeType` — use those once available. For now, use simple heuristics:
-   - Images: items with image attachments
-   - Video: items with video attachments
-   - Articles: items with `item_type === 'Article'` or body text >500 chars
-   - Links: items with external link embeds
-4. **Add a source filter dropdown**: Bluesky / Local / Archives / All — the user asked for this too
-5. Keep the card layout the same for now (don't try to make a grid for images — that's a follow-up)
+- Make user avatars/names clickable in friends/contacts lists
+- Navigate to the user's profile URL (e.g., `https://bsky.app/profile/{handle}` for Bluesky users)
 
 ---
 
-## Priority 5 — UF.11: Settings Consolidation 🔄
+## Priority 4 — Following Tab "My Contacts" Section
 
-**User:** *"Account/connected accounts should be combined. Add search settings, privacy settings, browser customization. Lose the Bluesky Feeds section. Is device sync even relevant?"*
-
-### What's wrong now:
-`SettingsScreen.tsx` has: separate Account and Connected Accounts sections, a "Bluesky Feeds" management section (line 235), a "Device Sync (Beta)" section (line 280), and "Clear Vault" (line 338) with no export option.
+**User:** *"My contacts section on the following view of the feed is bad. It's just literally a worse version of the friends tab."*
 
 ### Fix:
-1. **Merge Account + Connected Accounts** into one "Identity" section — Bytescape identity as the parent account, linked accounts listed below with a "+ Link New Account" button
-2. **Remove "Bluesky Feeds" section** — move this into the FeedScreen directly (as a feed management panel)
-3. **Remove "Device Sync (Beta)"** or rename to "P2P Connections" — the user's P2P node pairing already covers this
-4. **Rename "Clear Vault" to "Delete Account"** — add a confirmation dialog
-5. **Add an "Export Data" button** above "Delete Account" (can be a placeholder for now that shows "Coming soon" — Backend will implement the actual export in UF.15)
+- Remove or replace the "My Contacts" section from the Following tab context panel
+- Replace with something useful (e.g., "Recently active" list) or eliminate entirely
 
 ---
 
-## Priority 6 — UF.9: Profile Page Rework 🔄
+## Priority 5 — Subscribed Tab Purpose
 
-**User:** *"Profile posts are entirely too wide. Keep them narrow. Filter by Wall and Posts. Wall is what users have posted to the user's wall (guestbook). Posts is what the user posted on the wider web. Lose the stats. Move networks into a filter box."*
+**User:** *"Subscribed is now deleted for some reason, did we not come up with a better idea?"*
+
+The user re-added `subscribed` to the tabs array. They want it with a DISTINCT purpose.
 
 ### Fix:
-1. In `ProfileScreen.tsx`: Make post cards narrower (max-width ~480px or 2-column grid)
-2. Add two sub-tabs: **Wall** (posts by/to the user — guestbook-style) and **Posts** (user's posts across platforms)
-3. Remove the stats bar (media count, vault files, storage)
-4. Add source/network filter on the Posts tab
-5. Add verified badges for linked external accounts
+- Subscribed tab shows ONLY content from **custom feeds and followed hashtags**
+- All tab shows everything (timeline + subscriptions + vault)
+- This gives Subscribed a "curated content" role vs All's "firehose"
 
 ---
 
-## Deferred (Do NOT Start)
-- **UF.10** Social module redesign — needs PM design spec, too large for this sprint
-- **UF.14** Theme customization (per-color picker, animated backgrounds) — UX design needed
-- **UF.15** Export manager backend — Backend agent scope
-- **B10.4** Reload/Refresh
-- **Navigation unification** (useNavStore → useLocationStore)
+## Priority 6 — Screen Space Utilization
+
+**User:** *"Use of space is still awkward. Feed is massively wide. Needs a limit that makes sense. Sidebars need to fill the space."*
+
+### Fix:
+- Keep `--content-max-width: 960px` (user set this intentionally)
+- Make sidebars expand to fill remaining viewport width proportionally
+- Layout: `[expanding sidebar] [960px max content] [expanding sidebar]`
+- Responsive: when window narrows, sidebars collapse first
+
+---
+
+## Priority 7 — Customize / Profile Edit Mode
+
+**User:** *"Customize should be a pencil button that says 'Customize' under it. Clicking it makes profile components turn into editable modules you can drag and drop."*
+
+### Fix:
+- Pencil icon + "Customize" label replaces current button
+- Edit mode: sections become draggable, resizable, editable modules
+- Save/Cancel buttons in edit mode
+- Leverage any existing GrapesJS or drag-drop infrastructure
+
+---
+
+## Priority 8 — Profile Layout: Tabs + Bio Sections
+
+**User:** *"Profile tabs are way off to the left. Empty spots on the profile. Turn it into a robust social media bio."*
+
+### Fix:
+- Align profile tabs to start at the left edge of the feed content area
+- Fill empty sections with: "About me:", "Connections:", social links
+- Editable via Customize mode (P7)
+
+---
+
+## Priority 9 — Import Screen Redesign (3-Terminal Layout)
+
+**User:** *"Scary verbiage about permanently discarding. Rethink: 3 terminals next to each other for import/memories/trackers, each populating data in an ASCII art dashboard."*
+
+### Fix:
+1. **Verbiage**: Remove "permanently discard", "shred", "exorcism". Use: "import", "protect", "liberate"
+2. **Layout**: 3 equal-width terminal panels side by side:
+   - Terminal 1: **Import Progress** — file counts, steps
+   - Terminal 2: **Memories Found** — posts, photos, videos
+   - Terminal 3: **Trackers Detected** — tracker names, event counts
+3. Monospace/terminal aesthetic: dark bg, green text, ASCII borders
+4. Import button: calm language ("📦 Import & Protect")
+
+---
+
+## Priority 10 — Social Module (First Pass)
+
+**User:** *"Browse profiles opens a custom browser bar. The social module is the weakest. Needs focus on managing/discovering friends."*
+
+### Fix:
+- Remove the secondary browser bar in Social
+- Show cross-platform followers/following in one unified view
+- Use icon-based navigation pattern
+
+---
+
+## Priority 11 — Connected Accounts Plus Button
+
+**User:** *"Put a big green plus sign under the latest linked account that says 'Connect account.'"*
+
+### Fix:
+- Green "+" button below last connected account in Settings
+- On click: modal with platform selection → auth/import flow
+
+---
+
+## Priority 12 — P2P Connections Cleanup
+
+**User:** *"Is P2P Connections even relevant still?"*
+
+### Fix:
+- Evaluate if it's redundant with peer connection workflow
+- If redundant, remove or simplify
+
+---
+
+## Priority 13 — Hacker Theme 🖥️
+
+**User:** *"Please make a hacker off black/green aesthetic theme, with chunky bit style font and console loading screen."*
+
+### Fix:
+- New theme preset: `[data-theme="hacker"]`
+- Colors: off-black (#0a0a0a), bright green (#00ff41), dim green (#0d4f0d)
+- Monospace pixel-style font
+- Boot loading screen with console typewriter animation
 
 ---
 
 ## Anti-Patterns
-- Do NOT modify `ComposeBox.tsx` — Track C owns that
-- Do NOT modify Rust connector files (`connectors/*.rs`) — Track A owns those
-- Do NOT modify `ROADMAP.md` — PM scope only
-- Do NOT start deferred items — report back via progress.md
-- Do NOT fabricate item descriptions — ALWAYS verify against ROADMAP.md
-- Do NOT merge branches without PM authorization
+- Do NOT re-implement content-type filter chips
+- Do NOT set `--content-max-width: 100%` or add `"maximized": true`
+- Do NOT add `Link`/`Video` to TypeScript BytescapeType
+- Do NOT modify Rust connectors — Backend scope
+- Do NOT modify ComposeBox — Content scope
 - **Always run `git branch --show-current` before committing**
 
 ## Definition of Done
-- [ ] Window launches maximized, no fixed content-width cap
-- [ ] AuditScreen: no "Exorcism" or "Shred Surveillance" text, trackers classified
-- [ ] Feed has 3 tabs (all/following/you), no "subscribed"
-- [ ] Feed has content-type filter chips, no lens toggles
-- [ ] Settings: merged identity section, no Bluesky Feeds, no Device Sync
-- [ ] Profile: narrow cards, Wall/Posts tabs, no stats bar
-- [ ] `pnpm tauri dev` compiles without errors
+- [ ] Article reader shows articles (classify_feed_entry restored)
+- [ ] Post images/videos show at natural aspect ratio
+- [ ] Profile clicks navigate to user profile
+- [ ] Following tab: no duplicate "My Contacts" section
+- [ ] Subscribed tab: shows only custom feeds/hashtags
+- [ ] Import screen: 3-terminal layout, calm verbiage
+- [ ] Hacker theme available
+- [ ] `pnpm tauri dev` compiles
 - [ ] `pnpm test` passes
-- [ ] Committed to `main` with semantic messages
+- [ ] Committed to `main`

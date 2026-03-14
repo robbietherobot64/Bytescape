@@ -1,60 +1,54 @@
-# Backend Agent — Sprint: USER FEEDBACK FIXES (2026-03-15)
+# Backend Agent — Sprint: USER FEEDBACK v2 (2026-03-15)
 
-## 🚨 CRITICAL CONTEXT — THE USER IS UNHAPPY
+## 🚨 READ FIRST — User Reverted Agent Work
 
-The user gave 16 feedback items. After a full sprint, only 3 were completed. The user says "literally none of my feedback has been listened to." **This sprint is 100% user feedback. No roadmap items. No A1.2 research. Only fixing what the user asked for.**
+The user manually reverted several backend changes:
+- ❌ `headers_cache` removed from `DbManager` — do NOT re-add caching to the struct
+- ❌ `item_type_filter` parameter removed from `get_timeline_unified` — do NOT add server-side type filtering
+- ❌ `reclassify_vault_items` command removed from `lib.rs` — do NOT re-register it
+- ❌ `commands/classify.rs` module removed from `commands/mod.rs` — the file still exists but is dead code
 
-All work is on **`main`**. Verify with `git branch --show-current` before every commit.
+The `classify_feed_entry` and `classify_item` functions in `models/mod.rs` still exist and should be used for item classification on ingest — just don't expose them as standalone commands.
 
----
+All work on **`main`**. Run `git branch --show-current` before every commit.
 
-## Priority 1 — UF.16: Feed Performance ⚡⚡⚡
-
-**User:** *"Feed takes a while to refresh...like a really really long while, tens of seconds that it seems like its stalled out."*
-
-This is the single most complained-about backend issue. Your parallel fetch work was a start, but the feed is still painfully slow. Fix it for real:
-
-### 1a. Cached-First Rendering
-When `get_timeline` / `get_unified_feed` is called:
-1. **Immediately return cached vault items** — items stored from previous fetches. This should take <200ms.
-2. **Spawn a background tokio task** to fetch fresh data from Bluesky API
-3. **On success**: merge new items into vault, emit `app.emit("feed-updated", new_items)` event
-4. Frontend can then re-render with the updated feed
-
-```rust
-// Pseudo-flow:
-// 1. Query vault for cached items → return immediately
-// 2. Spawn tokio task: fetch from Bluesky API
-// 3. On success: merge new items into vault, emit "feed-updated" event
-```
-
-### 1b. Loading Events
-Emit `feed-loading-start` before API call and `feed-loading-end` after. The Frontend will use these for spinner display.
-
-### 1c. Timing Instrumentation
-Gated behind `#[cfg(debug_assertions)]` — log duration of each step:
-- Token retrieval, API request, deserialization, vault merge/dedup, total wall time
-
-**Target**: Feed shows content within 500ms (cached), fresh data within 3-5s.
+Read the user's latest feedback at `.github/agents/prompts/user-feedback` before starting.
 
 ---
 
-## Priority 2 — UF.3: Unified Contacts ⚡
+## Priority 1 — Feed Performance ⚡⚡⚡
 
-**User:** *"Friends list only has users you have chatted with, rather than all of your connected people."*
+**User:** *"Feed takes a while to refresh...like a really really long while. Backend worked on this for a bit, but it's still 16 seconds to load the feed."*
 
-Your ContactManager currently only handles Bluesky follows/followers + P2P. Extend:
+The headers_cache approach was rejected. Try a different strategy:
 
-1. **Extract contacts from imported archives**: Facebook friends, Instagram followers, group members, conversation participants → add to unified contacts table
-2. **P2P peers** discovered via Iroh should appear in contacts, not just as a capability flag
-3. **Dedup across sources**: Same person as Bluesky follow + Facebook friend + P2P peer. Dedup by DID, then by display name + handle as fallback.
-4. **`list_contacts` must return ALL contacts** — not just chat participants. Frontend calls this from the Friends/Social screen.
+### Fix:
+1. **Profile the actual bottleneck**: Add `#[cfg(debug_assertions)]` timing logs to pinpoint whether the 16s is in token retrieval, Bluesky API request, response parsing, vault merge, or dedup
+2. **Reduce API payload**: Use pagination properly — request only 30 items per call, not bulk fetches
+3. **Parallel fetch**: If fetching timeline + custom feeds, use `tokio::join!` to run them concurrently (check if this is already implemented, it may be)
+4. **Quick-return vault items**: Return vault items immediately as a first page, then fetch live data in the background and emit a `feed-updated` event (do NOT use struct-level caching — use a simple event-based approach)
+
+**Target**: Feed shows content within 2-3 seconds. 16 seconds is unacceptable.
 
 ---
 
-## Priority 3 — UF.15: Export Data Backend ⚡
+## Priority 2 — Chat Friends List ⚡
 
-**User:** *"Before 'Clear Vault' there should be an 'Export' option, that takes you to a detailed export manager, to export your vault and profile data as a zip file, in JSON format."*
+**User:** *"Chat friends list only has users you have chatted with, rather than all of your connected people you can chat with."*
+
+### Fix:
+1. `list_contacts` must return ALL contacts — not just chat participants
+2. Include: Bluesky follows/followers, imported archive contacts (Facebook friends, Instagram follows), P2P peers
+3. Dedup by DID, then by handle/display name
+4. The frontend friends panel calls `list_contacts` — it should show everyone you could potentially chat with
+
+---
+
+## Priority 3 — Export Vault Data ⚡
+
+**User:** *"Export button added, but no functionality."*
+
+The frontend has an export button but it calls a command that doesn't exist or doesn't work yet.
 
 ### Implement:
 ```rust
@@ -69,41 +63,35 @@ pub async fn export_vault_data(
 1. Export all `BytescapeItem` records as JSON
 2. Export contacts, messages, profile data
 3. If `include_media`, include media blobs
-4. Package everything into a ZIP file at `output_path`
+4. Package into ZIP at `output_path`
 5. Return `ExportResult { path, item_count, media_count, size_bytes }`
-
-Register in `lib.rs`. The Frontend will add a button that calls this before "Delete Account."
+6. Register in `lib.rs`
 
 ---
 
-## Priority 4 — UF.13: Facebook Import Verification ⚡
+## Priority 4 — Facebook Import Quality
 
-**User:** *"The facebook import doesn't really work at all, it just shows random activity rather than actual posts or media."*
+The user's previous feedback about Facebook import "not really working" and "showing random activity" may have been partially addressed. Verify:
 
-You added extensive filtering (50+ directory exclusions). Now verify it actually works:
-
-1. **Test with the user's actual archive** at `/home/korendian/Downloads/facebook-rabiezaater-2025-01-12-TwiR2QHB/`
-2. Run the parser and check: are the results actual posts with text/photos/videos, or still random activity?
-3. If still broken, trace through `facebook.rs` and find what's still leaking through the filters
-4. The import should produce `BytescapeItem` entries that look like real social media posts — not ad interaction logs
+1. Test with archive at `/home/korendian/Downloads/facebook-rabiezaater-2025-01-12-TwiR2QHB/`
+2. Run parser, check that results are actual posts with text/photos — not ad logs or activity noise
+3. If still broken, trace through `facebook.rs` filtering logic
 
 ---
 
 ## Anti-Patterns
-- Do NOT modify frontend components (`src/`) — Track B owns those
-- Do NOT modify `ComposeBox.tsx` or content components — Track C owns those
-- Do NOT commit to feature branches — all work is on `main`
+- Do NOT re-add `headers_cache` to DbManager
+- Do NOT re-add `item_type_filter` to `get_timeline_unified`
+- Do NOT re-register `reclassify_vault_items` command
+- Do NOT modify frontend components — Frontend scope
+- Do NOT modify ComposeBox — Content scope
 - **Always run `git branch --show-current` before committing**
-- Do NOT hallucinate crate imports — check Cargo.toml before using
-- Do NOT start A1.2 research or any roadmap item — user feedback only
 
 ## Definition of Done
-- [ ] Feed shows cached items in <500ms, fresh data arrives via `feed-updated` event
-- [ ] `feed-loading-start` / `feed-loading-end` events emitted
-- [ ] Debug timing logs for each pipeline step
-- [ ] `list_contacts` returns unified list from ALL sources (Bluesky + archives + P2P)
-- [ ] `export_vault_data` command registered and produces valid ZIP
-- [ ] Facebook import tested with real archive, produces real posts
-- [ ] `cargo check` passes (0 errors)
+- [ ] Feed loads in <3 seconds with timing logs showing bottleneck
+- [ ] `list_contacts` returns unified contacts from all sources
+- [ ] `export_vault_data` command produces valid ZIP
+- [ ] Facebook import produces real posts (verified with user's archive)
+- [ ] `cargo check` passes
 - [ ] `pnpm test` passes
-- [ ] Committed to `main` with semantic messages
+- [ ] Committed to `main`

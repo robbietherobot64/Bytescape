@@ -38,7 +38,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
-        let mut entry = FeedEntry {
+        FeedEntry {
             id: post.uri.clone(),
             cid: Some(post.cid.clone()),
             viewer_like: post.viewer_like,
@@ -65,7 +65,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             reply_parent_handle: post.reply_parent_handle,
             reply_parent_uri: post.reply_parent_uri,
             quoted_post: post.quoted_post.map(|q| Box::new(FeedEntry::from(*q))),
-            item_type: None, // Classified below
+            item_type: Some(BytescapeType::Status),
             syndication_status: None,
             audiences: vec![Audience::Local, Audience::Bluesky],
             share_history: vec![
@@ -80,11 +80,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             tagged_people: vec![],
             title: None,
             original_url: Some(post.uri),
-        };
-
-        // Classify the entry based on content
-        entry.item_type = Some(crate::models::classify_feed_entry(&entry));
-        entry
+        }
     }
 }
 
@@ -194,42 +190,27 @@ pub async fn get_timeline_unified(
     feed_uris: Vec<String>,
     limit: Option<u8>,
     cursor: Option<String>,
-    vault_offset: Option<usize>,
-    item_type_filter: Option<String>,
+    vault_offset: Option<usize>
 ) -> Result<UnifiedFeedResponse, String> {
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
 
-    // ── 1 + 2 + 3. Live timeline + custom feeds + vault — ALL in parallel ──
+    // ── 1 + 2. Live timeline + custom feeds — in parallel ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
-    let effective_limit = limit.unwrap_or(30) as usize;
 
     let timeline_fut = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone());
-
-    // Vault future: runs concurrently with network calls
-    let vault_state = state.clone();
-    let vault_off = vault_offset.unwrap_or(0);
-    let vault_fut = async move {
-        let db_guard = vault_state.db_manager.read().await;
-        if let Some(db) = db_guard.as_ref() {
-            if let Ok(Some((did, _))) = vault_state.keychain.load_session() {
-                return db.list_my_items_paged(&did, None, effective_limit.max(50), vault_off).await.ok();
-            }
-        }
-        None
-    };
-
-    let mut vault_entries: Vec<FeedEntry> = Vec::new();
 
     if has_custom {
         let custom_fut = crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         );
 
-        let (timeline_result, custom_result, vault_result) = tokio::join!(timeline_fut, custom_fut, vault_fut);
+        let (timeline_result, custom_result) = tokio::join!(timeline_fut, custom_fut);
 
         match timeline_result {
             Ok((posts, nc)) => {
+                #[cfg(debug_assertions)]
+                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
                 next_cursor = nc;
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
@@ -240,21 +221,19 @@ pub async fn get_timeline_unified(
 
         match custom_result {
             Ok((posts, _)) => {
+                #[cfg(debug_assertions)]
+                println!("get_timeline_unified: custom feeds returned {} posts", posts.len());
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
             }
         }
-
-        if let Some((items, _)) = vault_result {
-            vault_entries.extend(items.into_iter().map(FeedEntry::from));
-        }
     } else {
-        let (timeline_result, vault_result) = tokio::join!(timeline_fut, vault_fut);
-
-        match timeline_result {
+        match timeline_fut.await {
             Ok((posts, nc)) => {
+                #[cfg(debug_assertions)]
+                println!("get_timeline_unified: live timeline returned {} posts", posts.len());
                 next_cursor = nc;
                 feed.extend(posts.into_iter().map(FeedEntry::from));
             }
@@ -262,9 +241,20 @@ pub async fn get_timeline_unified(
                 eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
             }
         }
+    }
 
-        if let Some((items, _)) = vault_result {
-            vault_entries.extend(items.into_iter().map(FeedEntry::from));
+    // ── 3. Vault items ──
+    let mut vault_entries: Vec<FeedEntry> = Vec::new();
+    {
+        let db_manager = state.db_manager.clone();
+        let db_guard = db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            let offset = vault_offset.unwrap_or(0);
+            if let Ok(Some((did, _))) = state.keychain.load_session() {
+                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, offset).await {
+                    vault_entries.extend(items.into_iter().map(FeedEntry::from));
+                }
+            }
         }
     }
 
@@ -318,25 +308,6 @@ pub async fn get_timeline_unified(
             true
         }
     });
-
-    // ── 7. Item type filter ──
-    if let Some(ref filter) = item_type_filter {
-        let filter_lower = filter.to_lowercase();
-        feed.retain(|entry| {
-            if let Some(ref it) = entry.item_type {
-                let type_str = match it {
-                    BytescapeType::Status => "status",
-                    BytescapeType::Gallery => "gallery",
-                    BytescapeType::Article => "article",
-                    BytescapeType::Link => "link",
-                    BytescapeType::Video => "video",
-                };
-                type_str == filter_lower
-            } else {
-                false
-            }
-        });
-    }
 
     Ok(UnifiedFeedResponse {
         items: feed,

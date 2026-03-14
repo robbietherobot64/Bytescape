@@ -60,7 +60,7 @@
     --context-panel-width: 200px;
     --friends-panel-width: 220px;
     --header-height: 46px;
-    --content-max-width: 100%;
+    --content-max-width: 960px;
     --feed-right-panel-width: 220px;
 
     /* Typography — the holy trio */
@@ -5021,33 +5021,34 @@ textarea::placeholder {
    LENSES — Gallery, Reader, & View Toggle
    ═══════════════════════════════════════════════════════ */
 
-/* ─── Content-Type Filter Chips ─── */
-.feed-content-type-filters {
+/* ─── Lens Toggle Buttons ─── */
+.feed-lens-toggle {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     margin-left: auto;
-    flex-wrap: wrap;
+    background: var(--bg-toolbar);
+    box-shadow: var(--bevel-sunken);
+    padding: 2px;
 }
 
-.content-type-chip {
+.lens-btn {
     background: var(--bg-toolbar);
     border: none;
-    padding: 4px 10px;
+    padding: 4px 8px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-muted);
     box-shadow: var(--bevel-button);
     transition: background 0.1s;
     line-height: 1;
-    white-space: nowrap;
 }
 
-.content-type-chip:hover {
+.lens-btn:hover {
     background: var(--bg-card-hover);
     color: var(--text-primary);
 }
 
-.content-type-chip.active {
+.lens-btn.active {
     background: var(--bg-content);
     box-shadow: var(--bevel-pressed);
     color: var(--text-primary);

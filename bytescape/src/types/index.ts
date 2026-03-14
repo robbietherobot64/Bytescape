@@ -112,7 +112,6 @@ export interface TrackerEntry {
     name: string;
     event_count: number;
     event_types: string[];
-    category: string;
 }
 
 export interface ParseResult {
@@ -137,19 +136,9 @@ export interface ParsedPost {
     location?: PostLocation | null;
 }
 
-export type BytescapeType = 'Status' | 'Gallery' | 'Article' | 'Link' | 'Video';
+export type BytescapeType = 'Status' | 'Gallery' | 'Article';
 export type SyndicationStatus = 'LocalOnly' | 'PendingSyndication' | 'Syndicated';
 export type Audience = 'Local' | 'Bluesky' | 'P2p' | 'Activitypub';
-
-export interface ReclassifyResult {
-    total_scanned: number;
-    total_changed: number;
-    status_count: number;
-    gallery_count: number;
-    article_count: number;
-    link_count: number;
-    video_count: number;
-}
 
 export interface SyndicationEvent {
     platform: string;

@@ -52,16 +52,17 @@ See [prompts/pm-audit-2026-03-14.md](prompts/pm-audit-2026-03-14.md) for the ori
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK FIXES
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
 
-⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes. No A1.2 research.
+⚠️ **The user REVERTED several agent changes.** Read the "READ FIRST" section in your sprint prompt — headers_cache, item_type_filter, and reclassify command were all removed. Do NOT re-add them.
 
 Read your full kickoff prompt: [prompts/backend-a1-ap-actor.md](prompts/backend-a1-ap-actor.md)
+Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)
 
-**Priority 1 — UF.16** Feed performance (cached-first rendering + timing)
-**Priority 2 — UF.3** Unified contacts (all sources, not just Bluesky)
-**Priority 3 — UF.15** Export vault data as ZIP backend command
-**Priority 4 — UF.13** Facebook import verification with real archive
+**Priority 1** — Feed performance (16s → <3s target, NO headers_cache)
+**Priority 2** — Chat friends list (all contacts, not just chat participants)
+**Priority 3** — Export vault data as ZIP (button exists, needs backend)
+**Priority 4** — Facebook import quality verification
 
 ## Prime Directive
 

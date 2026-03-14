@@ -74,15 +74,16 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK FIXES
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
 
-⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes. No GIF/emoji pickers.
+⚠️ **The user REVERTED the classification system.** classify.rs module removed, reclassify command removed, Link/Video removed from TS types, filter chips removed. Read the "READ FIRST" section in your sprint prompt carefully.
 
 Read your full kickoff prompt: [prompts/content-c1c2-sprint.md](prompts/content-c1c2-sprint.md)
+Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)
 
-**Priority 1 — UF.7** Content-type classification (Link + Video variants, heuristic, reclassify command)
-**Priority 2 — UF.12** Tracker category classification data for AuditScreen
-**Priority 3 — UF.6** Feed query filtering by content type (backend support for filter chips)
+**Priority 1** — Appearance customization (per-color picker, background images/gifs)
+**Priority 2** — Default background presets
+**Priority 3** — ComposeBox regression check
 
 ## Prime Directive
 

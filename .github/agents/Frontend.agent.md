@@ -59,18 +59,26 @@ All prior work verified and accepted:
 
 **Do not redo any of this work.**
 
-## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK BLITZ
+## 🎯 Current Assignment (2026-03-15) — USER FEEDBACK v2
 
-⚠️ **All work is on `main` now.** The user says 81% of their feedback was ignored. This sprint is 100% user feedback fixes.
+⚠️ **The user REVERTED several agent changes.** Read the "READ FIRST" section in your sprint prompt carefully — it lists what was undone and what NOT to redo.
 
 Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
+Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)
 
-**Priority 1 — UF.1** Full-width + maximized window
-**Priority 2 — UF.12** Import/Audit screen text + tracker classification
-**Priority 3 — UF.5** Remove Subscribed tab, clean up Following
-**Priority 4 — UF.6** Feed content-type filter chips (replace lens toggles)
-**Priority 5 — UF.11** Settings consolidation
-**Priority 6 — UF.9** Profile page rework (narrow cards, Wall/Posts tabs)
+**Priority 1** — Fix Article Reader (classify_feed_entry must be restored)
+**Priority 2** — Post height / aspect ratio
+**Priority 3** — Profile click navigation
+**Priority 4** — Following tab My Contacts cleanup
+**Priority 5** — Subscribed tab distinct purpose
+**Priority 6** — Screen space utilization (keep 960px limit!)
+**Priority 7** — Customize pencil button + drag/drop edit mode
+**Priority 8** — Profile layout tabs + bio sections
+**Priority 9** — Import screen 3-terminal redesign
+**Priority 10** — Social module first pass
+**Priority 11** — Connected accounts green plus button
+**Priority 12** — P2P Connections cleanup
+**Priority 13** — Hacker theme
 
 ## Prime Directive
 

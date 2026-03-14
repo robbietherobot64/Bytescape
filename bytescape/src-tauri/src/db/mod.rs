@@ -28,9 +28,6 @@ pub mod peers;
 #[derive(Clone)]
 pub struct DbManager {
     pub(crate) db: Arc<RwLock<Database>>,
-    /// In-memory cache of item headers, sorted newest-first.
-    /// Populated on first read, invalidated on writes.
-    headers_cache: Arc<RwLock<Option<Vec<BytescapeItemHeader>>>>,
 }
 
 impl DbManager {
@@ -58,7 +55,6 @@ impl DbManager {
 
         Ok(Self {
             db: Arc::new(RwLock::new(db)),
-            headers_cache: Arc::new(RwLock::new(None)),
         })
     }
 

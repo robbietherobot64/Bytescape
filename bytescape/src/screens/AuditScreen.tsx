@@ -44,12 +44,12 @@ export function AuditScreen({
         general_tracking: { label: 'General Tracking', icon: '🔍' },
     };
 
-    // Group trackers by category
+    // Group trackers (flat — no category field on TrackerEntry)
     const groupedTrackers = useMemo(() => {
         if (!parseResult) return new Map<string, TrackerEntry[]>();
         const groups = new Map<string, TrackerEntry[]>();
         for (const t of parseResult.trackers) {
-            const cat = t.category || 'general_tracking';
+            const cat = 'general_tracking';
             if (!groups.has(cat)) groups.set(cat, []);
             groups.get(cat)!.push(t);
         }

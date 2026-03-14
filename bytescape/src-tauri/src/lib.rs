@@ -435,7 +435,6 @@ pub fn run() {
             commands::posting::publish_post_v2,
             commands::posting::search_mentions,
             commands::posting::search_hashtags_autocomplete,
-            commands::classify::reclassify_vault_items,
             commands::interactions::like_post,
             commands::interactions::unlike_post,
             commands::interactions::repost_post,

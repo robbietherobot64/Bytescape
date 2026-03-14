@@ -15,8 +15,7 @@
         "title": "bytescape",
         "width": 1280,
         "height": 800,
-        "maximizable": true,
-        "maximized": true
+        "maximizable": true
       }
     ],
     "security": {

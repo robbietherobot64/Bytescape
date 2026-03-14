@@ -37,8 +37,6 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
-        // Invalidate header cache on write
-        *self.headers_cache.write().await = None;
         Ok(true) // was new
     }
 
@@ -97,8 +95,6 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
-        // Invalidate header cache on write
-        *self.headers_cache.write().await = None;
         Ok(())
     }
 
@@ -284,8 +280,6 @@ impl DbManager {
             }
         }
         write_txn.commit().map_err(|e| e.to_string())?;
-        // Invalidate header cache after deleting items
-        *self.headers_cache.write().await = None;
 
         Ok(keys_to_delete.len())
     }
@@ -359,23 +353,9 @@ impl DbManager {
         Ok(headers)
     }
 
-    /// Get all headers, using the in-memory cache when available.
-    /// The cache is invalidated on save/upsert/delete writes.
+    /// Get all headers from the database.
     async fn get_cached_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
-        // Fast path: cache hit
-        {
-            let cache = self.headers_cache.read().await;
-            if let Some(ref cached) = *cache {
-                return Ok(cached.clone());
-            }
-        }
-        // Slow path: build from DB and cache
-        let headers = self.build_all_headers().await?;
-        {
-            let mut cache = self.headers_cache.write().await;
-            *cache = Some(headers.clone());
-        }
-        Ok(headers)
+        self.build_all_headers().await
     }
 
     pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
