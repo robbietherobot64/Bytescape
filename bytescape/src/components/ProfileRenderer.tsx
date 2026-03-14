@@ -26,6 +26,10 @@ import {
 
 interface ProfileRendererProps {
     editable?: boolean;
+    /** User's DID for meta tag injection (B2.3) */
+    did?: string | null;
+    /** User's handle for meta tag injection (B2.3) */
+    handle?: string | null;
 }
 
 /** A segment of the layout — either raw HTML or a widget placeholder */
@@ -116,7 +120,7 @@ function sanitizeCss(css: string): string {
         .replace(/-moz-binding\s*:/gi, '/* binding removed */:');
 }
 
-export function ProfileRenderer({ editable = false }: ProfileRendererProps) {
+export function ProfileRenderer({ editable = false, did, handle }: ProfileRendererProps) {
     const [layout, setLayout] = useState<ProfileLayout | null>(null);
     const [widgetData, setWidgetData] = useState<WidgetData>({});
     const [loading, setLoading] = useState(true);
@@ -163,10 +167,18 @@ export function ProfileRenderer({ editable = false }: ProfileRendererProps) {
 
     // ─── Raw HTML mode: render in sandboxed iframe (B2.2) ───
     if (layout.render_mode === 'raw') {
+        const metaTags = [
+            did ? `<meta name="bytescape:did" content="${did}">` : '',
+            handle ? `<meta name="bytescape:handle" content="${handle}">` : '',
+            did ? `<link rel="alternate" type="application/atom+xml" title="Atom Feed" href="at://${did}/app.bsky.feed.post">` : '',
+            did ? `<link rel="alternate" type="application/json" title="AT Protocol" href="at://${did}">` : '',
+        ].filter(Boolean).join('\n');
+
         const srcDoc = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+${metaTags}
 <style>
 body {
     background: #0f0f23;
@@ -244,6 +256,12 @@ ${DOMPurify.sanitize(layout.html, { ADD_TAGS: ['marquee'], WHOLE_DOCUMENT: false
 
     return (
         <div className="profile-renderer">
+            {/* DID Meta Tags (B2.3) — invisible, for client-side DID resolution */}
+            {did && <meta name="bytescape:did" content={did} />}
+            {handle && <meta name="bytescape:handle" content={handle} />}
+            {did && <link rel="alternate" type="application/atom+xml" title="Atom Feed" href={`at://${did}/app.bsky.feed.post`} />}
+            {did && <link rel="alternate" type="application/json" title="AT Protocol" href={`at://${did}`} />}
+
             {/* Inject sanitized CSS */}
             <style>{sanitizedCss}</style>
 

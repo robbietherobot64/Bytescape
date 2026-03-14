@@ -167,7 +167,7 @@ export function ProfileScreen({ auth, archiveCount }: ProfileScreenProps) {
             {/* ═══ Custom Layout or Default Wall ═══ */}
             {hasCustomLayout ? (
                 <div className="profile-custom-layout" style={{ margin: '0 16px' } as React.CSSProperties}>
-                    <ProfileRenderer editable={false} />
+                    <ProfileRenderer editable={false} did={auth?.did} handle={auth?.handle} />
                 </div>
             ) : (
             <>
