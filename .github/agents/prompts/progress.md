@@ -90,6 +90,52 @@ All A0 OAuth gaps (GAP-1 through GAP-7) are now **closed**. The critical bug cau
 ## Build & Test Status
 
 - **Rust build**: ✅ Compiles (warnings only, no errors)
-- **Frontend tests**: ✅ 75/75 passing
-- **Branch**: `track-b/ui-redesign` (merged `main` at `bac702e`)
+- **Frontend tests**: ✅ 151/151 passing
+- **Branch**: `track-c/c1-facet-frontend` (merged `main` + `track-b/ui-redesign`)
 - **Last verified**: 2026-03-14
+
+---
+
+## Content Agent (Track C) — C6.1 CRDT Storage Layer
+
+### Summary
+C6.1 CRDT Storage Layer is **complete**. Local-only Yjs-backed collaborative editing for Articles is fully wired end-to-end: Rust backend (yrs crate) → Tauri commands → React hook (useCollabDoc) → Tiptap Collaboration extension in ArticleEditor.
+
+### Implementation Details
+
+**Backend (already existed from GAP-4, modified for Tiptap compatibility):**
+- `collab.rs`: 6 methods on DbManager — `create_collab_doc`, `apply_collab_update`, `get_collab_state`, `snapshot_collab_to_item`, `delete_collab_doc`, `list_collab_docs`
+- `snapshot_collab_to_item` changed to accept `content: &str` parameter from frontend (Tiptap uses Y.XmlFragment, not Y.Text — cannot extract plain text in Rust)
+- Removed unused `GetString` import after the snapshot change
+- `commands/collab.rs`: 6 Tauri command wrappers, `snapshot_collab_to_item` updated with `content: String` param
+- All commands registered in `lib.rs` invoke_handler
+
+**Frontend (new):**
+- `src/hooks/useCollabDoc.ts` (216 lines) — React hook managing Y.Doc lifecycle:
+  - Creates Y.Doc, loads/creates collab doc via Tauri invoke
+  - Subscribes to Yjs update events with 300ms debounced batching
+  - Persists updates to backend via `apply_collab_update`
+  - Provides `snapshot(content)` function for saving to BytescapeItem
+  - Cleanup: Y.Doc.destroy() on unmount
+- `src/components/ArticleEditor.tsx` — Enhanced with collaborative mode:
+  - New props: `collaborative?: boolean`, `collabDocId?: string`, `itemId?: string`
+  - Collaborative mode: `StarterKit.configure({ undoRedo: false })` + `Collaboration.configure({ document: ydoc, field: 'content' })`
+  - Loading/error states for collab initialization
+  - `collabDocId` included in `ArticleEditorData` onChange output
+  - Non-collaborative mode: zero behavior change
+
+**Tests (18 new, 151 total):**
+- `useCollabDoc` hook: creation, loading, error handling, update persistence, snapshot
+- Yjs operations: XmlFragment, state encoding, merging, update events
+- ArticleEditor: collaborative loading/error states, normal mode
+
+### Key Design Decisions
+1. **Y.XmlFragment vs Y.Text**: Tiptap's Collaboration extension creates Y.XmlFragment (ProseMirror XML nodes), not Y.Text. Backend's `snapshot_collab_to_item` was modified to accept rendered content from frontend instead of extracting from Yjs doc.
+2. **Debounced persistence**: Updates are batched at 300ms intervals using `Y.mergeUpdates()` before sending to backend.
+3. **No P2P sync**: C6.1 is local-only. P2P real-time sync is C6.3 (requires iroh-gossip integration).
+
+### Commits
+| Commit | Description |
+|--------|-------------|
+| `cc85d0f` | Merge main into track-c (resolve lib.rs conflicts) |
+| `80a5407` | Merge track-b/ui-redesign into track-c (bring in C6.1 + Profile Builder work) |

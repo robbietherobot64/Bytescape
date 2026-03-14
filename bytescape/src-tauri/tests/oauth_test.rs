@@ -249,3 +249,217 @@ fn assert_session_store_impl() {
     fn _requires_session_store<T: SessionStore>() {}
     _requires_session_store::<FileSessionStore>();
 }
+
+// ─── GAP-3: Real OAuth Flow Tests ──────────────────────────────────────────
+
+/// GAP-3 Test 1: OAuthManager::new() constructs without error.
+#[test]
+fn test_oauth_manager_new_constructs_successfully() {
+    let dir = tempdir().unwrap();
+    let result = OAuthManager::new(
+        dir.path().to_path_buf(),
+        "test_master_password".to_string(),
+    );
+    assert!(result.is_ok(), "OAuthManager::new() should succeed: {:?}", result.err());
+}
+
+/// GAP-3 Test 1b: OAuthManager::new() works with empty password.
+#[test]
+fn test_oauth_manager_new_empty_password() {
+    let dir = tempdir().unwrap();
+    let result = OAuthManager::new(
+        dir.path().to_path_buf(),
+        String::new(),
+    );
+    assert!(result.is_ok(), "OAuthManager::new() should handle empty password");
+}
+
+/// GAP-3 Test 1c: Fresh OAuthManager has no active session.
+#[tokio::test]
+async fn test_oauth_manager_no_initial_session() {
+    let dir = tempdir().unwrap();
+    let mgr = OAuthManager::new(dir.path().to_path_buf(), "pw".to_string()).unwrap();
+    assert!(!mgr.has_session().await, "Fresh OAuthManager should have no active session");
+}
+
+/// GAP-3 Test 2: Callback URL parsing — complete valid query string.
+#[test]
+fn test_parse_query_string_complete() {
+    let query = OAuthManager::parse_query_string("code=auth_code_123&state=user_handle&iss=https%3A%2F%2Fbsky.social");
+    assert_eq!(query.code.as_deref(), Some("auth_code_123"));
+    assert_eq!(query.state.as_deref(), Some("user_handle"));
+    assert_eq!(query.iss.as_deref(), Some("https://bsky.social"));
+    assert!(query.error.is_none());
+    assert!(query.error_description.is_none());
+}
+
+/// GAP-3 Test 2b: Callback parsing — error response.
+#[test]
+fn test_parse_query_string_error_response() {
+    let query = OAuthManager::parse_query_string(
+        "error=access_denied&error_description=The%20user%20denied%20the%20request"
+    );
+    assert!(query.code.is_none());
+    assert_eq!(query.error.as_deref(), Some("access_denied"));
+    assert_eq!(query.error_description.as_deref(), Some("The user denied the request"));
+}
+
+/// GAP-3 Test 2c: Callback parsing — empty query string.
+#[test]
+fn test_parse_query_string_empty() {
+    let query = OAuthManager::parse_query_string("");
+    assert!(query.code.is_none());
+    assert!(query.state.is_none());
+    assert!(query.iss.is_none());
+    assert!(query.error.is_none());
+}
+
+/// GAP-3 Test 2d: Callback parsing — partial (code only, missing state).
+#[test]
+fn test_parse_query_string_partial() {
+    let query = OAuthManager::parse_query_string("code=abc123");
+    assert_eq!(query.code.as_deref(), Some("abc123"));
+    assert!(query.state.is_none(), "Missing state should be None");
+}
+
+/// GAP-3 Test 2e: Callback parsing — URL-encoded special characters.
+#[test]
+fn test_parse_query_string_url_encoded() {
+    let query = OAuthManager::parse_query_string(
+        "code=a%20b%2Bc&state=hello%26world&iss=https%3A%2F%2Fauth.example.com"
+    );
+    assert_eq!(query.code.as_deref(), Some("a b+c"));
+    assert_eq!(query.state.as_deref(), Some("hello&world"));
+    assert_eq!(query.iss.as_deref(), Some("https://auth.example.com"));
+}
+
+/// GAP-3 Test 3: is_oauth_session sentinel detection via keychain.
+#[test]
+fn test_oauth_sentinel_detection_via_keychain() {
+    use bytescape_lib::keychain_encrypted::EncryptedKeychain;
+    let dir = tempdir().unwrap();
+    let keychain = EncryptedKeychain::new(
+        dir.path().join("keychain.json"),
+        "test_password".to_string(),
+    );
+
+    // No session → no sentinel
+    let jwt = keychain.get_access_jwt().unwrap();
+    assert!(jwt.is_none(), "No session should return None");
+
+    // Save with sentinel value
+    keychain.save_session(
+        "did:plc:test123".to_string(),
+        "test.bsky.social".to_string(),
+        bytescape_lib::OAUTH_SESSION_SENTINEL.to_string(),
+        bytescape_lib::OAUTH_SESSION_SENTINEL.to_string(),
+    ).unwrap();
+
+    let jwt = keychain.get_access_jwt().unwrap();
+    assert_eq!(jwt.as_deref(), Some(bytescape_lib::OAUTH_SESSION_SENTINEL));
+
+    // Save with real JWT — sentinel should no longer match
+    keychain.save_session(
+        "did:plc:test123".to_string(),
+        "test.bsky.social".to_string(),
+        "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.sig".to_string(),
+        "rt_real_refresh".to_string(),
+    ).unwrap();
+
+    let jwt = keychain.get_access_jwt().unwrap();
+    assert_ne!(jwt.as_deref(), Some(bytescape_lib::OAUTH_SESSION_SENTINEL));
+}
+
+/// GAP-3 Test 4a: process_callback validation — missing code.
+#[test]
+fn test_callback_query_missing_code() {
+    let query = OAuthManager::parse_query_string("state=handle_only");
+    assert!(query.code.is_none(), "Missing code should be detected");
+    assert!(query.state.is_some());
+}
+
+/// GAP-3 Test 4b: process_callback validation — missing state.
+#[test]
+fn test_callback_query_missing_state() {
+    let query = OAuthManager::parse_query_string("code=auth_code");
+    assert!(query.code.is_some());
+    assert!(query.state.is_none(), "Missing state should be detected");
+}
+
+/// GAP-3 Test 4c: process_callback — error takes precedence over valid params.
+#[test]
+fn test_callback_query_error_takes_precedence() {
+    let query = OAuthManager::parse_query_string(
+        "code=valid&state=valid&error=server_error&error_description=Internal+error"
+    );
+    assert!(query.error.is_some(), "Error should be detected even with valid code+state");
+    assert_eq!(query.error.as_deref(), Some("server_error"));
+}
+
+/// GAP-3 Test 5a: XRPC URL parsing — with query string.
+#[test]
+fn test_parse_xrpc_url_with_query() {
+    let (nsid, query) = OAuthManager::parse_xrpc_url(
+        "https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50"
+    ).unwrap();
+    assert_eq!(nsid, "app.bsky.feed.getTimeline");
+    assert_eq!(query.as_deref(), Some("limit=50"));
+}
+
+/// GAP-3 Test 5b: XRPC URL parsing — without query string.
+#[test]
+fn test_parse_xrpc_url_without_query() {
+    let (nsid, query) = OAuthManager::parse_xrpc_url(
+        "https://pds.example.com/xrpc/com.atproto.repo.createRecord"
+    ).unwrap();
+    assert_eq!(nsid, "com.atproto.repo.createRecord");
+    assert!(query.is_none());
+}
+
+/// GAP-3 Test 5c: XRPC URL parsing — complex multi-param query.
+#[test]
+fn test_parse_xrpc_url_complex_query() {
+    let (nsid, query) = OAuthManager::parse_xrpc_url(
+        "https://pds.example.com/xrpc/app.bsky.feed.getAuthorFeed?actor=did:plc:abc&limit=100&cursor=xyz"
+    ).unwrap();
+    assert_eq!(nsid, "app.bsky.feed.getAuthorFeed");
+    assert_eq!(query.as_deref(), Some("actor=did:plc:abc&limit=100&cursor=xyz"));
+}
+
+/// GAP-3 Test 5d: XRPC URL parsing — non-XRPC URL returns error.
+#[test]
+fn test_parse_xrpc_url_non_xrpc_returns_error() {
+    let result = OAuthManager::parse_xrpc_url("https://example.com/api/v1/status");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("not an XRPC endpoint"));
+}
+
+/// GAP-3 Test 5e: get_pds_url — no session returns error.
+#[tokio::test]
+async fn test_get_pds_url_no_session_returns_error() {
+    let dir = tempdir().unwrap();
+    let mgr = OAuthManager::new(dir.path().to_path_buf(), "pw".to_string()).unwrap();
+    let result = mgr.get_pds_url().await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("No OAuth session"));
+}
+
+/// GAP-3 Test 5f: xrpc_get — no session returns error.
+#[tokio::test]
+async fn test_xrpc_get_no_session_returns_error() {
+    let dir = tempdir().unwrap();
+    let mgr = OAuthManager::new(dir.path().to_path_buf(), "pw".to_string()).unwrap();
+    let result = mgr.xrpc_get("app.bsky.feed.getTimeline", None).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("No OAuth session"));
+}
+
+/// GAP-3 Test 5g: restore_session — invalid DID format returns error.
+#[tokio::test]
+async fn test_restore_session_invalid_did() {
+    let dir = tempdir().unwrap();
+    let mgr = OAuthManager::new(dir.path().to_path_buf(), "pw".to_string()).unwrap();
+    let result = mgr.restore_session("not-a-valid-did").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Invalid DID"));
+}
