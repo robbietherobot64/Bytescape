@@ -282,11 +282,20 @@ export function ChatScreen() {
         if (buddies.length > 0) return [];
         const seen = new Map<string, BuddyInfo>();
         for (const m of messages) {
-            if (m.sender_did && m.sender_did !== auth?.did && !seen.has(m.sender_did)) {
-                seen.set(m.sender_did, { handle: m.sender_handle, did: m.sender_did });
+            // Resolve best available handle: sender_handle, peer_handle (if same DID), or truncated DID
+            if (m.sender_did && m.sender_did !== auth?.did) {
+                const existing = seen.get(m.sender_did);
+                const bestHandle = m.sender_handle || m.peer_handle || existing?.handle || m.sender_did.slice(0, 12);
+                if (!existing || !existing.handle || existing.handle === existing.did?.slice(0, 12)) {
+                    seen.set(m.sender_did, { handle: bestHandle, did: m.sender_did });
+                }
             }
-            if (m.peer_did && m.peer_did !== auth?.did && !seen.has(m.peer_did)) {
-                seen.set(m.peer_did, { handle: m.peer_handle || m.peer_did.slice(0, 12), did: m.peer_did });
+            if (m.peer_did && m.peer_did !== auth?.did) {
+                const existing = seen.get(m.peer_did);
+                const bestHandle = m.peer_handle || m.sender_handle || existing?.handle || m.peer_did.slice(0, 12);
+                if (!existing || !existing.handle || existing.handle === existing.did?.slice(0, 12)) {
+                    seen.set(m.peer_did, { handle: bestHandle, did: m.peer_did });
+                }
             }
         }
         return [...seen.values()].sort((a, b) => a.handle.localeCompare(b.handle));
