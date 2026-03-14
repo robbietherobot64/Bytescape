@@ -337,13 +337,13 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 ### A0 OAuth — Known Gaps (post-merge follow-ups)
 *Identified by PM audit of Track A delivery. These are not bugs — they are documented scope gaps in the initial OAuth implementation that need follow-up work.*
 
-- [x] **A0-GAP-1 Ephemeral OAuth Sessions**: Persistent `FileSessionStore` with AES-256-GCM encryption. OAuth sessions survive app restarts. *(Commit: `45c6d04`)*
+- [x] **A0-GAP-1 Ephemeral OAuth Sessions**: Persistent `FileSessionStore` with ChaCha20-Poly1305 encryption + Argon2id KDF. OAuth sessions survive app restarts. *(Commit: `45c6d04`)*
 - [x] **A0-GAP-2 Fixed Callback Port**: Dynamic fallback to OS-assigned port (`127.0.0.1:0`) when `28457` is in use. *(Commit: `f2f279f`)*
-- [x] **A0-GAP-3 No OAuth Rust Tests**: `FileSessionStore` unit tests added. *(Commit: `bac702e`)*
+- [ ] **A0-GAP-3 No OAuth Rust Tests**: `FileSessionStore` unit tests added (commit `bac702e`), but required test areas (OAuthManager construction, callback parsing, process_callback errors, is_oauth_session, PDS URL failure) are **not covered**. Needs proper OAuth flow tests.
 - [x] **A0-GAP-4 Write Operations Not Wired for OAuth**: `publish_post_v2` and `syndicate_vault_item` now use `is_oauth_session()` branching. *(Commit: `9c60417`)*
 - [x] **A0-GAP-5 DMs for OAuth Sessions**: Added `transition:chat.bsky` OAuth scope, `clone_with_proxy()` for isolated chat proxy headers, parallel chat import. *(Commits: `c29e549`, `ad6af24`)*
 - [x] **A0-GAP-6 Saved Feeds / Unified Feed Empty for OAuth**: Fixed PDS URL vs AppView routing. *(Commit: `c684d84`)*
-- [x] **A0-GAP-7 Verify Transitive Crate Dependencies**: Confirmed `p256` and `urlencoding` are transitive via `atrium-oauth`. Explicit entries added to `Cargo.toml` for build safety. *(Commit: `9c60417`)*
+- [ ] **A0-GAP-7 Verify Transitive Crate Dependencies**: `p256` is NOT in `Cargo.toml` (has zero direct imports — correct). `urlencoding` IS in `Cargo.toml`. Needs verification on clean machine builds.
 
 <details>
 <summary>✅ Resolved Issues (click to expand)</summary>
