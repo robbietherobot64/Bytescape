@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { BsChatDotsFill, BsPersonFill } from 'react-icons/bs';
 import { usePeerStore, useAuthStore } from '../store';
 import { PeerInfo, ProfileView } from '../types';
 
@@ -302,15 +303,24 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
                     </div>
                 </div>
             </button>
-            {isP2p && onChat && friend.nodeId && (
+            <div className="friend-item-actions">
+                {onChat && friend.nodeId && (
+                    <button
+                        className="friend-item-action-btn"
+                        onClick={handleChat}
+                        title={`Message ${friend.displayName}`}
+                    >
+                        <BsChatDotsFill size={11} />
+                    </button>
+                )}
                 <button
-                    className="friend-item-chat-btn"
-                    onClick={handleChat}
-                    title={`Chat with ${friend.displayName}`}
+                    className="friend-item-action-btn"
+                    onClick={handleClick}
+                    title={`${friend.displayName}'s profile`}
                 >
-                    💬
+                    <BsPersonFill size={11} />
                 </button>
-            )}
+            </div>
         </div>
     );
 }
