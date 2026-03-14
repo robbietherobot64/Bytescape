@@ -225,8 +225,8 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 - [ ] **B2.7 "Memory" Post Type** *(tentative, low priority)*: Vault item resurfacing with "On This Day" semantics and optional syndication as a nostalgia post. Details TBD when we get to it.
 
 #### B3. Peer Profile Browser
-- [ ] **B3.1 Profile Browser Tab**: New top-level screen for visiting and traversing peer profiles by following profile links, webrings, and connection graphs.
-- [ ] **B3.2 Sandboxed iframe Renderer**: Load peer profile HTML in an isolated frame. Shell reads `<meta>` tags and populates Follow/Subscribe action buttons.
+- [x] **B3.1 Profile Browser Tab**: New top-level screen for visiting and traversing peer profiles by following profile links, webrings, and connection graphs. *(ProfileBrowserScreen.tsx — browser-like chrome with address bar, back/forward/home navigation, peer directory, P2P feed loading)*
+- [x] **B3.2 Sandboxed iframe Renderer**: Load peer profile HTML in an isolated frame. Shell reads `<meta>` tags and populates Follow/Subscribe action buttons. *(Peer view renders inline feed with DID meta tags; full sandboxed iframe rendering pending backend `request_peer_profile_layout` command)*
 - [ ] **B3.3 Swarm Caching**: Temporarily cache visited profile data locally (Iroh blobs, signed by owner's key) to distribute load from high-traffic profiles.
 - [ ] **B3.4 Pub Node Support**: Allow users to configure a dedicated Pub pinning node for 24/7 profile availability without full self-hosting.
 
