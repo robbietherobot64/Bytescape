@@ -196,17 +196,29 @@ pub async fn get_timeline_unified(
     let mut next_cursor: Option<String> = None;
 
     // ── 1. Live timeline ──
-    if let Ok((posts, nc)) = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await {
-        next_cursor = nc;
-        feed.extend(posts.into_iter().map(FeedEntry::from));
+    match crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await {
+        Ok((posts, nc)) => {
+            println!("get_timeline_unified: live timeline returned {} posts", posts.len());
+            next_cursor = nc;
+            feed.extend(posts.into_iter().map(FeedEntry::from));
+        }
+        Err(e) => {
+            eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
+        }
     }
 
     // ── 2. Custom / subscribed feeds ──
     if !tags.is_empty() || !feed_uris.is_empty() {
-        if let Ok((posts, _)) = crate::commands::import::get_unified_feed(
+        match crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         ).await {
-            feed.extend(posts.into_iter().map(FeedEntry::from));
+            Ok((posts, _)) => {
+                println!("get_timeline_unified: custom feeds returned {} posts", posts.len());
+                feed.extend(posts.into_iter().map(FeedEntry::from));
+            }
+            Err(e) => {
+                eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
+            }
         }
     }
 

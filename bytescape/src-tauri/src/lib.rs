@@ -128,11 +128,18 @@ impl AppState {
 
     /// Get the PDS base URL for XRPC calls.
     ///
-    /// - **App-password**: Extracts PDS from JWT `iss` claim via `authenticated_xrpc_candidates`.
-    /// - **OAuth**: Gets PDS from the live `OAuthSession`'s `base_uri()`.
+    /// Returns a URL ending in `/xrpc` for both auth modes so callers can
+    /// simply append `/{nsid}` to construct the full endpoint URL.
+    ///
+    /// - **App-password**: Extracts PDS from JWT `iss` claim via `authenticated_xrpc_candidates`
+    ///   (these already include `/xrpc`).
+    /// - **OAuth**: Gets raw PDS host from `OAuthSession::base_uri()` and appends `/xrpc`.
     pub async fn get_pds_base(&self) -> Result<String, String> {
         if self.is_oauth_session() {
-            self.oauth_manager.get_pds_url().await
+            let base = self.oauth_manager.get_pds_url().await?;
+            // OAuthSession::base_uri() returns the raw PDS host (no /xrpc),
+            // but xrpc_get/xrpc_post_json expect the base to include /xrpc.
+            Ok(format!("{}/xrpc", base.trim_end_matches('/')))
         } else {
             let jwt = self.get_fresh_access_jwt().await?;
             let candidates = connectors::bluesky::authenticated_xrpc_candidates(&jwt, true);
@@ -226,6 +233,69 @@ impl AppState {
             }
             resp.json::<serde_json::Value>().await
                 .map_err(|e| format!("Failed to parse response: {}", e))
+        }
+    }
+
+    /// Make an authenticated GET request routed through the Bluesky chat proxy.
+    ///
+    /// Adds `atproto-proxy: did:web:api.bsky.chat#bsky_chat` header for chat API calls.
+    pub async fn xrpc_chat_get(&self, endpoint: &str) -> Result<serde_json::Value, String> {
+        let pds = self.get_pds_base().await?;
+        let url = format!("{}/{}", pds.trim_end_matches('/'), endpoint);
+
+        if self.is_oauth_session() {
+            let resp_str = self.oauth_manager.authenticated_chat_get(&url).await?;
+            serde_json::from_str(&resp_str)
+                .map_err(|e| format!("Failed to parse chat response: {}", e))
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let resp = reqwest::Client::new()
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", jwt))
+                .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
+                .send()
+                .await
+                .map_err(|e| format!("Chat GET request failed: {}", e))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                return Err(format!("Chat GET {} failed ({}): {}", endpoint, status, err_body));
+            }
+            resp.json::<serde_json::Value>().await
+                .map_err(|e| format!("Failed to parse chat response: {}", e))
+        }
+    }
+
+    /// Make an authenticated POST request routed through the Bluesky chat proxy.
+    pub async fn xrpc_chat_post(&self, endpoint: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+        let pds = self.get_pds_base().await?;
+        let url = format!("{}/{}", pds.trim_end_matches('/'), endpoint);
+
+        if self.is_oauth_session() {
+            let json_bytes = serde_json::to_vec(&body)
+                .map_err(|e| format!("JSON serialize failed: {}", e))?;
+            let resp_str = self.oauth_manager
+                .authenticated_chat_post(&url, json_bytes, "application/json")
+                .await?;
+            serde_json::from_str(&resp_str)
+                .map_err(|e| format!("Failed to parse chat response: {}", e))
+        } else {
+            let jwt = self.get_fresh_access_jwt().await?;
+            let resp = reqwest::Client::new()
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", jwt))
+                .header("atproto-proxy", "did:web:api.bsky.chat#bsky_chat")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Chat POST request failed: {}", e))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_body = resp.text().await.unwrap_or_default();
+                return Err(format!("Chat POST {} failed ({}): {}", endpoint, status, err_body));
+            }
+            resp.json::<serde_json::Value>().await
+                .map_err(|e| format!("Failed to parse chat response: {}", e))
         }
     }
 
