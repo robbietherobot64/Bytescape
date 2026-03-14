@@ -3,7 +3,7 @@
 //! Verifies the `classify_item` heuristic classifies BytescapeItem into
 //! the correct BytescapeType variant based on media, text length, and link presence.
 
-use bytescape_lib::models::{BytescapeItem, BytescapeType, classify_item, classify_bluesky_post};
+use bytescape_lib::models::{BytescapeItem, BytescapeType, FeedEntry, classify_item, classify_bluesky_post, classify_feed_entry};
 
 /// Helper: create a minimal BytescapeItem for testing classification.
 fn test_item() -> BytescapeItem {
@@ -284,4 +284,112 @@ fn priority_article_over_link() {
     item.link_url = Some("https://example.com".to_string());
     item.content = "x".repeat(600); // Long text + link → Article (text len wins)
     assert_eq!(classify_item(&item), BytescapeType::Article);
+}
+
+// ─── classify_feed_entry tests ───
+
+/// Helper: create a minimal FeedEntry for testing classification.
+fn test_feed_entry() -> FeedEntry {
+    FeedEntry {
+        id: "feed-test".to_string(),
+        timestamp: 1700000000,
+        content: String::new(),
+        author_did: None,
+        author_handle: None,
+        author_avatar: None,
+        source: "bluesky".to_string(),
+        cid: None,
+        viewer_like: None,
+        viewer_repost: None,
+        media_urls: vec![],
+        media_thumbnails: vec![],
+        media_kinds: vec![],
+        media_mimes: vec![],
+        link_url: None,
+        link_title: None,
+        link_description: None,
+        link_thumbnail: None,
+        like_count: None,
+        reply_count: None,
+        repost_count: None,
+        reposted_by: None,
+        reposted_by_handle: None,
+        reply_parent_handle: None,
+        reply_parent_uri: None,
+        quoted_post: None,
+        item_type: None,
+        syndication_status: None,
+        audiences: vec![],
+        share_history: vec![],
+        location: None,
+        tagged_people: vec![],
+        title: None,
+        original_url: None,
+    }
+}
+
+#[test]
+fn feed_entry_classify_video() {
+    let mut entry = test_feed_entry();
+    entry.media_kinds = vec!["video".to_string()];
+    entry.media_urls = vec!["https://video.bsky.app/watch/x".to_string()];
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Video);
+}
+
+#[test]
+fn feed_entry_classify_gallery() {
+    let mut entry = test_feed_entry();
+    entry.media_kinds = vec!["image".to_string(), "image".to_string()];
+    entry.media_urls = vec!["https://a.jpg".into(), "https://b.jpg".into()];
+    entry.content = "Photos!".to_string();
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Gallery);
+}
+
+#[test]
+fn feed_entry_classify_article() {
+    let mut entry = test_feed_entry();
+    entry.content = "x".repeat(501);
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Article);
+}
+
+#[test]
+fn feed_entry_classify_link() {
+    let mut entry = test_feed_entry();
+    entry.link_url = Some("https://example.com".to_string());
+    entry.content = "Check this".to_string();
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Link);
+}
+
+#[test]
+fn feed_entry_classify_status() {
+    let mut entry = test_feed_entry();
+    entry.content = "Hello".to_string();
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Status);
+}
+
+#[test]
+fn feed_entry_single_image_gallery() {
+    let mut entry = test_feed_entry();
+    entry.media_kinds = vec!["image".to_string()];
+    entry.media_urls = vec!["https://a.jpg".into()];
+    entry.content = "pic".to_string();
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Gallery);
+}
+
+#[test]
+fn feed_entry_video_beats_long_text() {
+    let mut entry = test_feed_entry();
+    entry.media_kinds = vec!["video".to_string()];
+    entry.media_urls = vec!["https://video.bsky.app/x".into()];
+    entry.content = "x".repeat(1000);
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Video);
+}
+
+#[test]
+fn feed_entry_fallback_no_kinds_uses_urls() {
+    let mut entry = test_feed_entry();
+    // No media_kinds but has 3 media_urls → fallback counts as images
+    entry.media_urls = vec!["a.jpg".into(), "b.png".into(), "c.gif".into()];
+    entry.content = "Short".to_string();
+    assert_eq!(classify_feed_entry(&entry), BytescapeType::Gallery);
 }
