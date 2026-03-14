@@ -14,6 +14,7 @@ pub(crate) const FOLLOWED_HASHTAGS_TABLE: TableDefinition<&str, &str> = TableDef
 pub(crate) const WILLOW_WRITE_PARITY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("willow_write_parity");
 pub(crate) const PEERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("peers");
 pub(crate) const COLLAB_DOCS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("collab_docs");
+pub(crate) const AP_ACTORS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("ap_actors");
 
 pub use crate::models::*;
 
@@ -44,6 +45,7 @@ impl DbManager {
             let _ = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(COLLAB_DOCS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
@@ -209,5 +211,54 @@ impl DbManager {
             }
         }
         Ok(tags)
+    }
+
+
+    // ─── AP Actor CRUD ───
+
+    pub async fn save_ap_actor(
+        &self,
+        actor: &crate::activitypub::ApActor,
+    ) -> Result<(), String> {
+        let serialized = serde_json::to_string(actor).map_err(|e| e.to_string())?;
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
+            table
+                .insert(actor.owner_did.as_str(), serialized.as_str())
+                .map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_ap_actor(
+        &self,
+        owner_did: &str,
+    ) -> Result<Option<crate::activitypub::ApActor>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
+        match table.get(owner_did) {
+            Ok(Some(value)) => {
+                let actor: crate::activitypub::ApActor =
+                    serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+                Ok(Some(actor))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub async fn delete_ap_actor(&self, owner_did: &str) -> Result<(), String> {
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
+            let _ = table.remove(owner_did);
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
