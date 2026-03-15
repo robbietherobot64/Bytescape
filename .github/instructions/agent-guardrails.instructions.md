@@ -75,6 +75,7 @@ When user feedback conflicts with current code state, the **user feedback wins**
 - **Do not spawn unnecessary terminals.** Reuse existing ones.
 - **Kill background processes when done.** If you start `pnpm tauri dev` for testing, kill it before your session ends.
 - **Avoid `sleep` loops.** If you need to wait for a build, use the build command directly (not background + sleep + grep pattern).
+- **Close terminals when you are done with them.** Every terminal you open must be closed before your session ends. Do not leave zombie terminals. If you opened a terminal for a one-off command, close it after the command completes. The PM will kill all remaining terminals during code review — if terminals are still open, that means you left a mess.
 
 ---
 

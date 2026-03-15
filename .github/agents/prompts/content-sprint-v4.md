@@ -10,7 +10,7 @@ Read `.github/agents/prompts/user-feedback` for the user's actual words.
 - **One feature per commit.** Each commit addresses one priority item.
 - **Verify before committing:** `cargo check` + `npx tsc --noEmit` + `pnpm test -- --run` — all must pass.
 - **If stuck after two genuine attempts:** Document what you tried and what failed in `progress.md`, then move on.
-- **Terminal discipline:** Do not spawn multiple `pnpm tauri dev` processes. Kill background processes when done. Do not use `sleep` loops.
+- **Terminal discipline:** Do not spawn multiple `pnpm tauri dev` processes. Kill background processes when done. Do not use `sleep` loops. **Close every terminal you open when you are done with it** — do not leave zombie terminals.
 
 ### Track Boundaries
 Your scope: `src/components/ComposeBox*`, `src/components/lenses/*`, `src/components/ThemeCustomizer.tsx`, `src/components/ThemePicker.tsx`, content-related CSS, and content-related models in `src-tauri/src/models/`.

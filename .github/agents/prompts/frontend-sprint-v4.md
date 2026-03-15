@@ -27,6 +27,7 @@ Before implementing ANY feature that involves Tauri APIs, native platform behavi
 - **Do not spawn `pnpm tauri dev` more than once.** Kill it before starting a new one.
 - **Do not use `sleep` loops.** Run build commands directly.
 - **Do not spawn background processes and forget them.**
+- **Close every terminal you open when you are done with it.** Do not leave zombie terminals. The PM will kill all remaining terminals during review — if yours are still open, that's a failure.
 - Reuse existing terminals. The previous session left **170+ zombie terminals** and crashed the environment.
 
 ### 5. Track Boundaries
