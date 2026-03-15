@@ -63,20 +63,7 @@ The command `export_vault_data` exists (183 lines) and is registered. But:
 
 ---
 
-### P3 — Instagram Connector Testing ⚡
-
-**Current state:** `connectors/instagram.rs` exists (507 lines), `Source::Instagram` variant in the enum. An Instagram archive exists in the workspace at `instagram-gostaticband-2026-02-22-GIeT6CmP/`.
-
-**Task:**
-1. Test the Instagram import against the archive in the workspace
-2. Verify it produces real posts with content — not noise/metadata
-3. Check media path resolution (photos from `media/posts/`, `media/reels/`, `media/stories/`)
-4. Fix any parsing issues found
-5. Ensure imported items are properly classified via `classify_feed_entry`
-
----
-
-### P4 — Feed Cache Tuning ⚡
+### P3 — Feed Cache Tuning ⚡
 
 The caching system was implemented last sprint but hasn't been tuned with real-world usage.
 
@@ -86,7 +73,7 @@ The caching system was implemented last sprint but hasn't been tuned with real-w
 
 ---
 
-### P5 — Cargo Warnings Cleanup ⚡
+### P4 — Cargo Warnings Cleanup ⚡
 
 There are 27 compiler warnings. Clean up the most impactful ones:
 1. Unused imports
@@ -108,7 +95,6 @@ There are 27 compiler warnings. Clean up the most impactful ones:
 ## Definition of Done
 - [ ] Video jitter investigated — fix applied or documented diagnosis
 - [ ] `export_vault_data` tested end-to-end, produces valid ZIP
-- [ ] Instagram import tested against workspace archive
 - [ ] Feed cache timing logs added (debug builds only)
 - [ ] Cargo warnings reduced
 - [ ] `cargo check` — 0 errors

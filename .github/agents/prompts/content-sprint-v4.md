@@ -36,26 +36,7 @@ Your scope: `src/components/ComposeBox*`, `src/components/lenses/*`, `src/compon
 
 ## Sprint Priorities
 
-### P1 — Drag-and-Drop Media onto ComposeBox ⚡⚡⚡
-
-**User context:** The ComposeBox (508 lines) currently supports media attachment via a file picker dialog (`@tauri-apps/plugin-dialog`). Users should also be able to drag files directly onto the compose area.
-
-**Implementation:**
-1. Add `onDragOver`, `onDragEnter`, `onDragLeave`, `onDrop` handlers to the ComposeBox container
-2. On drop: read the dropped files, validate they're images/video (`png, jpg, jpeg, webp, gif, mp4, mov`)
-3. Process them through the same attachment pipeline as the existing file picker
-4. Show a visual drop zone indicator (border highlight, "Drop media here" overlay) during drag
-5. Handle multiple files in a single drop
-
-**Tests to add:**
-- Renders drop zone indicator on drag enter
-- Processes dropped image files
-- Rejects non-media file types
-- Handles multiple files
-
----
-
-### P2 — Emoji Picker ⚡⚡
+### P1 — Emoji Picker ⚡⚡
 
 **Implementation:**
 1. Add an emoji button (😀) to the ComposeBox toolbar
@@ -73,7 +54,7 @@ Your scope: `src/components/ComposeBox*`, `src/components/lenses/*`, `src/compon
 
 ---
 
-### P3 — GIF Picker (Tenor API) ⚡⚡
+### P2 — GIF Picker (Tenor API) ⚡⚡
 
 **Implementation:**
 1. Add a GIF button to the ComposeBox toolbar
@@ -92,7 +73,7 @@ Your scope: `src/components/ComposeBox*`, `src/components/lenses/*`, `src/compon
 
 ---
 
-### P4 — Theme Preset Gaps ⚡
+### P3 — Theme Preset Gaps ⚡
 
 **PM audit finding:** The previous sprint report mentioned "sunset orange" and "rose gold" theme presets, but these **do not exist** in App.css. Only `geocities`, `win98`, `midnight`, and `hacker` data-theme selectors exist.
 
@@ -104,7 +85,7 @@ Your scope: `src/components/ComposeBox*`, `src/components/lenses/*`, `src/compon
 
 ---
 
-### P5 — ComposeBox Regression Check ⚡
+### P4 — ComposeBox Regression Check ⚡
 
 Quick verification pass on existing ComposeBox functionality:
 1. Link preview unfurling works (paste a URL, see a card)
@@ -124,7 +105,6 @@ Quick verification pass on existing ComposeBox functionality:
 - ❌ Do NOT add npm dependencies without checking `package.json` for existing alternatives first
 
 ## Definition of Done
-- [ ] Drag-and-drop media works on ComposeBox
 - [ ] Emoji picker available in compose toolbar
 - [ ] GIF picker researched and implemented (or documented if API key is required)
 - [ ] Theme presets in ThemePicker match actual App.css themes

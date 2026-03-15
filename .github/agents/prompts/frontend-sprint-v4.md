@@ -138,29 +138,6 @@ The backend command `export_vault_data` exists in `commands/export.rs` and is re
 
 ---
 
-### P6 — Profile Enhancements ⚡
-
-**User:** *"Profile tabs are way off to the left. Empty spots. Turn it into a robust social media bio with About me, Connections, etc."*
-
-**Fix:**
-1. Align profile tabs to start at the left edge of the content area (not the viewport)
-2. Fill empty sections with editable bio fields: "About me", "Connections", social links
-3. These should be placeholder/default values that invite the user to fill them in
-4. Keep the Customize/GrapesJS edit mode — just improve the default layout
-
----
-
-### P7 — Hacker Theme Polish ⚡
-
-**User:** *"Please make a hacker off black/green aesthetic theme, with chunky bit style font and console loading screen"*
-
-**Current state:** `[data-theme="hacker"]` already exists in App.css with a full variable set (off-black, green, monospace font). 
-
-**Remaining work:**
-1. Verify the hacker theme is selectable in the ThemePicker UI — if not, add it as a card
-2. Add a console-style loading/boot screen animation when the app starts (typewriter text effect, "Initializing secure vault...", etc.)
-3. If the "chunky bit style font" isn't loading, check if the font is available or add a pixel/bitmap web font
-
 ---
 
 ## Anti-Patterns (MUST AVOID)
@@ -178,8 +155,6 @@ The backend command `export_vault_data` exists in `commands/export.rs` and is re
 - [ ] Export button calls `export_vault_data` with file dialog
 - [ ] Social/FriendsScreen shows unified cross-platform connections
 - [ ] P2P Connections section evaluated and simplified
-- [ ] Profile tabs aligned, bio sections added
-- [ ] Hacker theme selectable and polished
 - [ ] `cargo check` — 0 errors
 - [ ] `npx tsc --noEmit` — 0 errors
 - [ ] `pnpm test -- --run` — all pass
