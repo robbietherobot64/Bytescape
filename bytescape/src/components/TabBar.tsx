@@ -1,13 +1,17 @@
 import { useNavStore } from '../store';
 import { BsX } from 'react-icons/bs';
 
-/** Browser-style tab bar — renders open tabs between TopBar and content area. */
+/**
+ * Chrome-style tab bar — sits ABOVE the address bar / TopBar.
+ *
+ * Always shows the current active tab. Additional tabs appear when
+ * the user opens profiles or secondary screens. Closing the last tab
+ * shows the "no tabs open" empty state.
+ */
 export function TabBar() {
     const { tabs, activeTabId, switchTab, closeTab } = useNavStore();
 
-    // Hide tab bar when there are fewer than 2 tabs
-    if (tabs.length < 2) return null;
-
+    // Always render the tab bar (even with 0 tabs for the visual bar)
     return (
         <div className="tab-bar">
             {tabs.map((tab) => (

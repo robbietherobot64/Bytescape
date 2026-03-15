@@ -125,21 +125,44 @@ export const useNavStore = create<NavState>((set, get) => ({
 
     openTab: (screen, label, meta) => {
         const state = get();
-        // If a tab for this screen already exists (and no meta difference), switch to it
-        const existing = state.tabs.find(t => t.screen === screen && !meta);
-        if (existing) {
-            set({ activeTabId: existing.id, screen });
+
+        // If meta is provided (e.g. peer profile), always create a new tab
+        if (meta) {
+            const id = nextTabId();
+            const newTab: TabItem = {
+                id,
+                screen,
+                label: label || TAB_LABELS[screen] || screen,
+                meta,
+            };
+            set({
+                tabs: [...state.tabs, newTab],
+                activeTabId: id,
+                screen,
+            });
             return;
         }
+
+        // If there's an active tab, replace it with the new screen (navigate in-place)
+        if (state.activeTabId) {
+            const updatedTabs = state.tabs.map(t =>
+                t.id === state.activeTabId
+                    ? { ...t, screen, label: label || TAB_LABELS[screen] || screen, meta: undefined }
+                    : t
+            );
+            set({ tabs: updatedTabs, screen });
+            return;
+        }
+
+        // No tabs exist — create the first tab
         const id = nextTabId();
         const newTab: TabItem = {
             id,
             screen,
             label: label || TAB_LABELS[screen] || screen,
-            meta,
         };
         set({
-            tabs: [...state.tabs, newTab],
+            tabs: [newTab],
             activeTabId: id,
             screen,
         });
@@ -151,8 +174,8 @@ export const useNavStore = create<NavState>((set, get) => ({
         if (idx === -1) return;
         const remaining = state.tabs.filter(t => t.id !== tabId);
         if (remaining.length === 0) {
-            // Last tab closed — go to feed
-            set({ tabs: [], activeTabId: null, screen: 'feed' });
+            // Last tab closed — show empty state
+            set({ tabs: [], activeTabId: null });
             return;
         }
         if (state.activeTabId === tabId) {

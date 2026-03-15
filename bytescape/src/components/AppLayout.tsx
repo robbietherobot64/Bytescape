@@ -2,6 +2,7 @@ import React from 'react';
 import { TopBar } from './TopBar';
 import { TabBar } from './TabBar';
 import { SidebarItem } from '../types';
+import { useNavStore } from '../store';
 import {
     BsHouseFill, BsChatDotsFill, BsPeopleFill,
     BsFolderFill, BsPersonFill
@@ -33,7 +34,7 @@ const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string 
     { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
 ];
 
-/** Application shell: top bar + main content + mobile bottom nav. */
+/** Application shell: tab bar + top bar + main content + mobile bottom nav. */
 export function AppLayout({
     children,
     activeSidebar,
@@ -44,8 +45,11 @@ export function AppLayout({
     onSearchSubmit,
     avatarInitial,
 }: AppLayoutProps) {
+    const { tabs } = useNavStore();
+
     return (
         <div className="app-layout">
+            <TabBar />
             <TopBar
                 activeSidebar={activeSidebar}
                 onNavigate={onNavigate}
@@ -54,11 +58,22 @@ export function AppLayout({
                 onSearchSubmit={onSearchSubmit}
                 avatarInitial={avatarInitial}
             />
-            <TabBar />
             <div className="app-body">
-                <main className="main-content" style={mainStyle}>
-                    {children}
-                </main>
+                {tabs.length === 0 ? (
+                    <main className="main-content">
+                        <div className="no-tabs-state">
+                            <div className="no-tabs-box">
+                                <div style={{ fontSize: '2rem', marginBottom: 8 }}>🌐</div>
+                                <h2>No Tabs Open</h2>
+                                <p>Use the navigation menu to open a page.</p>
+                            </div>
+                        </div>
+                    </main>
+                ) : (
+                    <main className="main-content" style={mainStyle}>
+                        {children}
+                    </main>
+                )}
             </div>
 
             {/* Mobile bottom navigation bar — visible only on small screens via CSS */}

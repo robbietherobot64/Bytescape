@@ -212,7 +212,9 @@ function App() {
       const status = await invoke<AuthStatus | null>("check_auth_status");
       if (status) {
         setAuth(status);
-        setScreen("feed");
+        // Create initial Feed tab on auto-login (same as handleLoginSuccess)
+        openTab("feed", "Feed");
+        setActiveSidebar("feed");
         await loadArchiveStats();
         // Show identity setup if the user hasn't chosen a username yet
         if (!status.identity_ready) {
@@ -229,7 +231,9 @@ function App() {
 
   const handleLoginSuccess = async (status: AuthStatus, shouldImport: boolean) => {
     setAuth(status);
-    setScreen("feed");
+    // Create the initial Feed tab after login
+    openTab("feed", "Feed");
+    setActiveSidebar("feed");
     await loadArchiveStats();
 
     // Show identity setup if the user hasn't chosen a username yet
@@ -248,6 +252,8 @@ function App() {
     } catch { /* ignore */ }
     setAuth(null);
     setScreen("login");
+    // Clear all tabs on logout
+    useNavStore.setState({ tabs: [], activeTabId: null });
     setArchiveCount(0);
     chatStore.setMessages([]);
     chatStore.setSelectedConvoId(null);

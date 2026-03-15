@@ -470,10 +470,10 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                     </div>
                 )}
 
-                {/* Link Preview */}
-                {entry.link_url && !isGif && !hasMedia && (
+                {/* Link Preview — show for article/external links even with media */}
+                {entry.link_url && !isGif && (
                     <a href={entry.link_url} target="_blank" rel="noopener noreferrer" className="link-preview-card">
-                        {entry.link_thumbnail && (
+                        {entry.link_thumbnail && !hasMedia && (
                             <div className="link-thumb">
                                 <img src={entry.link_thumbnail} alt="" />
                             </div>

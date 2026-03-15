@@ -24,7 +24,7 @@ export function ImportScreen({
     const isBlueskyLinked = auth?.source === 'bluesky';
 
     return (
-        <>
+        <div className="screen-centered">
             <div className="main-header">
                 <h1 style={{ textAlign: 'center', width: '100%' } as React.CSSProperties}>Import Archive</h1>
             </div>
@@ -88,6 +88,6 @@ export function ImportScreen({
                     </div>
                 )}
             </div>
-        </>
+        </div>
     );
 }

@@ -186,9 +186,13 @@ export function useUnifiedFeed({
                 setCache('you', dedupedYou, bskyCursor);
 
             } else if (tab === 'subscribed') {
-                // ── Subscribed tab: only custom feeds + hashtags (curated content) ──
-                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
-                const allFeedUris = customFeedUris(feedsData);
+                // ── Subscribed tab: show content from user's saved/subscribed feeds ──
+                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((e): GeneratorView[] => {
+                    console.error('list_saved_feeds failed:', e);
+                    return [];
+                });
+                // Use ALL saved feed URIs (including following) for subscribed tab
+                const allFeedUris = feedsData.map(f => f.uri);
                 const tags = await invoke<string[]>('list_followed_hashtags').catch((): string[] => []);
                 setFollowedHashtags(tags);
 
@@ -198,23 +202,29 @@ export function useUnifiedFeed({
                     : allFeedUris;
 
                 if (activeFeedUris.length > 0 || tags.length > 0) {
-                    // Use get_unified_feed directly — does NOT include main timeline
-                    const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                        tags,
-                        feedUris: activeFeedUris,
-                        limit: 30,
-                        cursor: null,
-                    }).catch((): [BlueskyPost[], string | null] => [[], null]);
+                    try {
+                        const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                            tags,
+                            feedUris: activeFeedUris,
+                            limit: 50,
+                            cursor: null,
+                        });
 
-                    if (isStale()) return;
-                    setSavedFeeds(feedsData);
-                    setCachedSavedFeeds(feedsData);
+                        if (isStale()) return;
+                        setSavedFeeds(feedsData);
+                        setCachedSavedFeeds(feedsData);
 
-                    const adapted = posts.map(adaptBlueskyPost);
-                    const deduped = deduplicateFeedEntries(adapted);
-                    setFeedEntries(deduped);
-                    setCursor(nextCur);
-                    setCache('subscribed', deduped, nextCur);
+                        const adapted = posts.map(adaptBlueskyPost);
+                        const deduped = deduplicateFeedEntries(adapted);
+                        setFeedEntries(deduped);
+                        setCursor(nextCur);
+                        setCache('subscribed', deduped, nextCur);
+                    } catch (e) {
+                        console.error('get_unified_feed failed for subscribed tab:', e);
+                        if (!isStale()) {
+                            setFeedError(typeof e === 'string' ? e : 'Failed to load subscribed feeds');
+                        }
+                    }
                 } else {
                     if (isStale()) return;
                     setSavedFeeds(feedsData);
@@ -227,26 +237,30 @@ export function useUnifiedFeed({
                 const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
                 const feedUris = customFeedUris(feedsData);
 
-                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
-                    tags: [],
-                    feedUris,
-                    limit: 30,
-                    cursor: null,
-                    vaultOffset: 0,
-                }).catch(() => null);
+                try {
+                    const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                        tags: [],
+                        feedUris,
+                        limit: 50,
+                        cursor: null,
+                        vaultOffset: 0,
+                    });
 
-                if (isStale()) return;
-                setSavedFeeds(feedsData);
-                setCachedSavedFeeds(feedsData);
+                    if (isStale()) return;
+                    setSavedFeeds(feedsData);
+                    setCachedSavedFeeds(feedsData);
 
-                if (response) {
                     const deduped = deduplicateFeedEntries(response.items);
-
                     setFeedEntries(deduped);
                     setCursor(response.next_cursor);
                     setCache('all', deduped, response.next_cursor);
                     setArchiveOffset(200);
-                } else {
+                } catch (e) {
+                    console.error('get_timeline_unified failed:', e);
+                    if (isStale()) return;
+                    setSavedFeeds(feedsData);
+                    setCachedSavedFeeds(feedsData);
+                    setFeedError(typeof e === 'string' ? e : 'Failed to load unified feed');
                     setFeedEntries([]);
                     setCursor(null);
                 }
@@ -355,12 +369,13 @@ export function useUnifiedFeed({
                 setCursor(bskyCursor);
 
             } else if (activeTab === 'subscribed' && cursor) {
+                const allFeedUris = savedFeeds.map(f => f.uri);
                 const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                     tags: followedHashtags || [],
-                    feedUris: customFeedUris(savedFeeds),
-                    limit: 30,
+                    feedUris: allFeedUris,
+                    limit: 50,
                     cursor,
-                }).catch((): [BlueskyPost[], string | null] => [[], null]);
+                });
 
                 if (posts.length > 0) {
                     setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
@@ -371,10 +386,10 @@ export function useUnifiedFeed({
                 const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                     tags: [],
                     feedUris: customFeedUris(savedFeeds),
-                    limit: 30,
+                    limit: 50,
                     cursor,
                     vaultOffset: archiveOffset,
-                }).catch(() => null);
+                });
 
                 if (response) {
                     setFeedEntries(prev => deduplicateFeedEntries([...prev, ...response.items]));
