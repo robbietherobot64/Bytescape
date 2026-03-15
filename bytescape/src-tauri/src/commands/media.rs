@@ -578,11 +578,14 @@ pub fn mime_from_path_hint(path: &str) -> String {
     }
 }
 
-/// Download an HLS video by fetching its m3u8 playlist and all segments server-side.
+/// Download an HLS video, returning a local MP4 file path.
 ///
-/// Downloads all MPEG-TS segments, concatenates them, then remuxes to MP4 via
-/// FFmpeg for proper WebKitGTK playback (seeking, audio, smooth decode).
-/// Falls back to raw `.ts` if FFmpeg is unavailable.
+/// Strategy (in order):
+/// 1. Cache hit — return existing MP4 immediately
+/// 2. FFmpeg native HLS download — handles separate audio/video tracks, timestamp
+///    correction, and remuxing to MP4 in a single pass (most robust)
+/// 3. Manual segment download + FFmpeg remux — fallback if native HLS fails
+/// 4. Raw `.ts` — last resort if FFmpeg is entirely unavailable
 #[tauri::command]
 pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
     use std::io::Write;
@@ -594,12 +597,10 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
         .map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
     let url_hash = format!("{:x}", md5_hash(&playlist_url));
-    let mp4_filename = format!("{}.mp4", url_hash);
-    let mp4_path = cache_dir.join(&mp4_filename);
-    let ts_filename = format!("{}.ts", url_hash);
-    let ts_path = cache_dir.join(&ts_filename);
+    let mp4_path = cache_dir.join(format!("{}.mp4", url_hash));
+    let ts_path = cache_dir.join(format!("{}.ts", url_hash));
 
-    // Cache hit — prefer MP4 (remuxed), fall back to TS (raw segments)
+    // ── Cache hit — prefer MP4 ──────────────────────────────────────────────
     if mp4_path.exists() {
         if let Ok(meta) = std::fs::metadata(&mp4_path) {
             if meta.len() > 1000 {
@@ -608,22 +609,39 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             }
         }
     }
+    // Stale TS without MP4 — try remuxing it
     if ts_path.exists() {
         if let Ok(meta) = std::fs::metadata(&ts_path) {
             if meta.len() > 1000 {
-                // TS exists but MP4 doesn't — try remuxing first
                 if let Ok(remuxed) = remux_ts_to_mp4(&ts_path, &mp4_path) {
-                    println!("resolve_hls_video: Remuxed existing TS → MP4 ({:.1} MB)", 
+                    println!("resolve_hls_video: Remuxed existing TS → MP4 ({:.1} MB)",
                         std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
                     return Ok(remuxed);
                 }
-                // FFmpeg not available — return TS as fallback
+                // FFmpeg unavailable — return TS as fallback
                 println!("resolve_hls_video: TS cache hit, no FFmpeg ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
                 return Ok(ts_path.to_string_lossy().into_owned());
             }
         }
     }
 
+    // ── Strategy 1: FFmpeg native HLS → MP4 ─────────────────────────────────
+    // FFmpeg's HLS demuxer handles: separate audio/video playlists, variant
+    // selection, timestamp correction at segment boundaries, ADTS→raw AAC, etc.
+    println!("resolve_hls_video: Trying FFmpeg native HLS download...");
+    match ffmpeg_hls_to_mp4(&playlist_url, &mp4_path) {
+        Ok(path) => {
+            println!("resolve_hls_video: FFmpeg HLS → MP4 success ({:.1} MB)",
+                std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
+            let _ = std::fs::remove_file(&ts_path); // clean any stale TS
+            return Ok(path);
+        }
+        Err(e) => {
+            println!("resolve_hls_video: FFmpeg HLS failed ({}), falling back to manual download...", e);
+        }
+    }
+
+    // ── Strategy 2: Manual segment download + remux ─────────────────────────
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -757,13 +775,12 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     file.flush().map_err(|e| format!("Failed to flush file: {}", e))?;
     drop(file);
 
-    println!("resolve_hls_video: Download complete, total {:.1} MB", total_bytes as f64 / (1024.0 * 1024.0));
+    println!("resolve_hls_video: Manual download complete, total {:.1} MB", total_bytes as f64 / (1024.0 * 1024.0));
 
-    // Remux MPEG-TS → MP4 for proper WebKitGTK playback
-    // -c copy = no re-encoding (fast), -movflags +faststart = moov atom at front for instant play
+    // Remux concatenated MPEG-TS → MP4 (fixes audio + timestamp issues)
     match remux_ts_to_mp4(&ts_path, &mp4_path) {
         Ok(mp4) => {
-            println!("resolve_hls_video: Remuxed to MP4 ({:.1} MB)", 
+            println!("resolve_hls_video: Remuxed to MP4 ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
             Ok(mp4)
         }
@@ -774,19 +791,22 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     }
 }
 
-/// Remux an MPEG-TS file to MP4 using FFmpeg.
+/// Download an HLS stream directly via FFmpeg's native protocol handler.
 ///
-/// Uses `-c copy` for zero re-encoding and `-movflags +faststart` to move the
-/// moov atom to the front of the file, enabling instant playback and seeking.
-/// Returns the MP4 path on success, or an error if FFmpeg is unavailable or fails.
-fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+/// This is superior to manual segment download because FFmpeg:
+/// - Handles separate audio and video playlists (`#EXT-X-MEDIA:TYPE=AUDIO`)
+/// - Corrects timestamp discontinuities at segment boundaries
+/// - Converts ADTS-wrapped AAC to raw AAC for MP4 container
+/// - Selects the best variant automatically
+fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
-            "-y",                    // overwrite output without asking
-            "-i", &ts_path.to_string_lossy(),
-            "-c", "copy",            // no re-encoding
-            "-movflags", "+faststart", // moov atom at front
-            "-f", "mp4",             // force MP4 container
+            "-y",                          // overwrite without asking
+            "-i", playlist_url,            // HLS URL — FFmpeg handles the protocol
+            "-c", "copy",                  // no re-encoding (fast, lossless)
+            "-bsf:a", "aac_adtstoasc",    // convert ADTS AAC → raw AAC for MP4
+            "-movflags", "+faststart",     // moov atom at front for instant playback
+            "-f", "mp4",                   // force MP4 container output
             &mp4_path.to_string_lossy(),
         ])
         .stdout(std::process::Stdio::piped())
@@ -799,11 +819,52 @@ fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std
         return Err(format!("FFmpeg exited with {}: {}", output.status, stderr));
     }
 
-    // Verify output file is valid (at least has moov atom — first 8 bytes should be ftyp box)
-    if let Ok(meta) = std::fs::metadata(mp4_path) {
-        if meta.len() < 100 {
-            return Err("FFmpeg produced an empty or invalid MP4".into());
-        }
+    // Verify the output is a valid MP4 (not an error page or empty file)
+    match std::fs::metadata(mp4_path) {
+        Ok(meta) if meta.len() > 1000 => Ok(mp4_path.to_string_lossy().into_owned()),
+        Ok(meta) => Err(format!("FFmpeg produced a suspiciously small file ({} bytes)", meta.len())),
+        Err(e) => Err(format!("Output file not found: {}", e)),
+    }
+}
+
+/// Remux an MPEG-TS file to MP4 using FFmpeg.
+///
+/// Key flags:
+/// - `-c copy`: No re-encoding (fast, lossless)
+/// - `-bsf:a aac_adtstoasc`: Convert ADTS-wrapped AAC (used in MPEG-TS) to raw
+///   AAC frames (required by MP4 container) — without this, audio is silently dropped
+/// - `-fflags +genpts+discardcorrupt`: Regenerate presentation timestamps and
+///   discard corrupt packets — fixes choppiness from HLS segment boundary discontinuities
+/// - `-avoid_negative_ts make_zero`: Shift timestamps to start at 0
+/// - `-movflags +faststart`: Move moov atom to file front for instant playback
+fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",                             // overwrite without asking
+            "-fflags", "+genpts+discardcorrupt", // regenerate timestamps, drop corrupt
+            "-avoid_negative_ts", "make_zero", // normalize timestamps to start at 0
+            "-i", &ts_path.to_string_lossy(),
+            "-c", "copy",                     // no re-encoding
+            "-bsf:a", "aac_adtstoasc",        // ADTS AAC → raw AAC for MP4
+            "-movflags", "+faststart",         // moov atom at front
+            "-f", "mp4",                       // force MP4 container
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg not found or failed to execute: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg exited with {}: {}", output.status, stderr));
+    }
+
+    // Verify output file is valid
+    match std::fs::metadata(mp4_path) {
+        Ok(meta) if meta.len() > 1000 => {},
+        Ok(meta) => return Err(format!("FFmpeg produced a suspiciously small file ({} bytes)", meta.len())),
+        Err(e) => return Err(format!("Output file not found: {}", e)),
     }
 
     // Clean up the intermediate TS file to save disk space
