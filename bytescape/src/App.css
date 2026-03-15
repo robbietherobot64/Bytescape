@@ -456,6 +456,14 @@ a:hover {
     background-attachment: fixed, scroll, scroll;
 }
 
+/* Tiled background mode — small tessellated patterns */
+.has-custom-bg.bg-tiled .main-content {
+    background-size: auto, auto, auto;
+    background-repeat: repeat, repeat, repeat;
+    background-attachment: scroll, scroll, scroll;
+    background-position: left top, left top, left top;
+}
+
 /* Default container for non-full-bleed screens */
 .app-container {
     max-width: 100%;

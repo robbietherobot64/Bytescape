@@ -1,11 +1,13 @@
 import { useEffect } from 'react';
 import { useThemeStore } from '../store';
 import type { ThemeId } from '../types';
-import type { ColorOverrides } from '../store';
+import type { ColorOverrides, UserBackground, BackgroundMode } from '../store';
 
 const STORAGE_KEY = 'bytescape-theme';
 const OVERRIDES_KEY = 'bytescape-theme-overrides';
 const BG_KEY = 'bytescape-theme-bg';
+const BG_MODE_KEY = 'bytescape-theme-bg-mode';
+const USER_BGS_KEY = 'bytescape-theme-user-bgs';
 
 /**
  * useTheme — reads the active theme from the store,
@@ -23,6 +25,11 @@ export function useTheme() {
     const removeColorOverride = useThemeStore((s) => s.removeColorOverride);
     const resetAllOverrides = useThemeStore((s) => s.resetAllOverrides);
     const setCustomBackground = useThemeStore((s) => s.setCustomBackground);
+    const backgroundMode = useThemeStore((s) => s.backgroundMode);
+    const userBackgrounds = useThemeStore((s) => s.userBackgrounds);
+    const setBackgroundMode = useThemeStore((s) => s.setBackgroundMode);
+    const addUserBackground = useThemeStore((s) => s.addUserBackground);
+    const removeUserBackground = useThemeStore((s) => s.removeUserBackground);
 
     /* On mount: restore from localStorage (runs once per app lifecycle) */
     useEffect(() => {
@@ -47,6 +54,24 @@ export function useTheme() {
         if (savedBg) {
             setCustomBackground(savedBg);
         }
+
+        // Restore background mode
+        const savedMode = localStorage.getItem(BG_MODE_KEY) as BackgroundMode | null;
+        if (savedMode === 'cover' || savedMode === 'tile') {
+            setBackgroundMode(savedMode);
+        }
+
+        // Restore user-uploaded backgrounds
+        try {
+            const savedUserBgs = localStorage.getItem(USER_BGS_KEY);
+            if (savedUserBgs) {
+                const parsed: UserBackground[] = JSON.parse(savedUserBgs);
+                for (const bg of parsed) {
+                    addUserBackground(bg);
+                }
+            }
+        } catch { /* ignore corrupt data */ }
+
         // Only run on mount
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -95,14 +120,34 @@ export function useTheme() {
         }
     }, [customBackground]);
 
+    /* Apply background display mode (cover vs tile) */
+    useEffect(() => {
+        if (backgroundMode === 'tile') {
+            document.documentElement.classList.add('bg-tiled');
+        } else {
+            document.documentElement.classList.remove('bg-tiled');
+        }
+        localStorage.setItem(BG_MODE_KEY, backgroundMode);
+    }, [backgroundMode]);
+
+    /* Persist user-uploaded backgrounds */
+    useEffect(() => {
+        localStorage.setItem(USER_BGS_KEY, JSON.stringify(userBackgrounds));
+    }, [userBackgrounds]);
+
     return {
         activeTheme,
         setTheme,
         customOverrides,
         customBackground,
+        backgroundMode,
+        userBackgrounds,
         setColorOverride,
         removeColorOverride,
         resetAllOverrides,
         setCustomBackground,
+        setBackgroundMode,
+        addUserBackground,
+        removeUserBackground,
     } as const;
 }

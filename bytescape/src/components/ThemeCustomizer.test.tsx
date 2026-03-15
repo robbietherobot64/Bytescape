@@ -9,10 +9,13 @@ describe('ThemeCustomizer', () => {
             activeTheme: 'geocities',
             customOverrides: {},
             customBackground: null,
+            backgroundMode: 'cover',
+            userBackgrounds: [],
         });
         document.documentElement.removeAttribute('data-theme');
         document.documentElement.style.cssText = '';
         document.documentElement.classList.remove('has-custom-bg');
+        document.documentElement.classList.remove('bg-tiled');
         localStorage.clear();
     });
 
@@ -135,5 +138,55 @@ describe('ThemeCustomizer', () => {
         });
         render(<ThemeCustomizer />);
         expect(screen.getByText('● active')).toBeTruthy();
+    });
+
+    it('renders upload button with green plus', () => {
+        render(<ThemeCustomizer />);
+        expect(screen.getByTitle('Upload custom background image')).toBeTruthy();
+        expect(screen.getByText('Upload')).toBeTruthy();
+    });
+
+    it('renders cover/tile toggle with Cover active by default', () => {
+        render(<ThemeCustomizer />);
+        const coverBtn = screen.getByTitle('Full image \u2014 scales to fill screen');
+        const tileBtn = screen.getByTitle('Tile \u2014 repeats small pattern images');
+        expect(coverBtn).toBeTruthy();
+        expect(tileBtn).toBeTruthy();
+    });
+
+    it('switches to tile mode on click', () => {
+        render(<ThemeCustomizer />);
+        fireEvent.click(screen.getByTitle('Tile \u2014 repeats small pattern images'));
+        expect(useThemeStore.getState().backgroundMode).toBe('tile');
+    });
+
+    it('renders user-uploaded backgrounds with trash icon', () => {
+        useThemeStore.setState({
+            userBackgrounds: [
+                { id: 'test1', name: 'My Tile', dataUrl: 'data:image/png;base64,abc123' },
+            ],
+        });
+        render(<ThemeCustomizer />);
+        expect(screen.getByTitle('My Tile')).toBeTruthy();
+        expect(screen.getByTitle('Remove My Tile')).toBeTruthy();
+    });
+
+    it('removes user background on trash click', () => {
+        useThemeStore.setState({
+            userBackgrounds: [
+                { id: 'test1', name: 'My Tile', dataUrl: 'data:image/png;base64,abc123' },
+            ],
+        });
+        render(<ThemeCustomizer />);
+        fireEvent.click(screen.getByTitle('Remove My Tile'));
+        expect(useThemeStore.getState().userBackgrounds.length).toBe(0);
+    });
+
+    it('renders hidden file input for uploads', () => {
+        render(<ThemeCustomizer />);
+        const fileInput = document.querySelector('[data-testid="bg-file-input"]') as HTMLInputElement;
+        expect(fileInput).toBeTruthy();
+        expect(fileInput.type).toBe('file');
+        expect(fileInput.accept).toBe('image/*');
     });
 });

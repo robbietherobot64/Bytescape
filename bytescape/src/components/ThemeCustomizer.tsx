@@ -215,15 +215,21 @@ export function ThemeCustomizer() {
     const {
         customOverrides,
         customBackground,
+        backgroundMode,
+        userBackgrounds,
         setColorOverride,
         removeColorOverride,
         resetAllOverrides,
         setCustomBackground,
+        setBackgroundMode,
+        addUserBackground,
+        removeUserBackground,
     } = useTheme();
 
     const [bgUrlInput, setBgUrlInput] = useState('');
     const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
     const colorInputRef = useRef<HTMLInputElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [activePickerVar, setActivePickerVar] = useState<string | null>(null);
 
     /** Resolve the current computed value of a CSS variable */
@@ -277,6 +283,34 @@ export function ThemeCustomizer() {
             setBgUrlInput('');
         }
     }, [bgUrlInput, setCustomBackground]);
+
+    /** Handle file upload for custom backgrounds */
+    const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        // Limit to 4MB for localStorage
+        if (file.size > 4 * 1024 * 1024) {
+            alert('Image too large (max 4MB). For large backgrounds, use a URL instead.');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const id = Date.now().toString(36);
+            const name = file.name.replace(/\.[^.]+$/, '');
+            addUserBackground({ id, name, dataUrl });
+            setCustomBackground(dataUrl);
+        };
+        reader.readAsDataURL(file);
+        // Reset input so the same file can be re-selected
+        e.target.value = '';
+    }, [addUserBackground, setCustomBackground]);
+
+    /** Remove a user-uploaded background */
+    const handleRemoveUserBg = useCallback((id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        removeUserBackground(id);
+    }, [removeUserBackground]);
 
     const hasAnyOverrides = Object.keys(customOverrides).length > 0 || customBackground !== null;
 
@@ -444,6 +478,141 @@ export function ThemeCustomizer() {
                                 </div>
                             );
                         })}
+                        {/* User-uploaded backgrounds */}
+                        {userBackgrounds.map((ubg) => {
+                            const isActive = customBackground === ubg.dataUrl;
+                            return (
+                                <div key={ubg.id} style={{ textAlign: 'center', position: 'relative' }}>
+                                    <button
+                                        onClick={() => setCustomBackground(ubg.dataUrl)}
+                                        style={{
+                                            ...bgPresetButtonStyle,
+                                            backgroundImage: `url(${ubg.dataUrl})`,
+                                            backgroundSize: backgroundMode === 'tile' ? 'auto' : 'cover',
+                                            backgroundRepeat: backgroundMode === 'tile' ? 'repeat' : 'no-repeat',
+                                            backgroundPosition: 'center',
+                                            borderColor: isActive ? 'var(--accent-teal)' : 'rgba(0,0,0,0.2)',
+                                            boxShadow: isActive ? '0 0 0 1px var(--accent-teal)' : 'none',
+                                        } as CSSProperties}
+                                        title={ubg.name}
+                                    />
+                                    <button
+                                        onClick={(e) => handleRemoveUserBg(ubg.id, e)}
+                                        style={{
+                                            position: 'absolute',
+                                            top: -4,
+                                            right: -4,
+                                            width: 16,
+                                            height: 16,
+                                            borderRadius: '50%',
+                                            background: 'var(--accent-red)',
+                                            color: '#fff',
+                                            fontSize: '0.6rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            padding: 0,
+                                            lineHeight: 1,
+                                        } as CSSProperties}
+                                        title={`Remove ${ubg.name}`}
+                                    >
+                                        ✕
+                                    </button>
+                                    <div style={{
+                                        fontSize: '0.6rem',
+                                        color: 'var(--text-muted)',
+                                        marginTop: 3,
+                                        maxWidth: 80,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    } as CSSProperties}>
+                                        {ubg.name}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {/* Upload button */}
+                        <div style={{ textAlign: 'center' }}>
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                style={{
+                                    ...bgPresetButtonStyle,
+                                    background: 'transparent',
+                                    borderColor: 'var(--accent-green)',
+                                    borderStyle: 'dashed',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexDirection: 'column',
+                                    gap: 2,
+                                } as CSSProperties}
+                                title="Upload custom background image"
+                            >
+                                <span style={{ fontSize: '1.4rem', color: 'var(--accent-green)', lineHeight: 1 }}>+</span>
+                            </button>
+                            <div style={{ fontSize: '0.6rem', color: 'var(--accent-green)', marginTop: 3 }}>
+                                Upload
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Hidden file input for uploads */}
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    style={{ display: 'none' } as CSSProperties}
+                    data-testid="bg-file-input"
+                />
+
+                {/* Cover / Tile toggle */}
+                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Mode:</span>
+                    <div style={{
+                        display: 'flex',
+                        gap: 0,
+                        borderRadius: 4,
+                        overflow: 'hidden',
+                        border: 'var(--border-default)',
+                    } as CSSProperties}>
+                        <button
+                            onClick={() => setBackgroundMode('cover')}
+                            style={{
+                                padding: '4px 12px',
+                                fontSize: '0.72rem',
+                                fontFamily: 'inherit',
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: backgroundMode === 'cover' ? 'var(--accent-teal)' : 'var(--bg-toolbar)',
+                                color: backgroundMode === 'cover' ? '#fff' : 'var(--text-secondary)',
+                                transition: 'background 0.15s, color 0.15s',
+                            } as CSSProperties}
+                            title="Full image — scales to fill screen"
+                        >
+                            Cover
+                        </button>
+                        <button
+                            onClick={() => setBackgroundMode('tile')}
+                            style={{
+                                padding: '4px 12px',
+                                fontSize: '0.72rem',
+                                fontFamily: 'inherit',
+                                border: 'none',
+                                borderLeft: '1px solid rgba(0,0,0,0.2)',
+                                cursor: 'pointer',
+                                background: backgroundMode === 'tile' ? 'var(--accent-teal)' : 'var(--bg-toolbar)',
+                                color: backgroundMode === 'tile' ? '#fff' : 'var(--text-secondary)',
+                                transition: 'background 0.15s, color 0.15s',
+                            } as CSSProperties}
+                            title="Tile — repeats small pattern images"
+                        >
+                            Tile
+                        </button>
                     </div>
                 </div>
 

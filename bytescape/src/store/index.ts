@@ -310,23 +310,42 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
 /** Per-variable color overrides keyed by CSS variable name (e.g. "--bg-sidebar") */
 export type ColorOverrides = Record<string, string>;
 
+/** User-uploaded background image persisted as base64 data URL */
+export interface UserBackground {
+    id: string;
+    name: string;
+    dataUrl: string;
+}
+
+/** Background display mode — cover (full bleed) or tile (repeat pattern) */
+export type BackgroundMode = 'cover' | 'tile';
+
 interface ThemeState {
     activeTheme: ThemeId;
     /** Per-CSS-variable colour overrides applied on top of the active theme */
     customOverrides: ColorOverrides;
     /** Background image/gif URL or CSS gradient for the app root */
     customBackground: string | null;
+    /** How the background image is displayed */
+    backgroundMode: BackgroundMode;
+    /** User-uploaded background images (persisted independently of active background) */
+    userBackgrounds: UserBackground[];
     setTheme: (theme: ThemeId) => void;
     setColorOverride: (variable: string, value: string) => void;
     removeColorOverride: (variable: string) => void;
     resetAllOverrides: () => void;
     setCustomBackground: (bg: string | null) => void;
+    setBackgroundMode: (mode: BackgroundMode) => void;
+    addUserBackground: (bg: UserBackground) => void;
+    removeUserBackground: (id: string) => void;
 }
 
 export const useThemeStore = create<ThemeState>((set) => ({
     activeTheme: 'geocities',
     customOverrides: {},
     customBackground: null,
+    backgroundMode: 'cover',
+    userBackgrounds: [],
     setTheme: (theme) => set({ activeTheme: theme }),
     setColorOverride: (variable, value) =>
         set((s) => ({ customOverrides: { ...s.customOverrides, [variable]: value } })),
@@ -336,6 +355,16 @@ export const useThemeStore = create<ThemeState>((set) => ({
             delete next[variable];
             return { customOverrides: next };
         }),
-    resetAllOverrides: () => set({ customOverrides: {}, customBackground: null }),
+    resetAllOverrides: () => set({ customOverrides: {}, customBackground: null, backgroundMode: 'cover' }),
     setCustomBackground: (bg) => set({ customBackground: bg }),
+    setBackgroundMode: (mode) => set({ backgroundMode: mode }),
+    addUserBackground: (bg) =>
+        set((s) => ({ userBackgrounds: [...s.userBackgrounds, bg] })),
+    removeUserBackground: (id) =>
+        set((s) => ({
+            userBackgrounds: s.userBackgrounds.filter((b) => b.id !== id),
+            customBackground: s.userBackgrounds.find((b) => b.id === id)?.dataUrl === s.customBackground
+                ? null
+                : s.customBackground,
+        })),
 }));
