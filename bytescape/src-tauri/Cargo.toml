@@ -23,7 +23,7 @@ default = []
 willow = ["dep:willow_25"]
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "unstable"] }
 getrandom = { version = "0.2", features = ["js"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"

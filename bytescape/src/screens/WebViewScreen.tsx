@@ -1,7 +1,8 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Webview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface WebViewScreenProps {
     url: string;
@@ -22,6 +23,9 @@ let webviewCounter = 0;
  *
  * Uses Tauri's native Webview API (not an iframe) so all sites load
  * properly, including those with X-Frame-Options restrictions like bsky.app.
+ *
+ * Requires the `unstable` feature flag on the tauri crate in Cargo.toml
+ * to enable multi-webview support.
  */
 export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -31,6 +35,9 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
 
+    const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+    const [errorMsg, setErrorMsg] = useState<string>('');
+
     // Position the webview to match the container's bounds
     const syncPosition = useCallback(() => {
         const wv = webviewRef.current;
@@ -39,7 +46,7 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
 
         const rect = container.getBoundingClientRect();
         wv.setPosition(new LogicalPosition(rect.x, rect.y)).catch(() => {});
-        wv.setSize(new LogicalSize(rect.width, rect.height)).catch(() => {});
+        wv.setSize(new LogicalSize(Math.max(rect.width, 100), Math.max(rect.height, 100))).catch(() => {});
     }, []);
 
     // Create the native webview on mount, destroy on unmount
@@ -50,6 +57,8 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
         async function create() {
             if (isCreatingRef.current) return;
             isCreatingRef.current = true;
+            setStatus('loading');
+            setErrorMsg('');
 
             const container = containerRef.current;
             if (!container) {
@@ -57,11 +66,25 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
                 return;
             }
 
-            // Wait a frame for layout to settle
-            await new Promise(r => requestAnimationFrame(r));
+            // Wait for layout to settle — two rAF cycles to ensure paint
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             if (destroyed) return;
 
-            const rect = container.getBoundingClientRect();
+            let rect = container.getBoundingClientRect();
+
+            // Validate container has reasonable dimensions
+            if (rect.width < 10 || rect.height < 10) {
+                await new Promise(r => setTimeout(r, 200));
+                if (destroyed) return;
+                rect = container.getBoundingClientRect();
+                if (rect.width < 10 || rect.height < 10) {
+                    setStatus('error');
+                    setErrorMsg('Unable to determine content area dimensions.');
+                    isCreatingRef.current = false;
+                    return;
+                }
+            }
+
             try {
                 const appWindow = getCurrentWindow();
                 const wv = new Webview(appWindow, label, {
@@ -70,6 +93,27 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
                     y: rect.y,
                     width: Math.max(rect.width, 100),
                     height: Math.max(rect.height, 100),
+                    focus: true,
+                });
+
+                // Listen for creation success/failure
+                wv.once('tauri://created', () => {
+                    if (destroyed) return;
+                    setStatus('ready');
+                    if (!isActiveRef.current) {
+                        wv.hide().catch(() => {});
+                    }
+                });
+
+                wv.once('tauri://error', (e) => {
+                    if (destroyed) return;
+                    const msg = typeof e.payload === 'string'
+                        ? e.payload
+                        : (e.payload as { message?: string })?.message || 'Unknown error creating webview';
+                    console.error('Webview creation error:', msg);
+                    setStatus('error');
+                    setErrorMsg(msg);
+                    webviewRef.current = null;
                 });
 
                 if (destroyed) {
@@ -85,10 +129,14 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
                         if (!destroyed && webviewRef.current) {
                             webviewRef.current.hide().catch(() => {});
                         }
-                    }, 150);
+                    }, 300);
                 }
             } catch (err) {
                 console.error('Failed to create native webview:', err);
+                if (!destroyed) {
+                    setStatus('error');
+                    setErrorMsg(err instanceof Error ? err.message : String(err));
+                }
             }
             isCreatingRef.current = false;
         }
@@ -112,6 +160,7 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
 
         if (isActive) {
             wv.show().catch(() => {});
+            wv.setFocus().catch(() => {});
             syncPosition();
         } else {
             wv.hide().catch(() => {});
@@ -139,10 +188,74 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
         };
     }, [syncPosition]);
 
+    const handleOpenExternal = async () => {
+        try {
+            await openUrl(url);
+        } catch {
+            window.open(url, '_blank');
+        }
+    };
+
     return (
         <div
             ref={containerRef}
             className="webview-container"
-        />
+        >
+            {status === 'loading' && (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    color: 'var(--text-secondary)',
+                    gap: '12px',
+                } as React.CSSProperties}>
+                    <div style={{ fontSize: '16px' } as React.CSSProperties}>Loading…</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' } as React.CSSProperties}>
+                        {url}
+                    </div>
+                </div>
+            )}
+            {status === 'error' && (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    color: 'var(--text-secondary)',
+                    gap: '16px',
+                    padding: '24px',
+                    textAlign: 'center',
+                } as React.CSSProperties}>
+                    <div style={{ fontSize: '18px', color: 'var(--text-primary)' } as React.CSSProperties}>
+                        Unable to load page
+                    </div>
+                    <div style={{
+                        fontSize: '12px',
+                        color: 'var(--text-muted)',
+                        maxWidth: '500px',
+                        wordBreak: 'break-word',
+                    } as React.CSSProperties}>
+                        {errorMsg || 'An error occurred while creating the browser view.'}
+                    </div>
+                    <button
+                        onClick={handleOpenExternal}
+                        style={{
+                            padding: '8px 20px',
+                            background: 'var(--accent-purple)',
+                            color: 'var(--text-primary)',
+                            border: 'none',
+                            borderRadius: 'var(--border-radius)',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                        } as React.CSSProperties}
+                    >
+                        Open in external browser
+                    </button>
+                </div>
+            )}
+        </div>
     );
 }
