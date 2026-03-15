@@ -1,84 +1,81 @@
 /**
- * Open a URL in an in-app webview window (Tauri v2).
+ * Open a URL in an in-app browser tab.
  *
- * Creates a new WebviewWindow for the given URL. Each URL gets its own
- * window with a unique label derived from the URL to prevent duplicates.
- * If the window for that URL already exists, it focuses it instead.
- *
- * Also creates a tab entry in the NavStore so the user sees the window
- * in their tab bar. Closing the tab closes the window and vice-versa.
+ * Instead of opening separate Tauri WebviewWindow instances (which spawn
+ * new OS windows), this uses the NavStore to create in-app "webview" tabs
+ * that render the URL in an embedded iframe within the app shell.
  */
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-
-/** Track open webview windows so we can close them from tabs */
-const openWebviews = new Map<string, WebviewWindow>();
+import { useNavStore } from '../store';
 
 /**
- * Open a URL in a new Tauri webview window inside the app.
- * Falls back to console.error on failure.
+ * Open a URL in a new in-app browser tab.
+ * If a tab with the same URL already exists, switch to it instead.
  */
-export async function openInApp(url: string, title?: string): Promise<void> {
-    // Create a stable label from the URL (alphanumeric + dashes only)
-    const label = 'browse-' + url.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 80);
-
-    // Check if window with this label already exists
-    const existing = await WebviewWindow.getByLabel(label);
+export function openInApp(url: string, title?: string): void {
+    const store = useNavStore.getState();
+    // Check if a webview tab with this URL already exists
+    const existing = store.tabs.find(
+        (t) => t.screen === 'webview' && t.meta?.url === url
+    );
     if (existing) {
-        try {
-            await existing.setFocus();
-        } catch {
-            // Window may have been closed, create a new one
-        }
+        store.switchTab(existing.id);
         return;
     }
-
-    const webview = new WebviewWindow(label, {
-        url,
-        title: title || url,
-        width: 1024,
-        height: 768,
-        center: true,
-    });
-
-    openWebviews.set(label, webview);
-
-    webview.once('tauri://error', (e) => {
-        console.error('Failed to open in-app window:', e);
-        openWebviews.delete(label);
-    });
-
-    // When the webview window is closed by the user, remove the tab
-    webview.once('tauri://close-requested', () => {
-        openWebviews.delete(label);
-    });
+    // Derive a short title from the URL if none provided
+    const displayTitle = title || (() => {
+        try {
+            const u = new URL(url);
+            return u.hostname + (u.pathname !== '/' ? u.pathname.slice(0, 40) : '');
+        } catch {
+            return url.slice(0, 40);
+        }
+    })();
+    store.openTab('webview', displayTitle, { url });
 }
 
 /**
- * Close a webview window that was opened via openInApp.
- */
-export function closeWebview(label: string): void {
-    const wv = openWebviews.get(label);
-    if (wv) {
-        wv.close().catch(console.error);
-        openWebviews.delete(label);
-    }
-}
-
-/**
- * Focus a webview window that was opened via openInApp.
- */
-export function focusWebview(label: string): void {
-    const wv = openWebviews.get(label);
-    if (wv) {
-        wv.setFocus().catch(console.error);
-    }
-}
-
-/**
- * Open a Bluesky profile in an in-app webview.
+ * Open a Bluesky profile in an in-app browser tab.
  */
 export function openBlueskyProfile(handle: string): void {
     if (!handle) return;
     const url = `https://bsky.app/profile/${handle}`;
-    openInApp(url, `@${handle} — Bluesky`).catch(console.error);
+    openInApp(url, `@${handle}`);
+}
+
+/**
+ * Install a global click interceptor that catches all `<a target="_blank">`
+ * clicks and routes them to in-app browser tabs instead of opening in the
+ * system browser.
+ *
+ * Call once at app startup (e.g. in a useEffect in App.tsx).
+ * Returns a cleanup function that removes the listener.
+ */
+export function installLinkInterceptor(): () => void {
+    function handler(e: MouseEvent) {
+        // Walk up from the click target to find an <a> element
+        let el = e.target as HTMLElement | null;
+        while (el && el.tagName !== 'A') {
+            el = el.parentElement;
+        }
+        if (!el) return;
+
+        const anchor = el as HTMLAnchorElement;
+        const href = anchor.href;
+
+        // Only intercept external links (http/https) with target="_blank"
+        if (!href || (!href.startsWith('http://') && !href.startsWith('https://'))) return;
+        if (anchor.target !== '_blank') return;
+
+        // Don't intercept if user is holding modifier keys (they want OS default)
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const title = anchor.title || anchor.textContent?.trim() || undefined;
+        openInApp(href, title);
+    }
+
+    document.addEventListener('click', handler, true); // capture phase
+    return () => document.removeEventListener('click', handler, true);
 }

@@ -8,6 +8,7 @@ import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS, customFeedUris } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
+import { BsGlobe } from 'react-icons/bs';
 
 export type MediaFilter = 'all' | 'images' | 'video' | 'short' | 'long' | 'articles';
 
@@ -237,6 +238,13 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         };
     }, []);
 
+    const handleNavigateTab = useCallback((tab: FeedTab, opts?: { feedUri?: string }) => {
+        setActiveTab(tab);
+        if (opts?.feedUri) {
+            setSelectedFeedUri(opts.feedUri);
+        }
+    }, [setActiveTab]);
+
     return (
         <div className="feed-layout">
             {/* Feed context panel — left side */}
@@ -257,6 +265,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 vaultSources={vaultSources}
                 archiveTotal={archiveTotal}
                 position="left"
+                onNavigateTab={handleNavigateTab}
             />
             <div className="feed-main">
                 {/* Fixed Header with Tabs */}
@@ -272,6 +281,22 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             </button>
                         ))}
                     </div>
+
+                    {/* Platform filter — centered in header (no functionality yet, positioning only) */}
+                    <div className="feed-platform-filter">
+                        <BsGlobe size={13} style={{ opacity: 0.6 }} />
+                        <select
+                            className="platform-filter-select"
+                            value={archiveSourceFilter}
+                            onChange={e => setArchiveSourceFilter(e.target.value)}
+                        >
+                            <option value="">All Platforms</option>
+                            {vaultSources.map(s => (
+                                <option key={s} value={s}>{s}</option>
+                            ))}
+                        </select>
+                    </div>
+
                     <div className="feed-lens-toggle">
                         {([
                             ['all', '⊞', 'All'],
@@ -321,6 +346,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 setArchiveSourceFilter={setArchiveSourceFilter}
                                 vaultSources={vaultSources}
                                 archiveTotal={archiveTotal}
+                                onNavigateTab={handleNavigateTab}
                             />
                         </div>
                     )}

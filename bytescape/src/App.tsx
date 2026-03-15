@@ -55,10 +55,12 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
 import { ProfileBrowserScreen } from "./screens/ProfileBrowserScreen";
+import { WebViewScreen } from "./screens/WebViewScreen";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 import { RecoverySetupModal } from "./components/RecoverySetupModal";
 import { useTheme } from "./hooks/useTheme";
 import { useLocationStore } from "./hooks/useLocation";
+import { installLinkInterceptor } from "./utils/openInApp";
 
 function App() {
   // ─── Theme (applies data-theme attribute on <html>) ───
@@ -88,6 +90,11 @@ function App() {
   useEffect(() => {
     useLocationStore.getState().syncFromNavStore();
   }, [screen, feedActiveTab, peerProfileNodeId]);
+
+  // ─── Global link interceptor: route all <a target="_blank"> to in-app tabs ───
+  useEffect(() => {
+    return installLinkInterceptor();
+  }, []);
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
@@ -455,7 +462,7 @@ function App() {
 
   /** Screens that need full-bleed layout (no padding, flex column, overflow hidden) */
   const FULL_BLEED_SCREENS: Set<Screen> = new Set([
-    'chat', 'feed', 'vault', 'friends', 'peer-profile', 'profile-builder', 'profile-browser',
+    'chat', 'feed', 'vault', 'friends', 'peer-profile', 'profile-builder', 'profile-browser', 'webview',
   ]);
 
   const fullBleedStyle: React.CSSProperties = {
@@ -558,6 +565,8 @@ function App() {
         );
       case 'vault':
         return <VaultScreen auth={auth} />;
+      case 'webview':
+        return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} />;
       case 'settings':
         return (
           <SettingsScreen

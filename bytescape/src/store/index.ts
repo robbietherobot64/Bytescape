@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 // ─── Navigation Store ───
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile" | "webview";
 
 /** Browser-style tab descriptor */
 export interface TabItem {
@@ -76,6 +76,7 @@ const TAB_LABELS: Partial<Record<Screen, string>> = {
     'profile-builder': 'Profile Builder',
     'profile-browser': 'Profile Browser',
     'peer-profile': 'Peer Profile',
+    webview: 'Browser',
 };
 
 interface NavState {

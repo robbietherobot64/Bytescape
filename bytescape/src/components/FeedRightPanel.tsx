@@ -1,6 +1,7 @@
 import { ProfileView, GeneratorView } from '../types';
 import { Win98Box } from './Win98Box';
 import { openBlueskyProfile } from '../utils/openInApp';
+import { FeedTab } from '../hooks/useUnifiedFeed';
 
 interface FeedRightPanelProps {
     activeTab: string;
@@ -20,6 +21,8 @@ interface FeedRightPanelProps {
     archiveTotal: number;
     /** Render position — affects border/shadow direction */
     position?: 'left' | 'right';
+    /** Navigate to a different feed tab (e.g. clicking "+N more" → Following) */
+    onNavigateTab?: (tab: FeedTab, opts?: { feedUri?: string }) => void;
 }
 
 export function FeedRightPanel({
@@ -39,6 +42,7 @@ export function FeedRightPanel({
     vaultSources,
     archiveTotal,
     position = 'right',
+    onNavigateTab,
 }: FeedRightPanelProps) {
 
     const panelTitle =
@@ -56,11 +60,11 @@ export function FeedRightPanel({
             <div className="right-panel-body sidebar-list">
                 {activeTab === 'following' ? (
                     <div>
-                        {/* Recently active follows — compact summary */}
+                        {/* Full follows list — always expanded */}
                         <div className="panel-section">
                             <div className="panel-section-label">Active Follows</div>
                         </div>
-                        {followingList.slice(0, 12).map(profile => (
+                        {followingList.map(profile => (
                             <div
                                 key={profile.did}
                                 className="contact-mini-row"
@@ -86,11 +90,6 @@ export function FeedRightPanel({
                         ))}
                         {followingList.length === 0 && (
                             <div className="empty-state panel-empty">No follows found.</div>
-                        )}
-                        {followingList.length > 12 && (
-                            <div className="panel-hint" style={{ marginTop: 8 } as React.CSSProperties}>
-                                +{followingList.length - 12} more
-                            </div>
                         )}
                     </div>
                 ) : activeTab === 'subscribed' ? (
@@ -208,8 +207,13 @@ export function FeedRightPanel({
                             <div className="empty-state panel-empty">No follows found.</div>
                         )}
                         {followingList.length > 12 && (
-                            <div className="panel-hint" style={{ marginTop: 8 } as React.CSSProperties}>
-                                +{followingList.length - 12} more
+                            <div
+                                className="panel-hint panel-hint--clickable"
+                                style={{ marginTop: 8, cursor: 'pointer' } as React.CSSProperties}
+                                onClick={() => onNavigateTab?.('following')}
+                                title="View all follows"
+                            >
+                                +{followingList.length - 12} more →
                             </div>
                         )}
 
@@ -222,7 +226,14 @@ export function FeedRightPanel({
                             <select
                                 className="input-field"
                                 value={selectedFeedUri}
-                                onChange={e => setSelectedFeedUri(e.target.value)}
+                                onChange={e => {
+                                    const uri = e.target.value;
+                                    setSelectedFeedUri(uri);
+                                    // If user picks a specific feed, navigate to Subscribed tab
+                                    if (uri !== FEED_FILTER_ALL && onNavigateTab) {
+                                        onNavigateTab('subscribed', { feedUri: uri });
+                                    }
+                                }}
                             >
                                 <option value={FEED_FILTER_ALL}>All Feeds</option>
                                 {savedFeeds
@@ -241,10 +252,19 @@ export function FeedRightPanel({
                                     className="input-field"
                                     value={hashtagInput}
                                     onChange={e => setHashtagInput(e.target.value)}
-                                    onKeyDown={e => e.key === 'Enter' && handleAddHashtag()}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                            handleAddHashtag();
+                                            // Navigate to Subscribed tab when adding a hashtag
+                                            onNavigateTab?.('subscribed');
+                                        }
+                                    }}
                                     placeholder="#topic"
                                 />
-                                <button className="btn btn-primary hashtag-add-btn" onClick={handleAddHashtag}>+</button>
+                                <button className="btn btn-primary hashtag-add-btn" onClick={() => {
+                                    handleAddHashtag();
+                                    onNavigateTab?.('subscribed');
+                                }}>+</button>
                             </div>
                             <div className="hashtag-pills">
                                 {followedHashtags.map(tag => (
@@ -262,24 +282,6 @@ export function FeedRightPanel({
                             {followedHashtags.length === 0 && (
                                 <div className="panel-hint">No tags followed yet.</div>
                             )}
-                        </div>
-
-                        {/* ── Divider ── */}
-                        <div className="panel-divider" />
-
-                        {/* ── Section 3: Platform Source ── */}
-                        <div className="panel-section">
-                            <div className="panel-section-label">Platform</div>
-                            <select
-                                className="input-field"
-                                value={archiveSourceFilter}
-                                onChange={e => setArchiveSourceFilter(e.target.value)}
-                            >
-                                <option value="">All sources</option>
-                                {vaultSources.map(s => (
-                                    <option key={s} value={s}>{s}</option>
-                                ))}
-                            </select>
                         </div>
                     </div>
                 )}
