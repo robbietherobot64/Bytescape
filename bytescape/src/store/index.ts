@@ -101,6 +101,8 @@ interface NavState {
     tabs: TabItem[];
     activeTabId: string | null;
     openTab: (screen: Screen, label?: string, meta?: Record<string, string>) => void;
+    /** Navigate the current active tab to a different screen (in-place, no new tab) */
+    navigateInTab: (screen: Screen, label?: string) => void;
     closeTab: (tabId: string) => void;
     switchTab: (tabId: string) => void;
 }
@@ -164,6 +166,22 @@ export const useNavStore = create<NavState>((set, get) => ({
         const newTabs = [...state.tabs];
         newTabs.splice(insertIdx, 0, newTab);
         set({ tabs: newTabs, activeTabId: id, screen });
+    },
+
+    navigateInTab: (screen, label) => {
+        const state = get();
+        const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+        if (!activeTab) {
+            // No active tab — fall back to creating one
+            get().openTab(screen, label);
+            return;
+        }
+        const newTabs = state.tabs.map(t =>
+            t.id === state.activeTabId
+                ? { ...t, screen, label: label || TAB_LABELS[screen] || screen, meta: undefined }
+                : t
+        );
+        set({ tabs: newTabs, screen });
     },
 
     closeTab: (tabId) => {

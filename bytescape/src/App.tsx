@@ -80,6 +80,7 @@ function App() {
     peerProfileNodeId, setPeerProfileNodeId,
     peerProfileName, setPeerProfileName,
     openTab,
+    navigateInTab,
     tabs, activeTabId
   } = useNavStore();
   const chatStore = useChatStore();
@@ -365,8 +366,8 @@ function App() {
       const selected = typeof rawSelected === 'string' ? rawSelected : null;
       if (!selected) return;
 
-      // Route into audit flow — must use openTab so the tab system creates/switches to the audit tab.
-      openTab("audit", "Audit");
+      // Navigate the current tab (Import) to audit — stays in the same tab.
+      navigateInTab("audit", "Audit");
       setActiveSidebar("import");
 
       setProgress(null);

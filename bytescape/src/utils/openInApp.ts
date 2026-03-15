@@ -1,51 +1,34 @@
 /**
- * Open a URL in an in-app browser tab.
+ * Open URLs in the system browser.
  *
- * Instead of opening separate Tauri WebviewWindow instances (which spawn
- * new OS windows), this uses the NavStore to create in-app "webview" tabs
- * that render the URL in an embedded iframe within the app shell.
+ * Native Tauri multi-webview (in-app browsing) is unreliable on Linux/WebKitGTK,
+ * so all external links open in the user's default browser instead.
  */
-import { useNavStore } from '../store';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 /**
- * Open a URL in a new in-app browser tab.
- * If a tab with the same URL already exists, switch to it instead.
+ * Open a URL in the system's default browser.
  */
-export function openInApp(url: string, title?: string): void {
-    const store = useNavStore.getState();
-    // Check if a webview tab with this URL already exists
-    const existing = store.tabs.find(
-        (t) => t.screen === 'webview' && t.meta?.url === url
-    );
-    if (existing) {
-        store.switchTab(existing.id);
-        return;
-    }
-    // Derive a short title from the URL if none provided
-    const displayTitle = title || (() => {
-        try {
-            const u = new URL(url);
-            return u.hostname + (u.pathname !== '/' ? u.pathname.slice(0, 40) : '');
-        } catch {
-            return url.slice(0, 40);
-        }
-    })();
-    store.openTab('webview', displayTitle, { url });
+export function openInApp(url: string, _title?: string): void {
+    openUrl(url).catch(() => {
+        // Fallback: try window.open if plugin fails
+        window.open(url, '_blank');
+    });
 }
 
 /**
- * Open a Bluesky profile in an in-app browser tab.
+ * Open a Bluesky profile in the system browser.
  */
 export function openBlueskyProfile(handle: string): void {
     if (!handle) return;
     const url = `https://bsky.app/profile/${handle}`;
-    openInApp(url, `@${handle}`);
+    openInApp(url);
 }
 
 /**
  * Install a global click interceptor that catches all `<a target="_blank">`
- * clicks and routes them to in-app browser tabs instead of opening in the
- * system browser.
+ * clicks and opens them in the system browser instead of navigating
+ * the Tauri webview away from the app.
  *
  * Call once at app startup (e.g. in a useEffect in App.tsx).
  * Returns a cleanup function that removes the listener.
@@ -72,8 +55,7 @@ export function installLinkInterceptor(): () => void {
         e.preventDefault();
         e.stopPropagation();
 
-        const title = anchor.title || anchor.textContent?.trim() || undefined;
-        openInApp(href, title);
+        openInApp(href);
     }
 
     document.addEventListener('click', handler, true); // capture phase
