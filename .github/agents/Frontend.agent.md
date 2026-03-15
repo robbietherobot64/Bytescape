@@ -2,26 +2,7 @@
 name: Frontend
 description: "Track B — Profile, Lenses & Communities. React/TypeScript frontend agent for UI, maps, groups, and profile builder."
 tools:
-  - codebase
-  - readFile
-  - editFiles
-  - createFile
-  - createDirectory
-  - fileSearch
-  - textSearch
-  - listDirectory
-  - usages
-  - runInTerminal
-  - problems
-  - terminalLastCommand
-  - terminalSelection
-  - runTests
-  - testFailure
-  - changes
-  - fetch
-  - githubRepo
-  - runSubagent
-  - searchResults
+  ['execute/runInTerminal', 'execute/testFailure', 'execute/runTests', 'read/terminalSelection', 'read/terminalLastCommand', 'read/problems', 'read/readFile', 'edit/createDirectory', 'edit/createFile', 'edit/editFiles', 'search', 'web', 'agent']
 model: claude-sonnet-4-20250514
 ---
 

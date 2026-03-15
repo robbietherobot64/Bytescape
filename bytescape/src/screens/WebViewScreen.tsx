@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface WebViewScreenProps {
@@ -8,19 +8,79 @@ interface WebViewScreenProps {
     isActive: boolean;
 }
 
+/** Domains known to block iframing via X-Frame-Options / CSP frame-ancestors */
+const IFRAME_BLOCKED_DOMAINS = [
+    'bsky.app',
+    'twitter.com',
+    'x.com',
+    'facebook.com',
+    'instagram.com',
+    'linkedin.com',
+    'github.com',
+    'reddit.com',
+    'youtube.com',
+    'tiktok.com',
+    'threads.net',
+    'mastodon.social',
+];
+
+function isBlockedDomain(url: string): boolean {
+    try {
+        const hostname = new URL(url).hostname;
+        return IFRAME_BLOCKED_DOMAINS.some(
+            d => hostname === d || hostname.endsWith('.' + d)
+        );
+    } catch {
+        return false;
+    }
+}
+
 /**
  * In-app browser tab — renders an external URL inside an iframe.
  *
- * Sites that block iframing via X-Frame-Options/CSP will show an error state
- * with a button to open in the system browser as a fallback.
+ * Sites known to block iframing are detected immediately and show
+ * an "Open in browser" prompt. Other sites load in an iframe with
+ * a post-load content check.
  *
  * Requires `frame-src https: http:` in the Tauri CSP config.
  */
 export function WebViewScreen({ url }: WebViewScreenProps) {
-    const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+    const blocked = isBlockedDomain(url);
+    const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
+        blocked ? 'error' : 'loading'
+    );
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
+    // For non-blocked sites, set a timeout — if onLoad hasn't set 'ready'
+    // after 10s, show error (likely silently blocked).
+    useEffect(() => {
+        if (blocked) return;
+        const timer = setTimeout(() => {
+            setStatus(prev => prev === 'loading' ? 'error' : prev);
+        }, 10000);
+        return () => clearTimeout(timer);
+    }, [url, blocked]);
+
     const handleLoad = () => {
+        if (blocked) return;
+        // X-Frame-Options blocks still fire onLoad with a blank page.
+        // Try to detect by reading contentWindow.location.
+        try {
+            const win = iframeRef.current?.contentWindow;
+            if (win) {
+                try {
+                    const loc = win.location.href;
+                    if (loc === 'about:blank') {
+                        setStatus('error');
+                        return;
+                    }
+                } catch {
+                    // Cross-origin error = site actually loaded (good)
+                }
+            }
+        } catch {
+            // ignore
+        }
         setStatus('ready');
     };
 
@@ -38,48 +98,6 @@ export function WebViewScreen({ url }: WebViewScreenProps) {
 
     return (
         <div className="webview-container">
-            {/* Address bar */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                background: 'var(--bg-secondary)',
-                borderBottom: '1px solid var(--border-color)',
-                fontSize: '12px',
-                flexShrink: 0,
-            } as React.CSSProperties}>
-                <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' } as React.CSSProperties}>
-                    🌐
-                </span>
-                <span style={{
-                    color: 'var(--text-secondary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    flex: 1,
-                    fontFamily: 'monospace',
-                } as React.CSSProperties}>
-                    {url}
-                </span>
-                <button
-                    onClick={handleOpenExternal}
-                    style={{
-                        background: 'var(--bg-tertiary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: 'var(--border-radius)',
-                        color: 'var(--text-secondary)',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                        padding: '2px 8px',
-                        whiteSpace: 'nowrap',
-                    } as React.CSSProperties}
-                    title="Open in system browser"
-                >
-                    ↗ External
-                </button>
-            </div>
-
             {/* Loading indicator */}
             {status === 'loading' && (
                 <div style={{
@@ -89,20 +107,16 @@ export function WebViewScreen({ url }: WebViewScreenProps) {
                     justifyContent: 'center',
                     position: 'absolute',
                     inset: 0,
-                    top: '36px',
                     color: 'var(--text-secondary)',
                     gap: '12px',
                     zIndex: 1,
                     background: 'var(--bg-primary)',
                 } as React.CSSProperties}>
                     <div style={{ fontSize: '16px' } as React.CSSProperties}>Loading…</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' } as React.CSSProperties}>
-                        {url}
-                    </div>
                 </div>
             )}
 
-            {/* Error state */}
+            {/* Error state — site blocks iframing */}
             {status === 'error' && (
                 <div style={{
                     display: 'flex',
@@ -111,7 +125,6 @@ export function WebViewScreen({ url }: WebViewScreenProps) {
                     justifyContent: 'center',
                     position: 'absolute',
                     inset: 0,
-                    top: '36px',
                     color: 'var(--text-secondary)',
                     gap: '16px',
                     padding: '24px',
@@ -128,7 +141,13 @@ export function WebViewScreen({ url }: WebViewScreenProps) {
                         maxWidth: '500px',
                         wordBreak: 'break-word',
                     } as React.CSSProperties}>
-                        The site blocks embedding. You can open it in your browser instead.
+                        {url}
+                    </div>
+                    <div style={{
+                        fontSize: '12px',
+                        color: 'var(--text-muted)',
+                    } as React.CSSProperties}>
+                        The site blocks embedding. Click below to open it in your browser.
                     </div>
                     <button
                         onClick={handleOpenExternal}
@@ -147,22 +166,24 @@ export function WebViewScreen({ url }: WebViewScreenProps) {
                 </div>
             )}
 
-            {/* The iframe */}
-            <iframe
-                ref={iframeRef}
-                src={url}
-                onLoad={handleLoad}
-                onError={handleError}
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                style={{
-                    width: '100%',
-                    flex: 1,
-                    border: 'none',
-                    background: '#fff',
-                    display: status === 'error' ? 'none' : 'block',
-                } as React.CSSProperties}
-                title={url}
-            />
+            {/* The iframe — only rendered for non-blocked sites */}
+            {!blocked && (
+                <iframe
+                    ref={iframeRef}
+                    src={url}
+                    onLoad={handleLoad}
+                    onError={handleError}
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                    style={{
+                        width: '100%',
+                        flex: 1,
+                        border: 'none',
+                        background: '#fff',
+                        display: status === 'error' ? 'none' : 'block',
+                    } as React.CSSProperties}
+                    title={url}
+                />
+            )}
         </div>
     );
 }
