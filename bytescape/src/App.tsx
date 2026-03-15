@@ -355,59 +355,60 @@ function App() {
 
 
   // === Facebook Import ===
-  async function handleFilePick() {
+  async function handleFilePick(pathOverride?: string) {
     try {
-      const selected = await open({
+      const rawSelected = pathOverride || await open({
         multiple: false,
         filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
       });
-      if (selected) {
-        // Route into audit flow while keeping import highlighted in navigation.
-        setScreen("audit");
-        setActiveSidebar("import");
+      // Ensure we have a valid string path (guard against non-string values)
+      const selected = typeof rawSelected === 'string' ? rawSelected : null;
+      if (!selected) return;
 
-        setProgress(null);
-        setParseResult(null);
-        setLogs([]);
-        setIsShredding(false);
-        setImportComplete(false);
-        setSelectedArchivePath(selected);
-        setError("");
-        addLog("[start] Parsing archive...");
+      // Route into audit flow — must use openTab so the tab system creates/switches to the audit tab.
+      openTab("audit", "Audit");
+      setActiveSidebar("import");
 
-        // Capture archive structure in logs to aid parser diagnostics.
-        try {
-          const zipInfo = await invoke<string[]>("debug_zip_contents", { path: selected });
-          console.log("ZIP structure:", zipInfo);
-          addLog(`[debug] ZIP structure (${zipInfo.length} lines):`);
-          // Show all directory structure, but limit JSON files to 50
-          let jsonCount = 0;
-          for (const line of zipInfo) {
-            if (line.startsWith("  📄") && ++jsonCount > 50) {
-              addLog(`  ... (truncated, ${zipInfo.length - jsonCount} more)`);
-              break;
-            }
-            addLog(line);
+      setProgress(null);
+      setParseResult(null);
+      setLogs([]);
+      setIsShredding(false);
+      setImportComplete(false);
+      setSelectedArchivePath(selected);
+      setError("");
+      addLog("[start] Parsing archive...");
+
+      // Capture archive structure in logs to aid parser diagnostics.
+      try {
+        const zipInfo = await invoke<string[]>("debug_zip_contents", { path: selected });
+        addLog(`[debug] ZIP structure (${zipInfo.length} lines):`);
+        // Show all directory structure, but limit JSON files to 50
+        let jsonCount = 0;
+        for (const line of zipInfo) {
+          if (line.startsWith("  📄") && ++jsonCount > 50) {
+            addLog(`  ... (truncated, ${zipInfo.length - jsonCount} more)`);
+            break;
           }
-        } catch (e) {
-          console.error("debug_zip_contents failed:", e);
+          addLog(line);
         }
-
-        const lowerSelected = selected.toLowerCase();
-        const sourceHint = lowerSelected.includes("instagram")
-          ? "instagram"
-          : lowerSelected.includes("facebook")
-            ? "facebook"
-            : null;
-
-        const result = await invoke<ParseResult>("import_archive_auto", {
-          path: selected,
-          sourceHint,
-        });
-        setParseResult(result);
-        addLog(`[done] Found ${result.posts.length} posts, ${result.trackers.length} trackers`);
-        addLog(`[source] Detected archive source: ${result.source || 'unknown'}`);
+      } catch (e) {
+        console.error("debug_zip_contents failed:", e);
       }
+
+      const lowerSelected = selected.toLowerCase();
+      const sourceHint = lowerSelected.includes("instagram")
+        ? "instagram"
+        : lowerSelected.includes("facebook")
+          ? "facebook"
+          : null;
+
+      const result = await invoke<ParseResult>("import_archive_auto", {
+        path: selected,
+        sourceHint,
+      });
+      setParseResult(result);
+      addLog(`[done] Found ${result.posts.length} posts, ${result.trackers.length} trackers`);
+      addLog(`[source] Detected archive source: ${result.source || 'unknown'}`);
     } catch (e: any) {
       setError(typeof e === "string" ? e : "File selection failed");
     }
@@ -512,7 +513,8 @@ function App() {
             importStatus={importStatus}
             archiveCount={archiveCount}
             onImportBluesky={importBluesky}
-            onFilePick={handleFilePick}
+            onFilePick={() => handleFilePick()}
+            onFileDropPath={(path: string) => handleFilePick(path)}
             onNavigate={handleNavigate}
             error={error || ""}
           />

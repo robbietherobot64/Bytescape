@@ -1,3 +1,5 @@
+import React, { useState, useEffect } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarItem, AuthStatus } from '../types';
 
 interface ImportScreenProps {
@@ -7,6 +9,8 @@ interface ImportScreenProps {
     archiveCount: number;
     onImportBluesky: () => void;
     onFilePick: () => void;
+    /** Called when a file is dropped via Tauri native drag-drop (provides filesystem path) */
+    onFileDropPath?: (path: string) => void;
     onNavigate: (item: SidebarItem) => void;
     error: string;
 }
@@ -18,10 +22,42 @@ export function ImportScreen({
     archiveCount,
     onImportBluesky,
     onFilePick,
+    onFileDropPath,
     onNavigate: _onNavigate,
     error
 }: ImportScreenProps) {
     const isBlueskyLinked = auth?.source === 'bluesky';
+
+    // Tauri native drag-drop — provides real filesystem paths
+    const [dragOver, setDragOver] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        let unlisten: (() => void) | undefined;
+
+        getCurrentWindow().onDragDropEvent((event) => {
+            if (cancelled) return;
+            if (event.payload.type === 'over') {
+                setDragOver(true);
+            } else if (event.payload.type === 'leave') {
+                setDragOver(false);
+            } else if (event.payload.type === 'drop') {
+                setDragOver(false);
+                const paths: string[] = event.payload.paths;
+                const zipPath = paths.find(p => p.toLowerCase().endsWith('.zip'));
+                if (zipPath && onFileDropPath) {
+                    onFileDropPath(zipPath);
+                }
+            }
+        }).then(fn => {
+            if (!cancelled) unlisten = fn;
+        });
+
+        return () => {
+            cancelled = true;
+            unlisten?.();
+        };
+    }, [onFileDropPath]);
 
     return (
         <div className="screen-centered">
@@ -65,12 +101,18 @@ export function ImportScreen({
                             </p>
                         )}
 
-                        {/* Archive imports */}
+                        {/* Archive imports — click opens file picker, drag-drop handled by Tauri native event */}
                         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                             <p className="text-muted text-sm mb-8">Or import from a data export:</p>
-                            <div className="drop-zone" onClick={onFilePick}>
-                                <div className="drop-icon">📂</div>
-                                <div className="drop-title">Drop a ZIP export</div>
+                            <div
+                                className={`drop-zone${dragOver ? ' dragging' : ''}`}
+                                onClick={onFilePick}
+                            >
+                                {dragOver && (
+                                    <div className="drop-icon" style={{ color: 'var(--accent-blue)' }}>📥</div>
+                                )}
+                                {!dragOver && <div className="drop-icon">📂</div>}
+                                <div className="drop-title">{dragOver ? 'Release to import' : 'Drop a ZIP export or click to browse'}</div>
                                 <div className="drop-hint">
                                     Supports Facebook, Instagram, Google Takeout, Twitter/X archives
                                 </div>
