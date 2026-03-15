@@ -7,7 +7,7 @@ Bytescape is a unified social vault and communication client. It operates on a "
 ## Architecture: Engine & Lens
 
 - **Bytescape Bridge (The Engine):** A headless local backend that manages your data "Vault", P2P networking (Iroh), and connections to external networks (Bluesky, ActivityPub).
-- **Bytescape (The Lens):** A beautiful, "Frutiger Aero" inspired interface that lets you browse, search, and interact with your unified social history.
+- **Bytescape Browser (The Lens):** A beautiful, "Frutiger Aero" inspired interface that lets you browse, search, and interact with your unified social history.
 
 > "Web2 Convenience, Web3 Privacy."
 
@@ -18,7 +18,7 @@ Bytescape is a unified social vault and communication client. It operates on a "
 
 ## 🚀 Getting Started
 
-The project is split into the frontend (`bytescape`) and the backend bridge (`bytescape-bridge`).
+The project is split into the frontend (`bytescape browser`) and the backend bridge (`bytescape-bridge`).
 
 ### Prerequisites
 *   **Rust** (v1.75+ or Latest Stable)
@@ -53,7 +53,7 @@ pnpm tauri build
 *   **Backend**: Rust, Tauri v2
 *   **Networking**: [Iroh](https://iroh.computer)
 *   **Database**: redb
-*   **Identity**: AT Protocol (Bluesky)
+*   **Identity**: Decentralized Identifier (DID)
 
 ## License
 
