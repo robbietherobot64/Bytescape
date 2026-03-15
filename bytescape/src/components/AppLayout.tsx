@@ -1,5 +1,6 @@
 import React from 'react';
 import { TopBar } from './TopBar';
+import { TabBar } from './TabBar';
 import { SidebarItem } from '../types';
 import {
     BsHouseFill, BsChatDotsFill, BsPeopleFill,
@@ -53,6 +54,7 @@ export function AppLayout({
                 onSearchSubmit={onSearchSubmit}
                 avatarInitial={avatarInitial}
             />
+            <TabBar />
             <div className="app-body">
                 <main className="main-content" style={mainStyle}>
                     {children}

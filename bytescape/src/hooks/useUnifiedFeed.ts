@@ -117,7 +117,7 @@ export function useUnifiedFeed({
     // All paths end with deduplicateFeedEntries to collapse duplicates
     // while preserving reposts as distinct events.
 
-    const { setCache, getCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
+    const { setCache, getCache, clearCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
 
     const fetchFeed = useCallback(async (tab: FeedTab, background = false) => {
         if (!auth) return;
@@ -264,6 +264,12 @@ export function useUnifiedFeed({
             }
         }
     }, [auth, selectedFeedUri, archiveSourceFilter]);
+
+    // Invalidate subscribed cache when feed URI changes — prevents stale-while-revalidate
+    // from showing the old feed's content while the new one loads
+    useEffect(() => {
+        clearCache('subscribed');
+    }, [selectedFeedUri, clearCache]);
 
     // Trigger reload on tab/filter change
     useEffect(() => {

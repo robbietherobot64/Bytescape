@@ -50,6 +50,34 @@ export const useAppStore = create<AppState>((set) => ({
 // ─── Navigation Store ───
 export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
+/** Browser-style tab descriptor */
+export interface TabItem {
+    id: string;
+    screen: Screen;
+    label: string;
+    /** Extra context for restoring screen state (e.g. peer node ID) */
+    meta?: Record<string, string>;
+}
+
+let tabCounter = 0;
+function nextTabId(): string {
+    return `tab-${++tabCounter}`;
+}
+
+const TAB_LABELS: Partial<Record<Screen, string>> = {
+    feed: 'Feed',
+    chat: 'Chat',
+    friends: 'Social',
+    profile: 'Profile',
+    settings: 'Settings',
+    vault: 'Vault',
+    import: 'Import',
+    audit: 'Audit',
+    'profile-builder': 'Profile Builder',
+    'profile-browser': 'Profile Browser',
+    'peer-profile': 'Peer Profile',
+};
+
 interface NavState {
     screen: Screen;
     setScreen: (screen: Screen) => void;
@@ -67,9 +95,16 @@ interface NavState {
     /** Cached display name for the peer profile being viewed */
     peerProfileName: string | null;
     setPeerProfileName: (name: string | null) => void;
+
+    /** Browser-style tabs */
+    tabs: TabItem[];
+    activeTabId: string | null;
+    openTab: (screen: Screen, label?: string, meta?: Record<string, string>) => void;
+    closeTab: (tabId: string) => void;
+    switchTab: (tabId: string) => void;
 }
 
-export const useNavStore = create<NavState>((set) => ({
+export const useNavStore = create<NavState>((set, get) => ({
     screen: 'login',
     setScreen: (screen) => set({ screen }),
 
@@ -84,6 +119,58 @@ export const useNavStore = create<NavState>((set) => ({
 
     peerProfileName: null,
     setPeerProfileName: (name) => set({ peerProfileName: name }),
+
+    tabs: [],
+    activeTabId: null,
+
+    openTab: (screen, label, meta) => {
+        const state = get();
+        // If a tab for this screen already exists (and no meta difference), switch to it
+        const existing = state.tabs.find(t => t.screen === screen && !meta);
+        if (existing) {
+            set({ activeTabId: existing.id, screen });
+            return;
+        }
+        const id = nextTabId();
+        const newTab: TabItem = {
+            id,
+            screen,
+            label: label || TAB_LABELS[screen] || screen,
+            meta,
+        };
+        set({
+            tabs: [...state.tabs, newTab],
+            activeTabId: id,
+            screen,
+        });
+    },
+
+    closeTab: (tabId) => {
+        const state = get();
+        const idx = state.tabs.findIndex(t => t.id === tabId);
+        if (idx === -1) return;
+        const remaining = state.tabs.filter(t => t.id !== tabId);
+        if (remaining.length === 0) {
+            // Last tab closed — go to feed
+            set({ tabs: [], activeTabId: null, screen: 'feed' });
+            return;
+        }
+        if (state.activeTabId === tabId) {
+            // Switch to neighbor tab
+            const newIdx = Math.min(idx, remaining.length - 1);
+            const neighbor = remaining[newIdx];
+            set({ tabs: remaining, activeTabId: neighbor.id, screen: neighbor.screen });
+        } else {
+            set({ tabs: remaining });
+        }
+    },
+
+    switchTab: (tabId) => {
+        const state = get();
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (!tab) return;
+        set({ activeTabId: tabId, screen: tab.screen });
+    },
 }));
 
 // ─── Chat Store ───
@@ -153,6 +240,7 @@ interface FeedCacheState {
     setCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
     getCache: (tab: string, maxAgeMs?: number) => FeedCacheEntry | null;
     appendCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
+    clearCache: (tab: string) => void;
 
     /** Cached context data */
     cachedSavedFeeds: GeneratorView[];
@@ -186,6 +274,10 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
         };
     }),
 
+    clearCache: (tab) => set((state) => {
+        const { [tab]: _, ...rest } = state.cache;
+        return { cache: rest };
+    }),
     cachedSavedFeeds: [],
     setCachedSavedFeeds: (feeds) => set({ cachedSavedFeeds: feeds }),
     cachedFollowingList: [],

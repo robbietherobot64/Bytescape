@@ -108,7 +108,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
     }
 
     return (
-        <div style={{ paddingBottom: 40 } as React.CSSProperties}>
+        <div className="screen-centered" style={{ paddingBottom: 40 } as React.CSSProperties}>
             <div className="main-header">
                 <h1>⚙️ Settings</h1>
             </div>

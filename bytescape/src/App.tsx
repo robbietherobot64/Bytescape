@@ -76,7 +76,8 @@ function App() {
     activeSidebar, setActiveSidebar,
     feedActiveTab, setFeedActiveTab,
     peerProfileNodeId, setPeerProfileNodeId,
-    peerProfileName, setPeerProfileName
+    peerProfileName, setPeerProfileName,
+    openTab
   } = useNavStore();
   const chatStore = useChatStore();
 
@@ -427,33 +428,19 @@ function App() {
   // === Navigation ===
   function handleNavigate(item: SidebarItem) {
     setActiveSidebar(item);
-    switch (item) {
-      case "feed":
-        setScreen("feed");
-        break;
-      case "search":
-        setScreen("feed");
-        break;
-      case "import":
-        setScreen("import");
-        break;
-      case "profile":
-        setScreen("profile");
-        break;
-      case "chat":
-        setScreen("chat");
-        break;
-      case "social":
-        setScreen("friends");
-        break;
-      case "settings":
-        setScreen("settings");
-        break;
-      case "vault":
-        setScreen("vault");
-        break;
-      default:
-        break;
+    const screenMap: Record<string, { screen: Parameters<typeof openTab>[0]; label?: string }> = {
+      feed: { screen: 'feed', label: 'Feed' },
+      search: { screen: 'feed', label: 'Feed' },
+      import: { screen: 'import', label: 'Import' },
+      profile: { screen: 'profile', label: 'Profile' },
+      chat: { screen: 'chat', label: 'Chat' },
+      social: { screen: 'friends', label: 'Social' },
+      settings: { screen: 'settings', label: 'Settings' },
+      vault: { screen: 'vault', label: 'Vault' },
+    };
+    const target = screenMap[item];
+    if (target) {
+      openTab(target.screen, target.label);
     }
   }
 
@@ -516,7 +503,7 @@ function App() {
             onViewProfile={(peerNodeId, peerName) => {
               setPeerProfileNodeId(peerNodeId);
               setPeerProfileName(peerName || null);
-              setScreen("peer-profile");
+              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
               setActiveSidebar("social");
             }}
           />
@@ -580,7 +567,7 @@ function App() {
             onViewProfile={(peerNodeId, peerName) => {
               setPeerProfileNodeId(peerNodeId);
               setPeerProfileName(peerName || null);
-              setScreen("peer-profile");
+              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
               setActiveSidebar("social");
             }}
           />

@@ -4,8 +4,14 @@
  * Creates a new WebviewWindow for the given URL. Each URL gets its own
  * window with a unique label derived from the URL to prevent duplicates.
  * If the window for that URL already exists, it focuses it instead.
+ *
+ * Also creates a tab entry in the NavStore so the user sees the window
+ * in their tab bar. Closing the tab closes the window and vice-versa.
  */
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+
+/** Track open webview windows so we can close them from tabs */
+const openWebviews = new Map<string, WebviewWindow>();
 
 /**
  * Open a URL in a new Tauri webview window inside the app.
@@ -34,9 +40,38 @@ export async function openInApp(url: string, title?: string): Promise<void> {
         center: true,
     });
 
+    openWebviews.set(label, webview);
+
     webview.once('tauri://error', (e) => {
         console.error('Failed to open in-app window:', e);
+        openWebviews.delete(label);
     });
+
+    // When the webview window is closed by the user, remove the tab
+    webview.once('tauri://close-requested', () => {
+        openWebviews.delete(label);
+    });
+}
+
+/**
+ * Close a webview window that was opened via openInApp.
+ */
+export function closeWebview(label: string): void {
+    const wv = openWebviews.get(label);
+    if (wv) {
+        wv.close().catch(console.error);
+        openWebviews.delete(label);
+    }
+}
+
+/**
+ * Focus a webview window that was opened via openInApp.
+ */
+export function focusWebview(label: string): void {
+    const wv = openWebviews.get(label);
+    if (wv) {
+        wv.setFocus().catch(console.error);
+    }
 }
 
 /**
