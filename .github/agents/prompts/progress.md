@@ -721,6 +721,125 @@ Found 4 unstaged Rust file changes (`feed_aggregation.rs`, `commands/mod.rs`, `v
 
 ---
 
+## 2026-03-15 — Content Agent: Background Upload + Tiled Mode ✅
+
+### Commit: `e0606a1`
+
+### Summary
+Follow-up to the appearance customization sprint, per direct user request. Two new features:
+1. **Custom background upload** — users can upload their own image files as persistent background presets
+2. **Cover / Tile mode toggle** — switch between full-bleed cover backgrounds and tessellated tile patterns for classic web tile images
+
+### What Was Built
+
+#### 1. Custom Background Upload ✅
+- Green **+ Upload** button with dashed border in the background presets grid
+- Opens native file picker (accepts `image/*`, max 4MB for localStorage safety)
+- Uploaded images stored as base64 data URLs in `userBackgrounds` store array
+- Each upload appears as a thumbnail preset with a red **✕** trash button to remove
+- Uploads persist across sessions via `bytescape-theme-user-bgs` localStorage key
+- Selecting an upload auto-applies it as the active background
+- Trashing the currently-active upload also clears the background
+
+#### 2. Cover / Tile Mode Toggle ✅
+- Segmented **Cover | Tile** button group below background presets
+- **Cover**: scales image to fill screen with `background-size: cover`, `background-attachment: fixed` (default, existing behavior)
+- **Tile**: repeats image across background with `background-size: auto`, `background-repeat: repeat` — ideal for small tessellated web tile patterns
+- Mode applied via `.bg-tiled` CSS class on `<html>` element
+- Mode persists via `bytescape-theme-bg-mode` localStorage key
+
+### Store Changes (`store/index.ts`)
+
+| New Type/Field | Purpose |
+|----------------|---------|
+| `UserBackground` | `{ id, name, dataUrl }` — persisted upload record |
+| `BackgroundMode` | `'cover' \| 'tile'` — display mode |
+| `backgroundMode: BackgroundMode` | Current mode (default: `'cover'`) |
+| `userBackgrounds: UserBackground[]` | Array of saved uploads |
+| `setBackgroundMode(mode)` | Switch cover/tile |
+| `addUserBackground(bg)` | Save new upload |
+| `removeUserBackground(id)` | Delete upload + clear if active |
+
+### Hook Changes (`hooks/useTheme.ts`)
+
+| Addition | Purpose |
+|----------|---------|
+| `BG_MODE_KEY` / `USER_BGS_KEY` | localStorage persistence keys |
+| Mount restore | Restores `backgroundMode` + `userBackgrounds` from localStorage |
+| `backgroundMode` effect | Toggles `.bg-tiled` class on `<html>` + persists |
+| `userBackgrounds` effect | Persists upload array to localStorage |
+| Extended return | All new values/actions exposed to consumers |
+
+### CSS Changes (`App.css`)
+
+```css
+.has-custom-bg.bg-tiled .main-content {
+    background-size: auto, auto, auto;
+    background-repeat: repeat, repeat, repeat;
+    background-attachment: scroll, scroll, scroll;
+    background-position: left top, left top, left top;
+}
+```
+
+### Files Modified (5 files, +306/-2 lines)
+
+| File | Changes |
+|------|---------|
+| `src/store/index.ts` | Added `UserBackground`, `BackgroundMode` types, 3 new state fields, 3 new actions |
+| `src/hooks/useTheme.ts` | 2 new localStorage keys, mount restore logic, 2 new effects, extended return |
+| `src/components/ThemeCustomizer.tsx` | Upload button + user bg thumbnails with trash + Cover/Tile toggle + hidden file input |
+| `src/components/ThemeCustomizer.test.tsx` | 6 new tests (upload button, cover/tile toggle, user bg render/remove, file input) |
+| `src/App.css` | `.has-custom-bg.bg-tiled .main-content` CSS override rule |
+
+### Test Coverage (6 new tests, 20 total for ThemeCustomizer)
+- Renders upload button with green plus and "Upload" label
+- Renders Cover/Tile toggle buttons
+- Switches to tile mode on click
+- Renders user-uploaded backgrounds with trash icon
+- Removes user background on trash click
+- Renders hidden file input with correct type and accept attributes
+
+### Verification
+- `npx tsc --noEmit`: 0 errors
+- `pnpm test -- --run`: 250/250 tests pass (12 test files)
+- `cargo check`: 0 errors (pre-existing warnings only)
+
+---
+
+## Content Agent (Track C) — Sprint Summary for PM
+
+### Commits This Sprint (2026-03-14 to 2026-03-15)
+
+| Commit | Description | Lines |
+|--------|-------------|-------|
+| `ce5e130` | Appearance customization — per-color picker, background presets & custom URL | +745/-4 |
+| `8588d98` | Progress documentation update | +70/-1 |
+| `e0606a1` | Background upload + tiled/cover mode toggle | +306/-2 |
+
+### Total Sprint Output
+- **3 commits**, **+1,121/-7 lines** across **7 files** (2 new, 5 modified)
+- **20 new tests** (ThemeCustomizer), 250 total passing
+- **0 TypeScript errors**, **0 Rust errors**
+
+### What Users Can Now Do
+1. Click any colour swatch in Settings → Appearance to open a colour picker and customize it
+2. Choose from 6 built-in background presets (Aurora, Sunset, Ocean, Warm Mesh, Matrix, Retro Grid)
+3. Upload their own background images (up to 4MB) which persist as saved presets
+4. Delete uploaded backgrounds via a trash button on each thumbnail
+5. Switch between **Cover** mode (full bleed) and **Tile** mode (repeating patterns) for backgrounds
+6. Paste any image/GIF URL as a custom background
+7. Reset individual colours or all customizations at once
+8. All customizations survive theme switches and app restarts (localStorage)
+
+### Awaiting PM Assignment
+Sprint complete. Content Agent is available for next assignment. Suggested next items from roadmap:
+- **C4.1** Drag-and-Drop Media onto ComposeBox
+- **C2.2** GIF Picker (Tenor API)
+- **C2.3** Emoji Picker
+- **C5.1** "Post to Wall" UX (syndicate button on vault items)
+
+---
+
 ## 2026-03-15 — Backend Agent: Video Playback Fix + Feed Performance Optimization
 
 ### Session Overview
