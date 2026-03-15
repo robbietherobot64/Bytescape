@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { useEffect, useRef, useState } from 'react';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { useNavStore } from '../store';
 
 interface WebViewScreenProps {
     url: string;
@@ -8,182 +9,180 @@ interface WebViewScreenProps {
     isActive: boolean;
 }
 
-/** Domains known to block iframing via X-Frame-Options / CSP frame-ancestors */
-const IFRAME_BLOCKED_DOMAINS = [
-    'bsky.app',
-    'twitter.com',
-    'x.com',
-    'facebook.com',
-    'instagram.com',
-    'linkedin.com',
-    'github.com',
-    'reddit.com',
-    'youtube.com',
-    'tiktok.com',
-    'threads.net',
-    'mastodon.social',
-];
-
-function isBlockedDomain(url: string): boolean {
-    try {
-        const hostname = new URL(url).hostname;
-        return IFRAME_BLOCKED_DOMAINS.some(
-            d => hostname === d || hostname.endsWith('.' + d)
-        );
-    } catch {
-        return false;
-    }
-}
+let windowCounter = 0;
 
 /**
- * In-app browser tab — renders an external URL inside an iframe.
+ * In-app browser tab — opens a native OS browser window for the URL.
  *
- * Sites known to block iframing are detected immediately and show
- * an "Open in browser" prompt. Other sites load in an iframe with
- * a post-load content check.
+ * Uses Tauri's WebviewWindow API which creates a real browser window
+ * backed by the OS webview engine (WebKitGTK on Linux, WebView2 on Windows,
+ * WKWebView on macOS). This loads ANY URL — no iframe restrictions.
  *
- * Requires `frame-src https: http:` in the Tauri CSP config.
+ * The tab in the main app tracks the window lifecycle:
+ * - Mount → creates the window
+ * - Unmount (tab closed) → destroys the window
+ * - User closes the window → tab is removed
+ * - Tab becomes active → window is focused
  */
-export function WebViewScreen({ url }: WebViewScreenProps) {
-    const blocked = isBlockedDomain(url);
-    const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
-        blocked ? 'error' : 'loading'
-    );
-    const iframeRef = useRef<HTMLIFrameElement>(null);
+export function WebViewScreen({ url, title, isActive }: WebViewScreenProps) {
+    const windowRef = useRef<WebviewWindow | null>(null);
+    const labelRef = useRef<string>(`browser-${++windowCounter}`);
+    const isCreatingRef = useRef(false);
+    const destroyedRef = useRef(false);
+    const [status, setStatus] = useState<'creating' | 'open' | 'error'>('creating');
+    const [errorMsg, setErrorMsg] = useState('');
 
-    // For non-blocked sites, set a timeout — if onLoad hasn't set 'ready'
-    // after 10s, show error (likely silently blocked).
+    // Create the native window on mount
     useEffect(() => {
-        if (blocked) return;
-        const timer = setTimeout(() => {
-            setStatus(prev => prev === 'loading' ? 'error' : prev);
-        }, 10000);
-        return () => clearTimeout(timer);
-    }, [url, blocked]);
+        const label = labelRef.current;
+        destroyedRef.current = false;
+        let unlistenClose: (() => void) | null = null;
 
-    const handleLoad = () => {
-        if (blocked) return;
-        // X-Frame-Options blocks still fire onLoad with a blank page.
-        // Try to detect by reading contentWindow.location.
-        try {
-            const win = iframeRef.current?.contentWindow;
-            if (win) {
-                try {
-                    const loc = win.location.href;
-                    if (loc === 'about:blank') {
-                        setStatus('error');
-                        return;
+        async function createWindow() {
+            if (isCreatingRef.current) return;
+            isCreatingRef.current = true;
+
+            try {
+                const displayTitle = title || (() => {
+                    try {
+                        return new URL(url).hostname;
+                    } catch {
+                        return 'Browser';
                     }
-                } catch {
-                    // Cross-origin error = site actually loaded (good)
+                })();
+
+                const wvw = new WebviewWindow(label, {
+                    url,
+                    title: `${displayTitle} — Bytescape`,
+                    width: 1024,
+                    height: 768,
+                    center: true,
+                    focus: true,
+                });
+
+                // Wait for creation
+                await new Promise<void>((resolve, reject) => {
+                    wvw.once('tauri://created', () => resolve());
+                    wvw.once('tauri://error', (e) => {
+                        const msg = typeof e.payload === 'string'
+                            ? e.payload
+                            : (e.payload as { message?: string })?.message || 'Failed to create browser window';
+                        reject(new Error(msg));
+                    });
+                });
+
+                if (destroyedRef.current) {
+                    wvw.destroy().catch(() => {});
+                    return;
                 }
+
+                windowRef.current = wvw;
+                setStatus('open');
+
+                // Listen for the user closing the native window → close the tab
+                unlistenClose = await wvw.onCloseRequested(async () => {
+                    if (destroyedRef.current) return;
+                    destroyedRef.current = true;
+                    windowRef.current = null;
+                    // Find and close the tab that owns this webview
+                    const navState = useNavStore.getState();
+                    const tab = navState.tabs.find(
+                        t => t.screen === 'webview' && t.meta?.url === url
+                    );
+                    if (tab) {
+                        navState.closeTab(tab.id);
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to create browser window:', err);
+                if (!destroyedRef.current) {
+                    setStatus('error');
+                    setErrorMsg(err instanceof Error ? err.message : String(err));
+                }
+            } finally {
+                isCreatingRef.current = false;
             }
-        } catch {
-            // ignore
         }
-        setStatus('ready');
-    };
 
-    const handleError = () => {
-        setStatus('error');
-    };
+        createWindow();
 
-    const handleOpenExternal = async () => {
-        try {
-            await openUrl(url);
-        } catch {
-            window.open(url, '_blank');
+        return () => {
+            destroyedRef.current = true;
+            if (unlistenClose) unlistenClose();
+            const wvw = windowRef.current;
+            if (wvw) {
+                wvw.destroy().catch(() => {});
+                windowRef.current = null;
+            }
+        };
+    }, [url, title]);
+
+    // Focus the window when the tab becomes active
+    useEffect(() => {
+        if (isActive && windowRef.current) {
+            windowRef.current.setFocus().catch(() => {});
         }
-    };
+    }, [isActive]);
 
     return (
         <div className="webview-container">
-            {/* Loading indicator */}
-            {status === 'loading' && (
-                <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    position: 'absolute',
-                    inset: 0,
-                    color: 'var(--text-secondary)',
-                    gap: '12px',
-                    zIndex: 1,
-                    background: 'var(--bg-primary)',
-                } as React.CSSProperties}>
-                    <div style={{ fontSize: '16px' } as React.CSSProperties}>Loading…</div>
-                </div>
-            )}
-
-            {/* Error state — site blocks iframing */}
-            {status === 'error' && (
-                <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    position: 'absolute',
-                    inset: 0,
-                    color: 'var(--text-secondary)',
-                    gap: '16px',
-                    padding: '24px',
-                    textAlign: 'center',
-                    background: 'var(--bg-primary)',
-                    zIndex: 1,
-                } as React.CSSProperties}>
-                    <div style={{ fontSize: '18px', color: 'var(--text-primary)' } as React.CSSProperties}>
-                        This site can't be displayed in-app
-                    </div>
-                    <div style={{
-                        fontSize: '12px',
-                        color: 'var(--text-muted)',
-                        maxWidth: '500px',
-                        wordBreak: 'break-word',
-                    } as React.CSSProperties}>
-                        {url}
-                    </div>
-                    <div style={{
-                        fontSize: '12px',
-                        color: 'var(--text-muted)',
-                    } as React.CSSProperties}>
-                        The site blocks embedding. Click below to open it in your browser.
-                    </div>
-                    <button
-                        onClick={handleOpenExternal}
-                        style={{
-                            padding: '8px 20px',
-                            background: 'var(--accent-purple)',
-                            color: 'var(--text-primary)',
-                            border: 'none',
-                            borderRadius: 'var(--border-radius)',
-                            cursor: 'pointer',
-                            fontSize: '13px',
-                        } as React.CSSProperties}
-                    >
-                        Open in browser
-                    </button>
-                </div>
-            )}
-
-            {/* The iframe — only rendered for non-blocked sites */}
-            {!blocked && (
-                <iframe
-                    ref={iframeRef}
-                    src={url}
-                    onLoad={handleLoad}
-                    onError={handleError}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                    style={{
-                        width: '100%',
-                        flex: 1,
-                        border: 'none',
-                        background: '#fff',
-                        display: status === 'error' ? 'none' : 'block',
-                    } as React.CSSProperties}
-                    title={url}
-                />
-            )}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                color: 'var(--text-secondary)',
+                gap: '16px',
+                padding: '24px',
+                textAlign: 'center',
+            } as React.CSSProperties}>
+                {status === 'creating' && (
+                    <>
+                        <div style={{ fontSize: '24px' } as React.CSSProperties}>🌐</div>
+                        <div style={{ fontSize: '14px' } as React.CSSProperties}>Opening browser window…</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
+                            {url}
+                        </div>
+                    </>
+                )}
+                {status === 'open' && (
+                    <>
+                        <div style={{ fontSize: '24px' } as React.CSSProperties}>🌐</div>
+                        <div style={{ fontSize: '14px', color: 'var(--text-primary)' } as React.CSSProperties}>
+                            Browsing in a separate window
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
+                            {url}
+                        </div>
+                        <button
+                            onClick={() => windowRef.current?.setFocus().catch(() => {})}
+                            style={{
+                                padding: '8px 20px',
+                                background: 'var(--accent-purple)',
+                                color: 'var(--text-primary)',
+                                border: 'none',
+                                borderRadius: 'var(--border-radius)',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                            } as React.CSSProperties}
+                        >
+                            Focus window
+                        </button>
+                    </>
+                )}
+                {status === 'error' && (
+                    <>
+                        <div style={{ fontSize: '24px' } as React.CSSProperties}>⚠️</div>
+                        <div style={{ fontSize: '14px', color: 'var(--accent-red, #ff6b6b)' } as React.CSSProperties}>
+                            Failed to open browser window
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
+                            {errorMsg}
+                        </div>
+                    </>
+                )}
+            </div>
         </div>
     );
 }
