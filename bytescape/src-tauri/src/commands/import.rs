@@ -1896,15 +1896,34 @@ pub async fn send_bsky_dm(
     }))
 }
 
-/// List saved Bluesky custom feeds.
+/// List saved Bluesky custom feeds (cached for 5 minutes).
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
-    if state.is_oauth_session() {
-        // OAuth path: use DPoP-authenticated XRPC helpers
-        return list_saved_feeds_oauth(&state).await;
+    use std::time::Duration;
+    
+    // Check feed cache first (5 minute TTL — saved feeds rarely change)
+    let cache_key = "saved_feeds".to_string();
+    if let Some(cached) = state.feed_cache.get(&cache_key, Duration::from_secs(300)).await {
+        if let Ok(feeds) = serde_json::from_value::<Vec<crate::connectors::bluesky::GeneratorView>>(cached) {
+            return Ok(feeds);
+        }
     }
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+    
+    let result = if state.is_oauth_session() {
+        list_saved_feeds_oauth(&state).await
+    } else {
+        let access_jwt = state.get_fresh_access_jwt().await?;
+        crate::connectors::bluesky::get_saved_feeds(&access_jwt).await
+    };
+    
+    // Cache successful results
+    if let Ok(ref feeds) = result {
+        if let Ok(json) = serde_json::to_value(feeds) {
+            state.feed_cache.set(&cache_key, json).await;
+        }
+    }
+    
+    result
 }
 
 /// OAuth-aware implementation of saved feeds fetching.

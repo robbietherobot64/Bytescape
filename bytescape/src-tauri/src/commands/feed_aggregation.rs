@@ -201,6 +201,10 @@ pub async fn get_timeline_unified(
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
 
+    // Feed cache TTL — 30 seconds balances freshness vs speed.
+    // The frontend has its own 2-minute stale-while-revalidate layer on top.
+    let cache_ttl = std::time::Duration::from_secs(30);
+
     // Load session DID upfront (keychain is not Clone)
     let owner_did = state.keychain.load_session()
         .ok()
@@ -223,10 +227,43 @@ pub async fn get_timeline_unified(
         Vec::new()
     };
 
-    // ── 1 + 2. Live timeline + custom feeds — in parallel WITH vault ──
+    // ── 1 + 2. Live timeline + custom feeds — with feed cache ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
-    let timeline_fut = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone());
+    // Build a cache key incorporating cursor/offset to avoid serving stale pages
+    let cache_key_timeline = format!("timeline:{}", cursor.as_deref().unwrap_or("first"));
+
+    // Try to serve timeline from cache (avoids Bluesky API round-trip)
+    let cached_timeline = if cursor.is_none() {
+        state.feed_cache.get(&cache_key_timeline, cache_ttl).await
+    } else {
+        None // don't cache paginated requests
+    };
+
+    let timeline_fut = async {
+        if let Some(cached) = cached_timeline {
+            // Cache hit — deserialize cached response
+            #[cfg(debug_assertions)]
+            println!("get_timeline_unified: timeline CACHE HIT");
+            if let Ok(posts) = serde_json::from_value::<Vec<BlueskyImportedPost>>(cached.get("posts").cloned().unwrap_or_default()) {
+                let nc = cached.get("cursor").and_then(|c| c.as_str()).map(|s| s.to_string());
+                return Ok((posts, nc));
+            }
+        }
+        // Cache miss — hit the network
+        let result = crate::commands::import::get_timeline(state.clone(), limit, cursor.clone()).await;
+        // Cache the result for next time (fire-and-forget, errors are fine)
+        if cursor.is_none() {
+            if let Ok((ref posts, ref nc)) = result {
+                let cache_val = serde_json::json!({
+                    "posts": posts,
+                    "cursor": nc,
+                });
+                state.feed_cache.set(&cache_key_timeline, cache_val).await;
+            }
+        }
+        result
+    };
 
     if has_custom {
         let custom_fut = crate::commands::import::get_unified_feed(

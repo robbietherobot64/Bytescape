@@ -37,6 +37,7 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        self.invalidate_header_cache().await;
         Ok(true) // was new
     }
 
@@ -95,6 +96,7 @@ impl DbManager {
             parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        self.invalidate_header_cache().await;
         Ok(())
     }
 
@@ -280,24 +282,13 @@ impl DbManager {
             }
         }
         write_txn.commit().map_err(|e| e.to_string())?;
+        self.invalidate_header_cache().await;
 
         Ok(keys_to_delete.len())
     }
 
     pub async fn list_all_item_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
-        let db = self.db.read().await;
-        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
-        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
-
-        let mut items = Vec::new();
-        for item in table.iter().map_err(|e| e.to_string())? {
-            let (_key, value) = item.map_err(|e| e.to_string())?;
-            let item_struct: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            items.push(item_struct.header());
-        }
-
-        items.sort_by(|a, b| b.effective_timestamp.cmp(&a.effective_timestamp));
-        Ok(items)
+        self.get_cached_headers().await
     }
 
     pub async fn list_items_filtered(&self, filter_did: Option<&str>, exclude: bool) -> Result<Vec<BytescapeItem>, String> {
@@ -353,9 +344,29 @@ impl DbManager {
         Ok(headers)
     }
 
-    /// Get all headers from the database.
+    /// Get all headers from the database, using the in-memory cache if available.
+    /// The cache is invalidated whenever an item is saved or deleted.
     async fn get_cached_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
-        self.build_all_headers().await
+        // Fast path: return cached headers if available
+        {
+            let cache = self.header_cache.read().await;
+            if let Some(ref headers) = *cache {
+                return Ok(headers.clone());
+            }
+        }
+        // Slow path: build from DB and store in cache
+        let headers = self.build_all_headers().await?;
+        {
+            let mut cache = self.header_cache.write().await;
+            *cache = Some(headers.clone());
+        }
+        Ok(headers)
+    }
+
+    /// Invalidate the header cache. Call this after any write to ITEMS_TABLE.
+    pub(crate) async fn invalidate_header_cache(&self) {
+        let mut cache = self.header_cache.write().await;
+        *cache = None;
     }
 
     pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {

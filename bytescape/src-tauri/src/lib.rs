@@ -32,6 +32,53 @@ pub mod oauth;
 mod traffic;
 use traffic::TrafficController;
 
+/// Cached API response with TTL.
+#[derive(Clone)]
+pub struct CachedResponse<T: Clone> {
+    pub data: T,
+    pub fetched_at: std::time::Instant,
+}
+
+impl<T: Clone> CachedResponse<T> {
+    pub fn new(data: T) -> Self {
+        Self { data, fetched_at: std::time::Instant::now() }
+    }
+    pub fn is_fresh(&self, max_age: std::time::Duration) -> bool {
+        self.fetched_at.elapsed() < max_age
+    }
+}
+
+/// In-memory cache for feed API responses.
+/// Keyed by cache slot name, holds serialized JSON to avoid type-parameter sprawl.
+pub struct FeedCache {
+    entries: tokio::sync::RwLock<std::collections::HashMap<String, CachedResponse<serde_json::Value>>>,
+}
+
+impl FeedCache {
+    pub fn new() -> Self {
+        Self { entries: tokio::sync::RwLock::new(std::collections::HashMap::new()) }
+    }
+
+    /// Get a cached JSON value if it exists and is younger than `max_age`.
+    pub async fn get(&self, key: &str, max_age: std::time::Duration) -> Option<serde_json::Value> {
+        let map = self.entries.read().await;
+        map.get(key).filter(|c| c.is_fresh(max_age)).map(|c| c.data.clone())
+    }
+
+    /// Store a JSON value in the cache.
+    pub async fn set(&self, key: &str, value: serde_json::Value) {
+        let mut map = self.entries.write().await;
+        map.insert(key.to_string(), CachedResponse::new(value));
+    }
+
+    /// Invalidate a specific key.
+    #[allow(dead_code)]
+    pub async fn invalidate(&self, key: &str) {
+        let mut map = self.entries.write().await;
+        map.remove(key);
+    }
+}
+
 /// Application-wide state shared across all commands
 pub struct AppState {
     pub app_handle: AppHandle,
@@ -51,6 +98,9 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Guard to ensure `restore_session` runs at most once per app lifetime.
     pub session_restored: AtomicBool,
+    /// In-memory cache for feed API responses (timeline, saved feeds, etc.).
+    /// TTL-based: entries expire after 30s to balance freshness vs speed.
+    pub feed_cache: FeedCache,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -583,8 +633,14 @@ pub fn run() {
                 pending_import: Mutex::new(None),
                 media_port,
                 oauth_manager,
-                http_client: reqwest::Client::new(),
+                http_client: reqwest::Client::builder()
+                    .pool_max_idle_per_host(4)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90))
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new()),
                 session_restored: AtomicBool::new(false),
+                feed_cache: FeedCache::new(),
             };
 
             app.manage(state);

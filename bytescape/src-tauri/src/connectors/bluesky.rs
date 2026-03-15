@@ -7,6 +7,22 @@ use std::sync::Arc;
 use crate::connectors::Source;
 use crate::sync::SyncManager;
 
+/// Module-level shared HTTP client.
+///
+/// reqwest::Client internally uses connection pooling (hyper's pool).
+/// Reusing a single client across all Bluesky API calls avoids:
+/// - Redundant TLS handshakes (each costs ~100-300ms)
+/// - Redundant DNS lookups
+/// - Creating new connection pools per call
+static SHARED_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
+    Client::builder()
+        .pool_max_idle_per_host(6)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+});
+
 /// The public, unauthenticated Bluesky AppView API.
 ///
 /// `bsky.social/xrpc` now requires authentication for all endpoints.
@@ -472,7 +488,7 @@ pub async fn import_bluesky_timeline(
     _sync_manager: Option<Arc<SyncManager>>,
     _download_media: bool,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::new();
+    let client = SHARED_CLIENT.clone();
     let token = access_jwt.trim();
     let limit = limit.unwrap_or(50);
 
@@ -545,10 +561,7 @@ pub async fn import_bluesky_feed(
     per_page_limit: Option<u8>,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
     std::fs::create_dir_all(&media_dir)
         .map_err(|e| format!("Failed to create media dir: {}", e))?;
 
@@ -995,10 +1008,7 @@ pub async fn search_posts(
     cursor: Option<String>,
     required_tags: Option<Vec<String>>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
 
     // Use the public search endpoint (assuming app.bsky.feed.searchPosts)
     // Note: searchPosts usually takes 'q' parameter.
@@ -1144,10 +1154,7 @@ pub async fn get_follows(
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<ProfileView>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
     let mut url = format!("{}/app.bsky.graph.getFollows?actor={}&limit={}", PUBLIC_XRPC, actor, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", c));
@@ -1176,10 +1183,7 @@ pub async fn get_follows(
 pub async fn get_saved_feeds(
     access_jwt: &str,
 ) -> Result<Vec<GeneratorView>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
     
     // 1. Get Preferences (try PDS first for authenticated user prefs, then public endpoint)
     let token = access_jwt.trim();
@@ -1337,10 +1341,7 @@ pub async fn get_custom_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
 
     let encoded_feed = urlencoding::encode(feed_uri);
     let mut url = format!("{}/app.bsky.feed.getFeed?feed={}&limit={}", AUTH_XRPC, encoded_feed, limit);
@@ -1380,10 +1381,7 @@ pub async fn get_actor_likes(
     limit: u8,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
     let mut url = format!("{}/app.bsky.feed.getActorLikes?actor={}&limit={}", AUTH_XRPC, actor, limit);
     if let Some(c) = cursor {
         url.push_str(&format!("&cursor={}", c));
@@ -1669,10 +1667,7 @@ pub async fn import_bluesky_likes(
     app_handle: &AppHandle,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    let client = SHARED_CLIENT.clone();
     std::fs::create_dir_all(&media_dir)
         .map_err(|e| format!("Failed to create media dir: {}", e))?;
 
@@ -1898,7 +1893,7 @@ pub async fn import_follows_posts(
     app_handle: &AppHandle,
     sync_manager: Option<Arc<SyncManager>>,
 ) -> Result<Vec<BlueskyImportedPost>, String> {
-    let client = Client::new();
+    let client = SHARED_CLIENT.clone();
     
     // 1. Get all follows
     let _ = app_handle.emit("import-progress", ImportProgress {
@@ -1951,7 +1946,7 @@ pub async fn import_bluesky_follows_as_contacts(
     db_manager: Arc<tokio::sync::RwLock<Option<crate::db::DbManager>>>,
     _app_handle: &AppHandle,
 ) -> Result<usize, String> {
-    let client = Client::new();
+    let client = SHARED_CLIENT.clone();
     let follows = get_all_follows(&client, actor, access_jwt).await?;
     
     let db_guard = db_manager.read().await;
@@ -1995,7 +1990,7 @@ impl BlueskyClient {
     /// to ensure the token is valid and auto-refreshed.
     pub fn with_jwt(access_jwt: &str) -> Self {
         Self {
-            http: Client::new(),
+            http: SHARED_CLIENT.clone(),
             access_jwt: access_jwt.to_string(),
         }
     }
@@ -2010,7 +2005,7 @@ impl BlueskyClient {
             .unwrap_or_default();
 
         Self {
-            http: Client::new(),
+            http: SHARED_CLIENT.clone(),
             access_jwt,
         }
     }

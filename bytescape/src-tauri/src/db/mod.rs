@@ -28,6 +28,9 @@ pub mod peers;
 #[derive(Clone)]
 pub struct DbManager {
     pub(crate) db: Arc<RwLock<Database>>,
+    /// Cached vault item headers — avoids full table scan + JSON deserialization
+    /// on every feed load. Invalidated on any write (save_item, delete, etc.).
+    pub(crate) header_cache: Arc<RwLock<Option<Vec<BytescapeItemHeader>>>>,
 }
 
 impl DbManager {
@@ -55,6 +58,7 @@ impl DbManager {
 
         Ok(Self {
             db: Arc::new(RwLock::new(db)),
+            header_cache: Arc::new(RwLock::new(None)),
         })
     }
 
