@@ -214,6 +214,10 @@ export function buildUrl(screen: Screen, params?: {
             return 'byte://login';
         case 'archive':
             return 'byte://feed';
+        case 'webview':
+            // Webview tabs display their actual URL, not a byte:// URL.
+            // The real URL is passed separately via tab meta.
+            return 'byte://browser';
         default:
             return 'byte://feed';
     }
@@ -377,11 +381,18 @@ export const useLocationStore = create<LocationState>((set, get) => ({
         const navState = useNavStore.getState();
         const chatState = useChatStore.getState();
 
-        const url = buildUrl(navState.screen, {
-            feedTab: navState.feedActiveTab,
-            convoId: chatState.selectedConvoId,
-            peerNodeId: navState.peerProfileNodeId,
-        });
+        // For webview tabs, show the actual external URL instead of byte://
+        let url: string;
+        if (navState.screen === 'webview') {
+            const activeTab = navState.tabs.find(t => t.id === navState.activeTabId);
+            url = activeTab?.meta?.url || 'byte://browser';
+        } else {
+            url = buildUrl(navState.screen, {
+                feedTab: navState.feedActiveTab,
+                convoId: chatState.selectedConvoId,
+                peerNodeId: navState.peerProfileNodeId,
+            });
+        }
 
         const state = get();
         if (url !== state.currentUrl) {

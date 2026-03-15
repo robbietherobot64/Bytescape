@@ -21,6 +21,7 @@ import {
     BsSearch, BsGlobe, BsPeopleFill
 } from 'react-icons/bs';
 import { useLocationStore, resolveUrl } from '../hooks/useLocation';
+import { openInApp } from '../utils/openInApp';
 
 interface OmnibarProps {
     /** Called when a plain text search is submitted (not a URL) */
@@ -83,6 +84,9 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     // Determine content origin icon
     const getOriginIcon = () => {
+        if (currentUrl.startsWith('http://') || currentUrl.startsWith('https://')) {
+            return <BsGlobe style={{ fontSize: 12, color: 'var(--accent-blue)' }} title="External Site" />;
+        }
         if (currentUrl.startsWith('byte://peer/')) {
             return <BsPeopleFill style={{ fontSize: 12, color: '#50fa7b' }} title="Peer Content (P2P)" />;
         }
@@ -117,6 +121,14 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
         e.preventDefault();
         const value = inputValue.trim();
         if (!value) return;
+
+        // Check if it's an external URL (http/https) — open as in-app browser tab
+        if (value.startsWith('http://') || value.startsWith('https://')) {
+            openInApp(value);
+            inputRef.current?.blur();
+            setShowSuggestions(false);
+            return;
+        }
 
         // Check if it's a valid byte:// URL or path
         const isUrl = value.startsWith('byte://') ||

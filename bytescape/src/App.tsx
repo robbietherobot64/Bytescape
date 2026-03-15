@@ -89,7 +89,7 @@ function App() {
   // and push onto the navigation history stack.
   useEffect(() => {
     useLocationStore.getState().syncFromNavStore();
-  }, [screen, feedActiveTab, peerProfileNodeId]);
+  }, [screen, feedActiveTab, peerProfileNodeId, activeTabId]);
 
   // ─── Global link interceptor: route all <a target="_blank"> to in-app tabs ───
   useEffect(() => {
@@ -566,7 +566,7 @@ function App() {
       case 'vault':
         return <VaultScreen auth={auth} />;
       case 'webview':
-        return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} />;
+        return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} isActive={tab.id === activeTabId} />;
       case 'settings':
         return (
           <SettingsScreen
