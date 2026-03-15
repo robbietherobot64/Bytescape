@@ -1,5 +1,7 @@
 # Bytescape Technical Specification
 
+**NEEDS MAJOR REVISIONS**
+
 This document aggregates the core technical specifications for Bytescape: Architecture, System Design, Storage Boundaries, and Security.
 
 
