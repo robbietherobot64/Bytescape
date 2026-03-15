@@ -17,15 +17,14 @@ let webviewCounter = 0;
  * In-app browser tab — renders an external URL using a native Tauri webview
  * overlay positioned inside the content area.
  *
- * No toolbar or URL bar — the existing Omnibar shows the URL.
- * Works just like opening a new tab in a real browser: the tab appears
- * at the top, and the content fills the screen.
- *
  * Uses Tauri's native Webview API (not an iframe) so all sites load
  * properly, including those with X-Frame-Options restrictions like bsky.app.
  *
  * Requires the `unstable` feature flag on the tauri crate in Cargo.toml
  * to enable multi-webview support.
+ *
+ * On Linux (WebKitGTK), the invoke for webview creation may hang without
+ * resolving, so we poll with Webview.getByLabel() as a fallback.
  */
 export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +52,7 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
     useEffect(() => {
         const label = labelRef.current;
         let destroyed = false;
+        let pollTimer: ReturnType<typeof setInterval> | null = null;
 
         async function create() {
             if (isCreatingRef.current) return;
@@ -96,9 +96,10 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
                     focus: true,
                 });
 
-                // Listen for creation success/failure
+                // Listen for creation success/failure (works when invoke resolves)
                 wv.once('tauri://created', () => {
                     if (destroyed) return;
+                    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                     setStatus('ready');
                     if (!isActiveRef.current) {
                         wv.hide().catch(() => {});
@@ -107,6 +108,7 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
 
                 wv.once('tauri://error', (e) => {
                     if (destroyed) return;
+                    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
                     const msg = typeof e.payload === 'string'
                         ? e.payload
                         : (e.payload as { message?: string })?.message || 'Unknown error creating webview';
@@ -123,14 +125,39 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
 
                 webviewRef.current = wv;
 
-                // If not active right now, hide after a brief delay for init
-                if (!isActiveRef.current) {
-                    setTimeout(() => {
-                        if (!destroyed && webviewRef.current) {
-                            webviewRef.current.hide().catch(() => {});
+                // Fallback: On Linux, the invoke('plugin:webview|create_webview')
+                // may hang without resolving (neither created nor error fires).
+                // Poll with Webview.getByLabel() to detect when it's actually ready.
+                let pollCount = 0;
+                pollTimer = setInterval(async () => {
+                    pollCount++;
+                    if (destroyed) {
+                        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+                        return;
+                    }
+                    try {
+                        const found = await Webview.getByLabel(label);
+                        if (found) {
+                            // Webview exists — it was created successfully
+                            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+                            setStatus('ready');
+                            if (!isActiveRef.current) {
+                                wv.hide().catch(() => {});
+                            } else {
+                                syncPosition();
+                            }
                         }
-                    }, 300);
-                }
+                    } catch {
+                        // getByLabel failed — ignore, keep polling
+                    }
+                    // Give up after 15 seconds
+                    if (pollCount >= 30) {
+                        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+                        setStatus('error');
+                        setErrorMsg('Webview creation timed out. Try opening in your browser instead.');
+                    }
+                }, 500);
+
             } catch (err) {
                 console.error('Failed to create native webview:', err);
                 if (!destroyed) {
@@ -145,6 +172,7 @@ export function WebViewScreen({ url, isActive }: WebViewScreenProps) {
 
         return () => {
             destroyed = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
             const wv = webviewRef.current;
             if (wv) {
                 wv.close().catch(() => {});
