@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { useEffect, useRef, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useNavStore } from '../store';
+import { openInApp } from '../utils/openInApp';
 
 interface WebViewScreenProps {
     url: string;
@@ -9,180 +11,163 @@ interface WebViewScreenProps {
     isActive: boolean;
 }
 
-let windowCounter = 0;
+let idCounter = 0;
 
 /**
- * In-app browser tab — opens a native OS browser window for the URL.
+ * In-app browser tab backed by a native webview.
  *
- * Uses Tauri's WebviewWindow API which creates a real browser window
- * backed by the OS webview engine (WebKitGTK on Linux, WebView2 on Windows,
- * WKWebView on macOS). This loads ANY URL — no iframe restrictions.
+ * Creates a real OS webview (WebKitGTK/WebView2/WKWebView) within the main
+ * window, positioned over the React content area. This renders ANY URL with
+ * no iframe restrictions — just like a real browser tab.
  *
- * The tab in the main app tracks the window lifecycle:
- * - Mount → creates the window
- * - Unmount (tab closed) → destroys the window
- * - User closes the window → tab is removed
- * - Tab becomes active → window is focused
+ * Lifecycle:
+ * - First activation → creates the native webview via Rust command
+ * - Tab switch away → hides the webview (moves off-screen, preserves state)
+ * - Tab switch back → restores the webview position/size
+ * - Window resize → updates webview bounds via ResizeObserver
+ * - Tab close (unmount) → destroys the native webview
  */
-export function WebViewScreen({ url, title, isActive }: WebViewScreenProps) {
-    const windowRef = useRef<WebviewWindow | null>(null);
-    const labelRef = useRef<string>(`browser-${++windowCounter}`);
-    const isCreatingRef = useRef(false);
+export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const labelRef = useRef(`browser-${++idCounter}`);
+    const createdRef = useRef(false);
     const destroyedRef = useRef(false);
-    const [status, setStatus] = useState<'creating' | 'open' | 'error'>('creating');
-    const [errorMsg, setErrorMsg] = useState('');
+    const isActiveRef = useRef(isActive);
+    isActiveRef.current = isActive;
 
-    // Create the native window on mount
+    /** Measure the container and sync the native webview to match. */
+    const syncBounds = useCallback(async () => {
+        if (!containerRef.current || destroyedRef.current || !createdRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
+        try {
+            await invoke('browser_set_bounds', {
+                label: labelRef.current,
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+            });
+        } catch (err) {
+            console.error('[WebView] set_bounds:', err);
+        }
+    }, []);
+
+    // ─── Create / Show / Hide based on isActive ───
+    useEffect(() => {
+        if (destroyedRef.current) return;
+
+        if (isActive) {
+            if (!createdRef.current) {
+                // First activation: create the native webview
+                const create = async () => {
+                    const el = containerRef.current;
+                    if (!el) return;
+
+                    // Wait one frame for layout to settle
+                    await new Promise<void>(r => requestAnimationFrame(() => r()));
+                    if (destroyedRef.current) return;
+
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width < 1 || rect.height < 1) return;
+
+                    try {
+                        await invoke('browser_create', {
+                            label: labelRef.current,
+                            url,
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        });
+                        createdRef.current = true;
+
+                        // If the user switched away during creation, hide immediately
+                        if (!isActiveRef.current) {
+                            invoke('browser_hide', { label: labelRef.current }).catch(() => {});
+                        }
+                    } catch (err) {
+                        console.error('[WebView] create error:', err);
+                    }
+                };
+                create();
+            } else {
+                // Already created: restore position/size (show)
+                requestAnimationFrame(() => syncBounds());
+            }
+        } else if (createdRef.current) {
+            // Tab is inactive: hide the webview (move off-screen)
+            invoke('browser_hide', { label: labelRef.current }).catch(() => {});
+        }
+    }, [isActive, url, syncBounds]);
+
+    // ─── Track container size changes ───
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+
+        const observer = new ResizeObserver(() => {
+            if (isActiveRef.current && createdRef.current) {
+                syncBounds();
+            }
+        });
+        observer.observe(el);
+
+        return () => observer.disconnect();
+    }, [syncBounds]);
+
+    // ─── Listen for title changes from the native webview ───
     useEffect(() => {
         const label = labelRef.current;
-        destroyedRef.current = false;
-        let unlistenClose: (() => void) | null = null;
+        let unlisten: (() => void) | null = null;
 
-        async function createWindow() {
-            if (isCreatingRef.current) return;
-            isCreatingRef.current = true;
-
-            try {
-                const displayTitle = title || (() => {
-                    try {
-                        return new URL(url).hostname;
-                    } catch {
-                        return 'Browser';
-                    }
-                })();
-
-                const wvw = new WebviewWindow(label, {
-                    url,
-                    title: `${displayTitle} — Bytescape`,
-                    width: 1024,
-                    height: 768,
-                    center: true,
-                    focus: true,
-                });
-
-                // Wait for creation
-                await new Promise<void>((resolve, reject) => {
-                    wvw.once('tauri://created', () => resolve());
-                    wvw.once('tauri://error', (e) => {
-                        const msg = typeof e.payload === 'string'
-                            ? e.payload
-                            : (e.payload as { message?: string })?.message || 'Failed to create browser window';
-                        reject(new Error(msg));
-                    });
-                });
-
-                if (destroyedRef.current) {
-                    wvw.destroy().catch(() => {});
-                    return;
-                }
-
-                windowRef.current = wvw;
-                setStatus('open');
-
-                // Listen for the user closing the native window → close the tab
-                unlistenClose = await wvw.onCloseRequested(async () => {
-                    if (destroyedRef.current) return;
-                    destroyedRef.current = true;
-                    windowRef.current = null;
-                    // Find and close the tab that owns this webview
-                    const navState = useNavStore.getState();
-                    const tab = navState.tabs.find(
-                        t => t.screen === 'webview' && t.meta?.url === url
-                    );
-                    if (tab) {
-                        navState.closeTab(tab.id);
-                    }
-                });
-            } catch (err) {
-                console.error('Failed to create browser window:', err);
-                if (!destroyedRef.current) {
-                    setStatus('error');
-                    setErrorMsg(err instanceof Error ? err.message : String(err));
-                }
-            } finally {
-                isCreatingRef.current = false;
+        listen<string>(`browser-title-${label}`, (event) => {
+            const newTitle = event.payload;
+            if (!newTitle) return;
+            // Update the tab label in the nav store
+            const nav = useNavStore.getState();
+            const tab = nav.tabs.find(
+                t => t.screen === 'webview' && t.meta?.url === url
+            );
+            if (tab && nav.updateTabLabel) {
+                nav.updateTabLabel(tab.id, newTitle);
             }
-        }
+        }).then(fn => { unlisten = fn; });
 
-        createWindow();
+        return () => { unlisten?.(); };
+    }, [url]);
 
+    // ─── Listen for "open in new tab" from links clicked in the webview ───
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+
+        listen<string>('browser-new-tab', (event) => {
+            openInApp(event.payload);
+        }).then(fn => { unlisten = fn; });
+
+        return () => { unlisten?.(); };
+    }, []);
+
+    // ─── Cleanup: destroy native webview on unmount ───
+    useEffect(() => {
+        const label = labelRef.current;
         return () => {
             destroyedRef.current = true;
-            if (unlistenClose) unlistenClose();
-            const wvw = windowRef.current;
-            if (wvw) {
-                wvw.destroy().catch(() => {});
-                windowRef.current = null;
+            if (createdRef.current) {
+                invoke('browser_close', { label }).catch(() => {});
             }
         };
-    }, [url, title]);
-
-    // Focus the window when the tab becomes active
-    useEffect(() => {
-        if (isActive && windowRef.current) {
-            windowRef.current.setFocus().catch(() => {});
-        }
-    }, [isActive]);
+    }, []);
 
     return (
-        <div className="webview-container">
-            <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
+        <div
+            ref={containerRef}
+            className="webview-container"
+            style={{
+                width: '100%',
                 height: '100%',
-                color: 'var(--text-secondary)',
-                gap: '16px',
-                padding: '24px',
-                textAlign: 'center',
-            } as React.CSSProperties}>
-                {status === 'creating' && (
-                    <>
-                        <div style={{ fontSize: '24px' } as React.CSSProperties}>🌐</div>
-                        <div style={{ fontSize: '14px' } as React.CSSProperties}>Opening browser window…</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
-                            {url}
-                        </div>
-                    </>
-                )}
-                {status === 'open' && (
-                    <>
-                        <div style={{ fontSize: '24px' } as React.CSSProperties}>🌐</div>
-                        <div style={{ fontSize: '14px', color: 'var(--text-primary)' } as React.CSSProperties}>
-                            Browsing in a separate window
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
-                            {url}
-                        </div>
-                        <button
-                            onClick={() => windowRef.current?.setFocus().catch(() => {})}
-                            style={{
-                                padding: '8px 20px',
-                                background: 'var(--accent-purple)',
-                                color: 'var(--text-primary)',
-                                border: 'none',
-                                borderRadius: 'var(--border-radius)',
-                                cursor: 'pointer',
-                                fontSize: '13px',
-                            } as React.CSSProperties}
-                        >
-                            Focus window
-                        </button>
-                    </>
-                )}
-                {status === 'error' && (
-                    <>
-                        <div style={{ fontSize: '24px' } as React.CSSProperties}>⚠️</div>
-                        <div style={{ fontSize: '14px', color: 'var(--accent-red, #ff6b6b)' } as React.CSSProperties}>
-                            Failed to open browser window
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '500px', wordBreak: 'break-all' } as React.CSSProperties}>
-                            {errorMsg}
-                        </div>
-                    </>
-                )}
-            </div>
-        </div>
+                background: 'var(--bg-primary)',
+            } as React.CSSProperties}
+        />
     );
 }

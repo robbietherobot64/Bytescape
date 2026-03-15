@@ -105,6 +105,8 @@ interface NavState {
     navigateInTab: (screen: Screen, label?: string) => void;
     closeTab: (tabId: string) => void;
     switchTab: (tabId: string) => void;
+    /** Update the label of an existing tab (e.g. when a browser page title changes) */
+    updateTabLabel: (tabId: string, label: string) => void;
 }
 
 export const useNavStore = create<NavState>((set, get) => ({
@@ -209,6 +211,14 @@ export const useNavStore = create<NavState>((set, get) => ({
         const tab = state.tabs.find(t => t.id === tabId);
         if (!tab) return;
         set({ activeTabId: tabId, screen: tab.screen });
+    },
+
+    updateTabLabel: (tabId, label) => {
+        set((state) => ({
+            tabs: state.tabs.map(t =>
+                t.id === tabId ? { ...t, label } : t
+            ),
+        }));
     },
 }));
 

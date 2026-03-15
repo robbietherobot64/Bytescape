@@ -19,6 +19,7 @@ pub mod profile;
 pub mod unfurl;
 pub mod classify;
 pub mod export;
+pub mod browser;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
@@ -34,3 +35,4 @@ pub use collab::*;
 pub use ap::*;
 pub use profile::*;
 pub use unfurl::*;
+pub use browser::*;

@@ -526,6 +526,12 @@ pub fn run() {
             // Export commands
             commands::export::export_vault_data,
             
+            // Browser tab commands (B10)
+            commands::browser::browser_create,
+            commands::browser::browser_close,
+            commands::browser::browser_set_bounds,
+            commands::browser::browser_hide,
+            
             // ActivityPub commands (A1.1)
             commands::ap::create_ap_actor,
             commands::ap::get_ap_actor,
