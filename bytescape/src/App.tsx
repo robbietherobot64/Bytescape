@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore } from "./store";
+import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore, TabItem, Screen } from "./store";
 
 import "./App.css";
 
@@ -77,7 +77,8 @@ function App() {
     feedActiveTab, setFeedActiveTab,
     peerProfileNodeId, setPeerProfileNodeId,
     peerProfileName, setPeerProfileName,
-    openTab
+    openTab,
+    tabs, activeTabId
   } = useNavStore();
   const chatStore = useChatStore();
 
@@ -450,6 +451,128 @@ function App() {
     }
   }
 
+  // === Render Helpers ===
+
+  /** Screens that need full-bleed layout (no padding, flex column, overflow hidden) */
+  const FULL_BLEED_SCREENS: Set<Screen> = new Set([
+    'chat', 'feed', 'vault', 'friends', 'peer-profile', 'profile-builder', 'profile-browser',
+  ]);
+
+  const fullBleedStyle: React.CSSProperties = {
+    padding: 0,
+    height: '100%',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    maxWidth: 'none',
+    width: '100%',
+  };
+
+  const standardStyle: React.CSSProperties = {
+    height: '100%',
+    overflowY: 'auto',
+  };
+
+  /** Render the screen content for a given tab */
+  function renderTabScreen(tab: TabItem) {
+    switch (tab.screen) {
+      case 'feed':
+        return (
+          <FeedScreen
+            auth={auth}
+            activeTab={feedActiveTab}
+            setActiveTab={setFeedActiveTab}
+            isImporting={isImporting}
+            onOpenChat={(peerNodeId, _peerName) => {
+              const { setSelectedConvoId } = useChatStore.getState();
+              setSelectedConvoId(`p2p:${peerNodeId}`);
+              openTab("chat", "Chat");
+              setActiveSidebar("chat");
+            }}
+            onViewProfile={(peerNodeId, peerName) => {
+              setPeerProfileNodeId(peerNodeId);
+              setPeerProfileName(peerName || null);
+              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
+              setActiveSidebar("social");
+            }}
+          />
+        );
+      case 'import':
+        return (
+          <ImportScreen
+            auth={auth}
+            isImporting={isImporting}
+            importStatus={importStatus}
+            archiveCount={archiveCount}
+            onImportBluesky={importBluesky}
+            onFilePick={handleFilePick}
+            onNavigate={handleNavigate}
+            error={error || ""}
+          />
+        );
+      case 'audit':
+        return (
+          <AuditScreen
+            progress={progress}
+            parseResult={parseResult}
+            logs={logs}
+            isShredding={isShredding}
+            importComplete={importComplete}
+            error={error || ""}
+            onShred={handleShred}
+            onNavigate={handleNavigate}
+          />
+        );
+      case 'profile':
+        return <ProfileScreen auth={auth} archiveCount={archiveCount} />;
+      case 'profile-builder':
+        return <ProfileBuilderScreen />;
+      case 'profile-browser':
+        return <ProfileBrowserScreen />;
+      case 'chat':
+        return <ChatScreen />;
+      case 'friends':
+        return (
+          <FriendsScreen
+            auth={auth}
+            onOpenChat={(peerNodeId, _peerName) => {
+              const { setSelectedConvoId } = useChatStore.getState();
+              setSelectedConvoId(`p2p:${peerNodeId}`);
+              openTab("chat", "Chat");
+              setActiveSidebar("chat");
+            }}
+            onViewProfile={(peerNodeId, peerName) => {
+              setPeerProfileNodeId(peerNodeId);
+              setPeerProfileName(peerName || null);
+              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
+              setActiveSidebar("social");
+            }}
+          />
+        );
+      case 'peer-profile':
+        return (
+          <PeerProfileScreen
+            nodeId={tab.meta?.nodeId || peerProfileNodeId || ''}
+            initialPeerName={tab.meta?.peerName || peerProfileName || undefined}
+          />
+        );
+      case 'vault':
+        return <VaultScreen auth={auth} />;
+      case 'settings':
+        return (
+          <SettingsScreen
+            auth={auth}
+            archiveCount={archiveCount}
+            onLogout={handleLogout}
+            onClearVault={() => setArchiveCount(0)}
+            onAuthUpdated={(updatedAuth) => setAuth(updatedAuth)}
+          />
+        );
+      default:
+        return null;
+    }
+  }
+
   // === Render ===
 
   if (loading) {
@@ -482,126 +605,23 @@ function App() {
       onSearchChange={setSearchQuery}
       onSearchSubmit={handleSearchSubmit}
       avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
-      mainStyle={(screen === "chat" || screen === "feed" || screen === "vault" || screen === "friends" || screen === "peer-profile" || screen === "profile-builder" || screen === "profile-browser") ? {
-        padding: 0,
-        height: '100%',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        maxWidth: 'none',
-        width: '100%',
-        marginRight: 0,
-      } : undefined}
     >
       <ErrorBoundary fallback={<div>Application Error</div>}>
-        {screen === "feed" && (
-          <FeedScreen
-            auth={auth}
-            activeTab={feedActiveTab}
-            setActiveTab={setFeedActiveTab}
-            isImporting={isImporting}
-            onOpenChat={(peerNodeId, _peerName) => {
-              const { setSelectedConvoId } = useChatStore.getState();
-              setSelectedConvoId(`p2p:${peerNodeId}`);
-              setScreen("chat");
-              setActiveSidebar("chat");
-            }}
-            onViewProfile={(peerNodeId, peerName) => {
-              setPeerProfileNodeId(peerNodeId);
-              setPeerProfileName(peerName || null);
-              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
-              setActiveSidebar("social");
-            }}
-          />
-        )}
-
-        {screen === "import" && (
-          <ImportScreen
-            auth={auth}
-            isImporting={isImporting}
-            importStatus={importStatus}
-            archiveCount={archiveCount}
-            onImportBluesky={importBluesky}
-            onFilePick={handleFilePick}
-            onNavigate={handleNavigate}
-            error={error || ""}
-          />
-        )}
-
-        {screen === "audit" && (
-          <AuditScreen
-            progress={progress}
-            parseResult={parseResult}
-            logs={logs}
-            isShredding={isShredding}
-            importComplete={importComplete}
-            error={error || ""}
-            onShred={handleShred}
-            onNavigate={handleNavigate}
-          />
-        )}
-
-        {screen === "profile" && (
-          <ProfileScreen
-            auth={auth}
-            archiveCount={archiveCount}
-          />
-        )}
-
-        {screen === "profile-builder" && (
-          <ProfileBuilderScreen />
-        )}
-
-        {screen === "profile-browser" && (
-          <ProfileBrowserScreen />
-        )}
-
-        {screen === "chat" && (
-          <ChatScreen />
-        )}
-
-        {screen === "friends" && (
-          <FriendsScreen
-            auth={auth}
-            onOpenChat={(peerNodeId, _peerName) => {
-              // Set the P2P convo ID in the chat store so ChatScreen opens the right conversation
-              const { setSelectedConvoId } = useChatStore.getState();
-              setSelectedConvoId(`p2p:${peerNodeId}`);
-              setScreen("chat");
-              setActiveSidebar("chat");
-            }}
-            onViewProfile={(peerNodeId, peerName) => {
-              setPeerProfileNodeId(peerNodeId);
-              setPeerProfileName(peerName || null);
-              openTab('peer-profile', peerName || 'Peer Profile', { nodeId: peerNodeId });
-              setActiveSidebar("social");
-            }}
-          />
-        )}
-
-        {screen === "peer-profile" && peerProfileNodeId && (
-          <PeerProfileScreen nodeId={peerProfileNodeId} initialPeerName={peerProfileName || undefined} />
-        )}
-
-        {screen === "vault" && (
-          <VaultScreen auth={auth} />
-        )}
-
-        {screen === "settings" && (
-          <SettingsScreen
-            auth={auth}
-            archiveCount={archiveCount}
-            onLogout={handleLogout}
-            onClearVault={() => {
-              setArchiveCount(0);
-            }}
-            onAuthUpdated={(updatedAuth) => {
-              setAuth(updatedAuth);
-            }}
-          />
-        )}
-
-        {/* Application End */}
+        {/* Render ALL open tabs simultaneously — inactive tabs are hidden via display:none
+            so their React state is preserved and switching is instant (no re-mount/re-fetch). */}
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeTabId;
+          const isFullBleed = FULL_BLEED_SCREENS.has(tab.screen);
+          return (
+            <div
+              key={tab.id}
+              className={`tab-pane ${isActive ? 'tab-pane--active' : ''} ${isFullBleed ? 'tab-pane--full-bleed' : 'tab-pane--standard'}`}
+              style={isActive ? (isFullBleed ? fullBleedStyle : standardStyle) : { display: 'none' }}
+            >
+              {renderTabScreen(tab)}
+            </div>
+          );
+        })}
       </ErrorBoundary>
 
       {/* Identity setup modal — shown when user hasn't chosen a username yet */}

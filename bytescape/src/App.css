@@ -424,12 +424,25 @@ a:hover {
     flex: 1;
     min-width: 0;
     height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
     position: relative;
+    padding: 0;
     background:
         var(--stars-bg),
         linear-gradient(180deg, var(--bg-content) 0%, #ece5d5 100%);
+}
+
+/* Tab pane — each open tab renders in its own pane.
+   Only the active pane is visible; inactive panes use display:none
+   to preserve React component state for seamless tab switching. */
+.tab-pane {
+    width: 100%;
+}
+.tab-pane--full-bleed {
+    max-width: none;
+}
+.tab-pane--standard {
+    padding: 24px;
 }
 
 /* Custom background overlay — applied via useTheme when user sets a background */
@@ -1478,6 +1491,13 @@ a:hover {
 
 .panel-section {
     margin-bottom: 20px;
+}
+
+.panel-divider {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 16px 0;
+    opacity: 0.5;
 }
 
 .panel-section-label {

@@ -15,8 +15,6 @@ interface AppLayoutProps {
     activeSidebar: SidebarItem;
     /** Called when a sidebar item is selected. */
     onNavigate: (item: SidebarItem) => void;
-    /** Optional style override for full-bleed layouts. */
-    mainStyle?: React.CSSProperties;
     /** Search bar state. */
     searchQuery: string;
     onSearchChange: (query: string) => void;
@@ -39,7 +37,6 @@ export function AppLayout({
     children,
     activeSidebar,
     onNavigate,
-    mainStyle,
     searchQuery,
     onSearchChange,
     onSearchSubmit,
@@ -59,8 +56,8 @@ export function AppLayout({
                 avatarInitial={avatarInitial}
             />
             <div className="app-body">
-                {tabs.length === 0 ? (
-                    <main className="main-content">
+                <main className="main-content">
+                    {tabs.length === 0 ? (
                         <div className="no-tabs-state">
                             <div className="no-tabs-box">
                                 <div style={{ fontSize: '2rem', marginBottom: 8 }}>🌐</div>
@@ -68,12 +65,8 @@ export function AppLayout({
                                 <p>Use the navigation menu to open a page.</p>
                             </div>
                         </div>
-                    </main>
-                ) : (
-                    <main className="main-content" style={mainStyle}>
-                        {children}
-                    </main>
-                )}
+                    ) : children}
+                </main>
             </div>
 
             {/* Mobile bottom navigation bar — visible only on small screens via CSS */}

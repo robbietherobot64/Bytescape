@@ -174,15 +174,57 @@ export function FeedRightPanel({
                     </div>
                 ) : (
                     <div>
-                        {/* All tab — combined discovery tools */}
+                        {/* All tab — unified super-menu combining all context panels */}
+
+                        {/* ── Section 1: Active Follows ── */}
                         <div className="panel-section">
-                            <div className="panel-section-label">Curated Feed Source</div>
+                            <div className="panel-section-label">Active Follows</div>
+                        </div>
+                        {followingList.slice(0, 12).map(profile => (
+                            <div
+                                key={profile.did}
+                                className="contact-mini-row"
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', cursor: 'pointer' } as React.CSSProperties}
+                                onClick={() => {
+                                    if (profile.handle) {
+                                        openBlueskyProfile(profile.handle);
+                                    }
+                                }}
+                                title={`@${profile.handle}`}
+                            >
+                                <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--bg-toolbar)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0, overflow: 'hidden' } as React.CSSProperties}>
+                                    {profile.avatar ? (
+                                        <img src={profile.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' } as React.CSSProperties} />
+                                    ) : (
+                                        profile.handle?.[0]?.toUpperCase()
+                                    )}
+                                </div>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--link-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as React.CSSProperties}>
+                                    {profile.displayName || profile.handle}
+                                </span>
+                            </div>
+                        ))}
+                        {followingList.length === 0 && (
+                            <div className="empty-state panel-empty">No follows found.</div>
+                        )}
+                        {followingList.length > 12 && (
+                            <div className="panel-hint" style={{ marginTop: 8 } as React.CSSProperties}>
+                                +{followingList.length - 12} more
+                            </div>
+                        )}
+
+                        {/* ── Divider ── */}
+                        <div className="panel-divider" />
+
+                        {/* ── Section 2: Feeds & Hashtags ── */}
+                        <div className="panel-section">
+                            <div className="panel-section-label">Feeds & Hashtags</div>
                             <select
                                 className="input-field"
                                 value={selectedFeedUri}
                                 onChange={e => setSelectedFeedUri(e.target.value)}
                             >
-                                <option value={FEED_FILTER_ALL}>Global Timeline</option>
+                                <option value={FEED_FILTER_ALL}>All Feeds</option>
                                 {savedFeeds
                                     .filter(feed => !feed.uri.includes('app.bsky.feed.generator/following'))
                                     .map(feed => (
@@ -193,20 +235,17 @@ export function FeedRightPanel({
                             </select>
                         </div>
 
-                        {/* Hashtag Management */}
                         <div className="panel-section">
-                            <div className="panel-section-label">Subscribe to Tags</div>
                             <div className="hashtag-input-row">
                                 <input
                                     className="input-field"
                                     value={hashtagInput}
                                     onChange={e => setHashtagInput(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handleAddHashtag()}
-                                    placeholder="#discovery"
+                                    placeholder="#topic"
                                 />
                                 <button className="btn btn-primary hashtag-add-btn" onClick={handleAddHashtag}>+</button>
                             </div>
-
                             <div className="hashtag-pills">
                                 {followedHashtags.map(tag => (
                                     <div key={tag} className="hashtag-pill">
@@ -223,6 +262,24 @@ export function FeedRightPanel({
                             {followedHashtags.length === 0 && (
                                 <div className="panel-hint">No tags followed yet.</div>
                             )}
+                        </div>
+
+                        {/* ── Divider ── */}
+                        <div className="panel-divider" />
+
+                        {/* ── Section 3: Platform Source ── */}
+                        <div className="panel-section">
+                            <div className="panel-section-label">Platform</div>
+                            <select
+                                className="input-field"
+                                value={archiveSourceFilter}
+                                onChange={e => setArchiveSourceFilter(e.target.value)}
+                            >
+                                <option value="">All sources</option>
+                                {vaultSources.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
                 )}

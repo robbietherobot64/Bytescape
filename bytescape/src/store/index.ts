@@ -126,7 +126,7 @@ export const useNavStore = create<NavState>((set, get) => ({
     openTab: (screen, label, meta) => {
         const state = get();
 
-        // If meta is provided (e.g. peer profile), always create a new tab
+        // Content tabs with meta (e.g. peer profiles) — always create a NEW tab next to active
         if (meta) {
             const id = nextTabId();
             const newTab: TabItem = {
@@ -135,37 +135,34 @@ export const useNavStore = create<NavState>((set, get) => ({
                 label: label || TAB_LABELS[screen] || screen,
                 meta,
             };
-            set({
-                tabs: [...state.tabs, newTab],
-                activeTabId: id,
-                screen,
-            });
+            // Insert next to the active tab
+            const activeIdx = state.tabs.findIndex(t => t.id === state.activeTabId);
+            const insertIdx = activeIdx >= 0 ? activeIdx + 1 : state.tabs.length;
+            const newTabs = [...state.tabs];
+            newTabs.splice(insertIdx, 0, newTab);
+            set({ tabs: newTabs, activeTabId: id, screen });
             return;
         }
 
-        // If there's an active tab, replace it with the new screen (navigate in-place)
-        if (state.activeTabId) {
-            const updatedTabs = state.tabs.map(t =>
-                t.id === state.activeTabId
-                    ? { ...t, screen, label: label || TAB_LABELS[screen] || screen, meta: undefined }
-                    : t
-            );
-            set({ tabs: updatedTabs, screen });
+        // Module tabs — reuse existing tab for same screen, or create NEW tab
+        const existing = state.tabs.find(t => t.screen === screen && !t.meta);
+        if (existing) {
+            set({ activeTabId: existing.id, screen });
             return;
         }
 
-        // No tabs exist — create the first tab
+        // No existing tab for this module — create one next to active
         const id = nextTabId();
         const newTab: TabItem = {
             id,
             screen,
             label: label || TAB_LABELS[screen] || screen,
         };
-        set({
-            tabs: [newTab],
-            activeTabId: id,
-            screen,
-        });
+        const activeIdx = state.tabs.findIndex(t => t.id === state.activeTabId);
+        const insertIdx = activeIdx >= 0 ? activeIdx + 1 : state.tabs.length;
+        const newTabs = [...state.tabs];
+        newTabs.splice(insertIdx, 0, newTab);
+        set({ tabs: newTabs, activeTabId: id, screen });
     },
 
     closeTab: (tabId) => {
