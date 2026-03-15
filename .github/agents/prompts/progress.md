@@ -718,3 +718,118 @@ Implemented per-color customization and background presets per user feedback. Ev
 
 ### Anomalous Unstaged Changes Noted
 Found 4 unstaged Rust file changes (`feed_aggregation.rs`, `commands/mod.rs`, `vault.rs`, `lib.rs`) adding `classify` and `export` modules. These are outside Track C scope and were NOT committed. Origin: likely from another agent's stashed/crashed session. Left for PM investigation.
+
+---
+
+## 2026-03-15 — Backend Agent: Video Playback Fix + Feed Performance Optimization
+
+### Session Overview
+Two priorities addressed from user feedback:
+1. **Video playback** — "still somewhat choppy, still no audio" → Fixed audio + improved smoothness
+2. **Feed loading performance** — "double digit seconds to load" → Multi-layer caching, should reduce to near-instant for cached loads
+
+---
+
+### Commit `f7f3dda` — fix(track-a): FFmpeg native HLS download + proper audio/timestamp handling
+
+**User report:** Videos "still somewhat choppy" and "still no audio"
+
+**Root causes identified:**
+1. **No audio**: Missing `-bsf:a aac_adtstoasc` bitstream filter — ADTS-wrapped AAC frames were silently dropped during TS→MP4 remux
+2. **Choppiness**: HLS segment concatenation with `-c copy` preserved timestamp discontinuities between segments (each segment starts at its own PTS)
+
+**Fix — Two-strategy FFmpeg approach:**
+
+| Strategy | Method | When Used |
+|----------|--------|-----------|
+| **1 (Primary)** | `ffmpeg -i {m3u8_url}` — native HLS demuxer handles segment ordering, timestamp correction, and remuxing in one pass | Always tried first |
+| **2 (Fallback)** | Manual segment download + improved remux with `-bsf:a aac_adtstoasc -fflags +genpts+discardcorrupt -avoid_negative_ts make_zero` | Only if strategy 1 fails |
+
+**Files modified:** `src-tauri/src/connectors/bluesky.rs` — `download_hls_video()` function
+
+**User follow-up:** "Videos are mostly fixed. Still somewhat jittery, but better." ✅ Accepted.
+
+---
+
+### Commit `822223d` — perf(track-a): multi-layer caching + connection pooling for feed loading
+
+**User report:** "Data is taking a long time to load...double digit seconds...please expedite this"
+
+**Research findings (10 bottlenecks identified, top 3 addressed):**
+
+| # | Bottleneck | Severity | Fix |
+|---|-----------|----------|-----|
+| 1 | No backend feed cache — every tab switch/refresh hits Bluesky API | 🔴 Critical | Feed response cache with TTL |
+| 2 | New `reqwest::Client` per API call — 12 instances, redundant TLS handshakes | 🔴 Critical | Shared `LazyLock<Client>` with connection pooling |
+| 3 | Full redb table scan for every vault query — `build_all_headers` deserializes every item | 🔴 Critical | In-memory header cache with write-invalidation |
+| 4 | `list_saved_feeds` fetched on every tab load | 🟠 High | 5-minute TTL cache |
+
+**Optimization 1 — Feed Response Cache (AppState):**
+- `CachedResponse<T>` generic struct with `Instant`-based TTL freshness
+- `FeedCache` struct: async `RwLock<HashMap<String, CachedResponse<serde_json::Value>>>` with `get`/`set`/`invalidate` methods
+- Timeline cached 30s (cache key: `"timeline:{cursor}"`, first page only)
+- Saved feeds cached 5 minutes (rarely change mid-session)
+- Files: `lib.rs` (CachedResponse, FeedCache, AppState.feed_cache), `feed_aggregation.rs` (timeline caching), `import.rs` (saved feeds caching)
+
+**Optimization 2 — Vault Header Cache (DbManager):**
+- `header_cache: Arc<RwLock<Option<Vec<BytescapeItemHeader>>>>` on `DbManager`
+- Fast path: `get_cached_headers()` returns cloned Vec from memory
+- Slow path: runs `build_all_headers()` once, stores result
+- Auto-invalidated after every write: `save_item`, `upsert_item`, cleanup
+- `list_all_item_headers()` now delegates to cache instead of its own full table scan
+- Files: `db/mod.rs` (field + init), `db/vault.rs` (cache logic + invalidation at 3 write points)
+
+**Optimization 3 — Shared HTTP Client (bluesky.rs):**
+- `static SHARED_CLIENT: std::sync::LazyLock<Client>` with `pool_max_idle_per_host(6)`, `pool_idle_timeout(90s)`, `timeout(30s)`
+- Replaced all 12 `Client::new()` / `Client::builder()...build()` calls:
+  - `import_bluesky_timeline`, `import_bluesky_feed`, `search_posts`, `get_follows`, `get_saved_feeds`, `get_custom_feed`, `get_actor_likes`, `import_bluesky_likes`, `import_all_following_feeds`, `sync_follows_to_contacts`, `BlueskyClient::with_jwt()`, `BlueskyClient::new()`
+- Also upgraded `AppState.http_client` builder with `pool_max_idle_per_host(4)`, `pool_idle_timeout(90s)`, `timeout(30s)`
+
+**Expected performance impact:**
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| First feed load | 10-16s (12 HTTP clients, full vault scan, N+2 API calls) | ~2-3s (pooled client, single API call + cached vault headers) |
+| Tab switch / refresh within 30s | Same as first load | **Near-instant** (all from cache) |
+| Saved feeds resolution | ~1-2s per load | **Instant** after first load (5min cache) |
+
+**Files modified (6, all in `src-tauri/`):**
+
+| File | Changes |
+|------|---------|
+| `lib.rs` | +CachedResponse struct, +FeedCache struct, +feed_cache on AppState, upgraded http_client builder |
+| `db/mod.rs` | +header_cache field on DbManager, initialized in new() |
+| `db/vault.rs` | Rewrote get_cached_headers() with cache, +invalidate_header_cache(), invalidation at 3 write points, list_all_item_headers delegates to cache |
+| `commands/feed_aggregation.rs` | Timeline response caching with 30s TTL in get_timeline_unified |
+| `commands/import.rs` | Saved feeds caching with 5min TTL in list_saved_feeds |
+| `connectors/bluesky.rs` | +SHARED_CLIENT LazyLock, replaced 12 Client creation sites |
+
+---
+
+### User Feedback Status — Backend Items
+
+| UF Item | Status | Notes |
+|---------|--------|-------|
+| Feed takes 16s+ to load | ✅ Addressed | Multi-layer caching + connection pooling (commit `822223d`) |
+| Video choppy/no audio | ✅ Addressed | FFmpeg native HLS + audio bitstream filter (commit `f7f3dda`). User says "mostly fixed, still somewhat jittery" |
+| Chat friends list incomplete | ✅ Previously done | `bf56e20` + `ae4bf4b` — unified buddy list with follows |
+| Export vault data as ZIP | ⏳ Not started | Button exists (frontend), needs backend `export_vault_zip` command |
+| Facebook import quality | ✅ Previously done | Classification + tracker categories shipped |
+
+### Items Remaining for Next Sprint
+
+| Priority | Item | Description |
+|----------|------|-------------|
+| P1 | Export vault data | Implement `export_vault_zip` Tauri command — ZIP all vault items + media |
+| P2 | Video jitter investigation | User reports "still somewhat jittery" — may need re-encoding pass (not just remux) |
+| P3 | Feed cache tuning | Monitor real-world cache hit rates, adjust TTLs if needed |
+
+---
+
+### Build & Test Status
+
+- **Rust build**: ✅ Compiles (27 pre-existing warnings, 0 errors)
+- **Frontend tests**: ✅ 244/244 passing (12 test files)
+- **TypeScript**: ✅ Clean (`npx tsc --noEmit` — 0 errors)
+- **Branch**: `main` at `822223d` (backend HEAD, frontend has subsequent commits)
+- **Last verified**: 2026-03-15
