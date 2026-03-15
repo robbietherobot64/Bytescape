@@ -1,6 +1,67 @@
+# Agent Progress Log
+
+> This document is a running log of work completed by all agents. Updated after each commit. PM reviews this for status tracking.
+
+---
+
+## 2026-03-15 — PM Audit: Sprint v3 Results
+
+### Build Status
+- **cargo check**: ✅ 0 errors, 27 warnings
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 250/250 passing
+- **Working tree**: Clean (no uncommitted changes)
+- **HEAD**: `09ab5a4` on `main`
+
+### Backend Agent — Grade: A-
+**3 commits, focused, effective. All claims verified against code.**
+- ✅ FFmpeg HLS fix with `aac_adtstoasc` + `genpts+discardcorrupt` (in `commands/media.rs`, not `bluesky.rs` as report implied)
+- ✅ `FeedCache` + `CachedResponse<T>` on AppState (timeline 30s, saved feeds 5min)
+- ✅ `SHARED_CLIENT` LazyLock with connection pooling (bluesky.rs, 4+ call sites)
+- ✅ `header_cache` on DbManager (re-added — defensible for performance, but was not coordinated with PM)
+- ✅ `classify_feed_entry` restored in feed_aggregation.rs
+- ✅ `export_vault_data` registered (183 lines in commands/export.rs)
+- ⚠️ Minor: Report said FFmpeg code was in `bluesky.rs` — it's actually in `commands/media.rs`
+
+### Content Agent — Grade: A
+**3 commits, cleanest execution. Exceeded test claim.**
+- ✅ ThemeCustomizer.tsx (658 lines) — per-color picker for 21 CSS variables
+- ✅ 7 background presets (Aurora, Sunset, Ocean, Warm Mesh, Matrix, Retro Grid, None)
+- ✅ File upload (4MB limit) + custom URL input + tile/cover toggle
+- ✅ 20 tests (report claimed 14 — understated)
+- ⚠️ Report mentioned "sunset orange" and "rose gold" themes — these do NOT exist as `[data-theme]` blocks in App.css
+
+### Frontend Agent — Grade: C+
+**20 commits, 74 files touched. Excessive churn, several missed/regressed items.**
+- ✅ Multi-tab system (NavStore, TabBar, instant switching)
+- ✅ 4-tab feed (All/Following/Subscribed/Saved) with proper data sources
+- ✅ 3-terminal AuditScreen (Import/Memories/Trackers)
+- ✅ Connected accounts green ✓ + "Connect Account" button
+- ✅ Media lens toggles (All/Images/Video/Short/Long/Articles)
+- ❌ `maximized: true` LOST from tauri.conf.json during churn
+- ❌ In-app browser tabs: 5 attempts, none work at runtime (compiles clean)
+- ❌ Profile section not in feed layout
+- ❌ Social module not redesigned
+- ❌ Export button still shows `alert('coming soon')` instead of calling backend command
+- ⚠️ Track boundary violation: created `commands/browser.rs` (Rust backend file)
+- ⚠️ App.css: 6,477 lines after 20 commits of accumulated CSS
+
+### Guardrail Violations Detected
+1. **Frontend**: Created `commands/browser.rs` + modified `lib.rs` (Track A files)
+2. **Frontend**: Bundled unrelated features in single commits
+3. **Backend**: Re-added `header_cache` without PM coordination (defensible but uncoordinated)
+4. **All agents**: Terminal discipline not followed (~170+ zombie terminals caused crash)
+
+### Sprint v4 Prompts Written
+- `frontend-sprint-v4.md` — P1-P7: fullscreen fix, browser debug, export wiring, social redesign, P2P cleanup, profile, hacker theme
+- `backend-sprint-v4.md` — P1-P5: video jitter, export testing, Instagram connector, cache tuning, warnings cleanup
+- `content-sprint-v4.md` — P1-P5: drag-drop media, emoji picker, GIF picker, theme preset gaps, ComposeBox regression check
+
+---
+
 # Backend Agent (Track A) — Progress Log
 
-> This document is a running log of work completed by the Backend Agent. Updated after each commit. PM reviews this for status tracking.
+> Updated after each commit. PM reviews this for status tracking.
 
 ---
 
