@@ -877,3 +877,713 @@ Report security vulnerabilities to:
 - [Tauri Security Guidelines](https://v2.tauri.app/concept/security/)
 - [AES-GCM Specification](https://csrc.nist.gov/publications/detail/sp/800-38d/final)
 - [Argon2 Specification](https://datatracker.ietf.org/doc/html/rfc9106)
+
+---
+
+# SYSTEMS ANALYSIS & STRATEGIC ROADMAP
+
+*Prepared by the Systems Agent — 2026-03-15*
+*Based on full codebase audit: ~22,925 lines Rust (46 files), ~12,000 lines TypeScript/React, 6,478 lines CSS, 110+ Tauri commands, 13 redb tables, 8 Source connectors, 13 screen types.*
+
+> **Reading guide:** This analysis is structured as a gap-map between the **spec** (what TECHNICAL_SPEC.md and ROADMAP.md describe) and the **implementation** (what actually compiles and runs today). Each section grades the health of a subsystem on a 4-point scale: 🟢 Solid, 🟡 Functional with caveats, 🟠 Partially implemented, 🔴 Not yet started.
+
+---
+
+## 1. System Topology — Actual vs. Planned
+
+The diagram below reflects the **actual, verified implementation state** as of this audit. Dashed lines indicate designed-but-unimplemented pathways.
+
+```mermaid
+flowchart TD
+    subgraph External ["External Data Sources"]
+        BSKY["Bluesky<br/>(AT Protocol)"]
+        FB["Facebook Archive<br/>(HTML + JSON ZIP)"]
+        IG["Instagram Archive<br/>(JSON ZIP)"]
+        AP_EXT["ActivityPub Fediverse<br/>(Mastodon/Lemmy)"]
+        RSS_EXT["RSS/Atom Feeds"]
+    end
+
+    subgraph Engine ["The Engine: src-tauri/src/ (Rust)"]
+        direction TB
+        AUTH["Auth Layer<br/>OAuth (DPoP/PKCE) + App Password"]
+        CONN["Connectors<br/>bluesky.rs (2,072L)<br/>facebook.rs (2,675L)<br/>instagram.rs (507L)"]
+        INGEST["Ingest Pipeline<br/>Normalize → BytescapeItem<br/>Assign Willow paths"]
+        DB["redb (13 tables)<br/>Items · Messages · Contacts<br/>Peers · Collab · Profile"]
+        SYNC["SyncManager<br/>Iroh Docs · Blobs · Gossip"]
+        PROTO["P2P Protocol<br/>bytescape/1.0 ALPN<br/>PING · PROFILE · CHAT · FEED"]
+        SYND["Syndication Worker<br/>syndicate_vault_item"]
+        COLLAB["Collab Engine<br/>Yrs (Yjs) CRDT"]
+        CACHE["Feed Cache<br/>TTL: 30s timeline, 5m feeds"]
+        MEDIA["Media Server<br/>localhost Warp (blob_cache/)"]
+        CMDS["110+ Tauri Commands<br/>IPC Bridge → Frontend"]
+    end
+
+    subgraph Lens ["The Lens: src/ (React/TypeScript)"]
+        direction TB
+        FEED["Feed Screen<br/>All · Following · Subscribed · You"]
+        CHAT["Chat Screen<br/>Bluesky · P2P · Archives"]
+        VAULT["Vault Screen<br/>File Manager + Media Viewer"]
+        PROFILE["Profile System<br/>Builder (GrapesJS) + Renderer"]
+        SOCIAL["Social Screen<br/>Friends · Peers · Browser"]
+        IMPORT["Import Screen<br/>+ Audit Terminal"]
+        BROWSER["WebView Screen<br/>(compiles, runtime broken)"]
+        COMPOSE["ComposeBox<br/>Rich text · @mentions · #tags<br/>Link preview · Multi-target"]
+        THEME["Theme Engine<br/>4 themes · 21 CSS vars<br/>Custom BG · Per-color picker"]
+        STORES["Zustand (6 stores)<br/>Auth · UI · Nav · Feed · Peers · Theme"]
+    end
+
+    %% Solid connections (implemented)
+    BSKY -->|"OAuth + App-PW"| AUTH
+    BSKY -->|"Timeline / Feeds / DMs"| CONN
+    FB -->|"ZIP parse (HTML+JSON)"| CONN
+    IG -->|"ZIP parse (JSON)"| CONN
+    CONN --> INGEST
+    INGEST -->|"BytescapeItem + path"| DB
+    INGEST -->|"Media bytes → hash"| SYNC
+    DB <-->|"Tauri IPC (JSON)"| CMDS
+    SYNC <-->|"Blob store/retrieve"| CMDS
+    CMDS <-->|"invoke() / listen()"| STORES
+    STORES --> FEED & CHAT & VAULT & PROFILE & SOCIAL & IMPORT
+    PROTO <-->|"QUIC / NAT traversal"| SYNC
+    SYND -->|"createRecord"| BSKY
+    COLLAB <-->|"Yrs state"| DB
+    CACHE --> CMDS
+    MEDIA -->|"http://127.0.0.1:{port}"| FEED & VAULT
+
+    %% Dashed connections (not yet implemented)
+    AP_EXT -.->|"A1.2: Not connected"| CONN
+    RSS_EXT -.->|"A4.2: Not connected"| CONN
+    SYND -.->|"A1.2: AP syndication"| AP_EXT
+
+    classDef engine fill:#2d5016,stroke:#4a8c28,stroke-width:2px,color:#fff;
+    classDef lens fill:#1a3a5c,stroke:#2980b9,stroke-width:2px,color:#fff;
+    classDef external fill:#4a2040,stroke:#8e44ad,stroke-width:2px,color:#fff;
+    classDef broken fill:#5c1a1a,stroke:#c0392b,stroke-width:2px,color:#fff;
+    class AUTH,CONN,INGEST,DB,SYNC,PROTO,SYND,COLLAB,CACHE,MEDIA,CMDS engine;
+    class FEED,CHAT,VAULT,PROFILE,SOCIAL,IMPORT,COMPOSE,THEME,STORES lens;
+    class BSKY,FB,IG,AP_EXT,RSS_EXT external;
+    class BROWSER broken;
+```
+
+### Key Observations from Topology
+
+1. **Bluesky is the only live external protocol.** ActivityPub has scaffold code (7 modules, ~1,271 lines) but no live connection. RSS is not started.
+2. **The Tauri IPC bridge is the single chokepoint.** All 110+ commands serialize as JSON strings over the Tauri IPC channel — there is no streaming, no binary protocol, no batching.
+3. **P2P is operational but siloed.** Iroh handles blob storage, doc sync, and the custom `bytescape/1.0` protocol for peer chat/feeds, but the Iroh layer and the redb layer don't share transactional boundaries — orphan states are possible.
+4. **The frontend has no router.** All navigation is Zustand-driven. `wouter` is installed as a dependency but never imported.
+
+---
+
+## 2. Subsystem Health Assessment
+
+### 2.1 Authentication & Identity — 🟢 Solid
+
+| Component | Lines | Status |
+|-----------|-------|--------|
+| OAuth (DPoP/PKCE/PAR) | 1,008 | Full AT Protocol OAuth. 5-port fallback. DPoP-bound tokens. |
+| App-Password Auth | 74 | Simple but functional legacy path. |
+| Dual-Auth Dispatch | ~150 in lib.rs | Transparent branching — every XRPC call auto-selects Bearer or DPoP. |
+| Encrypted Keychain | 965 | ChaCha20-Poly1305 + Argon2id. Full identity lifecycle + escrow recovery. |
+| Local-Only Identity | — | `did:key` from Iroh Ed25519 keypair. No external dependency. |
+
+**Assessment:** This is the most mature subsystem. Both auth modes are production-grade, the keychain encryption is strong, and the identity recovery flow (escrow bundle + 3-step restore) is fully implemented. The DID hierarchy (`did:plc` > `master_did` > `local_did`) is well-reasoned.
+
+**Risk:** The dual-auth branching in `lib.rs` duplicates ~150 lines of near-identical dispatch code. As more XRPC operations are added, this will become a maintenance hazard. Consider extracting a trait-based dispatch layer.
+
+### 2.2 Data Ingestion Pipeline — 🟡 Functional with Caveats
+
+| Connector | Lines | Format | Archive | Live Feed | Vault Media |
+|-----------|-------|--------|---------|-----------|-------------|
+| Bluesky | 2,072 | API | ✅ Import | ✅ Timeline + Feeds | ✅ Blob hash |
+| Facebook | 2,675 | HTML + JSON | ✅ ZIP parse | ❌ No live API | ✅ Blob + FS |
+| Instagram | 507 | JSON | ✅ ZIP parse | ❌ No live API | ✅ Blob |
+| ActivityPub | 1,271 (scaffold) | — | ❌ | ❌ | ❌ |
+| RSS/Atom | 0 | — | ❌ | ❌ | ❌ |
+| Threads | 0 | — | ❌ | ❌ | ❌ |
+
+**Strengths:**
+- The universal `BytescapeItem` schema (42+ fields) is comprehensive — it handles status, gallery, article, video, and link types with full syndication tracking via `share_history` event sourcing.
+- Facebook connector handles both HTML and JSON export formats with resilient path lookup (normalized, prefixed, basename fallback), double-UTF-8 decoding, and off-Facebook tracker detection.
+- Willow-style paths (`/{source}/{type}/{year}/{month}/{id}`) are auto-assigned on every write — this is the migration contract for the future Willow store swap.
+
+**Weaknesses:**
+- **No streaming/chunked import.** Large archives are parsed entirely in-memory. A 2GB Facebook ZIP with thousands of photos will spike memory and potentially OOM. The `import_facebook_zip` function processes the entire ZIP synchronously before emitting results.
+- **Classification is heuristic-based.** `BytescapeType` assignment (Video > Gallery > Article > Link > Status) relies on field counting and MIME sniffing rather than semantic analysis — edge cases (e.g., a single photo with 600 chars of text) may misclassify.
+- **No incremental import.** There's no diffing against previously imported archives — reimporting the same ZIP duplicates items unless the key (`{source}:{original_id}`) happens to collide.
+
+### 2.3 Storage Architecture — 🟡 Functional with Caveats
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     STORAGE TOPOLOGY                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐    │
+│  │      redb (Local)       │    │     Iroh (P2P-Synced)   │    │
+│  │                         │    │                         │    │
+│  │  ITEMS_TABLE ◄──────────┼────┼── media_blobs[] hashes  │    │
+│  │  MESSAGES_TABLE         │    │                         │    │
+│  │  VAULT_MESSAGES_TABLE   │    │  Iroh Blobs             │    │
+│  │  CONTACTS_TABLE         │    │  ├─ {hash} → media      │    │
+│  │  CONVERSATIONS_TABLE    │    │  └─ {hash}:thumb → WebP │    │
+│  │  PEERS_TABLE            │    │                         │    │
+│  │  COLLAB_DOCS_TABLE      │    │  Iroh Docs              │    │
+│  │  PROFILE_LAYOUT_TABLE   │    │  └─ vault/file/{id}     │    │
+│  │  GUESTBOOK_TABLE        │    │     → VaultFile JSON    │    │
+│  │  AP_ACTORS_TABLE        │    │                         │    │
+│  │  FOLLOWED_HASHTAGS      │    └─────────────────────────┘    │
+│  │  WILLOW_WRITE_PARITY    │                                    │
+│  │  POSTS_TABLE (legacy)   │                                    │
+│  └─────────────────────────┘                                    │
+│                                                                 │
+│  ⚠️  Cross-store reference: BytescapeItem.media_blobs[]         │
+│     contains Iroh blob hashes — no foreign key constraint.      │
+│     Orphan blobs possible if redb row deleted without           │
+│     cleaning Iroh.                                              │
+│                                                                 │
+│  ⚠️  All redb tables are &str → &str (JSON serialized).        │
+│     No type safety at storage layer. No secondary indexes.      │
+│     Every non-key query is a full table scan + filter.          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Critical concern: Scale ceiling.** The `&str → &str` table design means every query except direct key lookup requires deserializing all rows. With 10,000+ items (realistic for a user with multi-year social history + archives), feed loads will degrade. The `header_cache` (in-memory copy of all item metadata) mitigates this for feed pagination but is invalidated on every write — a write-heavy import flow will thrash the cache.
+
+**The Willow Migration Strategy (Option B — Hybrid Staged)** is the correct call. The `WILLOW_WRITE_PARITY` table is already capturing audit data for every write, and path-indexed queries are available behind the `BYTESCAPE_WILLOW_PATH_ONLY_READS` feature flag. The bridge is being built while the road stays open.
+
+### 2.4 P2P Networking — 🟢 Solid
+
+| Component | Implementation | Status |
+|-----------|---------------|--------|
+| Iroh Endpoint | QUIC + NAT traversal + relay fallback | ✅ Cross-network verified |
+| Protocol Router | 4 ALPNs: docs, gossip, blobs, `bytescape/1.0` | ✅ |
+| Custom Protocol | PING, PROFILE_EXCHANGE, CHAT_MESSAGE, FEED_REQUEST | ✅ |
+| Rate Limiting (CRIT-4) | 3 conn/peer, 60 req/min, 64KB payload, stale eviction | ✅ |
+| Blob Storage | Content-addressed, WebP thumbnails, dedup by hash | ✅ |
+| Docs (CRDT) | Create/join namespace, tombstone deletion, compaction | ✅ |
+| Gossip | Presence broadcast | ✅ (basic) |
+
+**This is Bytescape's moat.** The P2P stack is the hardest part of the system and it works — verified across networks via Pkarr DHT relay, cross-platform (desktop ↔ Android APK). The protocol design is clean: a simple request-type enum with rate limiting, bidirectional profile exchange, and feed serving (capped at 50 items per request to prevent abuse).
+
+**Risks:**
+- **Tombstone accumulation in Iroh Docs.** CRDTs can't truly delete — tombstones pile up. The `compact_vault_files` function replaces deleted entries with small marker blobs, but this is a band-aid. Long-lived vaults will accumulate dead weight.
+- **No offline queue for P2P messages.** If a peer is unreachable, the message send fails immediately. There's no store-and-forward buffer — this is a Phase 5 (Community Stations) dependency.
+- **Gossip is underutilized.** Only presence broadcasts use it. The architecture spec describes gossip for group discovery, collaborative editing awareness, and network state events — none of these are implemented yet.
+
+### 2.5 Frontend Architecture — 🟡 Functional with Caveats
+
+| Aspect | Assessment |
+|--------|------------|
+| Component structure | 🟡 Large monoliths — FeedEntryCard (684L), ChatScreen (644L), ProfileBuilderScreen (657L) |
+| State management | 🟢 Fine-grained Zustand stores (6 independent stores) — minimal cross-store coupling |
+| Navigation | 🟡 Store-driven, no URL router. `byte://` scheme exists internally but isn't wired to browser URLs |
+| Tab system | 🟢 Browser-style tabs with preserved React state (`display: none` swap) |
+| Data fetching | 🟢 Stale-while-revalidate via `useUnifiedFeed` + TTL feed cache. Stale request cancellation. |
+| Styling | 🟠 6,478-line monolithic CSS file. No modules, no splitting. 4 full themes in one file. |
+| Bundle | 🟡 GrapesJS (~500KB) is lazy-loaded. `wouter` installed but never used. `hls.js` may be partially dead. |
+| Memoization | 🟠 `FeedEntryCard` not wrapped in `React.memo` — parent re-renders cascade to all cards |
+| Testing | 🟡 12 test files covering key components, but major screens (ChatScreen, VaultScreen, FeedScreen) untested |
+
+**Strengths:** The adapter pattern (`BlueskyPost` → `FeedEntry`, `BytescapeItem` → `FeedEntry`) cleanly isolates backend data shapes from rendering. The feed cache store with 120-second TTL enables true stale-while-revalidate. The theme engine is surprisingly deep — 21 customizable CSS variables, 7 background presets, file upload for custom backgrounds.
+
+**Weaknesses:**
+- **Memory growth from simultaneous tab rendering.** All 13 screen types render at once; inactive tabs are `display: none` but their React trees, effect cleanup, and interval timers remain alive. A user with 5+ peer profile tabs will hold 5 concurrent sets of blob-resolution state, feed data, and polling timers.
+- **Blob resolution waterfall.** `useBlobUrl` makes individual IPC calls per blob hash. A feed page with 20 images fires 20 sequential Tauri invocations. Batch resolution would cut IPC overhead significantly.
+- **The 6,478-line CSS file** is a ticking maintenance bomb. Every agent commit touches it. Four complete theme definitions means every style change must be replicated four times.
+
+### 2.6 Syndication & Publishing — 🟡 Functional with Caveats
+
+**Implemented:**
+- `syndicate_vault_item` posts to Bluesky via `createRecord` with rich text facets, image uploads, and link card embeds.
+- `share_history` event log with `active` flags enables rollback detection (`verify_syndications`).
+- Import deduplication: timeline importers skip re-importing already-syndicated items.
+
+**Not implemented:**
+- No background syndication job — syndication is currently synchronous per-item.
+- No rate limiting or backoff for bulk syndication.
+- No AP syndication (depends on A1.2).
+- `PendingSyndication` status exists in the schema but there's no queue processor consuming it.
+
+### 2.7 Collaborative Editing — 🟠 Partially Implemented
+
+The Yrs (Yjs Rust port) integration is functional for **local, single-user** editing:
+- Documents stored as base64-encoded Yjs binary state in `COLLAB_DOCS_TABLE`.
+- Frontend `useCollabDoc` hook manages Y.Doc lifecycle with debounced persistence.
+- `ArticleEditor` supports Tiptap collaboration extensions.
+
+**Missing the critical path:** Real-time P2P sync via Gossip (C6.3), offline merge (C6.4), and Station relay (C6.5) are all unimplemented. Without gossip-based update broadcasting, "collaborative editing" is actually "local Yjs document persistence." The architecture is sound — Yjs handles conflict resolution automatically — but the transport layer connecting two editors isn't built yet.
+
+**Fragility note:** `collab.rs` uses `blocking_read()`/`blocking_write()` on the redb database. If called from an async Tauri command handler (which they are), these can block the Tokio runtime thread. Under load, this could cause deadlocks or response timeouts.
+
+### 2.8 ActivityPub Federation — 🟠 Partially Implemented
+
+Seven modules (~1,271 lines) provide the structural foundation:
+- ActivityStreams JSON-LD types, Actor model, HTTP Signatures (RSA-SHA256)
+- Inbox processing, Outbox delivery, WebFinger resolution
+- `ApActor` stored in `AP_ACTORS_TABLE`
+
+**What's missing:** No live connection to any Mastodon/Lemmy instance. No Follow/Accept flow. No DM routing. The AP code compiles and has types, but there's no `connect_activitypub()` or live feed ingestion. This is scaffolding waiting for the A1.2 milestone.
+
+### 2.9 Browser & WebView — 🔴 Runtime Broken
+
+`commands/browser.rs` has 4 Rust commands. `WebViewScreen.tsx` invokes them. Everything compiles, 250 tests pass. **URLs don't load at runtime** — likely because `get_window("main")` returns `None` due to a window label mismatch in `tauri.conf.json`. This has been investigated 5 times with 5 different approaches. Only the Rust `WebviewBuilder` approach is architecturally correct — it needs focused debugging, not another rewrite.
+
+---
+
+## 3. Architectural Strengths
+
+### 3.1 The Unbundled Engine & Lens Pattern
+The clean separation between the Rust Engine and React Lens is the project's most important structural decision. It means:
+- **Future frontends are cheap.** A CLI vault tool, a mobile-only chat app, or a headless sync daemon could all consume the same 110+ Tauri commands without touching the Rust core.
+- **The backend is frontend-agnostic.** Replacing React with Solid, Svelte, or a native Swift/Kotlin UI would require zero backend changes.
+- **Testing is isolated.** Backend logic can be unit-tested in Rust without spinning up a WebView. Frontend components can be tested with mocked `invoke()` calls.
+
+### 3.2 The BytescapeItem Universal Container
+With 42+ fields covering identity, content, media, social metadata, syndication state, and Willow addressing, `BytescapeItem` is the gravity well that makes multi-network unification possible. The `share_history` event-sourcing pattern (rather than a single `syndication_status` field) is particularly well-designed — it enables:
+- Knowing exactly *when* and *where* something was syndicated
+- Rolling back syndications when upstream deletions are detected
+- Supporting future multi-network syndication (post to Bluesky AND Mastodon simultaneously, track independently)
+
+### 3.3 The Willow Migration Contract
+Rather than attempting a big-bang storage rewrite, the team chose to:
+1. Add Willow-compatible paths to every `BytescapeItem` now
+2. Write parity audit data on every save
+3. Gate the actual Willow store behind a Cargo feature flag
+4. Provide canary read flags for gradual rollout
+
+This is a textbook staged migration. The path-indexed APIs are already the migration surface — when the Willow store is ready, the read layer swaps transparently.
+
+### 3.4 Dual-Auth Transparency
+Supporting both OAuth (DPoP/PKCE/PAR) and app-password auth simultaneously, with transparent dispatch at the XRPC call layer, means users can authenticate however they prefer without the rest of the system caring. The `is_oauth_session()` branching is inelegant but functional — it can be refactored into a trait-based dispatch layer without touching any caller.
+
+### 3.5 P2P-First with Federation Bridge
+Most projects start centralized and try to bolt on P2P later. Bytescape starts P2P-first (Iroh mesh, content-addressed blobs, `did:key` identity) and bridges *outward* to centralized networks. This means the sovereignty model is structural, not aspirational — even if every external API went down, two Bytescape users could still sync data over QUIC.
+
+---
+
+## 4. Weaknesses, Technical Debt & Risk Vectors
+
+### 4.1 🔴 Critical: No Secondary Indexes on redb
+
+**Impact:** Every non-key query is a full table scan.
+
+All 13 redb tables use `TableDefinition<&str, &str>` — string key to JSON string value. Queries like "all items from Facebook sorted by date" require:
+1. Open a read transaction
+2. Iterate every row in `ITEMS_TABLE`
+3. Deserialize each JSON string to `BytescapeItem`
+4. Filter by `source == Facebook`
+5. Sort by `original_timestamp`
+
+At 1,000 items this is fast. At 50,000 items (a realistic long-term vault with multi-year social history + archives), this becomes multi-second. The `header_cache` mitigates feed pagination but is invalidated on every write.
+
+**Recommended path forward:** Either:
+- Add secondary index tables in redb (e.g., `ITEMS_BY_SOURCE_TABLE`, `ITEMS_BY_DATE_TABLE` with composite keys)
+- Move to SQLite/DuckDB for the local index layer while keeping redb for simple KV (keychain, preferences)
+- Accelerate the Willow store migration, which would provide path-native querying
+
+### 4.2 🟠 High: Cross-Store Consistency Gap
+
+`BytescapeItem.media_blobs[]` contains Iroh blob hashes, but there's no foreign-key constraint or transactional guarantee between redb and Iroh. Failure modes:
+
+| Scenario | Result |
+|----------|--------|
+| redb row deleted, Iroh blob survives | **Orphan blob** — wasted storage, no cleanup path |
+| Iroh blob lost (peer sync failure), redb row survives | **Broken reference** — image shows as missing in feed |
+| App crash mid-import (redb written, Iroh blob not yet stored) | **Dangling hash** — item references media that doesn't exist |
+
+The Willow migration (unifying items + media under one store) is the long-term fix. In the interim, a consistency-check background job (compare redb blob references against Iroh blob inventory) would catch drift.
+
+### 4.3 🟠 High: Monolithic CSS
+
+6,478 lines in a single `App.css`. Four complete theme definitions. Every component style. Every responsive breakpoint. This is the #1 contributor to agent merge conflicts and style regressions.
+
+**Recommended path forward:**
+- CSS Modules (`.module.css` per component) for component-scoped styles
+- Theme variables in a dedicated `themes/` directory (one file per theme)
+- Keep a thin `global.css` for resets, custom properties, and scrollbar styles
+
+### 4.4 🟡 Medium: IPC Serialization Overhead
+
+Every Tauri `invoke()` call serializes arguments to JSON, passes them over the IPC bridge, deserializes in Rust, processes, serializes the result back to JSON, and deserializes in TypeScript. For a feed load with 50 items (each with 42+ fields, media arrays, facets), this is a non-trivial serialization tax.
+
+Compounding factors:
+- `useBlobUrl` fires individual IPC calls per blob hash (no batching)
+- P2P keepalive polls `check_peer_connectivity` for each peer sequentially
+- `useUnifiedFeed` may trigger multiple feed fetches (timeline + vault) and merge them in TypeScript
+
+### 4.5 🟡 Medium: Frontend Component Monoliths
+
+Three components exceed 600 lines each:
+- `FeedEntryCard` (684 lines) — handles media grids, video, link previews, quote posts, engagement bar, audience pills, syndication, threads, reactions
+- `ProfileBuilderScreen` (657 lines) — GrapesJS integration, custom blocks, preview mode
+- `ChatScreen` (644 lines) — three-column layout, tabbed conversations, polling
+
+These are hard to test, hard to review, and prone to cascading re-renders. `FeedEntryCard` especially should be decomposed: `MediaGrid`, `EngagementBar`, `SyndicationDrawer`, `ThreadReplies` could each be their own components.
+
+### 4.6 🟡 Medium: 27 Cargo Warnings
+
+Unused imports, dead code, unused variables across the Rust codebase. Not errors, but they obscure real issues during development. A `cargo clippy` pass with `#![deny(warnings)]` would clean this up.
+
+### 4.7 🟡 Medium: Dead Dependencies
+
+| Dependency | Status |
+|-----------|--------|
+| `wouter` (npm) | Installed, never imported. Remove it. |
+| `hls.js` (npm) | Installed, but HLS resolution happens in Rust (`resolve_hls_video`). May be partially dead. Audit usage. |
+| `willow_25` (Cargo, feature-gated) | Correctly gated. Not default. No action needed. |
+
+---
+
+## 5. Data Flow Analysis — Critical Paths
+
+### 5.1 Feed Rendering Path (Latency-Critical)
+
+```
+User opens Feed tab
+    → useUnifiedFeed checks feed cache store (120s TTL)
+        → Cache HIT: render immediately, background refresh
+        → Cache MISS:
+            → invoke("get_timeline_unified") — Rust
+                → Check FeedCache (30s TTL timeline, 5m saved feeds)
+                    → API Cache HIT: return cached
+                    → API Cache MISS:
+                        → SHARED_CLIENT.get(bsky API) — HTTP
+                        → Parse response → BytescapeItem[]
+                        → Save to redb ITEMS_TABLE
+                        → Return to frontend
+            → TypeScript: adapt to FeedEntry[]
+            → For each media_blob: invoke("resolve_blob_url") — individual IPC!
+            → Render FeedEntryCard × N
+```
+
+**Bottleneck analysis:**
+1. **Cold start:** No cache → API fetch → redb write → IPC return → blob resolution × N. Estimated: 2-5 seconds.
+2. **Warm start:** Feed cache hit → immediate render. Estimated: <100ms.
+3. **Tab switch:** Tab preserved in DOM (`display: none` swap). Estimated: instant.
+4. **Blob resolution:** N sequential IPC calls for N images. This is the primary warm-path bottleneck.
+
+**Recommendation:** Add a batch blob resolution command (`resolve_blob_urls(hashes: Vec<String>)`) to cut N IPC calls to 1.
+
+### 5.2 Archive Import Path (Throughput-Critical)
+
+```
+User drops ZIP onto ImportScreen
+    → Tauri drag-drop event → filesystem path
+    → invoke("import_archive_auto") — Rust
+        → Detect format (FB HTML / FB JSON / IG JSON)
+        → Open ZIP in memory
+        → Parse all posts → Vec<BytescapeItem>
+        → For each media file:
+            → Extract from ZIP
+            → Store in Iroh Blobs → hash
+            → Generate WebP thumbnail → store → hash
+        → Emit progress events → frontend terminal
+    → Result stored in AppState.pending_import
+    → User clicks "Import"
+    → invoke("commit_memories") — Rust
+        → For each BytescapeItem:
+            → Assign Willow path
+            → Save to redb ITEMS_TABLE
+            → Write parity audit to WILLOW_WRITE_PARITY
+        → For each VaultMessage:
+            → Save to VAULT_MESSAGES_TABLE
+```
+
+**Bottleneck analysis:**
+1. **Memory:** Entire ZIP is processed before any results are returned. A 5GB archive with 10,000 photos will hold all parsed data in memory simultaneously.
+2. **Thumbnail generation:** Each WebP thumbnail is generated synchronously. Image decoding + resizing + encoding is CPU-intensive.
+3. **No resume/checkpoint:** If the app crashes mid-import, everything must be re-processed.
+
+**Recommendation:** Implement chunked streaming import — process N items at a time, commit each chunk, emit progress. Use `tokio::task::spawn_blocking` for CPU-intensive thumbnail generation to avoid starving the async runtime.
+
+### 5.3 P2P Message Path (Latency-Sensitive)
+
+```
+Peer A sends message
+    → invoke("send_p2p_chat_message")
+        → Iroh endpoint.connect(peer_B_node_id, "bytescape/1.0")
+            → NAT traversal / relay fallback
+        → Send CHAT_MESSAGE over bidirectional stream
+        → Save to local VAULT_MESSAGES_TABLE
+        → Return success
+
+Peer B receives message
+    → BytescapeProtocol::accept() triggered
+    → Rate limit check (3 conn/peer, 60 req/min)
+    → Parse CHAT_MESSAGE
+    → Save to VAULT_MESSAGES_TABLE
+    → Emit "p2p-message" Tauri event → frontend
+    → ChatScreen event listener updates UI
+```
+
+**This path is clean.** The only concern is the lack of store-and-forward — if Peer B is offline, the send fails immediately with no retry queue. This is acceptable for now; Community Stations (Phase 5) will add relay buffering.
+
+---
+
+## 6. Strategic Opportunities — Ranked by Impact × Feasibility
+
+### Tier 1: High Impact, High Feasibility (Do Now)
+
+| Opportunity | Impact | Effort | Rationale |
+|-------------|--------|--------|-----------|
+| **Batch blob resolution IPC** | Feed render speed ×5 | 1 session | Single biggest UX improvement per engineering hour |
+| **CSS modularization** | Dev velocity, fewer regressions | 2-3 sessions | Eliminates #1 source of merge conflicts |
+| **Window maximized on launch** | First impression | 5 minutes | One line in `tauri.conf.json` |
+| **Wire export button** | Feature completion | 30 minutes | Backend exists, frontend button exists, just connect them |
+| **Cargo warning cleanup** | Code health | 1 session | `cargo clippy --fix` + review |
+| **Remove dead deps** | Bundle size, clarity | 15 minutes | `pnpm remove wouter`, audit `hls.js` |
+
+### Tier 2: High Impact, Medium Feasibility (Next Sprint Cycle)
+
+| Opportunity | Impact | Effort | Rationale |
+|-------------|--------|--------|-----------|
+| **Secondary indexes or SQLite migration** | Scale to 50K+ items | 3-5 sessions | Eliminates the performance ceiling on feed/vault queries |
+| **Chunked archive import** | Handle large archives without OOM | 2-3 sessions | Critical for users with decade-long social histories |
+| **AP live connection (A1.2)** | Doubles the federated network | 5-8 sessions | Unlocks Mastodon/Lemmy/Threads — the biggest user-facing expansion |
+| **RSS/Atom connector** | New content type pipeline | 2-3 sessions | `feed-rs` crate is well-maintained; straightforward integration |
+| **WebView debugging (B10.7)** | In-app browsing | 1-2 sessions | Root cause is likely window label mismatch — focused debugging, not rewrite |
+| **Background syndication queue** | Reliable multi-network posting | 2-3 sessions | `PendingSyndication` exists in schema but has no consumer |
+
+### Tier 3: High Impact, Long Horizon (Strategic Investment)
+
+| Opportunity | Impact | Effort | Rationale |
+|-------------|--------|--------|-----------|
+| **AI-Enhanced Local Vault Search** | Killer feature — semantic search over private data | Research + 5-10 sessions | On-device LLM (ONNX/candle) for "find the photo of X." Zero-knowledge — data never leaves device. |
+| **Community Station Protocol** | "The People's Cloud" — resilient P2P mesh | 10-15 sessions | Encrypted store-and-forward relay enables offline messaging, profile availability, and Yjs collab relay. |
+| **Pluggable Lens Extension API** | Third-party ecosystem | 8-12 sessions | WASM/iframe sandbox for custom views (Kanban, Calendar, Analytics). Turns Bytescape into a platform. |
+| **Willow Store Full Migration** | Architecture unification | 10+ sessions | Replace redb with Willow-native store for items + messages. Enables true P2P content sync. |
+| **Geospatial Features (B4-B7)** | Hyperlocal social — unique market position | 15-20 sessions | Map-based discovery, local groups, marketplace. Requires `leaflet`/`maplibre-gl` + geohash indexing. |
+
+### Tier 4: Moonshots (Research Phase)
+
+| Opportunity | Notes |
+|-------------|-------|
+| **Content Provenance (C2PA)** | Prove photos are real, not AI-generated. Depends on C2PA Rust SDK maturity. |
+| **Device Attestation** | Android Play Integrity / Apple DeviceCheck for bot resistance. Privacy implications need evaluation. |
+| **DNS-over-HTTPS for WebView** | System-level DNS override for anti-tracking. Platform-dependent feasibility. |
+| **WASM Web Portal** | Public profiles via WebAssembly Iroh node in browser. Iroh WASM support is experimental. |
+
+---
+
+## 7. Dependency Risk Assessment
+
+### External Service Dependencies
+
+| Dependency | Risk | Mitigation |
+|-----------|------|------------|
+| Bluesky API (`bsky.social`) | Rate limits, API changes, downtime | Local-first design means app works without it; cached content survives disconnection |
+| Bluesky OAuth (`bsky.social/.well-known/`) | Discovery endpoint changes | `CloudflareDnsTxtResolver` custom DNS for `_atproto-did.` records; PDS URL resolved from JWT |
+| Iroh relay servers | Relay downtime blocks NAT-traversal | Direct QUIC connection works without relay if both peers have public IPs; Pkarr DHT fallback |
+| Cloudflare DoH (`1.1.1.1`) | DNS resolution for OAuth handle lookup | Fallback to system DNS should be added |
+
+### Crate/Library Dependency Risks
+
+| Dependency | Version | Risk | Notes |
+|-----------|---------|------|-------|
+| `iroh` | 0.35.0 | Pre-1.0 API churn | Pin version, track releases |
+| `atrium-oauth` | 0.1 | Very early — API may change significantly | Currently works; monitor `atrium` releases |
+| `yrs` | 0.21 | Stable but niche | Yjs compatibility verified; CRDT semantics well-tested |
+| `redb` | 2.4 | Stable | Consider migration to SQLite for secondary indexes |
+| `grapesjs` (npm) | 0.22 | Large bundle (~500KB), complex API | Lazy-loaded; consider lighter alternative if bundle grows |
+| `react` | 19.1 | Bleeding edge (React 19) | Concurrent features not yet leveraged; potential for Suspense boundaries |
+
+---
+
+## 8. Cross-Cutting Concerns
+
+### 8.1 Error Handling Architecture
+
+The Rust backend has a structured `BytescapeError` hierarchy:
+
+```
+BytescapeError
+├── Auth(String)
+├── Database(String)
+├── Network(String)
+├── Sync(String)
+├── Import(String)
+├── Io(std::io::Error)
+├── SerdeJson(serde_json::Error)
+├── Redb(redb::Error)
+└── Other(String)
+```
+
+However, most Tauri commands return `Result<T, String>` — the structured error types are `.to_string()`'d before crossing the IPC bridge. The frontend catches all errors in generic `try/catch` blocks with toast-style display. There's no error categorization on the frontend (e.g., "retry-able network error" vs. "permanent auth failure").
+
+### 8.2 Observability & Debugging
+
+**Current state:** Minimal. No structured logging, no telemetry, no performance metrics.
+- Rust uses `println!` / `eprintln!` for debug output
+- No `tracing` crate integration (despite it being a standard Rust observability tool)
+- Frontend has no performance monitoring (no `React.Profiler`, no `PerformanceObserver`)
+- No way to inspect P2P connection state from the UI beyond "connected" / "disconnected"
+
+**Recommended:** Add `tracing` with `tracing-subscriber` for structured, filterable logging. Emit span data for critical paths (feed fetch, archive import, P2P connection). This will be invaluable for debugging performance issues and P2P connectivity problems.
+
+### 8.3 Testing Coverage Map
+
+```
+                    ┌──────────────────────────────┐
+                    │        TEST COVERAGE          │
+                    ├──────────────────────────────┤
+                    │                              │
+                    │  RUST BACKEND                │
+                    │  ├── blob_hash.rs    ██████  │  17 tests
+                    │  ├── oauth.rs        █████   │  30 tests
+                    │  ├── error.rs        ███     │  
+                    │  ├── classify.rs     ██      │  
+                    │  ├── facebook.rs     ██      │  
+                    │  ├── db.rs           █       │  
+                    │  ├── iroh_sync.rs    █       │  
+                    │  ├── keychain.rs     █       │  
+                    │  └── (rest)          ░░░░░░  │  No tests
+                    │                              │
+                    │  FRONTEND                    │
+                    │  ├── richtext.test   ████    │  Facet parsing
+                    │  ├── useCharCount    ███     │  28 tests
+                    │  ├── ThemeCustom.    ███     │  20 tests
+                    │  ├── ThemePicker     ██      │  5 tests
+                    │  ├── ComposeBox      ██      │  
+                    │  ├── ArticleEditor   ██      │  
+                    │  ├── useCollabDoc    ██      │  18 tests
+                    │  ├── useLocation     █████   │  45 tests
+                    │  ├── SourceBadge     █       │  
+                    │  ├── RichText        █       │  
+                    │  ├── ProfileBuilder  █       │  
+                    │  ├── sanitize        █       │  
+                    │  └── SCREENS         ░░░░░░  │  No tests
+                    │                              │
+                    └──────────────────────────────┘
+```
+
+**Gap:** No screen-level integration tests. `FeedScreen`, `ChatScreen`, `VaultScreen`, and `LoginScreen` — the four most important user-facing surfaces — have zero test coverage. The backend connectors (2,072L Bluesky, 2,675L Facebook) have minimal test coverage relative to their complexity.
+
+---
+
+## 9. Maturity Model — Where Bytescape Sits Today
+
+| Dimension | Level | Evidence |
+|-----------|-------|----------|
+| **Core Data Model** | ██████████ 90% | `BytescapeItem` is comprehensive. Willow paths assigned. Share history event-sourced. |
+| **Bluesky Integration** | ████████░░ 80% | Full OAuth, timeline, feeds, DMs, posting, syndication. Minor gaps (likes on feed items sometimes stale). |
+| **Archive Import** | ███████░░░ 70% | FB + IG parsers work. Quality filtering improved. No chunked/streaming import. No incremental re-import. |
+| **P2P Networking** | ████████░░ 80% | Iroh fully operational. Custom protocol with rate limiting. Cross-network verified. No store-and-forward. |
+| **Identity & Auth** | █████████░ 90% | Dual-auth, encrypted keychain, DID hierarchy, escrow recovery. Production-grade. |
+| **Feed UX** | ██████░░░░ 60% | 4-tab system works. Content filters functional. Performance cached but not profiled. |
+| **Chat** | ██████░░░░ 60% | Bluesky DMs + P2P chat work. Archives imported. No offline queue. No read receipts. |
+| **Vault/Files** | ███████░░░ 70% | Full file manager. Upload, preview, delete, dedup. No search. No tagging UI. |
+| **Profile Builder** | █████░░░░░ 50% | GrapesJS integrated with custom widgets. Runtime broke once, fixed. No peer-to-peer serving. |
+| **ActivityPub** | ██░░░░░░░░ 20% | Scaffold code. Types, signatures, inbox/outbox. No live connection. |
+| **Collaborative Editing** | ███░░░░░░░ 30% | Yjs storage + Tiptap integration. No P2P sync. No awareness protocol. |
+| **Browser/WebView** | █░░░░░░░░░ 10% | Compiles. Runtime broken. Window label mismatch. |
+| **Geospatial** | ░░░░░░░░░░ 0% | Not started. |
+| **Community Stations** | ░░░░░░░░░░ 0% | Not started. |
+
+---
+
+## 10. Systems Interaction Diagram — Current Implementation
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant L as React Lens
+    participant S as Zustand Stores
+    participant I as Tauri IPC
+    participant E as Rust Engine
+    participant DB as redb
+    participant IR as Iroh (P2P)
+    participant BK as Bluesky API
+
+    Note over U,BK: === Feed Load (Cold Start) ===
+    U->>L: Opens Feed tab
+    L->>S: Check feed cache (120s TTL)
+    S-->>L: Cache MISS
+    L->>I: invoke("get_timeline_unified")
+    I->>E: Deserialize args
+    E->>E: Check FeedCache (30s TTL)
+    E->>BK: GET /xrpc/app.bsky.feed.getTimeline
+    BK-->>E: JSON response
+    E->>E: Parse → BytescapeItem[]
+    E->>DB: Save to ITEMS_TABLE
+    E-->>I: Serialize result
+    I-->>L: FeedEntry[]
+    L->>S: Update feed cache
+    loop For each media_blob
+        L->>I: invoke("resolve_blob_url")
+        I->>E: Check blob_cache/
+        E->>IR: get_blob(hash) if not cached
+        IR-->>E: bytes
+        E->>E: Write to blob_cache/{hash}.ext
+        E-->>I: http://127.0.0.1:{port}/{hash}.ext
+        I-->>L: URL string
+    end
+    L->>U: Render FeedEntryCard × N
+
+    Note over U,BK: === Archive Import ===
+    U->>L: Drop ZIP file
+    L->>I: invoke("import_archive_auto", path)
+    I->>E: Detect format
+    E->>E: Parse ZIP → posts + media
+    loop For each media file
+        E->>IR: store_blob(bytes) → hash
+        IR-->>E: blob hash
+        E->>IR: generate_thumbnail → store_blob
+    end
+    E-->>I: ImportedArchive (pending)
+    I-->>L: Show audit terminal
+    U->>L: Click "Import"
+    L->>I: invoke("commit_memories")
+    I->>E: Assign Willow paths
+    E->>DB: Batch insert ITEMS_TABLE
+    E->>DB: Write WILLOW_WRITE_PARITY
+    E-->>I: Success
+    I-->>L: Navigate to Feed
+
+    Note over U,BK: === P2P Chat ===
+    U->>L: Type message, click Send
+    L->>I: invoke("send_p2p_chat_message")
+    I->>E: Connect to peer via Iroh
+    E->>IR: endpoint.connect(node_id, "bytescape/1.0")
+    IR-->>E: QUIC connection
+    E->>E: Send CHAT_MESSAGE
+    E->>DB: Save to VAULT_MESSAGES_TABLE
+    E-->>I: Success
+    I-->>L: Optimistic UI update
+```
+
+---
+
+## 11. Recommended Execution Priorities
+
+Based on this analysis, here is the recommended priority ordering for the next development cycles:
+
+### Immediate (This Week)
+1. Add `"maximized": true` to `tauri.conf.json` window config
+2. Wire the export button in SettingsScreen to `export_vault_data`
+3. Remove `wouter` from package.json
+4. Run `cargo clippy --fix` to clean 27 warnings
+
+### Short-Term (Next 2 Sprints)
+1. **Batch blob resolution** — new Tauri command `resolve_blob_urls_batch(hashes: Vec<String>)` returning `HashMap<String, String>`
+2. **CSS modularization** — split `App.css` into per-theme and per-component files
+3. **`React.memo` on FeedEntryCard** — prevent cascading re-renders in feed
+4. **WebView window label fix** — check `tauri.conf.json` window labels against `get_window("main")` call
+
+### Medium-Term (Next Quarter)
+1. **RSS/Atom connector** — `feed-rs` crate, background polling, `BytescapeType::Article`
+2. **ActivityPub live connection** — build on existing scaffold, target Mastodon read-only first
+3. **Background syndication queue** — consume `PendingSyndication` with rate limiting + exponential backoff
+4. **Secondary indexes or SQLite** — break the 10K-item performance ceiling
+5. **Structured logging** — `tracing` crate with filterable spans for critical paths
+
+### Long-Term (Next 6 Months)
+1. **Community Station Protocol** — encrypted store-and-forward relay
+2. **AI local search** — on-device embedding model for semantic vault queries
+3. **Lens Extension API** — WASM/iframe plugin system for third-party views
+4. **Geospatial features** — map view, local groups, marketplace
+
+---
+
+*End of Systems Analysis. This document should be updated after each major sprint to reflect implementation progress and recalibrated priorities.*
+

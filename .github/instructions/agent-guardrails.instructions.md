@@ -50,10 +50,10 @@ When user feedback conflicts with current code state, the **user feedback wins**
 - Before editing a file, run `git log --oneline -5 -- <filepath>` to check if another agent recently modified it.
 - If another agent modified the file in the **current sprint**, coordinate through the PM or leave a comment in `progress.md` explaining your changes.
 - **Never modify files outside your track** unless your sprint prompt explicitly authorizes it. Track boundaries:
-  - **Frontend (Track B)**: `src/` (React/TypeScript), `src/App.css`, `tauri.conf.json` (UI config only)
+  - **Frontend (Track B)**: `src/` (all React/TypeScript, including ComposeBox, themes, lenses, CSS), `tauri.conf.json` (UI config only)
   - **Backend (Track A)**: `src-tauri/src/` (Rust), `src-tauri/Cargo.toml`
-  - **Content (Track C)**: `src/components/ComposeBox*`, `src/components/lenses/*`, `src-tauri/src/models/`, content-related CSS
   - **Shared files** (require PM coordination): `src/types/index.ts`, `src/hooks/useUnifiedFeed.ts`, `src-tauri/src/lib.rs` (command registration)
+  - *(Note: Content/Track C was dissolved as of Sprint v5. All Content scope merged into Frontend/Track B.)*
 
 ---
 
