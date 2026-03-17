@@ -8,14 +8,18 @@ Feedback:
 
 **Outstanding issues**
 
-- Feed take a while to refresh...like a really really long while, tens of seconds that it seems like its stalled out.  Backend worked on this for a bit, but it's still 16 seconds to load the feed, which is a while.
-- "Customize" is still janky and nonsensical.  Customize should be a pencil button that says "Customize" under it.  Clicking it should make the profile components, AS IS ON THE SCREEN CURRENTLY, turn into editable modules that you can edit and save and drag and drop in real time with the results showing up in real time on the profile.  You should be able to drag and drop boxes in a grid layout, resize boxes, add backgrounds, embed gifs and widgets like music players, etc.  Ya know, like all the grapjs and other interactive stuff we implemented?
-- There are now a bunch of empty spots on the profile, so we should strategize on what to fill it with.   We could always go with default empty "About me:", "Connections:", etc, that users can enter some basic info about themselves if they want, or delete those sections.  Let's turn it into a robust social media bio by default that you can edit and customize in terms of size, location, color, background, adding gifs, animations, etc.  
-- The import screen still needs a bit of work, but much better than it was.  Will readdress later on.
-- In general, the "social" module is the weakest and makes the least sense.  We need to do some serious brainstorming on how to make this module the most useful and functional, as it will be a very big part of how the platform works. The way it is now is lightyears from where it should be.  We need it to be more focused on managing and discovering friends/content.This should be about followers on different sites, webrings you're a part of, etc.  Clicking on the icons under the "social" section on the left is more of how I would imagine this section would work, being able to browse, search, and add/remove friends.
-- Is P2P Connections under the Settings tab even relevant still?  What even is that?  I had made a p2p connection using the peer node ID, so it seems like an irrelevant part of the program. 
-- Export button added, but not functionality
+Critical priorities:
+- Video stuttery/choppy when playing.
+- Feed and videos take a very long while to refresh...like a really really long while.  Last boot up was 20 seconds for the feed to load, and I always see at least a few seconds of "loading native media" before a video load.
+- Links and profiles don't load in new tabs, just open a new tab and it's a blank screen. 
+- Settings page completely missing, no navigation bar, just totally missing screen.
+Lower priorities:
+- If a video is played in small screen view, the video starts a new video in the frame view, while the small screen view video continues to play.  It should continue to play in full screen from where it left off, and only play one video at a time.  If one starts, the other should automatically stop.
+- Posts/images on the facebook feed are duplicating.  If someone tries to import a social media archive more than once, it should not duplicate, the import should be smart enough to differentiate.  It should still allow for multiple archive uploads, but it should be able to tell if it's a different archive, and then integrate those posts in as a single facebook/unified feed.
+- "Customize" button on profile broken.
+- User profile needs default boxes added for "About me:", "Connections:", etc, that users can enter some basic info about themselves if they want, or delete those sections and add other custom widgets/boxes.  Let's turn it into a robust social media bio by default that you can edit and customize in terms of size, location, color, background, adding gifs, animations, etc.  Use spacehey.come or myspace as the 
+- Followers in the social module has a "Bluesky API error: getFollowers failed with status:401 Unauthorized.
 
 **New Issues**
 
-- 
+- Chat button on friendslist contacts does not work.  Works fine on the feed screen.  

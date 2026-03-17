@@ -40,19 +40,72 @@ Your scope is `src-tauri/src/` (Rust backend), `src-tauri/Cargo.toml`.
 
 ---
 
-## Sprint Theme: "Polish What Exists"
+## Sprint Theme: "Bugfix & Stabilize"
 
-The systems architect recommends stabilizing core infrastructure before new features. This sprint focuses on performance bottlenecks, cleanup, and reliability — all directly addressing user-reported issues and architectural debt.
+User testing on 2026-03-17 revealed escalated issues: feed load time now 20s, video still stuttery, archive re-imports create duplicates, and Bluesky getFollowers returns 401. Phase 1 is critical bug fixes, Phase 2 is the originally planned infrastructure work.
 
 ---
 
-## Sprint Priorities
+## Phase 1 — Critical Bug Fixes (do these FIRST)
 
-### P1 — Batch Blob Resolution ⚡⚡⚡
+### P1 — Video Playback Fix ⚡⚡⚡ CRITICAL
+
+**User:** *"Video stuttery/choppy when playing."* and *"I always see at least a few seconds of 'loading native media' before a video loads."*
+
+This has been escalated from "mostly fixed" to a critical complaint. The user is seeing both stutter during playback AND a multi-second delay before video starts.
+
+**Two problems to solve:**
+1. **Stutter during playback:** FFmpeg remux uses `-c copy` with `aac_adtstoasc` and `genpts+discardcorrupt`. HLS segments can have PTS jumps that `-c copy` doesn't fix.
+   - Examine a cached MP4 with `ffprobe` for PTS discontinuities
+   - Try `-vsync cfr` or `-fps_mode cfr` for constant frame rate
+   - Last resort: lightweight re-encode (`-c:v libx264 -preset ultrafast -crf 23`)
+2. **"Loading native media" delay:** The HLS→MP4 conversion takes too long before playback starts.
+   - Check if the FFmpeg process is waiting on full download before converting
+   - Consider streaming the conversion (pipe segments as they arrive)
+   - Add progress events so the frontend knows conversion status
+
+**Target:** Video starts within 1-2s. Smooth playback without stutter.
+
+---
+
+### P2 — Bluesky getFollowers 401 Unauthorized ⚡⚡⚡ CRITICAL
+
+**User:** *"Followers in the social module has a 'Bluesky API error: getFollowers failed with status:401 Unauthorized.'"*
+
+The Bluesky session token is expired or not being refreshed before the `getFollowers` call.
+
+**Investigation:**
+1. Check the `getFollowers` command in the Bluesky connector — does it call `ensure_valid_session()` or `refresh_session()` before making the API request?
+2. Other Bluesky commands (timeline, etc.) likely DO refresh — find the pattern they use and apply it to `getFollowers`
+3. The auth retry pattern is in `auth.rs` — check if followers-related endpoints follow the same 401→refresh→retry flow
+
+**Fix:** Ensure `getFollowers` (and `getFollows`) calls go through the same session-refresh middleware as timeline fetches.
+
+---
+
+### P3 — Archive Import Deduplication ⚡⚡
+
+**User:** *"Posts/images on the facebook feed are duplicating. If someone tries to import a social media archive more than once, it should not duplicate. The import should be smart enough to differentiate."*
+
+Currently, re-importing the same archive creates duplicate `BytescapeItem` entries.
+
+**Fix:**
+1. Before inserting a new item during import, check if an item with the same `source` + `source_id` (or content hash if no source_id) already exists
+2. If it exists, skip it (or update if the new version has more data)
+3. For Facebook/Instagram archives: use the combination of `source: Facebook/Instagram` + timestamp + content hash as a dedup key
+4. Multiple DIFFERENT archives should still merge correctly — only skip true duplicates
+
+**This must work for both Facebook and Instagram connectors.**
+
+---
+
+## Phase 2 — Infrastructure & Performance
+
+### P4 — Batch Blob Resolution ⚡⚡
 
 **Systems Advisory HP-1. Single biggest feed render speed improvement.**
 
-**Problem:** Each image in the feed triggers an individual Tauri `invoke()` call to resolve its blob hash to a URL. A feed page with 20 images = 20 sequential IPC round-trips. The user reports feed loading takes ~16 seconds.
+**Problem:** Each image in the feed triggers an individual Tauri `invoke()` call to resolve its blob hash to a URL. A feed page with 20 images = 20 sequential IPC round-trips. The user reports feed loading takes **~20 seconds**.
 
 **Fix:**
 1. New command: `resolve_blob_urls_batch(hashes: Vec<String>) → HashMap<String, String>`
@@ -64,7 +117,7 @@ The systems architect recommends stabilizing core infrastructure before new feat
 
 ---
 
-### P2 — Cargo Warnings Cleanup ⚡⚡
+### P5 — Cargo Warnings Cleanup ⚡
 
 **Systems Advisory QW-4.** 27 compiler warnings obscure real issues during development.
 
@@ -78,23 +131,7 @@ The systems architect recommends stabilizing core infrastructure before new feat
 
 ---
 
-### P3 — Video Jitter Investigation ⚡⚡
-
-**User:** *"Videos are mostly fixed. Still somewhat jittery, but better."*
-
-**Current state:** FFmpeg remux uses `-c copy` with `aac_adtstoasc` and `genpts+discardcorrupt`. HLS segments can have PTS jumps that `-c copy` doesn't fix.
-
-**Investigation approach:**
-1. Examine a cached MP4 file with `ffprobe` to check for PTS discontinuities
-2. If PTS gaps: try `-vsync cfr` or `-fps_mode cfr` to force constant frame rate
-3. Last resort: lightweight re-encode (`-c:v libx264 -preset ultrafast -crf 23`) — only if remux fixes don't work
-4. Keep the two-strategy system (native HLS first, manual fallback)
-
-**Target:** Smooth playback. Audio already works.
-
----
-
-### P4 — Export Vault Data — Verify & Document ⚡
+### P6 — Export Vault Data — Verify & Document ⚡
 
 The command `export_vault_data` exists (183 lines) and is registered. The Frontend agent will wire the button this sprint. Your job:
 1. **Test it end-to-end** — verify it produces a valid ZIP with vault items, contacts, messages
@@ -104,7 +141,7 @@ The command `export_vault_data` exists (183 lines) and is registered. The Fronte
 
 ---
 
-### P5 — Cross-Store Consistency Check ⚡
+### P7 — Cross-Store Consistency Check ⚡
 
 **Systems Advisory PS-2.**
 
@@ -126,11 +163,16 @@ The command `export_vault_data` exists (183 lines) and is registered. The Fronte
 - ❌ Do NOT leave terminals open when done
 
 ## Definition of Done
+### Phase 1 (Critical — must complete)
+- [ ] Video playback smooth, load delay reduced
+- [ ] Bluesky `getFollowers` no longer returns 401 (session refresh applied)
+- [ ] Archive re-import does not create duplicate items
+### Phase 2 (Infrastructure — complete as time allows)
 - [ ] `resolve_blob_urls_batch` command exists and is registered
 - [ ] Cargo warnings reduced to 0 (or near-0)
-- [ ] Video jitter investigated — fix applied or documented diagnosis
 - [ ] `export_vault_data` tested end-to-end, interface documented
 - [ ] Consistency check job runs on startup (background, non-blocking)
+### Build verification
 - [ ] `cargo check` — 0 errors
 - [ ] `npx tsc --noEmit` — 0 errors
 - [ ] `pnpm test -- --run` — all pass
