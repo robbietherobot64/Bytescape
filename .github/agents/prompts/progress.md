@@ -1233,4 +1233,58 @@ Background task spawned 10s after app launch. Scans all items with media_blobs, 
 - **npx tsc --noEmit**: ✅ 0 errors (1 pre-existing Track B warning in AppLayout.tsx)
 - **pnpm test**: ✅ 250/250 passing
 - **Branch**: `main`
+
+---
+
+## 2026-03-17 — Sprint v5 Phase 2: Tiered Video + FeedCache Extension
+
+### Commits
+
+| Commit | Priority | Description |
+|--------|----------|-------------|
+| `a24e11c` | P1 | Tiered FFmpeg strategy — stream copy first, re-encode as last resort |
+| `27941c7` | P8 | Extend FeedCache to subscribed & custom feeds (30s TTL) |
+
+#### P1 — Video Playback: Tiered FFmpeg Strategy (committed `a24e11c`)
+
+**Root cause:** Both `ffmpeg_hls_to_mp4` and `remux_ts_to_mp4` performed full H.264 re-encode (`libx264 ultrafast`), causing 5–20s "Loading native media" delay per video. The `ultrafast` preset also inflated output 2–3× vs source.
+
+**Fix:** Replaced single-pass full re-encode with tiered A→B→C approach:
+
+| Strategy | What it does | Expected time | When used |
+|----------|-------------|---------------|-----------|
+| **A** (stream copy) | `-c:v copy -c:a copy` with PTS fixup flags (`-fflags +genpts+discardcorrupt -avoid_negative_ts make_zero -fps_mode cfr -movflags +faststart`) | <1s (I/O bound) | First attempt |
+| **B** (audio re-encode) | `-c:v copy -c:a aac -b:a 128k -bsf:a aac_adtstoasc` | 1-2s | If A fails ffprobe validation |
+| **C** (full re-encode) | `-c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k` | 5-20s | Last resort only |
+
+**Validation:** Each tier validated with `ffprobe -v error` before accepting. File size check (>1000 bytes) as fast pre-filter. Permissive if ffprobe not installed.
+
+**New functions (9 total, replacing 2):**
+- `ffmpeg_hls_stream_copy()`, `ffmpeg_hls_audio_reencode()`, `ffmpeg_hls_full_reencode()` — HLS-direct path
+- `tiered_ts_to_mp4()` — orchestrator for .ts files
+- `ts_stream_copy_to_mp4()`, `ts_audio_reencode_to_mp4()`, `ts_full_reencode_to_mp4()` — .ts file path
+- `validate_mp4_file_size()`, `validate_mp4_with_ffprobe()` — validation helpers
+
+**FFmpeg cancellation command for Track B:**
+```typescript
+// Cancel an active video conversion (e.g., when user scrolls past)
+await invoke('cancel_video_resolve', { playlistUrl: 'https://...' });
+```
+Kills active FFmpeg process by PID, cleans up partial output files. Prevents CPU thrashing from multiple concurrent conversions.
+
+#### P8 — FeedCache Extension for Subscribed & Custom Feeds (committed `27941c7`)
+
+**Problem:** `FeedCache` only cached the timeline sub-query in `get_timeline_unified`. Subscribed tab / custom feed fetches in `get_unified_feed` always hit the Bluesky network — no caching. With 45s auto-refresh, every cycle re-fetched all custom feeds.
+
+**Fix:** Wrapped `get_unified_feed` (import.rs) with 30s TTL cache:
+- Deterministic cache key from sorted `tags[]` + `feed_uris[]` (e.g., `unified:feed:at://....|tag:rust`)
+- Only first-page requests (`cursor == None`) are cached
+- Both OAuth and non-OAuth paths benefit
+- Expected: Subscribed tab reload drops from 1–3s → <200ms on cache hit
+
+### Build Status
+- **cargo check**: ✅ 0 errors, **0 warnings**
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 250/250 passing
+- **Branch**: `main`
 | B10.7 inline browser tabs | ❌ 5 failed attempts | Rust WebviewBuilder approach most promising, needs debugging |
