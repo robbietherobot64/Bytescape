@@ -480,6 +480,7 @@ pub fn run() {
             commands::media::backfill_media_mimes,
             commands::media::get_media_server_port,
             commands::media::resolve_media_url,
+            commands::media::resolve_blob_urls_batch,
             commands::syndicate::syndicate_vault_item,
             commands::syndicate::verify_syndications,
             commands::posting::publish_post_v2,

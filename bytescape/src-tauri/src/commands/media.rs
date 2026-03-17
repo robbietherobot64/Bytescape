@@ -1009,3 +1009,104 @@ pub async fn resolve_media_url(src: String, state: State<'_, AppState>) -> std::
         .unwrap_or_else(|_| format!("file://{}", resolved.display()));
     Ok(url)
 }
+
+/// Batch-resolve multiple media references to frontend-ready URLs in a single IPC call.
+///
+/// Takes a list of media source strings (blob hashes, URLs, paths) and returns
+/// a map of input → resolved URL. This eliminates N sequential IPC round-trips
+/// for a feed page with N images — the single biggest feed render optimization.
+///
+/// Entries that fail to resolve are omitted from the result (not fatal).
+#[tauri::command]
+pub async fn resolve_blob_urls_batch(
+    sources: Vec<String>,
+    state: State<'_, AppState>,
+) -> std::result::Result<std::collections::HashMap<String, String>, String> {
+    let mut results = std::collections::HashMap::with_capacity(sources.len());
+
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let cache_dir = app_data_dir.join("blob_cache");
+
+    for src in &sources {
+        let trimmed = src.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Passthrough: already a web or asset URL
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://")
+            || trimmed.starts_with("asset://") || trimmed.starts_with("tauri://") {
+            results.insert(src.clone(), trimmed.to_string());
+            continue;
+        }
+
+        // Blob reference: check cache first (no Iroh fetch in batch — too slow)
+        if trimmed.starts_with("blob:") {
+            let after = &trimmed[5..];
+            if after.starts_with("http://") || after.starts_with("https://") || after.starts_with("tauri://") {
+                results.insert(src.clone(), trimmed.to_string());
+                continue;
+            }
+            let normalized = normalize_blob_hash_input(trimmed);
+            // Fast cache check — try common extensions
+            let mut found = false;
+            for ext in &["jpg", "png", "webp", "gif", "mp4", "mov", "webm", "bin"] {
+                let cached = cache_dir.join(format!("{}.{}", &normalized, ext));
+                if cached.exists() {
+                    let url = format!("http://127.0.0.1:{}/{}.{}", state.media_port, &normalized, ext);
+                    results.insert(src.clone(), url);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                // Fallback: try Iroh export (expensive, but needed for uncached blobs)
+                match get_media_blob(trimmed.to_string(), state.clone()).await {
+                    Ok(cache_path) => {
+                        if let Some(filename) = std::path::Path::new(&cache_path).file_name() {
+                            let url = format!("http://127.0.0.1:{}/{}", state.media_port, filename.to_string_lossy());
+                            results.insert(src.clone(), url);
+                        }
+                    }
+                    Err(_) => {} // skip failed blobs
+                }
+            }
+            continue;
+        }
+
+        // Absolute filesystem path
+        if trimmed.starts_with('/') || (trimmed.len() >= 3 && trimmed.as_bytes()[1] == b':') {
+            if let Some(filename) = std::path::Path::new(trimmed).file_name() {
+                let in_cache = cache_dir.join(filename);
+                if in_cache.exists() {
+                    let url = format!("http://127.0.0.1:{}/{}", state.media_port, filename.to_string_lossy());
+                    results.insert(src.clone(), url);
+                    continue;
+                }
+            }
+            let url = tauri::Url::from_file_path(trimmed)
+                .map(|u| u.to_string())
+                .unwrap_or_else(|_| format!("file://{}", trimmed));
+            results.insert(src.clone(), url);
+            continue;
+        }
+
+        // Relative path — resolve against app data dir
+        let resolved = if trimmed.starts_with("media/") {
+            app_data_dir.join(trimmed)
+        } else {
+            app_data_dir.join("media").join(trimmed)
+        };
+
+        if resolved.exists() {
+            if let Some(filename) = resolved.file_name() {
+                let url = format!("http://127.0.0.1:{}/{}", state.media_port, filename.to_string_lossy());
+                results.insert(src.clone(), url);
+            }
+        }
+    }
+
+    Ok(results)
+}
