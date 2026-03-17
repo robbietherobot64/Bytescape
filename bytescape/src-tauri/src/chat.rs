@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use reqwest::Client;
 use tokio::sync::Mutex;
 
-/// Fallback XRPC URL for non-proxied calls (handle resolution)
-const PUBLIC_XRPC: &str = "https://bsky.social/xrpc";
+/// Fallback XRPC URL for non-proxied calls (handle resolution, public graph queries)
+const PUBLIC_XRPC: &str = "https://public.api.bsky.app/xrpc";
 const CHAT_PROXY: &str = "did:web:api.bsky.chat#bsky_chat";
 const PLC_DIRECTORY: &str = "https://plc.directory";
 
