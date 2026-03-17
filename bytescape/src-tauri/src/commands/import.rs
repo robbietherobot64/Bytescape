@@ -2079,12 +2079,45 @@ pub async fn get_unified_feed(
     limit: u8,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    if state.is_oauth_session() {
-        // OAuth path: use DPoP-authenticated XRPC for each sub-query
-        return get_unified_feed_oauth(&state, tags, feed_uris, limit, cursor).await;
+    let cache_ttl = std::time::Duration::from_secs(30);
+
+    // Build a deterministic cache key — only for first-page (no cursor) requests
+    let cache_key = if cursor.is_none() {
+        let mut key_parts: Vec<String> = tags.iter().map(|t| format!("tag:{}", t)).collect();
+        key_parts.extend(feed_uris.iter().map(|u| format!("feed:{}", u)));
+        key_parts.sort();
+        Some(format!("unified:{}", key_parts.join("|")))
+    } else {
+        None
+    };
+
+    // Try cache first
+    if let Some(ref key) = cache_key {
+        if let Some(cached) = state.feed_cache.get(key, cache_ttl).await {
+            if let Ok(result) = serde_json::from_value::<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>)>(cached) {
+                #[cfg(debug_assertions)]
+                println!("get_unified_feed: CACHE HIT for {}", key);
+                return Ok(result);
+            }
+        }
     }
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+
+    // Cache miss — hit network
+    let result = if state.is_oauth_session() {
+        get_unified_feed_oauth(&state, tags, feed_uris, limit, cursor).await
+    } else {
+        let access_jwt = state.get_fresh_access_jwt().await?;
+        crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+    };
+
+    // Store in cache on success (first page only)
+    if let (Some(ref key), Ok(ref data)) = (&cache_key, &result) {
+        if let Ok(val) = serde_json::to_value(data) {
+            state.feed_cache.set(key, val).await;
+        }
+    }
+
+    result
 }
 
 /// OAuth-aware unified feed aggregation.
