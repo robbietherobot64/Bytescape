@@ -6,6 +6,7 @@ use crate::chat::ChatClient;
 pub type SyncManager = crate::sync::SyncManager;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 pub enum SystemMessageType {
     ModeSwitchRequest,
     ModeSwitchAccept,
@@ -13,6 +14,7 @@ pub enum SystemMessageType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 pub struct SystemMessage {
     pub msg_type: SystemMessageType,
     pub payload: Option<String>,
@@ -21,6 +23,7 @@ pub struct SystemMessage {
 
 pub struct TrafficController {
     db: Arc<tokio::sync::RwLock<Option<DbManager>>>,
+    #[allow(dead_code)]
     chat: Arc<ChatClient>,
 }
 

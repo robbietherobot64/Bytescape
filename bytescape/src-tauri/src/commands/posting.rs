@@ -196,8 +196,8 @@ pub async fn publish_post_v2(
         let access_jwt = state.get_fresh_access_jwt().await?;
 
         let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-        let pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
-        let client = BlueskyClient::with_jwt(&access_jwt);
+        let _pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
+        let _client = BlueskyClient::with_jwt(&access_jwt);
 
         let mut images_embed = Vec::new();
         let mut video_embed = None;

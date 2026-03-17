@@ -124,6 +124,7 @@ enum Reason {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct FeedPost {
     uri: String,
     cid: String,
@@ -144,6 +145,7 @@ struct FeedPost {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PostViewer {
     #[serde(default)]
     pub like: Option<String>,
@@ -152,6 +154,7 @@ struct PostViewer {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct FeedAuthor {
     did: String,
     handle: String,
@@ -162,6 +165,7 @@ struct FeedAuthor {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PostRecord {
     #[serde(rename = "$type", default)]
     record_type: Option<String>,
@@ -175,12 +179,14 @@ struct PostRecord {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct Facet {
     features: Vec<FacetFeature>,
     index: FacetIndex,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct FacetIndex {
     #[serde(rename = "byteStart")]
     byte_start: usize,
@@ -190,6 +196,7 @@ struct FacetIndex {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "$type")]
+#[allow(dead_code)]
 enum FacetFeature {
     #[serde(rename = "app.bsky.richtext.facet#tag")]
     Tag {
@@ -208,6 +215,7 @@ enum FacetFeature {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PostEmbed {
     #[serde(rename = "$type", default)]
     embed_type: Option<String>,
@@ -216,12 +224,14 @@ struct PostEmbed {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct EmbedImage {
     alt: Option<String>,
     image: Option<BlobRef>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BlobRef {
     #[serde(rename = "$type", default)]
     ref_type: Option<String>,
@@ -232,6 +242,7 @@ struct BlobRef {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct EmbedExternal {
     uri: Option<String>,
     title: Option<String>,
@@ -773,6 +784,7 @@ pub async fn import_bluesky_feed(
     Ok(all_posts)
 }
 
+#[allow(dead_code)]
 async fn download_media_from_embed(
     client: &Client,
     embed: &Option<serde_json::Value>,
@@ -784,6 +796,7 @@ async fn download_media_from_embed(
 
 /// Download media from embed JSON, storing in Iroh blobs if SyncManager is available.
 /// Returns (local_paths_or_hashes, remote_urls, blob_hashes, thumbnail_hashes)
+#[allow(dead_code)]
 async fn download_media_from_embed_with_sync(
     client: &Client,
     embed: &Option<serde_json::Value>,

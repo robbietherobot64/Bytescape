@@ -56,6 +56,7 @@ fn rkey_from_uri(uri: &str) -> Option<String> {
 }
 
 /// Extract DID from an AT URI (at://did/collection/rkey)
+#[allow(dead_code)]
 fn did_from_uri(uri: &str) -> Option<String> {
     let stripped = uri.strip_prefix("at://")?;
     stripped.split('/').next().map(|s| s.to_string())

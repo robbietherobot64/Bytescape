@@ -49,7 +49,7 @@ const OAUTH_FALLBACK_PORTS: &[u16] = &[28458, 28459, 28460, 38457];
 // Avoids the `hickory-resolver` dependency by using Cloudflare's JSON DNS API.
 // Used by `AtprotoHandleResolver` to look up `_atproto.{handle}` TXT records.
 
-struct CloudflareDnsTxtResolver {
+pub(crate) struct CloudflareDnsTxtResolver {
     client: reqwest::Client,
 }
 

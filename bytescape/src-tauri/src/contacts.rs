@@ -4,21 +4,25 @@ use crate::chat::ChatClient;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 struct DeviceRecord {
     #[serde(rename = "nodeId")]
     node_id: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GetRecordResponse {
     value: DeviceRecord,
 }
 
+#[allow(dead_code)]
 pub struct ContactManager {
     db: DbManager,
     chat: Arc<ChatClient>,
 }
 
+#[allow(dead_code)]
 impl ContactManager {
     pub fn new(db: DbManager, chat: Arc<ChatClient>) -> Self {
         Self { db, chat }

@@ -2320,6 +2320,7 @@ fn looks_like_fb_date(text: &str) -> bool {
 }
 
 /// Try to extract timestamps from the HTML document and associate them with posts
+#[allow(dead_code)]
 fn extract_timestamps_from_html(_document: &Html, _posts: &mut [ParsedPost]) {
     // No longer used — timestamps are extracted per-post in parse_html_posts
 }

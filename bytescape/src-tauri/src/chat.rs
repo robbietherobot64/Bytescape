@@ -26,6 +26,7 @@ pub struct BskyMember {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct BskyGraphResponse {
     pub subject: BskyMember,
     pub follows: Option<Vec<BskyMember>>,
@@ -83,6 +84,7 @@ pub struct ProfileRecord {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GetRecordResponse {
     value: ProfileRecord,
     cid: String,
