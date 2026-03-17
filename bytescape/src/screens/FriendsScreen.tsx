@@ -45,7 +45,7 @@ export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreen
             <div className="friends-content">
                 {subview === 'peers' && <PeersView onOpenChat={onOpenChat} onViewProfile={onViewProfile} />}
                 {(subview === 'following' || subview === 'followers') && (
-                    <BlueskyFollowsView auth={auth} subview={subview} />
+                    <BlueskyFollowsView auth={auth} subview={subview} onOpenChat={onOpenChat} />
                 )}
             </div>
         </div>
@@ -281,8 +281,8 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
                     </h3>
                     <button
                         onClick={() => {
-                            const { setScreen } = useNavStore.getState();
-                            setScreen('profile-browser');
+                            const { openTab } = useNavStore.getState();
+                            openTab('profile-browser', 'Browse Profiles');
                         }}
                         style={{
                             padding: '6px 16px',
@@ -548,7 +548,7 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
 
 // ─── Bluesky Follows View (existing functionality) ───
 
-function BlueskyFollowsView({ auth, subview }: { auth: AuthStatus | null; subview: 'following' | 'followers' }) {
+function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | null; subview: 'following' | 'followers'; onOpenChat?: (peerNodeId: string, peerName: string) => void }) {
     const [people, setPeople] = useState<ProfileView[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -614,6 +614,28 @@ function BlueskyFollowsView({ auth, subview }: { auth: AuthStatus | null; subvie
                                 <div className="friend-bio">{person.description}</div>
                             )}
                         </div>
+                        {onOpenChat && person.did && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenChat(person.did, person.displayName || person.handle);
+                                }}
+                                title={`Chat with @${person.handle}`}
+                                style={{
+                                    padding: '6px 10px',
+                                    fontSize: '0.85rem',
+                                    background: 'var(--bg-secondary)',
+                                    color: 'var(--text-primary)',
+                                    border: '1px solid var(--border-color, #333)',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    flexShrink: 0,
+                                    alignSelf: 'center',
+                                } as React.CSSProperties}
+                            >
+                                💬
+                            </button>
+                        )}
                     </div>
                 ))}
 
