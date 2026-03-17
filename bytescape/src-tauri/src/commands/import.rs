@@ -599,6 +599,20 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
     }
 
     for post in &pending.posts {
+        // Generate a stable content-based ID for deduplication across re-imports.
+        // Same archive imported twice → same original_id → save_item skips duplicates.
+        let content_sig = format!(
+            "{}|{}|{}",
+            post.timestamp,
+            post.content.chars().take(200).collect::<String>(),
+            post.media_uris.join("|"),
+        );
+        let stable_id = format!("{:016x}", {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            content_sig.hash(&mut h);
+            h.finish()
+        });
         let item_id = uuid::Uuid::new_v4().to_string();
         let app_data_dir = state.app_handle.path()
             .app_data_dir()
@@ -670,7 +684,7 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             path: willow_path_for_item(&pending.source, item_type, post.timestamp, &item_id),
             imported_at: now,
             title: post.title.clone(),
-            original_id: None,
+            original_id: Some(stable_id.clone()),
             syndicated_uris: std::collections::HashMap::new(),
             syndicated_at: std::collections::HashMap::new(),
             author_did: None,
