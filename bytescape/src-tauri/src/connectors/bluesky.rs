@@ -14,7 +14,7 @@ use crate::sync::SyncManager;
 /// - Redundant TLS handshakes (each costs ~100-300ms)
 /// - Redundant DNS lookups
 /// - Creating new connection pools per call
-static SHARED_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
+pub static SHARED_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
     Client::builder()
         .pool_max_idle_per_host(6)
         .pool_idle_timeout(std::time::Duration::from_secs(90))

@@ -629,23 +629,26 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     // FFmpeg's HLS demuxer handles: separate audio/video playlists, variant
     // selection, timestamp correction at segment boundaries, ADTS→raw AAC, etc.
     println!("resolve_hls_video: Trying FFmpeg native HLS download...");
-    match ffmpeg_hls_to_mp4(&playlist_url, &mp4_path) {
-        Ok(path) => {
+    let playlist_for_ffmpeg = playlist_url.clone();
+    let mp4_for_ffmpeg = mp4_path.clone();
+    let ts_for_cleanup = ts_path.clone();
+    match tokio::task::spawn_blocking(move || ffmpeg_hls_to_mp4(&playlist_for_ffmpeg, &mp4_for_ffmpeg)).await {
+        Ok(Ok(path)) => {
             println!("resolve_hls_video: FFmpeg HLS → MP4 success ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
-            let _ = std::fs::remove_file(&ts_path); // clean any stale TS
+            let _ = std::fs::remove_file(&ts_for_cleanup); // clean any stale TS
             return Ok(path);
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             println!("resolve_hls_video: FFmpeg HLS failed ({}), falling back to manual download...", e);
+        }
+        Err(e) => {
+            println!("resolve_hls_video: FFmpeg task panicked ({}), falling back to manual download...", e);
         }
     }
 
     // ── Strategy 2: Manual segment download + remux ─────────────────────────
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::connectors::bluesky::SHARED_CLIENT.clone();
 
     // 1. Fetch the master/media playlist
     let playlist_text = client.get(&playlist_url)
@@ -778,14 +781,20 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     println!("resolve_hls_video: Manual download complete, total {:.1} MB", total_bytes as f64 / (1024.0 * 1024.0));
 
     // Remux concatenated MPEG-TS → MP4 (fixes audio + timestamp issues)
-    match remux_ts_to_mp4(&ts_path, &mp4_path) {
-        Ok(mp4) => {
+    let ts_for_remux = ts_path.clone();
+    let mp4_for_remux = mp4_path.clone();
+    match tokio::task::spawn_blocking(move || remux_ts_to_mp4(&ts_for_remux, &mp4_for_remux)).await {
+        Ok(Ok(mp4)) => {
             println!("resolve_hls_video: Remuxed to MP4 ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
             Ok(mp4)
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             println!("resolve_hls_video: FFmpeg remux failed ({}), returning raw TS", e);
+            Ok(ts_path.to_string_lossy().into_owned())
+        }
+        Err(e) => {
+            println!("resolve_hls_video: Remux task panicked ({}), returning raw TS", e);
             Ok(ts_path.to_string_lossy().into_owned())
         }
     }
@@ -793,18 +802,23 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
 
 /// Download an HLS stream directly via FFmpeg's native protocol handler.
 ///
-/// This is superior to manual segment download because FFmpeg:
-/// - Handles separate audio and video playlists (`#EXT-X-MEDIA:TYPE=AUDIO`)
-/// - Corrects timestamp discontinuities at segment boundaries
-/// - Converts ADTS-wrapped AAC to raw AAC for MP4 container
-/// - Selects the best variant automatically
+/// Uses a lightweight video re-encode (`libx264 ultrafast crf 23`) instead of
+/// stream copy to force FFmpeg to regenerate all timestamps from scratch. This
+/// eliminates PTS discontinuities at HLS segment boundaries that cause stutter
+/// with `-c copy`. Audio is copied (AAC passthrough) since it doesn't suffer
+/// from the same discontinuity issues.
 fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",                          // overwrite without asking
             "-i", playlist_url,            // HLS URL — FFmpeg handles the protocol
-            "-c", "copy",                  // no re-encoding (fast, lossless)
-            "-bsf:a", "aac_adtstoasc",    // convert ADTS AAC → raw AAC for MP4
+            "-c:v", "libx264",             // re-encode video to fix PTS discontinuities
+            "-preset", "ultrafast",        // fastest encoding — minimal CPU overhead
+            "-crf", "23",                  // visually lossless quality
+            "-c:a", "aac",                 // ensure audio is clean AAC
+            "-b:a", "128k",               // reasonable audio bitrate
+            "-fps_mode", "cfr",            // force constant frame rate output
+            "-max_muxing_queue_size", "1024", // prevent interleave buffer overflow
             "-movflags", "+faststart",     // moov atom at front for instant playback
             "-f", "mp4",                   // force MP4 container output
             &mp4_path.to_string_lossy(),
@@ -827,15 +841,14 @@ fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::res
     }
 }
 
-/// Remux an MPEG-TS file to MP4 using FFmpeg.
+/// Re-encode an MPEG-TS file to MP4 using FFmpeg.
 ///
-/// Key flags:
-/// - `-c copy`: No re-encoding (fast, lossless)
-/// - `-bsf:a aac_adtstoasc`: Convert ADTS-wrapped AAC (used in MPEG-TS) to raw
-///   AAC frames (required by MP4 container) — without this, audio is silently dropped
-/// - `-fflags +genpts+discardcorrupt`: Regenerate presentation timestamps and
-///   discard corrupt packets — fixes choppiness from HLS segment boundary discontinuities
-/// - `-avoid_negative_ts make_zero`: Shift timestamps to start at 0
+/// Uses lightweight re-encode to fix all timestamp issues from HLS segments:
+/// - `-c:v libx264 -preset ultrafast -crf 23`: Re-encode video with fresh PTS
+/// - `-c:a aac -b:a 128k`: Clean AAC audio
+/// - `-fps_mode cfr`: Force constant frame rate to eliminate jitter
+/// - `-fflags +genpts+discardcorrupt`: Extra safety for corrupt segment data
+/// - `-avoid_negative_ts make_zero`: Normalize timestamps to start at 0
 /// - `-movflags +faststart`: Move moov atom to file front for instant playback
 fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
@@ -844,8 +857,13 @@ fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std
             "-fflags", "+genpts+discardcorrupt", // regenerate timestamps, drop corrupt
             "-avoid_negative_ts", "make_zero", // normalize timestamps to start at 0
             "-i", &ts_path.to_string_lossy(),
-            "-c", "copy",                     // no re-encoding
-            "-bsf:a", "aac_adtstoasc",        // ADTS AAC → raw AAC for MP4
+            "-c:v", "libx264",                // re-encode video for clean PTS
+            "-preset", "ultrafast",           // fastest encoding
+            "-crf", "23",                     // visually lossless quality
+            "-c:a", "aac",                    // clean AAC audio
+            "-b:a", "128k",                   // reasonable audio bitrate
+            "-fps_mode", "cfr",               // constant frame rate output
+            "-max_muxing_queue_size", "1024", // prevent interleave buffer overflow
             "-movflags", "+faststart",         // moov atom at front
             "-f", "mp4",                       // force MP4 container
             &mp4_path.to_string_lossy(),
