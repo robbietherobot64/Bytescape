@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 import { getMediaPort } from '../utils/mediaServer';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 
 interface VideoPlayerProps {
     src: string;
@@ -23,10 +24,38 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
 
     // Smoothly resolve the poster if it's a blob:hash
     const [, resolvedPoster] = useLazyBlobUrl(poster);
+
+    // Register/unregister with global playback manager
+    const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
+        // Unregister previous element
+        if (videoRef.current) {
+            VideoPlaybackManager.unregister(videoRef.current);
+        }
+        videoRef.current = el;
+        if (el) {
+            VideoPlaybackManager.register(el);
+        }
+    }, []);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (videoRef.current) {
+                VideoPlaybackManager.unregister(videoRef.current);
+            }
+        };
+    }, []);
+
+    const handlePlay = () => {
+        if (videoRef.current) {
+            VideoPlaybackManager.notifyPlay(videoRef.current);
+        }
+    };
 
     // Intersection observer for lazy loading metadata bounds
     useEffect(() => {
@@ -134,6 +163,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             */}
             {resolvedUrl && (
                 <video
+                    ref={videoRefCallback}
                     src={resolvedUrl}
                     poster={resolvedPoster || undefined}
                     controls
@@ -142,6 +172,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                     playsInline
                     preload="metadata"
                     style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                    onPlay={handlePlay}
                     // Handle edge-case WebKit decoding errors gracefully
                     onError={(e) => {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);

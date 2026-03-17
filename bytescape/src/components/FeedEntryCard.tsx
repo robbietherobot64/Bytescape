@@ -13,6 +13,7 @@ import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { stripHtml } from '../utils/sanitize';
 import { RichText } from './RichText';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
@@ -182,6 +183,7 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
         }, {} as Record<string, string>);
 
     const openGallery = (index: number) => {
+        VideoPlaybackManager.pauseAll();
         setGalleryIndex(index);
         setIsGalleryOpen(true);
     };
