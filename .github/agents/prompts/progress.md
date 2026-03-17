@@ -1151,4 +1151,86 @@ Key files touched:
 | Connected accounts green + button | ⬜ Not started | |
 | P2P Connections cleanup | ⬜ Not started | |
 | Hacker theme | ⬜ Not started | Theme system is in place (ThemeCustomizer), just needs the preset |
+
+---
+
+## 2026-03-17 — Backend Sprint v5: "Bugfix & Stabilize"
+
+### Commits (chronological)
+
+| Commit | Priority | Description |
+|--------|----------|-------------|
+| `e9a36ca` | P2 | Fix getFollowers 401: changed `PUBLIC_XRPC` from `bsky.social/xrpc` to `public.api.bsky.app/xrpc` |
+| `d1a662f` | P3 | Archive import dedup: stable content-hash `original_id` for Facebook/Instagram items |
+| `ae129c7` | P1 | Video playback fix: libx264 re-encode instead of `-c copy`, spawn_blocking for FFmpeg |
+| `3d6bf99` | P4 | Batch blob URL resolution: `resolve_blob_urls_batch` command (Vec<String> → HashMap) |
+| `315cb8f` | P5 | Cargo warnings cleanup: 27 → 0 warnings (dead_code annotations, pub(crate), _ prefixes) |
+| `d1d1855` | P7 | Background blob consistency check on startup (10s delay, auto-heal broken refs) |
+
+### Priority Details
+
+#### P1 — Video Playback (committed `ae129c7`)
+**Root cause:** `-c copy` preserved PTS discontinuities from HLS segments, causing player stutter. Full-download-before-play architecture added loading delay.
+**Fix:** Replaced stream copy with lightweight re-encode: `-c:v libx264 -preset ultrafast -crf 23 -fps_mode cfr -c:a aac -b:a 128k`. Wrapped FFmpeg calls in `tokio::task::spawn_blocking` to unblock the async runtime. Used `SHARED_CLIENT` for HTTP fetches instead of creating new clients.
+
+#### P2 — Bluesky getFollowers 401 (committed `e9a36ca`)
+**Root cause:** `PUBLIC_XRPC` constant in `chat.rs` pointed to `https://bsky.social/xrpc` which now requires authentication for public endpoints. The correct public relay is `https://public.api.bsky.app/xrpc`.
+**Fix:** One-line URL constant change. Affects `getFollowers`, `getFollows`, and `resolveHandle` calls.
+
+#### P3 — Archive Import Deduplication (committed `d1a662f`)
+**Root cause:** Facebook/Instagram imports set `original_id: None`, so each import generated a fresh UUID key. Re-importing the same archive created duplicate items because `save_item` never detected the existing entry.
+**Fix:** In `commit_memories`, compute a deterministic `stable_id` from `hash(timestamp|content_200chars|media_uris)` using `DefaultHasher`. Set as `original_id`, so the DB key becomes `source:stable_id` — identical across re-imports, triggering dedup in `save_item`.
+
+#### P4 — Batch Blob URL Resolution (committed `3d6bf99`)
+**Frontend interface for Track B:**
+```typescript
+// Invoke:
+const urls = await invoke<Record<string, string>>('resolve_blob_urls_batch', {
+  sources: ['blob:abc123...', 'https://example.com/img.jpg', '/local/path.jpg']
+});
+// Returns: { 'blob:abc123...': 'http://localhost:PORT/blob_cache/abc123.jpg', ... }
+```
+**Behavior:**
+- `blob:HASH` → resolves through blob cache, returns `http://localhost:{media_port}/blob_cache/{hash}.{ext}`
+- HTTP/HTTPS URLs → passed through unchanged
+- Absolute/relative paths → checks existence, returns `http://localhost:{port}/{path}` or passthrough
+- Errors per-item are logged, never fail the batch
+
+#### P5 — Cargo Warnings (committed `315cb8f`)
+All 27 warnings eliminated. Zero behavior changes. Annotations applied:
+- 11 `#[allow(dead_code)]` on bluesky.rs deserialization structs
+- 2 `#[allow(dead_code)]` on unused bluesky.rs functions
+- 5 `#[allow(dead_code)]` on chat.rs, contacts.rs, traffic.rs structs
+- `pub(crate)` for `CloudflareDnsTxtResolver` in oauth.rs
+- `_` prefix for unused variables in posting.rs
+
+#### P6 — Export Vault Data (verified, no code changes needed)
+The `export_vault_data` command (183 lines in `commands/export.rs`) is fully functional.
+**Frontend interface for Track B:**
+```typescript
+// Invoke:
+const result = await invoke<ExportResult>('export_vault_data', {
+  outputPath: '/path/to/export.zip',
+  includeMedia: true,
+});
+// Returns:
+interface ExportResult {
+  path: string;       // Output ZIP path
+  item_count: number; // BytescapeItems exported
+  contact_count: number;
+  message_count: number;
+  media_count: number; // Media files bundled (if include_media=true)
+  size_bytes: number;  // Final ZIP size
+}
+```
+**ZIP contents:** `items.json`, `contacts.json`, `messages.json`, `media/` (if include_media=true — pulls from blob_cache + media dir + local paths).
+
+#### P7 — Cross-Store Blob Consistency (committed `d1d1855`)
+Background task spawned 10s after app launch. Scans all items with media_blobs, verifies each hash exists in Iroh via `SyncManager.has_media()`. Auto-heals broken references by removing them from the item (preserving parallel thumbnail_blobs/media_mimes arrays). Logs summary to console.
+
+### Build Status
+- **cargo check**: ✅ 0 errors, **0 warnings**
+- **npx tsc --noEmit**: ✅ 0 errors (1 pre-existing Track B warning in AppLayout.tsx)
+- **pnpm test**: ✅ 250/250 passing
+- **Branch**: `main`
 | B10.7 inline browser tabs | ❌ 5 failed attempts | Rust WebviewBuilder approach most promising, needs debugging |
