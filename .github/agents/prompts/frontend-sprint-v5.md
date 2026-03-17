@@ -5,6 +5,7 @@
 Read `.github/instructions/agent-guardrails.instructions.md` before doing anything.
 Read `.github/agents/prompts/user-feedback` for the user's actual words.
 Read `.github/agents/prompts/systems-advisory-2026-03-15.md` for the systems architect's recommendations.
+Read `.github/agents/prompts/systems-perf-analysis-2026-03-17.md` for the performance deep-dive (feed loading + video bottlenecks).
 
 ### Organizational Change: Content Track Merged Into Frontend
 
@@ -108,21 +109,7 @@ When a user clicks a link or profile that should open in a new tab, the tab open
 
 ---
 
-### P4 — Fix Video Double-Play Bug ⚡⚡
-
-**User:** *"If a video is played in small screen view, the video starts a new video in the frame view, while the small screen view video continues to play. It should continue from where it left off, and only play one video at a time."*
-
-The video player creates a second instance when switching from inline to expanded view instead of transferring the existing playback.
-
-**Fix:**
-1. When expanding a video to full/frame view, pause or destroy the inline player
-2. The expanded player should resume from the same timestamp (`currentTime`)
-3. Global rule: only one video plays at a time — when a new video starts, pause all others
-4. Look at `VideoPlayer` component and how it's instantiated in `FeedEntryCard` vs expanded view
-
----
-
-### P5 — Fix Chat Button on FriendsScreen ⚡⚡
+### P4 — Fix Chat Button on FriendsScreen ⚡⚡
 
 **User:** *"Chat button on friendslist contacts does not work. Works fine on the feed screen."*
 
@@ -135,9 +122,120 @@ The chat button handler works on the feed's friends panel but not on the dedicat
 
 ---
 
-## Phase 2 — Polish & Decomposition (after Phase 1 is complete)
+## Phase 2 — Performance Hotfixes (after Phase 1, before Polish)
 
-### P6 — Wire Export Button to Backend Command ⚡⚡
+> These come from the Systems architect's performance analysis (`systems-perf-analysis-2026-03-17.md`).
+> They are the highest-impact changes for reducing the ~20s feed load and video stutter.
+
+### P6 — Wire `resolve_blob_urls_batch` ⚡⚡⚡ HIGH IMPACT
+
+**Systems Analysis §L3. Single biggest feed render optimization. Backend command already exists.**
+
+**Problem:** Each image in the feed triggers an individual `invoke('get_media_blob')` call via `useBlobUrl`. A feed page with 20 images = 20 sequential IPC round-trips adding 500–2000ms to perceived load time.
+
+**The backend already has `resolve_blob_urls_batch`** — it takes `{ sources: string[] }` and returns a `HashMap<String, String>` of input → resolved URL. It's registered in `lib.rs`. The frontend just never calls it.
+
+**Fix:**
+1. After feed data arrives in `useUnifiedFeed.ts`, collect all `blob:hash` references from post embeds (images, thumbnails, posters)
+2. Make a single `invoke('resolve_blob_urls_batch', { sources: [...allBlobRefs] })` call
+3. Store the result in a Map/object that `useBlobUrl` can read from (check its `resolvedUrlCache`)
+4. When `useBlobUrl` finds a hash in this pre-resolved map, return immediately without IPC
+
+**Implementation approach:**
+- Add a `prefetchBlobUrls(sources: string[])` utility that calls the batch command and populates `resolvedUrlCache` in `useBlobUrl.ts`
+- Call it from `useUnifiedFeed.ts` after `setFeedEntries()` with all blob references extracted from the feed data
+- `useBlobUrl`'s existing `resolvedUrlCache` Map is already checked before IPC — just pre-populate it
+
+**Expected improvement:** 20 blob resolutions go from 20 sequential IPC calls (~500–2000ms) → 1 IPC call (~50–100ms). **10–20× speedup on image loading.**
+
+---
+
+### P7 — Parallelize IPC Calls in `useUnifiedFeed.ts` ⚡⚡
+
+**Systems Analysis §L1, §L2. Eliminates 200–500ms of serial wait.**
+
+**Problem:** The hook makes sequential `await invoke()` calls where parallelism is possible.
+
+**Fix for All tab (line ~240):**
+```typescript
+// CURRENT (serial, redundant):
+const feedsData = await invoke('list_saved_feeds');  // IPC #1 — waits 150-300ms
+const response = await invoke('get_timeline_unified', { feedUris });  // IPC #2
+
+// OPTION A — Parallel:
+const [feedsData, response] = await Promise.all([
+  invoke('list_saved_feeds'),
+  invoke('get_timeline_unified', { feedUris: [], ... }),
+]);
+// Note: get_timeline_unified already internally calls list_saved_feeds for its
+// own logic, so the feedUris param can be empty — it handles it.
+
+// OPTION B — Eliminate redundant call:
+// Just call get_timeline_unified directly. It already fetches saved feeds internally.
+// Only call list_saved_feeds separately if you need the GeneratorView[] data for UI.
+```
+
+**Fix for Subscribed tab (line ~192):**
+```typescript
+// CURRENT (3 serial calls):
+const feedsData = await invoke('list_saved_feeds');     // IPC #1
+const tags = await invoke('list_followed_hashtags');     // IPC #2 — independent!
+const [posts, cur] = await invoke('get_unified_feed', { tags, feedUris }); // IPC #3
+
+// FIX (parallelize independent calls):
+const [feedsData, tags] = await Promise.all([
+  invoke('list_saved_feeds'),
+  invoke('list_followed_hashtags'),
+]);
+// IPC #3 still sequential (needs results from above)
+const [posts, cur] = await invoke('get_unified_feed', { tags, feedUris: feedsData.map(f => f.uri) });
+```
+
+This reduces the Subscribed tab from a 3-step serial chain to a 2-step chain.
+
+**Expected improvement:** Shaves 200–500ms off initial feed load.
+
+---
+
+### P8 — Progressive Video Playback ⚡⚡
+
+**Systems Analysis §V2. Eliminates "Loading native media" perceived wait.**
+
+**Problem:** `VideoPlayer.tsx` doesn't render the `<video>` element until FFmpeg completes AND returns the file path. Users stare at "⏳ Loading native media..." for 5–20s (or 1–2s after backend fixes stream-copy).
+
+**Fix:**
+1. Render the `<video>` element immediately with the `poster` image (already resolved via `useLazyBlobUrl`)
+2. Show a small loading indicator overlaid on the poster (not replacing it)
+3. When `resolve_hls_video` returns, update `src` — the video becomes playable
+4. User sees: poster image → instant swap to playable video (perceived near-zero wait)
+
+**Also: Cancel FFmpeg on scroll-away:**
+- In `VideoPlayer`'s `useEffect` cleanup, call `invoke('cancel_video_resolve', { url: src })` if the video hasn't loaded yet
+- This prevents multiple concurrent FFmpeg processes from thrashing the CPU
+- The backend is adding this command (see backend sprint P1)
+- If the command doesn't exist yet, skip cancellation gracefully (try/catch)
+
+---
+
+### P9 — Fix Video Double-Play Bug ⚡⚡
+
+**User:** *"If a video is played in small screen view, the video starts a new video in the frame view, while the small screen view video continues to play."*
+
+*(Renumbered from original P4 — same content)*
+
+The video player creates a second instance when switching from inline to expanded view instead of transferring the existing playback.
+
+**Fix:**
+1. When expanding a video to full/frame view, pause or destroy the inline player
+2. The expanded player should resume from the same timestamp (`currentTime`)
+3. Global rule: only one video plays at a time — when a new video starts, pause all others
+4. Look at `VideoPlayer` component and how it's instantiated in `FeedEntryCard` vs expanded view
+
+---
+
+## Phase 3 — Polish & Decomposition (after Phase 2)
+
+### P10 — Wire Export Button to Backend Command ⚡⚡
 
 **User:** *"Export button added, but no functionality"*
 
@@ -155,7 +253,7 @@ The backend command `export_vault_data` exists in `commands/export.rs` (183 line
 
 ---
 
-### P7 — Remove Dead Dependencies ⚡
+### P11 — Remove Dead Dependencies ⚡
 
 **Systems Advisory QW-3:** `wouter` (router library) is installed in `package.json` but never imported anywhere. Navigation is entirely Zustand-driven.
 
@@ -165,7 +263,7 @@ Check for any other unused dependencies. Verify: `pnpm test` still passes, app s
 
 ---
 
-### P8 — CSS Modularization ⚡⚡
+### P12 — CSS Modularization ⚡⚡
 
 **Systems Advisory HP-2. Important for developer velocity but deferred behind critical bugs.**
 
@@ -185,7 +283,7 @@ Check for any other unused dependencies. Verify: `pnpm test` still passes, app s
 
 ---
 
-### P9 — FeedEntryCard Decomposition ⚡⚡
+### P13 — FeedEntryCard Decomposition ⚡⚡
 
 **Systems Advisory HP-3.**
 
@@ -213,13 +311,17 @@ Check for any other unused dependencies. Verify: `pnpm test` still passes, app s
 - ❌ Do NOT leave terminals open when done
 
 ## Definition of Done
-### Phase 1 (Critical — must complete)
+### Phase 1 (Critical Bugs — must complete)
 - [ ] App opens maximized (`tauri.conf.json` has `"maximized": true`)
 - [ ] Settings screen visible and navigable
 - [ ] Links/profiles open in new tabs without blank screen
-- [ ] Video plays only one instance at a time, expands from where it left off
 - [ ] Chat button works on FriendsScreen
-### Phase 2 (Polish — complete as time allows)
+### Phase 2 (Performance Hotfixes — high priority, do after Phase 1)
+- [ ] `resolve_blob_urls_batch` wired: feed images load via single batch IPC call
+- [ ] IPC calls parallelized in `useUnifiedFeed.ts` (Subscribed: 3→2 step chain, All: deduplicated)
+- [ ] VideoPlayer shows poster immediately, swaps to video when ready (progressive playback)
+- [ ] Video plays only one instance at a time, expands from where it left off
+### Phase 3 (Polish — complete as time allows)
 - [ ] Export button calls `export_vault_data` with file dialog
 - [ ] Dead dependencies removed (`wouter` + any others)
 - [ ] CSS modularized: themes in `src/themes/`, component styles in `.module.css`, thin `global.css`
