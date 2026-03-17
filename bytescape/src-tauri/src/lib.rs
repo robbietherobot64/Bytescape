@@ -772,6 +772,122 @@ pub fn run() {
                 }
             });
 
+            // Background: cross-store blob consistency check (P7)
+            // Verifies that all blob hashes referenced in BytescapeItem.media_blobs
+            // actually exist in the Iroh blob store. Logs orphans and broken references.
+            let consistency_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait 10s so startup, session restore, and other background jobs finish first
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+                let state = consistency_handle.state::<AppState>();
+
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
+                        None => return,
+                    }
+                };
+                let sync = {
+                    let guard = state.sync_manager.lock().await;
+                    match guard.as_ref() {
+                        Some(s) => s.clone(),
+                        None => {
+                            // No SyncManager = no blob store to check against
+                            println!("consistency_check: skipped — SyncManager not initialized");
+                            return;
+                        }
+                    }
+                };
+
+                let headers = match db.list_all_item_headers().await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        eprintln!("consistency_check: failed to list items: {}", e);
+                        return;
+                    }
+                };
+
+                let mut total_refs = 0usize;
+                let mut broken_refs = 0usize;
+                let mut items_with_broken = 0usize;
+                let mut items_healed = 0usize;
+
+                for header in &headers {
+                    if header.media_blob_count == 0 {
+                        continue;
+                    }
+
+                    // Fetch full item to inspect blob references
+                    let mut item = match db.get_item_by_id(&header.id).await {
+                        Ok(Some(item)) => item,
+                        _ => continue,
+                    };
+
+                    let mut has_broken = false;
+                    let mut valid_blobs = Vec::with_capacity(item.media_blobs.len());
+                    let mut valid_thumbs = Vec::with_capacity(item.thumbnail_blobs.len());
+                    let mut valid_mimes = Vec::with_capacity(item.media_mimes.len());
+
+                    for (i, blob_ref) in item.media_blobs.iter().enumerate() {
+                        total_refs += 1;
+                        let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
+                            Ok(h) => h,
+                            Err(_) => {
+                                // Unparseable hash — broken reference
+                                broken_refs += 1;
+                                has_broken = true;
+                                continue;
+                            }
+                        };
+
+                        if sync.has_media(hash).await {
+                            valid_blobs.push(blob_ref.clone());
+                            // Preserve parallel arrays
+                            if i < item.thumbnail_blobs.len() {
+                                valid_thumbs.push(item.thumbnail_blobs[i].clone());
+                            }
+                            if i < item.media_mimes.len() {
+                                valid_mimes.push(item.media_mimes[i].clone());
+                            }
+                        } else {
+                            broken_refs += 1;
+                            has_broken = true;
+                        }
+                    }
+
+                    if has_broken {
+                        items_with_broken += 1;
+
+                        // Auto-heal: remove broken blob references from the item
+                        item.media_blobs = valid_blobs;
+                        item.thumbnail_blobs = valid_thumbs;
+                        item.media_mimes = valid_mimes;
+
+                        if db.upsert_item(&item).await.is_ok() {
+                            items_healed += 1;
+                        }
+                    }
+
+                    // Yield between items to avoid starving other tasks
+                    tokio::task::yield_now().await;
+                }
+
+                if broken_refs > 0 {
+                    println!(
+                        "consistency_check: {}/{} blob refs broken across {} items ({} healed)",
+                        broken_refs, total_refs, items_with_broken, items_healed
+                    );
+                } else if total_refs > 0 {
+                    println!(
+                        "consistency_check: all {} blob refs valid across {} items",
+                        total_refs,
+                        headers.iter().filter(|h| h.media_blob_count > 0).count()
+                    );
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
