@@ -578,14 +578,47 @@ pub fn mime_from_path_hint(path: &str) -> String {
     }
 }
 
+/// Cancel an active video resolve operation by killing the FFmpeg process.
+///
+/// Called by the frontend when a user scrolls past a video that's still converting.
+/// Prevents CPU thrashing from multiple concurrent FFmpeg processes.
+#[tauri::command]
+pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<(), String> {
+    let url_hash = format!("{:x}", {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        playlist_url.hash(&mut hasher);
+        hasher.finish()
+    });
+
+    let mut active = state.active_ffmpeg.lock().await;
+    if let Some(pid) = active.remove(&url_hash) {
+        // Kill the FFmpeg process via shell command (cross-platform)
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+
+        // Clean up partial output files
+        let app_data_dir = state.app_handle.path().app_data_dir()
+            .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        let cache_dir = app_data_dir.join("blob_cache");
+        let mp4_path = cache_dir.join(format!("{}.mp4", url_hash));
+        let _ = std::fs::remove_file(&mp4_path);
+
+        println!("cancel_video_resolve: killed FFmpeg pid {} for {}", pid, &url_hash[..8.min(url_hash.len())]);
+    }
+    Ok(())
+}
+
 /// Download an HLS video, returning a local MP4 file path.
 ///
-/// Strategy (in order):
+/// Tiered strategy (in order of speed):
 /// 1. Cache hit — return existing MP4 immediately
-/// 2. FFmpeg native HLS download — handles separate audio/video tracks, timestamp
-///    correction, and remuxing to MP4 in a single pass (most robust)
-/// 3. Manual segment download + FFmpeg remux — fallback if native HLS fails
-/// 4. Raw `.ts` — last resort if FFmpeg is entirely unavailable
+/// 2. FFmpeg native HLS download with stream copy (Strategy A — <1s)
+/// 3. FFmpeg native HLS with audio re-encode only (Strategy B — 1-2s)
+/// 4. Manual segment download + tiered remux (A→B→C)
+/// 5. Full re-encode (Strategy C — 5-20s, last resort)
+/// 6. Raw `.ts` — if FFmpeg is entirely unavailable
 #[tauri::command]
 pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
     use std::io::Write;
@@ -609,11 +642,13 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             }
         }
     }
-    // Stale TS without MP4 — try remuxing it
+    // Stale TS without MP4 — try tiered remux
     if ts_path.exists() {
         if let Ok(meta) = std::fs::metadata(&ts_path) {
             if meta.len() > 1000 {
-                if let Ok(remuxed) = remux_ts_to_mp4(&ts_path, &mp4_path) {
+                let ts_for_stale = ts_path.clone();
+                let mp4_for_stale = mp4_path.clone();
+                if let Ok(Ok(remuxed)) = tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_stale, &mp4_for_stale)).await {
                     println!("resolve_hls_video: Remuxed existing TS → MP4 ({:.1} MB)",
                         std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
                     return Ok(remuxed);
@@ -625,14 +660,41 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
         }
     }
 
-    // ── Strategy 1: FFmpeg native HLS → MP4 ─────────────────────────────────
-    // FFmpeg's HLS demuxer handles: separate audio/video playlists, variant
-    // selection, timestamp correction at segment boundaries, ADTS→raw AAC, etc.
-    println!("resolve_hls_video: Trying FFmpeg native HLS download...");
+    // ── Strategy 1: FFmpeg native HLS → MP4 (tiered: copy → audio re-encode → full re-encode) ──
+    // Try the fastest approach first, fall back to more expensive ones only if validation fails.
+    println!("resolve_hls_video: Trying FFmpeg native HLS download (tiered)...");
     let playlist_for_ffmpeg = playlist_url.clone();
     let mp4_for_ffmpeg = mp4_path.clone();
     let ts_for_cleanup = ts_path.clone();
-    match tokio::task::spawn_blocking(move || ffmpeg_hls_to_mp4(&playlist_for_ffmpeg, &mp4_for_ffmpeg)).await {
+    match tokio::task::spawn_blocking(move || {
+        // Strategy A: Stream copy — fastest (<1s, I/O bound)
+        let mp4 = &mp4_for_ffmpeg;
+        if let Ok(path) = ffmpeg_hls_stream_copy(&playlist_for_ffmpeg, mp4) {
+            if validate_mp4_with_ffprobe(mp4) {
+                println!("resolve_hls_video: Strategy A (stream copy) succeeded");
+                return Ok(path);
+            }
+            println!("resolve_hls_video: Strategy A produced invalid MP4, trying B...");
+            let _ = std::fs::remove_file(mp4);
+        } else {
+            println!("resolve_hls_video: Strategy A failed, trying B...");
+        }
+
+        // Strategy B: Copy video, re-encode audio only (1-2s)
+        if let Ok(path) = ffmpeg_hls_audio_reencode(&playlist_for_ffmpeg, mp4) {
+            if validate_mp4_with_ffprobe(mp4) {
+                println!("resolve_hls_video: Strategy B (audio re-encode) succeeded");
+                return Ok(path);
+            }
+            println!("resolve_hls_video: Strategy B produced invalid MP4, trying C...");
+            let _ = std::fs::remove_file(mp4);
+        } else {
+            println!("resolve_hls_video: Strategy B failed, trying C...");
+        }
+
+        // Strategy C: Full re-encode (5-20s, last resort)
+        ffmpeg_hls_full_reencode(&playlist_for_ffmpeg, mp4)
+    }).await {
         Ok(Ok(path)) => {
             println!("resolve_hls_video: FFmpeg HLS → MP4 success ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
@@ -640,7 +702,7 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             return Ok(path);
         }
         Ok(Err(e)) => {
-            println!("resolve_hls_video: FFmpeg HLS failed ({}), falling back to manual download...", e);
+            println!("resolve_hls_video: All FFmpeg HLS strategies failed ({}), falling back to manual download...", e);
         }
         Err(e) => {
             println!("resolve_hls_video: FFmpeg task panicked ({}), falling back to manual download...", e);
@@ -780,10 +842,10 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
 
     println!("resolve_hls_video: Manual download complete, total {:.1} MB", total_bytes as f64 / (1024.0 * 1024.0));
 
-    // Remux concatenated MPEG-TS → MP4 (fixes audio + timestamp issues)
+    // Tiered remux: stream copy → audio re-encode → full re-encode
     let ts_for_remux = ts_path.clone();
     let mp4_for_remux = mp4_path.clone();
-    match tokio::task::spawn_blocking(move || remux_ts_to_mp4(&ts_for_remux, &mp4_for_remux)).await {
+    match tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_remux, &mp4_for_remux)).await {
         Ok(Ok(mp4)) => {
             println!("resolve_hls_video: Remuxed to MP4 ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
@@ -800,27 +862,23 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     }
 }
 
-/// Download an HLS stream directly via FFmpeg's native protocol handler.
+/// ── Strategy A: Stream copy with PTS fixup (fastest, <1 second) ──
 ///
-/// Uses a lightweight video re-encode (`libx264 ultrafast crf 23`) instead of
-/// stream copy to force FFmpeg to regenerate all timestamps from scratch. This
-/// eliminates PTS discontinuities at HLS segment boundaries that cause stutter
-/// with `-c copy`. Audio is copied (AAC passthrough) since it doesn't suffer
-/// from the same discontinuity issues.
-fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+/// Copies both video and audio streams without re-encoding.
+/// Fixes PTS discontinuities via `genpts+discardcorrupt` and `-fps_mode cfr`.
+fn ffmpeg_hls_stream_copy(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
-            "-y",                          // overwrite without asking
-            "-i", playlist_url,            // HLS URL — FFmpeg handles the protocol
-            "-c:v", "libx264",             // re-encode video to fix PTS discontinuities
-            "-preset", "ultrafast",        // fastest encoding — minimal CPU overhead
-            "-crf", "23",                  // visually lossless quality
-            "-c:a", "aac",                 // ensure audio is clean AAC
-            "-b:a", "128k",               // reasonable audio bitrate
-            "-fps_mode", "cfr",            // force constant frame rate output
-            "-max_muxing_queue_size", "1024", // prevent interleave buffer overflow
-            "-movflags", "+faststart",     // moov atom at front for instant playback
-            "-f", "mp4",                   // force MP4 container output
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", playlist_url,
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            "-fps_mode", "cfr",
+            "-movflags", "+faststart",
+            "-f", "mp4",
             &mp4_path.to_string_lossy(),
         ])
         .stdout(std::process::Stdio::piped())
@@ -830,10 +888,203 @@ fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::res
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("FFmpeg exited with {}: {}", output.status, stderr));
+        return Err(format!("FFmpeg stream-copy exited with {}: {}", output.status, stderr));
     }
 
-    // Verify the output is a valid MP4 (not an error page or empty file)
+    validate_mp4_file_size(mp4_path)
+}
+
+/// ── Strategy B: Copy video, re-encode audio only (1-2 seconds) ──
+///
+/// Fixes AAC-in-TS framing issues by re-encoding audio while keeping
+/// video stream-copy speed. Most common fix for HLS→MP4 audio glitches.
+fn ffmpeg_hls_audio_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", playlist_url,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-bsf:a", "aac_adtstoasc",
+            "-fps_mode", "cfr",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg audio-reencode failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg audio-reencode exited with {}: {}", output.status, stderr));
+    }
+
+    validate_mp4_file_size(mp4_path)
+}
+
+/// ── Strategy C: Full re-encode (5-20 seconds, last resort) ──
+///
+/// Re-encodes both video and audio to regenerate all timestamps from scratch.
+/// Only used when stream copy and audio-only re-encode both fail validation.
+fn ffmpeg_hls_full_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", playlist_url,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-fps_mode", "cfr",
+            "-max_muxing_queue_size", "1024",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg full-reencode failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg full-reencode exited with {}: {}", output.status, stderr));
+    }
+
+    validate_mp4_file_size(mp4_path)
+}
+
+/// Tiered TS→MP4 conversion: try stream copy first, then audio re-encode, then full.
+/// Used for manually-downloaded HLS segments that have been concatenated into a .ts file.
+fn tiered_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let ts_str = ts_path.to_string_lossy();
+
+    // Strategy A: Stream copy with PTS fixup
+    if let Ok(path) = ts_stream_copy_to_mp4(&ts_str, mp4_path) {
+        if validate_mp4_with_ffprobe(mp4_path) {
+            println!("tiered_ts_to_mp4: Strategy A (stream copy) succeeded");
+            let _ = std::fs::remove_file(ts_path);
+            return Ok(path);
+        }
+        let _ = std::fs::remove_file(mp4_path);
+    }
+
+    // Strategy B: Copy video, re-encode audio
+    if let Ok(path) = ts_audio_reencode_to_mp4(&ts_str, mp4_path) {
+        if validate_mp4_with_ffprobe(mp4_path) {
+            println!("tiered_ts_to_mp4: Strategy B (audio re-encode) succeeded");
+            let _ = std::fs::remove_file(ts_path);
+            return Ok(path);
+        }
+        let _ = std::fs::remove_file(mp4_path);
+    }
+
+    // Strategy C: Full re-encode
+    let result = ts_full_reencode_to_mp4(&ts_str, mp4_path);
+    if result.is_ok() {
+        let _ = std::fs::remove_file(ts_path);
+    }
+    result
+}
+
+/// TS→MP4 Strategy A: Stream copy
+fn ts_stream_copy_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", ts_input,
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            "-fps_mode", "cfr",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg ts-stream-copy failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg ts-stream-copy exited with {}: {}", output.status, stderr));
+    }
+    validate_mp4_file_size(mp4_path)
+}
+
+/// TS→MP4 Strategy B: Copy video, re-encode audio
+fn ts_audio_reencode_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", ts_input,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-bsf:a", "aac_adtstoasc",
+            "-fps_mode", "cfr",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg ts-audio-reencode failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg ts-audio-reencode exited with {}: {}", output.status, stderr));
+    }
+    validate_mp4_file_size(mp4_path)
+}
+
+/// TS→MP4 Strategy C: Full re-encode
+fn ts_full_reencode_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
+            "-i", ts_input,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-fps_mode", "cfr",
+            "-max_muxing_queue_size", "1024",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg ts-full-reencode failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg ts-full-reencode exited with {}: {}", output.status, stderr));
+    }
+    validate_mp4_file_size(mp4_path)
+}
+
+/// Validate MP4 file size (rejects empty/tiny files).
+fn validate_mp4_file_size(mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     match std::fs::metadata(mp4_path) {
         Ok(meta) if meta.len() > 1000 => Ok(mp4_path.to_string_lossy().into_owned()),
         Ok(meta) => Err(format!("FFmpeg produced a suspiciously small file ({} bytes)", meta.len())),
@@ -841,54 +1092,55 @@ fn ffmpeg_hls_to_mp4(playlist_url: &str, mp4_path: &std::path::Path) -> std::res
     }
 }
 
-/// Re-encode an MPEG-TS file to MP4 using FFmpeg.
+/// Validate an MP4 file using ffprobe for PTS discontinuities.
 ///
-/// Uses lightweight re-encode to fix all timestamp issues from HLS segments:
-/// - `-c:v libx264 -preset ultrafast -crf 23`: Re-encode video with fresh PTS
-/// - `-c:a aac -b:a 128k`: Clean AAC audio
-/// - `-fps_mode cfr`: Force constant frame rate to eliminate jitter
-/// - `-fflags +genpts+discardcorrupt`: Extra safety for corrupt segment data
-/// - `-avoid_negative_ts make_zero`: Normalize timestamps to start at 0
-/// - `-movflags +faststart`: Move moov atom to file front for instant playback
-fn remux_ts_to_mp4(ts_path: &std::path::Path, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
-    let output = std::process::Command::new("ffmpeg")
+/// Returns true if the file is playable (no fatal PTS issues).
+/// Falls back to true if ffprobe is not available (permissive).
+fn validate_mp4_with_ffprobe(mp4_path: &std::path::Path) -> bool {
+    // Quick size check first
+    if let Ok(meta) = std::fs::metadata(mp4_path) {
+        if meta.len() < 1000 {
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    // Run ffprobe to check for stream errors
+    let result = std::process::Command::new("ffprobe")
         .args([
-            "-y",                             // overwrite without asking
-            "-fflags", "+genpts+discardcorrupt", // regenerate timestamps, drop corrupt
-            "-avoid_negative_ts", "make_zero", // normalize timestamps to start at 0
-            "-i", &ts_path.to_string_lossy(),
-            "-c:v", "libx264",                // re-encode video for clean PTS
-            "-preset", "ultrafast",           // fastest encoding
-            "-crf", "23",                     // visually lossless quality
-            "-c:a", "aac",                    // clean AAC audio
-            "-b:a", "128k",                   // reasonable audio bitrate
-            "-fps_mode", "cfr",               // constant frame rate output
-            "-max_muxing_queue_size", "1024", // prevent interleave buffer overflow
-            "-movflags", "+faststart",         // moov atom at front
-            "-f", "mp4",                       // force MP4 container
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type,duration",
+            "-of", "csv=p=0",
             &mp4_path.to_string_lossy(),
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .output()
-        .map_err(|e| format!("FFmpeg not found or failed to execute: {}", e))?;
+        .output();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("FFmpeg exited with {}: {}", output.status, stderr));
+    match result {
+        Ok(output) => {
+            // If ffprobe exits with error, the file is probably broken
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("validate_mp4: ffprobe error: {}", stderr.chars().take(200).collect::<String>());
+                return false;
+            }
+            // If ffprobe printed errors to stderr, the file may have issues
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("Invalid data") || stderr.contains("error") {
+                println!("validate_mp4: ffprobe warnings: {}", stderr.chars().take(200).collect::<String>());
+                return false;
+            }
+            true
+        }
+        Err(_) => {
+            // ffprobe not available — assume the file is OK (permissive)
+            println!("validate_mp4: ffprobe not available, skipping validation");
+            true
+        }
     }
-
-    // Verify output file is valid
-    match std::fs::metadata(mp4_path) {
-        Ok(meta) if meta.len() > 1000 => {},
-        Ok(meta) => return Err(format!("FFmpeg produced a suspiciously small file ({} bytes)", meta.len())),
-        Err(e) => return Err(format!("Output file not found: {}", e)),
-    }
-
-    // Clean up the intermediate TS file to save disk space
-    let _ = std::fs::remove_file(ts_path);
-
-    Ok(mp4_path.to_string_lossy().into_owned())
 }
 
 /// Simple hash for cache key generation

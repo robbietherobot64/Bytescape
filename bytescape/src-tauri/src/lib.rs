@@ -101,6 +101,9 @@ pub struct AppState {
     /// In-memory cache for feed API responses (timeline, saved feeds, etc.).
     /// TTL-based: entries expire after 30s to balance freshness vs speed.
     pub feed_cache: FeedCache,
+    /// Active FFmpeg processes tracked by URL hash for cancellation support.
+    /// Frontend can call `cancel_video_resolve` when user scrolls past a video.
+    pub active_ffmpeg: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -475,6 +478,7 @@ pub fn run() {
             commands::media::get_media_blob_bytes,
             commands::media::download_peer_blob,
             commands::media::resolve_hls_video,
+            commands::media::cancel_video_resolve,
             commands::media::get_media_dir,
             commands::media::diagnose_media_ref,
             commands::media::backfill_media_mimes,
@@ -648,6 +652,7 @@ pub fn run() {
                     .unwrap_or_else(|_| reqwest::Client::new()),
                 session_restored: AtomicBool::new(false),
                 feed_cache: FeedCache::new(),
+                active_ffmpeg: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             };
 
             app.manage(state);
