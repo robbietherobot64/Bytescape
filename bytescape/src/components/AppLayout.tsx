@@ -5,7 +5,7 @@ import { SidebarItem } from '../types';
 import { useNavStore } from '../store';
 import {
     BsHouseFill, BsChatDotsFill, BsPeopleFill,
-    BsFolderFill, BsPersonFill
+    BsFolderFill, BsGearFill, BsBoxArrowInDown
 } from 'react-icons/bs';
 
 interface AppLayoutProps {
@@ -28,8 +28,9 @@ const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string 
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
     { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
     { id: 'social', icon: <BsPeopleFill />, label: 'Social' },
+    { id: 'import', icon: <BsBoxArrowInDown />, label: 'Import' },
     { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
-    { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
+    { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
 /** Application shell: tab bar + top bar + main content + mobile bottom nav. */
