@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useNavStore } from '../store';
@@ -35,6 +35,9 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
 
+    const [createError, setCreateError] = useState<string | null>(null);
+    const [isCreating, setIsCreating] = useState(false);
+
     /** Measure the container and sync the native webview to match. */
     const syncBounds = useCallback(async () => {
         if (!containerRef.current || destroyedRef.current || !createdRef.current) return;
@@ -59,35 +62,61 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
         if (isActive) {
             if (!createdRef.current) {
-                // First activation: create the native webview
+                // First activation: create the native webview with retry
                 const create = async () => {
                     const el = containerRef.current;
                     if (!el) return;
 
-                    // Wait one frame for layout to settle
-                    await new Promise<void>(r => requestAnimationFrame(() => r()));
-                    if (destroyedRef.current) return;
+                    setIsCreating(true);
+                    setCreateError(null);
 
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width < 1 || rect.height < 1) return;
+                    // Retry up to 5 times with increasing delays to wait for layout
+                    const delays = [0, 50, 150, 300, 500];
+                    for (let attempt = 0; attempt < delays.length; attempt++) {
+                        if (destroyedRef.current) return;
 
-                    try {
-                        await invoke('browser_create', {
-                            label: labelRef.current,
-                            url,
-                            x: rect.x,
-                            y: rect.y,
-                            width: rect.width,
-                            height: rect.height,
+                        await new Promise<void>(r => {
+                            if (attempt === 0) {
+                                requestAnimationFrame(() => r());
+                            } else {
+                                setTimeout(r, delays[attempt]);
+                            }
                         });
-                        createdRef.current = true;
 
-                        // If the user switched away during creation, hide immediately
-                        if (!isActiveRef.current) {
-                            invoke('browser_hide', { label: labelRef.current }).catch(() => {});
+                        if (destroyedRef.current) return;
+
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width < 1 || rect.height < 1) {
+                            if (attempt < delays.length - 1) continue;
+                            // All retries exhausted — container never got dimensions
+                            setIsCreating(false);
+                            setCreateError('Page container failed to initialize. Try closing and re-opening this tab.');
+                            return;
                         }
-                    } catch (err) {
-                        console.error('[WebView] create error:', err);
+
+                        try {
+                            await invoke('browser_create', {
+                                label: labelRef.current,
+                                url,
+                                x: rect.x,
+                                y: rect.y,
+                                width: rect.width,
+                                height: rect.height,
+                            });
+                            createdRef.current = true;
+                            setIsCreating(false);
+
+                            // If the user switched away during creation, hide immediately
+                            if (!isActiveRef.current) {
+                                invoke('browser_hide', { label: labelRef.current }).catch(() => {});
+                            }
+                            return; // success — exit retry loop
+                        } catch (err) {
+                            console.error('[WebView] create error (attempt', attempt + 1, '):', err);
+                            if (attempt < delays.length - 1) continue;
+                            setIsCreating(false);
+                            setCreateError(`Failed to open page: ${err}`);
+                        }
                     }
                 };
                 create();
@@ -159,6 +188,54 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         };
     }, []);
 
+    const handleRetry = () => {
+        setCreateError(null);
+        createdRef.current = false;
+        destroyedRef.current = false;
+        // Re-trigger the creation effect by toggling isActive awareness
+        // We can't re-trigger the effect directly, so we force a remount-like flow:
+        const el = containerRef.current;
+        if (!el) return;
+        setIsCreating(true);
+
+        const create = async () => {
+            const delays = [0, 100, 300, 600, 1000];
+            for (let attempt = 0; attempt < delays.length; attempt++) {
+                if (destroyedRef.current) return;
+
+                await new Promise<void>(r => setTimeout(r, delays[attempt]));
+                if (destroyedRef.current) return;
+
+                const rect = el.getBoundingClientRect();
+                if (rect.width < 1 || rect.height < 1) {
+                    if (attempt < delays.length - 1) continue;
+                    setIsCreating(false);
+                    setCreateError('Page container failed to initialize. Try closing and re-opening this tab.');
+                    return;
+                }
+
+                try {
+                    await invoke('browser_create', {
+                        label: labelRef.current,
+                        url,
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                    });
+                    createdRef.current = true;
+                    setIsCreating(false);
+                    return;
+                } catch (err) {
+                    if (attempt < delays.length - 1) continue;
+                    setIsCreating(false);
+                    setCreateError(`Failed to open page: ${err}`);
+                }
+            }
+        };
+        create();
+    };
+
     return (
         <div
             ref={containerRef}
@@ -167,7 +244,48 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 width: '100%',
                 height: '100%',
                 background: 'var(--bg-primary)',
+                position: 'relative',
             } as React.CSSProperties}
-        />
+        >
+            {(isCreating || createError) && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px',
+                    color: 'var(--text-secondary, #aaa)',
+                    fontSize: '14px',
+                    zIndex: 1,
+                } as React.CSSProperties}>
+                    {isCreating && !createError && (
+                        <span>Loading page…</span>
+                    )}
+                    {createError && (
+                        <>
+                            <span style={{ color: 'var(--error-color, #e74c3c)' } as React.CSSProperties}>
+                                {createError}
+                            </span>
+                            <button
+                                onClick={handleRetry}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color, #444)',
+                                    background: 'var(--bg-secondary, #222)',
+                                    color: 'var(--text-primary, #fff)',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                } as React.CSSProperties}
+                            >
+                                Retry
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }
