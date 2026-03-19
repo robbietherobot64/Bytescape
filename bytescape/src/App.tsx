@@ -4,6 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAuthStore, useAppStore, useNavStore, useChatStore, usePeerStore, TabItem, Screen } from "./store";
 
+import "./themes/geocities.css";
+import "./themes/win98.css";
+import "./themes/midnight.css";
+import "./themes/hacker.css";
 import "./App.css";
 
 /**

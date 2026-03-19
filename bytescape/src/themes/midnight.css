@@ -1,0 +1,54 @@
+/* ─── THEME: Midnight Mode (Dark) ─── */
+[data-theme="midnight"] {
+    --bg-page: #0f0f1a;
+    --bg-content: #1a1a2e;
+    --bg-panel: #16213e;
+    --bg-card: #1e1e36;
+    --bg-card-hover: #252542;
+    --bg-toolbar: #16213e;
+    --bg-input: #1e1e36;
+    --bg-sidebar: #0a0a18;
+    --bg-sidebar-hover: #12122a;
+    --bg-sidebar-active: #1a1a3e;
+
+    --link-blue: #60a5fa;
+    --link-visited: #a78bfa;
+    --link-hover: #f472b6;
+    --accent-green: #34d399;
+    --accent-red: #f87171;
+    --accent-orange: #fb923c;
+    --accent-yellow: #fbbf24;
+    --accent-teal: #06b6d4;
+    --accent-purple: #7c3aed;
+    --accent-purple-rgb: 124, 58, 237;
+
+    --text-primary: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --text-light: #64748b;
+    --text-on-dark: #f1f5f9;
+    --text-on-navy: #c7d2fe;
+
+    --border-outset-light: #334155;
+    --border-outset-dark: #0f172a;
+    --border-inset-light: #0f172a;
+    --border-inset-dark: #334155;
+    --border-default: 1px solid #334155;
+    --border-strong: 1px solid #475569;
+    --border-subtle: 1px solid #1e293b;
+    --border-radius-sm: 4px;
+    --border-radius-md: 6px;
+    --border-radius-lg: 8px;
+    --border-color: #334155;
+
+    --bevel-raised: inset -1px -1px 0 #0f172a, inset 1px 1px 0 #334155, inset -2px -2px 0 #020617, inset 2px 2px 0 #1e293b;
+    --bevel-sunken: inset 1px 1px 0 #0f172a, inset -1px -1px 0 #334155, inset 2px 2px 0 #020617, inset -2px -2px 0 #1e293b;
+    --bevel-button: inset -1px -1px 0 #020617, inset 1px 1px 0 #334155, inset -2px -2px 0 #0f172a, inset 2px 2px 0 #1e293b;
+    --bevel-pressed: inset 1px 1px 0 #020617, inset -1px -1px 0 #334155;
+
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-tertiary: #0f172a;
+
+    --stars-bg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ctext x='12' y='24' font-size='10' fill='%234338ca' opacity='0.3'%3E✦%3C/text%3E%3C/svg%3E");
+}

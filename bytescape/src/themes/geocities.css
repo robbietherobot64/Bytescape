@@ -1,0 +1,85 @@
+/* ═══════════════════════════════════════════════════════
+   BYTESCAPE — "GeoCities Memorial" Theme (Default)
+   Old-school web. Forums. RSS readers. AIM buddy lists.
+   Beveled edges, tiled backgrounds, Verdana forever.
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+    /* The Old Web Palette */
+    --bg-page: #c0c0c0;                /* Win98 silver */
+    --bg-content: #f5f0e6;             /* Warm parchment / beige */
+    --bg-panel: #e8e0d0;               /* Slightly darker beige panel */
+    --bg-card: #ffffff;                 /* White card on beige */
+    --bg-card-hover: #fffff0;           /* Ivory hover */
+    --bg-toolbar: #d4d0c8;             /* Classic toolbar grey */
+    --bg-input: #ffffff;
+    --bg-sidebar: #336;                /* Navy blue sidebar (classic nav) */
+    --bg-sidebar-hover: #447;
+    --bg-sidebar-active: #558;
+
+    /* The Web 1.0 accent colors */
+    --link-blue: #0000ee;              /* The one true link blue */
+    --link-visited: #551a8b;           /* Visited purple */
+    --link-hover: #ff0000;             /* Red hover, as the ancients intended */
+    --accent-green: #008000;           /* Green for success */
+    --accent-red: #cc0000;
+    --accent-orange: #ff6600;          /* Classic web orange */
+    --accent-yellow: #ffcc00;
+    --accent-teal: #008080;            /* Teal — the forgotten hero */
+
+    /* Text */
+    --text-primary: #000000;
+    --text-secondary: #333333;
+    --text-muted: #666666;
+    --text-light: #999999;
+    --text-on-dark: #ffffff;
+    --text-on-navy: #99ccff;
+
+    /* Borders — the beveled classic */
+    --border-outset-light: #ffffff;
+    --border-outset-dark: #808080;
+    --border-inset-light: #808080;
+    --border-inset-dark: #ffffff;
+    --border-default: 1px solid #999999;
+    --border-strong: 2px solid #666666;
+    --border-subtle: 1px solid #cccccc;
+    --border-radius-sm: 0px;  /* No rounded corners in the old web */
+    --border-radius-md: 0px;
+    --border-radius-lg: 3px;  /* Maximum daring */
+
+    /* The beveled look */
+    --bevel-raised: inset -1px -1px 0 #808080, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #404040, inset 2px 2px 0 #dfdfdf;
+    --bevel-sunken: inset 1px 1px 0 #808080, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #404040, inset -2px -2px 0 #dfdfdf;
+    --bevel-button: inset -1px -1px 0 #404040, inset 1px 1px 0 #ffffff, inset -2px -2px 0 #808080, inset 2px 2px 0 #dfdfdf;
+    --bevel-pressed: inset 1px 1px 0 #404040, inset -1px -1px 0 #ffffff;
+
+    /* Layout Tokens */
+    --sidebar-width: 140px;
+    --topbar-height: 48px;
+    --context-panel-width: 200px;
+    --friends-panel-width: 220px;
+    --header-height: 46px;
+    --content-max-width: 960px;
+    --screen-max-width: 1200px;
+    --feed-right-panel-width: 220px;
+
+    /* Typography — the holy trio */
+    --font-sans: 'Verdana', 'Tahoma', 'Geneva', 'Arial', sans-serif;
+    --font-serif: 'Georgia', 'Times New Roman', serif;
+    --font-mono: 'Courier New', 'Courier', monospace;
+
+    /* Safe Area */
+    --safe-top: var(--android-safe-area-top, env(safe-area-inset-top, 0px));
+    --safe-bottom: var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px));
+
+    /* Tiled star background via CSS */
+    --stars-bg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Ctext x='12' y='24' font-size='10' fill='%23ddd8c8' opacity='0.5'%3E✦%3C/text%3E%3C/svg%3E");
+
+    /* Ghost variable defaults — used in inline styles, need defined values */
+    --accent-purple: #8b5cf6;
+    --accent-purple-rgb: 139, 92, 246;
+    --bg-primary: #f5f0e6;
+    --bg-secondary: #e8e0d0;
+    --bg-tertiary: #d4d0c8;
+    --border-color: #999999;
+}

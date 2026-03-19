@@ -1,0 +1,51 @@
+/* ─── THEME: Desktop Mode (Win98 Classic) ─── */
+[data-theme="win98"] {
+    --bg-page: #c0c0c0;
+    --bg-content: #d4d0c8;
+    --bg-panel: #c0c0c0;
+    --bg-card: #d4d0c8;
+    --bg-card-hover: #d8d4cc;
+    --bg-toolbar: #c0c0c0;
+    --bg-input: #ffffff;
+    --bg-sidebar: #000080;
+    --bg-sidebar-hover: #0000a0;
+    --bg-sidebar-active: #1a1aff;
+
+    --link-blue: #0000ff;
+    --link-visited: #800080;
+    --link-hover: #ff0000;
+    --accent-green: #008000;
+    --accent-red: #cc0000;
+    --accent-orange: #ff8c00;
+    --accent-yellow: #ffcc00;
+    --accent-teal: #008080;
+    --accent-purple: #800080;
+    --accent-purple-rgb: 128, 0, 128;
+
+    --text-primary: #000000;
+    --text-secondary: #222222;
+    --text-muted: #555555;
+    --text-light: #808080;
+    --text-on-dark: #ffffff;
+    --text-on-navy: #ffffff;
+
+    --border-outset-light: #ffffff;
+    --border-outset-dark: #808080;
+    --border-inset-light: #808080;
+    --border-inset-dark: #ffffff;
+    --border-default: 2px solid #808080;
+    --border-strong: 2px solid #404040;
+    --border-subtle: 1px solid #ababab;
+    --border-radius-sm: 0px;
+    --border-radius-md: 0px;
+    --border-radius-lg: 0px;
+    --border-color: #808080;
+
+    --bg-primary: #d4d0c8;
+    --bg-secondary: #c0c0c0;
+    --bg-tertiary: #ababab;
+
+    --font-sans: 'Tahoma', 'MS Sans Serif', 'Verdana', sans-serif;
+
+    --stars-bg: none;
+}
