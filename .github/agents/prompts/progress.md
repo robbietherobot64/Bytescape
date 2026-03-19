@@ -4,6 +4,31 @@
 
 ---
 
+## 📋 Sprint v6 — PM Brief (2026-03-19)
+
+**Combined Sprint v6 delivery across Track A (Backend) and Track B (Frontend).**
+
+| # | Issue | Backend | Frontend | User Status |
+|---|-------|---------|----------|-------------|
+| 1 | Source filter broken | ✅ 5 root causes fixed (`7bc515b`) | ✅ Applied to all 4 tabs (`0906559`) | ✅ **Confirmed working** |
+| 2 | Chat button dead | ✅ `get_or_create_bsky_convo` (`bc5fcf6`) | ✅ Wired + sparkle fix (`4a02200`, `c10a41a`) | ⚠️ **Partially fixed** — works but unreliable (~20% click rate). Needs interactive debugging. |
+| 3 | In-app browser blank | ✅ Window label fix + diagnostics (`7b3acf8`) | ✅ Enabled in-app + show/focus (`748d181`, `c10a41a`) | ⚠️ **Tabs open** but content doesn't render. Needs backend `add_child` runtime debugging. |
+| 4 | Profile bio sections | ✅ Persist to DB (`5ac95e1`) | — (already existed) | ✅ **Accepted** — "good first implementation" |
+| 5 | Facebook import quality | ✅ Verified against archive (`b5a0315`) | — | ✅ **Parser verified good** — ZIP required |
+| 6 | Image hover 1px shift | — | ❌ Not attempted (scroll fix only, `32cf033`) | ❌ **Open** — hover `:hover` rule causing shift |
+
+**ROADMAP items resolved:** Source Filter Bug ✅, UF.13 Facebook Import ✅, Chat Button Backend Dep ✅ (partially, frontend still buggy)
+**ROADMAP items updated:** In-App Browser Tabs, B10.7, UF.3 Friends List, Image Hover Shift
+**Tests:** 264/264 frontend ✅, 30/30 Rust sprint tests ✅, cargo 0 warnings ✅
+**HEAD:** `c10a41a` on `main` (12 commits this sprint: 6 backend + 6 frontend)
+
+### 🔴 Blockers for Next Sprint
+1. **Chat button reliability** — Frontend: needs `console.log` breadcrumbs + loading spinner + DevTools inspection for overlapping elements
+2. **In-app browser rendering** — Backend: runtime `eprintln!` from `browser_create` to diagnose `add_child`. Consider `WebviewWindow` fallback.
+3. **Image hover shift** — Frontend: find and fix `:hover` CSS rule on image/media elements
+
+---
+
 ## 2026-03-19 — Frontend Sprint v6 Round 2: "Fix Feedback from Round 1"
 
 ### Build Status
