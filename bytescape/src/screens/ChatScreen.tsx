@@ -29,6 +29,7 @@ export function ChatScreen() {
     const {
         messages, setMessages,
         selectedConvoId, setSelectedConvoId,
+        pendingConvoMeta, setPendingConvoMeta,
         messageInput, setMessageInput,
         isSending, setIsSending,
     } = useChatStore();
@@ -162,7 +163,9 @@ export function ChatScreen() {
     const activeConvoMsgs = selectedConvoId ? byConvo[selectedConvoId] : null;
     const activeIsP2p = selectedConvoId?.startsWith(P2P_PREFIX) ?? false;
     const activeSource = (activeConvoMsgs?.[0]?.source || '').toLowerCase();
-    const activeIsLive = activeIsP2p || BLUESKY_SOURCES.has(activeSource);
+    // A convo is "live" (can send messages) if it's P2P, Bluesky, or a newly created Bluesky convo with no messages yet
+    const isNewBlueskyConvo = !!(selectedConvoId && !activeIsP2p && !activeConvoMsgs && pendingConvoMeta);
+    const activeIsLive = activeIsP2p || BLUESKY_SOURCES.has(activeSource) || isNewBlueskyConvo;
 
     // Derive title from participants
     let activeTitle = 'Chat';
@@ -175,7 +178,24 @@ export function ChatScreen() {
         const peerHandles = [...new Set(activeConvoMsgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h !== auth?.handle);
         const allHandles = [...new Set([...senderHandles, ...peerHandles])];
         activeTitle = allHandles.length > 0 ? allHandles.join(', ') : 'Just You';
+    } else if (isNewBlueskyConvo && pendingConvoMeta) {
+        activeTitle = pendingConvoMeta.handle;
     }
+
+    // Auto-switch to Bluesky tab when a Bluesky convo is selected (new or existing)
+    useEffect(() => {
+        if (!selectedConvoId || activeIsP2p) return;
+        if (isNewBlueskyConvo || BLUESKY_SOURCES.has(activeSource)) {
+            setActiveTab('bluesky');
+        }
+    }, [selectedConvoId]);
+
+    // Clear pendingConvoMeta once real messages arrive for that convo
+    useEffect(() => {
+        if (pendingConvoMeta && selectedConvoId && byConvo[selectedConvoId]) {
+            setPendingConvoMeta(null);
+        }
+    }, [messages, selectedConvoId, pendingConvoMeta]);
 
     // ── Scroll management ──
     useEffect(() => {
@@ -438,7 +458,7 @@ export function ChatScreen() {
                             <span className="chat-main-title">{activeTitle}</span>
                             {activeIsP2p && <span className="chat-tab-badge" style={{ background: '#a78bfa', color: '#fff' }}>P2P</span>}
                             {!activeIsLive && !activeIsP2p && <span className="chat-tab-badge" style={{ background: '#f59e0b', color: '#fff' }}>Archive</span>}
-                            {!activeIsP2p && BLUESKY_SOURCES.has(activeSource) && <span className="chat-tab-badge" style={{ background: '#1185fe', color: '#fff' }}>Bluesky</span>}
+                            {!activeIsP2p && (BLUESKY_SOURCES.has(activeSource) || isNewBlueskyConvo) && <span className="chat-tab-badge" style={{ background: '#1185fe', color: '#fff' }}>Bluesky</span>}
                         </Win98Box>
 
                         <div className="chat-msg-scroll" ref={chatContainerRef} onScroll={handleChatScroll}>
@@ -448,6 +468,15 @@ export function ChatScreen() {
                                     <div>Start a P2P conversation</div>
                                     <div style={{ fontSize: '0.8rem', marginTop: 4, opacity: 0.7 }}>
                                         Messages are sent directly over the Iroh network — no servers involved.
+                                    </div>
+                                </div>
+                            )}
+                            {(!activeConvoMsgs || activeConvoMsgs.length === 0) && isNewBlueskyConvo && (
+                                <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
+                                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>🦋</div>
+                                    <div>New conversation with {pendingConvoMeta?.handle}</div>
+                                    <div style={{ fontSize: '0.8rem', marginTop: 4, opacity: 0.7 }}>
+                                        Send a message to start chatting via Bluesky DM.
                                     </div>
                                 </div>
                             )}
@@ -589,6 +618,7 @@ export function ChatScreen() {
                                                         try {
                                                             const newConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
                                                             setSelectedConvoId(newConvoId);
+                                                            setPendingConvoMeta({ did: buddy.did, handle: buddy.handle });
                                                         } catch (e) {
                                                             console.error('Failed to create convo:', e);
                                                         }

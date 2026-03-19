@@ -17,7 +17,7 @@ import { useNavStore } from '../store';
  * the in-app WebView is broken. When Track A fixes browser.rs, flip the
  * `USE_SYSTEM_BROWSER` flag to false to re-enable in-app tabs.
  */
-const USE_SYSTEM_BROWSER = true;
+const USE_SYSTEM_BROWSER = false;
 
 export function openInApp(url: string, title?: string): void {
     if (USE_SYSTEM_BROWSER) {

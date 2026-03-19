@@ -241,12 +241,21 @@ export const usePeerStore = create<PeerState>((set) => ({
 }));
 
 // ─── Chat Store ───
+interface PendingConvoMeta {
+    did: string;
+    handle: string;
+}
+
 interface ChatState {
     messages: VaultMessage[];
     setMessages: (msgs: VaultMessage[] | ((prev: VaultMessage[]) => VaultMessage[])) => void;
 
     selectedConvoId: string | null;
     setSelectedConvoId: (id: string | null) => void;
+
+    /** Metadata for a newly created convo that has no messages yet */
+    pendingConvoMeta: PendingConvoMeta | null;
+    setPendingConvoMeta: (meta: PendingConvoMeta | null) => void;
 
     messageInput: string;
     setMessageInput: (val: string) => void;
@@ -263,6 +272,9 @@ export const useChatStore = create<ChatState>((set) => ({
 
     selectedConvoId: null,
     setSelectedConvoId: (id) => set({ selectedConvoId: id }),
+
+    pendingConvoMeta: null,
+    setPendingConvoMeta: (meta) => set({ pendingConvoMeta: meta }),
 
     messageInput: '',
     setMessageInput: (val) => set({ messageInput: val }),
