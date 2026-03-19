@@ -496,9 +496,18 @@ function App() {
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
-            onOpenChat={(peerNodeId, _peerName) => {
+            onOpenChat={async (peerNodeId, _peerName) => {
               const { setSelectedConvoId } = useChatStore.getState();
-              setSelectedConvoId(`p2p:${peerNodeId}`);
+              if (peerNodeId.startsWith('did:')) {
+                try {
+                  const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  setSelectedConvoId(convoId);
+                } catch (e) {
+                  console.error('Failed to get/create convo:', e);
+                }
+              } else {
+                setSelectedConvoId(`p2p:${peerNodeId}`);
+              }
               openTab("chat", "Chat");
               setActiveSidebar("chat");
             }}
@@ -549,9 +558,18 @@ function App() {
         return (
           <FriendsScreen
             auth={auth}
-            onOpenChat={(peerNodeId, _peerName) => {
+            onOpenChat={async (peerNodeId, _peerName) => {
               const { setSelectedConvoId } = useChatStore.getState();
-              setSelectedConvoId(`p2p:${peerNodeId}`);
+              if (peerNodeId.startsWith('did:')) {
+                try {
+                  const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  setSelectedConvoId(convoId);
+                } catch (e) {
+                  console.error('Failed to get/create convo:', e);
+                }
+              } else {
+                setSelectedConvoId(`p2p:${peerNodeId}`);
+              }
               openTab("chat", "Chat");
               setActiveSidebar("chat");
             }}

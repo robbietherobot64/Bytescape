@@ -574,7 +574,7 @@ export function ChatScreen() {
                                         <div className="friend-item-actions">
                                             <button
                                                 className="friend-item-action-btn"
-                                                onClick={() => {
+                                                onClick={async () => {
                                                     // Find or select the conversation with this buddy
                                                     const convoId = Object.keys(byConvo).find(cid => {
                                                         const msgs = byConvo[cid];
@@ -584,6 +584,14 @@ export function ChatScreen() {
                                                     });
                                                     if (convoId) {
                                                         setSelectedConvoId(convoId);
+                                                    } else {
+                                                        // Create a new conversation with this buddy
+                                                        try {
+                                                            const newConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
+                                                            setSelectedConvoId(newConvoId);
+                                                        } catch (e) {
+                                                            console.error('Failed to create convo:', e);
+                                                        }
                                                     }
                                                 }}
                                                 title={`Message ${buddy.handle}`}
