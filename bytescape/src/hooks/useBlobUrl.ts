@@ -6,8 +6,10 @@ import { blobCacheUrl } from '../utils/mediaServer';
  * In-memory cache of hash → asset URL to avoid re-invoking for already-resolved blobs.
  * The files on disk are also cached (the Rust side writes once to blob_cache/),
  * but this avoids the IPC round-trip entirely for repeat renders.
+ *
+ * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
  */
-const resolvedUrlCache = new Map<string, string>();
+export const resolvedUrlCache = new Map<string, string>();
 
 /**
  * Hook to resolve a media path that may be a blob hash.

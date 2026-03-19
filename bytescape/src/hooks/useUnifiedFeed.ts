@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
+import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
 
 /**
  * Nest owner replies under their parent posts.
@@ -153,6 +154,8 @@ export function useUnifiedFeed({
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
                 setCache('following', deduped, nextCursor);
+                // Batch-prefetch blob URLs for images (P6)
+                prefetchBlobUrls(deduped).catch(() => {});
                 await fetchFollowingList(auth.did);
 
             } else if (tab === 'you') {
@@ -184,16 +187,21 @@ export function useUnifiedFeed({
                 setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
                 setCache('you', dedupedYou, bskyCursor);
+                // Batch-prefetch blob URLs for images (P6)
+                prefetchBlobUrls(dedupedYou).catch(() => {});
 
             } else if (tab === 'subscribed') {
                 // ── Subscribed tab: show content from user's saved/subscribed feeds ──
-                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((e): GeneratorView[] => {
-                    console.error('list_saved_feeds failed:', e);
-                    return [];
-                });
+                // Parallelize independent IPC calls (P7 — saves 200-500ms)
+                const [feedsData, tags] = await Promise.all([
+                    invoke<GeneratorView[]>('list_saved_feeds').catch((e): GeneratorView[] => {
+                        console.error('list_saved_feeds failed:', e);
+                        return [];
+                    }),
+                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
+                ]);
                 // Use ALL saved feed URIs (including following) for subscribed tab
                 const allFeedUris = feedsData.map(f => f.uri);
-                const tags = await invoke<string[]>('list_followed_hashtags').catch((): string[] => []);
                 setFollowedHashtags(tags);
 
                 // Respect selectedFeedUri — filter to a single feed if selected
@@ -219,6 +227,8 @@ export function useUnifiedFeed({
                         setFeedEntries(deduped);
                         setCursor(nextCur);
                         setCache('subscribed', deduped, nextCur);
+                        // Batch-prefetch blob URLs for images (P6)
+                        prefetchBlobUrls(deduped).catch(() => {});
                     } catch (e) {
                         console.error('get_unified_feed failed for subscribed tab:', e);
                         if (!isStale()) {
@@ -234,17 +244,21 @@ export function useUnifiedFeed({
 
             } else if (tab === 'all') {
                 // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
-                const feedsData = await invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []);
-                const feedUris = customFeedUris(feedsData);
-
-                try {
-                    const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                // Parallelize list_saved_feeds with get_timeline_unified (P7)
+                // get_timeline_unified internally calls list_saved_feeds for its own logic,
+                // but we still need the GeneratorView[] data for the UI feed selector.
+                const [feedsData, response] = await Promise.all([
+                    invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []),
+                    invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                         tags: [],
-                        feedUris,
+                        feedUris: [],
                         limit: 50,
                         cursor: null,
                         vaultOffset: 0,
-                    });
+                    }),
+                ]);
+
+                try {
 
                     if (isStale()) return;
                     setSavedFeeds(feedsData);
@@ -255,11 +269,13 @@ export function useUnifiedFeed({
                     setCursor(response.next_cursor);
                     setCache('all', deduped, response.next_cursor);
                     setArchiveOffset(200);
+                    // Batch-prefetch blob URLs for images (P6)
+                    prefetchBlobUrls(deduped).catch(() => {});
                 } catch (e) {
-                    console.error('get_timeline_unified failed:', e);
+                    console.error('get_timeline_unified/list_saved_feeds failed:', e);
                     if (isStale()) return;
-                    setSavedFeeds(feedsData);
-                    setCachedSavedFeeds(feedsData);
+                    setSavedFeeds([]);
+                    setCachedSavedFeeds([]);
                     setFeedError(typeof e === 'string' ? e : 'Failed to load unified feed');
                     setFeedEntries([]);
                     setCursor(null);
