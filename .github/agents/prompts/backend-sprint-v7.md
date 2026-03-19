@@ -1,4 +1,4 @@
-# Backend Agent — Sprint v7 (2026-03-19)
+# Backend Agent — Sprint v7 (2026-03-19) — ActivityPub Pivot
 
 ## ⚠️ OPERATIONAL DISCIPLINE — READ CAREFULLY
 
@@ -24,141 +24,195 @@ There are only **two agents**: you (Backend/Track A — `src-tauri/src/`, `Cargo
 
 ### What was fixed by the PM before this sprint
 1. **Source filter: frontend now passes `sourceFilter` to backend** — The `all` tab in `useUnifiedFeed.ts` now sends `sourceFilter` to `get_timeline_unified`. Your sprint v6 backend work is now fully wired.
-2. **System browser re-enabled** — External URLs use system browser. The in-app WebView (`add_child()`) is broken on Linux/WebKitGTK and has been disabled.
+2. **System browser re-enabled** — External URLs use system browser. The in-app WebView is disabled.
 
 ### Sprint v6 results (your previous work)
-- ✅ Source filter backend: `source_filter` param on `get_timeline_unified`, composite cache keys, vault query passthrough, post-merge safety filter
-- ✅ `get_or_create_bsky_convo` exposed as Tauri command (OAuth + app-password paths)
-- ✅ WebView window label fixed to "main" + diagnostic logging + fallback
-- ✅ Profile sections persistence: `save_profile_sections` / `get_profile_sections` commands
-- ✅ Facebook import verification: quality confirmed against workspace archive
-- ✅ 30 new Rust unit tests (FeedCache isolation, source filter, profile sections, Facebook import quality)
-
-**All P1-P6 completed.** Strong sprint.
+- ✅ Source filter backend: `source_filter` param on `get_timeline_unified`, composite cache keys
+- ✅ `get_or_create_bsky_convo` exposed as Tauri command
+- ✅ WebView window label fixed + diagnostic logging + fallback
+- ✅ Profile sections persistence: `save_profile_sections` / `get_profile_sections`
+- ✅ Facebook import verification: quality confirmed
+- ✅ 30 new Rust unit tests
 
 **Build:** cargo ✅ (0 warnings), tsc ✅, 264/264 tests ✅
 
 ---
 
-## Sprint Theme: "Profiles, Instagram, & Chat Robustness"
+## Sprint Theme: "ActivityPub A1.2 — Mastodon/Lemmy Client"
 
-The backend is in good shape after sprint v6. This sprint focuses on: supporting the frontend's new native profile view, adding Instagram archive import, and hardening the chat system.
+### Strategic Context
+
+The user wants to move forward with ActivityPub implementation. The app already has Bluesky DM chat, and we want chat to work with ActivityPub too. Rather than polish Bluesky-only chat and redo it later, we're building the AP transport layer now so the Frontend agent can make the chat UI protocol-agnostic from the start.
+
+### What Already Exists (A1.1 — DONE)
+
+You have a solid AP foundation in `src-tauri/src/activitypub/`:
+
+| File | What's there |
+|------|-------------|
+| `actor.rs` | `ApActor` struct with ed25519 key pair from Iroh, `to_activitystreams()` serialization |
+| `types.rs` | `ApObject`, `ApActivity`, `ApCollection`, `ApPublicKey`, `ApMediaLink`, `ApTag`, `ApSource` |
+| `activities.rs` | Constructors: `create_note`, `follow`, `accept`, `reject`, `like`, `announce`, `delete`, `undo`, `update`, `bytescape_item_to_note` |
+| `inbox.rs` | `process_inbox()` — HTTP signature verification, dispatches Follow/Undo/Like/Announce/Create/Update/Delete/Accept/Reject |
+| `outbox.rs` | `deliver_activity()` — signed HTTP POST to remote inbox; `fetch_remote_actor()` — signed/unsigned GET |
+| `signatures.rs` | ed25519 HTTP signing for POST and GET |
+| `webfinger.rs` | `resolve_webfinger()` — looks up `acct:user@domain` resources |
+| `commands/ap.rs` | Tauri commands: `create_ap_actor`, `get_ap_actor`, `send_ap_activity`, `fetch_remote_actor`, `resolve_webfinger` |
+
+All 5 AP commands are registered in `lib.rs` lines 545-549.
+
+### What's Missing (A1.2 — THIS SPRINT)
+
+The A1.1 infra provides the signing, delivery, and inbox processing primitives. What's missing is the **Mastodon/Lemmy C2S client** — the ability to:
+1. Authenticate with a remote Mastodon instance (OAuth2)
+2. Read a user's home feed from their instance
+3. Send/receive DMs (AP `Create(Note)` addressed only to recipient — not `as:Public`)
+4. Follow/Unfollow remote actors
 
 ---
 
-## Phase 1 — Support Frontend Features
+## Phase 1 — AP Client Foundation (CRITICAL)
 
-### P1 — Expose `resolve_profile` Command ⚡⚡⚡ CRITICAL
+### P1 — Mastodon OAuth2 Client ⚡⚡⚡ CRITICAL
 
-The Frontend agent is building a native Bluesky profile screen (rendering profile + posts in React instead of a broken WebView). They need a command to resolve a Bluesky profile by handle.
+Implement Mastodon OAuth2 registration and authentication.
 
-**Check first:** A `resolve_profile` or `get_profile` command may already exist. Search `lib.rs` and `commands/` for existing profile-fetching commands.
+**Background:** Mastodon uses standard OAuth2. The flow is:
+1. **App registration:** `POST /api/v1/apps` on the target instance to register Bytescape (returns `client_id` + `client_secret`)
+2. **Authorization:** Open `https://{instance}/oauth/authorize?client_id=...&redirect_uri=...&scope=read+write+push&response_type=code` in browser
+3. **Token exchange:** `POST /oauth/token` with the auth code to get `access_token`
 
-**If it doesn't exist, create:**
+**Implementation:**
+1. Create `src-tauri/src/connectors/mastodon.rs` (or extend the existing connector file if there is one)
+2. Store the Mastodon session in `AppState` (similar to `bsky_session`) — struct `MastodonSession { instance: String, access_token: String, account_id: String }`
+3. Create Tauri commands:
+   - `mastodon_register_app(instance: String)` → registers Bytescape app on the instance, returns OAuth URL to open in browser
+   - `mastodon_complete_auth(instance: String, auth_code: String)` → exchanges code for token, stores session
+   - `mastodon_get_session()` → returns current session info (or null)
+4. Store credentials securely via the existing keychain module (`src-tauri/src/keychain.rs`)
+
+**Reference the Mastodon API docs:**
+- App registration: `POST /api/v1/apps` with `client_name`, `redirect_uris`, `scopes`, `website`
+- Token: `POST /oauth/token` with `grant_type=authorization_code`, `code`, `client_id`, `client_secret`, `redirect_uri`
+- Verify credentials: `GET /api/v1/accounts/verify_credentials` with `Authorization: Bearer {token}`
+
+### P2 — Read Mastodon Home Feed ⚡⚡⚡ CRITICAL
+
+Once authenticated, fetch the user's home timeline and normalize to `BytescapeItem`.
+
+**Implementation:**
+1. Add `mastodon_get_timeline(limit: Option<i32>)` command
+2. Call `GET /api/v1/timelines/home?limit={limit}` with the stored access token
+3. Parse Mastodon `Status` objects and normalize to `BytescapeItem`:
+   - `id` → status.id (prefixed with instance to be globally unique, e.g. `mastodon.social:123456`)
+   - `content` → strip HTML from `status.content` (Mastodon returns HTML)
+   - `source` → `Source::Mastodon`
+   - `original_timestamp` → parse `status.created_at` (ISO 8601)
+   - `author_name` → `status.account.display_name`
+   - `author_handle` → `status.account.acct` (includes @instance for remote accounts)
+   - `author_avatar` → `status.account.avatar`
+   - `media_paths` → map `status.media_attachments[].url`
+   - `item_type` → infer from media: images → `Gallery`, video → `Gallery`, text only → `Status`
+4. Cache results in `FeedCache` (same pattern as Bluesky timeline)
+
+**HTML stripping:** Mastodon content is HTML. Use a simple regex to strip tags or add the `ammonia` crate for safe HTML sanitization. Keep `<br>` as newlines, `<a>` href as link text.
+
+### P3 — AP Direct Messages (Send & Receive) ⚡⚡⚡ CRITICAL
+
+This is the key piece that enables protocol-agnostic chat. DMs in ActivityPub are just `Create(Note)` activities addressed to a single recipient (not to `as:Public`).
+
+**Sending DMs:**
+1. Create `send_ap_dm(recipient_actor_url: String, text: String)` Tauri command
+2. Construct a `Create(Note)` activity where:
+   - `to: [recipient_actor_url]` (NOT `as:Public` — this makes it a DM)
+   - `cc: []` (empty — private)
+   - The `Note` content is the message text
+3. Resolve the recipient's inbox URL via `fetch_remote_actor()`
+4. Deliver via the existing `deliver_activity()` signed POST
+5. Save the sent message locally as a `VaultMessage` with `source: "activitypub"`
+
+**Receiving DMs:**
+1. Modify `inbox.rs` `handle_create()` to detect DMs:
+   - A DM is a `Create(Note)` where `to` contains only specific actor URLs (not `as:Public`)
+   - When detected, save as `VaultMessage` with `source: "activitypub"`, `convo_id: "{sender_actor_url}"`, `sender_did: "{sender_actor_url}"`
+2. Emit a Tauri event: `app.emit("new-ap-dm", ...)` so the frontend can show it in real-time
+
+**Important:** The existing `VaultMessage` storage in `db/chat.rs` is already protocol-agnostic — it keys by `{owner_did}:{source}:{id}`. Just pass `"activitypub"` as the source. No schema changes needed.
+
+### P4 — Unified Send Message Command ⚡⚡
+
+Create a protocol-agnostic message-sending command that the frontend can call without knowing the protocol details:
+
+```rust
+#[tauri::command]
+pub async fn send_message(
+    state: State<'_, AppState>,
+    protocol: String,      // "bluesky" | "activitypub" | "p2p"
+    convo_id: String,       // Bluesky convo ID, AP actor URL, or P2P node ID
+    text: String,
+) -> Result<serde_json::Value, String>
+```
+
+This dispatches to:
+- `"bluesky"` → existing `send_bsky_dm` logic
+- `"activitypub"` → new `send_ap_dm` logic from P3
+- `"p2p"` → existing P2P message sending
+
+Return a serialized `VaultMessage` so the frontend can immediately display it.
+
+**Do NOT remove `send_bsky_dm`** — keep it for backwards compatibility but have the unified command delegate to it internally.
+
+---
+
+## Phase 2 — AP Social Graph
+
+### P5 — Follow/Unfollow Remote Actors ⚡⚡
+
+1. Create `mastodon_follow(account_id: String)` — calls `POST /api/v1/accounts/{id}/follow` (Mastodon C2S API)
+2. Create `mastodon_unfollow(account_id: String)` — calls `POST /api/v1/accounts/{id}/unfollow`
+3. Also create the S2S equivalents using the existing AP activity constructors:
+   - `send_ap_follow(target_actor_url: String)` — constructs Follow activity, delivers to target inbox
+   - `send_ap_unfollow(target_actor_url: String)` — constructs Undo(Follow), delivers to target inbox
+4. Update `handle_follow` in `inbox.rs` to auto-accept follow requests (for now) and store the follower in the DB
+
+### P6 — Expose `resolve_profile` Command ⚡⚡
+
+The Frontend agent is building a native profile screen. They need a unified profile resolver.
+
+**Check first:** Search `lib.rs` and `commands/` for existing profile-fetching commands.
+
+**Create:**
 ```rust
 #[tauri::command]
 pub async fn resolve_profile(
     state: State<'_, AppState>,
     handle: String,
-) -> Result<ProfileView, String>
+    protocol: Option<String>,  // "bluesky" | "activitypub" — auto-detect if None
+) -> Result<serde_json::Value, String>
 ```
 
-Where `ProfileView` includes: `did`, `handle`, `displayName`, `description`, `avatar`, `banner`, `followersCount`, `followsCount`, `postsCount`.
-
-This should call the Bluesky `app.bsky.actor.getProfile` endpoint via the existing OAuth/XRPC infrastructure.
-
-**Also verify `get_author_feed` works for arbitrary DIDs** (not just the logged-in user). The frontend will call `get_author_feed({ actor: targetDid, limit: 20 })` to show a profile's posts.
-
-### P2 — Harden `get_or_create_bsky_convo` ⚡⚡
-
-The command works but may be unreliable under certain conditions:
-1. **Add timeout:** If the Bluesky chat API takes >10 seconds, return an error instead of hanging
-2. **Handle expired sessions:** If the OAuth session expired, retry once with session refresh
-3. **Handle missing chat scope:** The chat endpoint requires `chat.bsky.convo` scope. If the user logged in without it, return a clear error message like "Re-login required for chat (missing chat scope)"
-4. **Add logging:** Log the member_did and result (success/error) to help debug issues
-
-### P3 — Instagram Archive Import ⚡⚡ NEW FEATURE
-
-There's an Instagram archive in the workspace at `instagram-gostaticband-2026-02-22-GIeT6CmP/`.
-
-Create a new connector: `src-tauri/src/connectors/instagram.rs`
-
-**Instagram archive structure:**
-- `personal_information/` — account info, profile
-- `media/posts/` — post images
-- `media/reels/` — video reels
-- `media/stories/` — story images/videos
-- `your_instagram_activity/content/` — posts, stories, reels with captions
-- `connections/followers_and_following/` — social graph
-
-**Implementation:**
-1. Create `connectors/instagram.rs`
-2. Add `Instagram` variant to `Source` enum in `connectors/mod.rs`
-3. Parse the JSON files in `your_instagram_activity/content/` for posts with:
-   - Caption text → `content`
-   - Timestamps → `original_timestamp`
-   - Media references → `media_paths` (link to files in `media/` directory)
-4. Import media files as blobs (same pattern as Facebook import)
-5. Normalize to `BytescapeItem` schema
-6. Register an `import_instagram_archive` command in `lib.rs`
-7. Apply the same quality filters as Facebook (skip activity logs, ads, etc.)
-
-**Reference:** Follow the pattern in `connectors/facebook.rs` for archive parsing.
+**Auto-detection logic:**
+- If handle contains `@` and looks like `user@instance.social` → treat as Mastodon/AP → resolve via WebFinger then fetch actor
+- If handle starts with `did:` or looks like a Bluesky handle → resolve via `app.bsky.actor.getProfile`
+- Return a normalized JSON with: `did`/`actor_url`, `handle`, `display_name`, `description`, `avatar`, `banner`, `followers_count`, `following_count`, `posts_count`, `protocol: "bluesky" | "activitypub"`
 
 ---
 
-## Phase 2 — Infrastructure
+## Phase 3 — Hardening (as time allows)
 
-### P4 — Unified Contact List ⚡⚡
+### P7 — Harden `get_or_create_bsky_convo` ⚡
 
-Currently, contacts come from multiple sources but aren't unified:
-- Bluesky follows (via `list_follows`)
-- P2P peers (via `list_peers`)
-- Imported contacts (Facebook friends, Instagram follows — not yet merged)
+1. **Add 10-second timeout** — return error instead of hanging
+2. **Handle expired sessions** — retry once with `refresh_session()`
+3. **Handle missing chat scope** — return clear error: "Re-login required for chat"
+4. **Add logging** — log member_did and result for debugging
 
-Create a `list_all_contacts` command that merges all sources into a unified contact list:
-```rust
-#[tauri::command]
-pub async fn list_all_contacts(
-    state: State<'_, AppState>,
-) -> Result<Vec<UnifiedContact>, String>
-```
+### P8 — Rate Limit Handling ⚡
 
-Where `UnifiedContact` includes: `did`, `handle`, `display_name`, `avatar`, `sources: Vec<String>` (which platforms this contact is known from).
-
-This enables the frontend to show a unified friends list that includes Bluesky follows, P2P peers, and imported contacts.
-
-### P5 — Rate Limit Handling ⚡
-
-Some Bluesky API calls fail silently when rate-limited. Add proper rate limit handling:
-1. Check response headers for `RateLimit-Remaining` and `RateLimit-Reset`
+Add proper rate limit handling for both Bluesky and Mastodon API calls:
+1. Check `RateLimit-Remaining` / `X-RateLimit-Remaining` response headers
 2. If rate-limited (429), wait and retry once
-3. Log rate limit events so the frontend can optionally display a warning
-4. Add rate limit awareness to: `get_timeline`, `get_author_feed`, `get_unified_feed`, `list_follows`, `list_followers`
-
----
-
-## Phase 3 — Technical Debt (as time allows)
-
-### P6 — Improve Error Messages ⚡
-
-Many commands return generic `"Failed to..."` error strings. Improve:
-1. Include the HTTP status code in API error messages
-2. Distinguish between auth errors (401/403 → "Session expired, please re-login") and server errors (5xx → "Bluesky servers are down, try again later")
-3. Return structured error types where possible
-
-### P7 — Archive Import Progress Events ⚡
-
-Large archive imports (Facebook, Instagram) can take 30+ seconds. Emit progress events:
-```rust
-app.emit("import-progress", ImportProgress {
-    stage: "Parsing posts...",
-    current: 150,
-    total: 500,
-});
-```
-
-The frontend can listen for these to show a progress bar instead of a generic spinner.
+3. Log rate limit events
 
 ---
 
@@ -166,20 +220,22 @@ The frontend can listen for these to show a progress bar instead of a generic sp
 - ❌ Do NOT modify files in `src/` — Frontend scope
 - ❌ Do NOT spawn multiple build processes or leave zombie terminals
 - ❌ Do NOT make multi-feature commits
-- ❌ Do NOT guess at API behavior — read the Bluesky AT Protocol docs
+- ❌ Do NOT guess at Mastodon API behavior — **read the Mastodon API docs**: `https://docs.joinmastodon.org/api/`
+- ❌ Do NOT break the existing Bluesky chat — `send_bsky_dm` and `import_vault_messages` must continue to work
 
 ## Definition of Done
 ### Phase 1 (Critical — must complete)
-- [ ] `resolve_profile` command exists and returns full Bluesky profile data
-- [ ] `get_author_feed` works for arbitrary DIDs (not just logged-in user)
+- [ ] Mastodon OAuth2 flow works: register app, authorize, exchange token, store session
+- [ ] `mastodon_get_timeline` fetches home feed and normalizes to `BytescapeItem` with `Source::Mastodon`
+- [ ] `send_ap_dm` sends a DM via signed ActivityPub delivery
+- [ ] `handle_create` in inbox.rs detects DMs and saves as VaultMessage with `source: "activitypub"`
+- [ ] `send_message` unified command dispatches to Bluesky/AP/P2P based on protocol param
+### Phase 2 (Social graph — high priority)
+- [ ] Follow/Unfollow remote Mastodon actors (C2S and S2S)
+- [ ] `resolve_profile` works for both Bluesky handles and `user@instance.social` handles
+### Phase 3 (Hardening — as time allows)
 - [ ] `get_or_create_bsky_convo` has timeout, session refresh, missing-scope handling
-- [ ] Instagram archive connector parses posts + media from workspace archive
-### Phase 2 (Features — high priority)
-- [ ] `list_all_contacts` returns unified contacts from all sources
-- [ ] Rate limit handling on key Bluesky API commands
-### Phase 3 (Debt — as time allows)
-- [ ] Error messages include HTTP status and actionable guidance
-- [ ] Archive imports emit progress events
+- [ ] Rate limit handling on Bluesky + Mastodon API calls
 ### Build verification
 - [ ] `cargo check` — 0 errors, 0 warnings
 - [ ] `npx tsc --noEmit` — 0 errors
