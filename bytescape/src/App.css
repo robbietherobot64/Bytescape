@@ -2139,7 +2139,6 @@ a:hover {
     position: relative;
     max-width: 90vw;
     max-height: 90vh;
-    width: 90vw;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2150,12 +2149,22 @@ a:hover {
     padding: 4px;
 }
 
+/* Video player wrapper — constrain dimensions, allow natural aspect ratio */
 .gallery-content > div {
-    width: 100%;
+    max-width: 90vw;
     max-height: 80vh;
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+/* Force video element within gallery to respect natural aspect ratio */
+.gallery-content video {
+    max-width: 90vw;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
 }
 
 .gallery-content img {
