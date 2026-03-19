@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect } from 'react';
 import { ParseProgress, ParseResult, SidebarItem } from '../types';
+import './AuditScreen.css';
 
 interface AuditScreenProps {
     progress: ParseProgress | null;

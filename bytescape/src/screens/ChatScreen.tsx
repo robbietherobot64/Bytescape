@@ -7,6 +7,7 @@ import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
 import { BsPersonFill, BsSearch, BsArrowDown, BsChatDotsFill } from 'react-icons/bs';
+import './ChatScreen.css';
 
 /* ────────────────────────────────────────────────────────
    ChatScreen — Tabbed chat with Bluesky / P2P / Archives

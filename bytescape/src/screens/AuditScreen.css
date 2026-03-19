@@ -1,0 +1,84 @@
+/* ═══════════════════════════════════════════════════════
+   AuditScreen.css — Extracted from App.css (Section 21)
+   Audit/import screen styles.
+   ═══════════════════════════════════════════════════════ */
+
+.audit-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.audit-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.memories-counter { text-align: center; padding: 10px; }
+
+.counter-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.tracker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.tracker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: var(--bg-card);
+    border: 1px solid #ccc;
+    font-size: 11px;
+}
+
+.tracker-item:nth-child(even) { background: #f8f4ea; }
+
+.tracker-events {
+    font-size: 10px;
+    color: var(--accent-teal);
+    font-weight: bold;
+    font-family: var(--font-mono);
+}
+
+/* Terminal log view — DOS prompt */
+.terminal {
+    background: #000000;
+    border: 2px solid #666;
+    box-shadow: var(--bevel-sunken);
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    max-height: 200px;
+    overflow-y: auto;
+    color: #00ff00;
+    line-height: 1.4;
+}
+
+.shred-section { text-align: center; padding: 14px; }
+
+.shred-btn {
+    background: var(--bg-toolbar);
+    color: var(--accent-red);
+    border: none;
+    padding: 6px 20px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: var(--bevel-button);
+    font-family: var(--font-sans);
+    border-radius: 0;
+}
+
+.shred-btn:hover {
+    background: var(--accent-red);
+    color: white;
+}
