@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BytescapeItem } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
-import { Win98Box } from '../components/Win98Box';
 import { ProfileRenderer } from '../components/ProfileRenderer';
+import { ProfileBioSections } from '../components/ProfileBioSections';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { useNavStore } from '../store';
 import { BsPersonFill, BsPencilFill } from 'react-icons/bs';
@@ -187,43 +187,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
             <div className="profile-content-narrow" style={{ maxWidth: 560, margin: '16px auto', padding: '0 16px' } as React.CSSProperties}>
                 {profileTab === 'wall' ? (
-                    /* Wall tab — bio sections + guestbook */
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 } as React.CSSProperties}>
-                        {/* About Me */}
-                        <Win98Box variant="window" title="About Me">
-                            <div className="profile-about-body">
-                                <p className="profile-about-text" style={{ color: 'var(--text-muted)', fontStyle: 'italic' } as React.CSSProperties}>
-                                    Tell the world about yourself. Click Customize to edit.
-                                </p>
-                            </div>
-                        </Win98Box>
-
-                        {/* Connections */}
-                        <Win98Box variant="window" title="Connections">
-                            <div className="profile-about-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 } as React.CSSProperties}>
-                                {auth?.source === 'bluesky' && (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--bg-toolbar)', border: 'var(--border-default)', fontSize: '0.82rem' } as React.CSSProperties}>
-                                        🦋 {auth.handle}
-                                    </span>
-                                )}
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--bg-toolbar)', border: 'var(--border-default)', fontSize: '0.82rem', color: 'var(--text-muted)' } as React.CSSProperties}>
-                                    + Add a link
-                                </span>
-                            </div>
-                        </Win98Box>
-
-                        {/* Guestbook */}
-                        <Win98Box variant="window" title="Guestbook">
-                            <div className="profile-about-body">
-                                <p className="profile-about-text">
-                                    Welcome to my corner of the internet! 🌐
-                                </p>
-                                <p className="profile-about-text" style={{ fontStyle: 'italic', color: 'var(--text-muted)' } as React.CSSProperties}>
-                                    Leave a message on the guestbook — coming soon.
-                                </p>
-                            </div>
-                        </Win98Box>
-                    </div>
+                    /* Wall tab — editable bio sections */
+                    <ProfileBioSections
+                        handle={auth?.handle}
+                        did={auth?.did}
+                        source={auth?.source}
+                    />
                 ) : (
                     /* Posts tab — user's posts across platforms */
                     <div>
