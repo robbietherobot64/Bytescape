@@ -2,24 +2,18 @@ This document is to document feedback from the user to all agents regarding thei
 
 Feedback:
 
-**REVERTED ISSUES**
-
-- Not opening in full screen
-
 **Outstanding issues**
 
 Critical priorities:
-- Video stuttery/choppy when playing.
-- Feed and videos take a very long while to refresh...like a really really long while.  Last boot up was 20 seconds for the feed to load, and I always see at least a few seconds of "loading native media" before a video load.
-- Links and profiles don't load in new tabs, just open a new tab and it's a blank screen. 
-- Settings page completely missing, no navigation bar, just totally missing screen.
-Lower priorities:
-- If a video is played in small screen view, the video starts a new video in the frame view, while the small screen view video continues to play.  It should continue to play in full screen from where it left off, and only play one video at a time.  If one starts, the other should automatically stop.
-- Posts/images on the facebook feed are duplicating.  If someone tries to import a social media archive more than once, it should not duplicate, the import should be smart enough to differentiate.  It should still allow for multiple archive uploads, but it should be able to tell if it's a different archive, and then integrate those posts in as a single facebook/unified feed.
-- "Customize" button on profile broken.
+
+- Links and profiles don't load in new tabs, just open a new tab and it says "loading page" pretty much forever. 
 - User profile needs default boxes added for "About me:", "Connections:", etc, that users can enter some basic info about themselves if they want, or delete those sections and add other custom widgets/boxes.  Let's turn it into a robust social media bio by default that you can edit and customize in terms of size, location, color, background, adding gifs, animations, etc.  Use spacehey.come or myspace as the 
-- Followers in the social module has a "Bluesky API error: getFollowers failed with status:401 Unauthorized.
+
+Lower priorities:
+
+- Chat button on friendslist contacts does not work.  Works fine on the feed screen.  
+- Images somewhat jittery when scrolling.
 
 **New Issues**
 
-- Chat button on friendslist contacts does not work.  Works fine on the feed screen.  
+- "Sources" drop down on the feed does not properly filter facebook, it shows up as bluesky posts.  Also, it seems to break the feed in general, when you return to All after filtering, it only shows your posts, not the posts of others.  
