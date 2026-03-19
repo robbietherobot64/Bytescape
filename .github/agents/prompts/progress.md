@@ -1288,3 +1288,69 @@ Kills active FFmpeg process by PID, cleans up partial output files. Prevents CPU
 - **pnpm test**: ✅ 250/250 passing
 - **Branch**: `main`
 | B10.7 inline browser tabs | ❌ 5 failed attempts | Rust WebviewBuilder approach most promising, needs debugging |
+
+---
+
+## 2026-03-18 — Content Agent: User Feedback Bugfixes
+
+### Summary
+Addressed 3 user-reported bugs from Sprint v5 feedback. 2 fixed and shipped, 1 identified as blocked on backend scope.
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `6ba6c10` | fix(track-b): prevent Settings black screen — deduplicate useTheme backgrounds + guard localStorage quota |
+| `e14d99c` | fix(track-b): center video properly in fullscreen gallery overlay |
+| `6abfb71` | fix(track-b): adapt gallery container to vertical video aspect ratio |
+| `c5c51f4` | Revert chat button attempt #2 (frontend-only workaround insufficient) |
+| `e067671` | Revert chat button attempt #1 (frontend-only workaround insufficient) |
+
+### Fix Details
+
+#### ✅ Settings Black Screen (Critical)
+**Root cause:** Exponential `userBackgrounds` duplication in localStorage → quota exceeded → unguarded `localStorage.setItem` threw `QuotaExceededError` in App-level `useTheme()` effect (above ErrorBoundary) → React 19 unmounts root → black screen on dark themes.
+
+**Bug chain:**
+1. `addUserBackground` in store always appended without dedup
+2. `useTheme()` mount effect read backgrounds from localStorage and called `addUserBackground` for each — ran every time ANY component using `useTheme()` mounted
+3. Three simultaneous consumers: App.tsx (above ErrorBoundary), ThemePicker, ThemeCustomizer
+4. Each Settings visit tripled the background array
+5. Persist effect wrote growing array back to localStorage with no try/catch
+6. When localStorage exceeded 5MB → crash in App-level effect → React 19 unmounts root
+
+**Fix (2 files):**
+- `src/store/index.ts`: Made `addUserBackground` idempotent — checks `s.userBackgrounds.some((b) => b.id === bg.id)` before appending
+- `src/hooks/useTheme.ts`: Added module-level `_restored` flag ensuring localStorage restore runs exactly once globally. Wrapped all 4 `localStorage.setItem` calls in try/catch.
+
+#### ✅ Video Fullscreen Gallery Centering
+**Problem:** Horizontal videos looked fine, but vertical/portrait videos were forced into a `width: 90vw` container, stretching into horizontal aspect ratio with large black bars.
+
+**Fix (1 file, 2 commits):**
+- `src/App.css`: Removed forced `width: 90vw` from `.gallery-content`. Added `.gallery-content > div` and `.gallery-content video` rules with `max-width: 90vw; max-height: 80vh; width: auto; height: auto; object-fit: contain` — container adapts to content's natural aspect ratio.
+
+#### ❌ Chat Button on ChatScreen Friends List — BLOCKED on Track A
+**Problem:** Clicking a buddy's chat icon on ChatScreen's right-panel friends list does nothing when no existing DM conversation exists.
+
+**Investigation:** The button searches `byConvo` by `peer_did`/`sender_did` — if no messages exist with that buddy, `convoId` is undefined and nothing happens. The FeedScreen version "works" only because it navigates to the Chat tab (visible response), not because it creates a conversation.
+
+**Root cause:** Frontend cannot create or retrieve a Bluesky DM conversation ID. `chat.rs:251` has `get_or_create_convo()` which calls `chat.bsky.convo.getConvoForMembers`, but it is NOT exposed as a `#[tauri::command]`. Without a Tauri command, the frontend has no way to obtain a valid `convo_id`.
+
+**Two frontend-only workarounds were attempted and reverted** — neither provided meaningful functionality.
+
+**Required:** Track A must expose a new Tauri command wrapping `chat.rs` `get_or_create_convo()`, e.g.:
+```rust
+#[tauri::command]
+pub async fn get_or_create_bsky_convo(
+    state: State<'_, AppState>,
+    member_did: String,
+) -> Result<String, String> // returns convo_id
+```
+Once available, the frontend fix is one line: `const convoId = await invoke('get_or_create_bsky_convo', { memberDid: buddy.did }); setSelectedConvoId(convoId);`
+
+### Build Status
+- **cargo check**: ✅ 0 errors
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 250/250 passing
+- **Working tree**: Clean
+- **HEAD**: `e067671` on `main`
