@@ -1,16 +1,33 @@
 /**
- * Open a URL in an in-app browser tab.
+ * Open a URL — either in an in-app tab or in the system browser.
  *
- * Creates a new tab with screen='webview' that renders the URL in an
- * embedded iframe within the app shell.
+ * The native WebView overlay (commands/browser.rs) is currently broken due
+ * to a window-label mismatch in the Rust backend (Track A). Until that's
+ * fixed, we route:
+ *   • Bluesky profile URLs  → system browser (instant, reliable)
+ *   • All other http(s) URLs → system browser via @tauri-apps/plugin-opener
+ *
+ * The in-app webview path is preserved for future re-enablement.
  */
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavStore } from '../store';
 
 /**
- * Open a URL in a new in-app browser tab.
- * If a tab with the same URL already exists, switch to it instead.
+ * Open a URL. Currently routes everything to the system browser because
+ * the in-app WebView is broken. When Track A fixes browser.rs, flip the
+ * `USE_SYSTEM_BROWSER` flag to false to re-enable in-app tabs.
  */
+const USE_SYSTEM_BROWSER = true;
+
 export function openInApp(url: string, title?: string): void {
+    if (USE_SYSTEM_BROWSER) {
+        openUrl(url).catch((err) =>
+            console.error('[openInApp] Failed to open URL in system browser:', err)
+        );
+        return;
+    }
+
+    // --- In-app webview path (currently disabled) ---
     const store = useNavStore.getState();
     // Check if a webview tab with this URL already exists
     const existing = store.tabs.find(
@@ -33,7 +50,8 @@ export function openInApp(url: string, title?: string): void {
 }
 
 /**
- * Open a Bluesky profile in an in-app browser tab.
+ * Open a Bluesky profile. Opens in system browser for now.
+ * Future: render in a native BlueskyProfileScreen tab.
  */
 export function openBlueskyProfile(handle: string): void {
     if (!handle) return;
@@ -43,8 +61,7 @@ export function openBlueskyProfile(handle: string): void {
 
 /**
  * Install a global click interceptor that catches all `<a target="_blank">`
- * clicks and routes them to in-app browser tabs instead of opening in the
- * system browser.
+ * clicks and routes them through openInApp (currently → system browser).
  *
  * Call once at app startup (e.g. in a useEffect in App.tsx).
  * Returns a cleanup function that removes the listener.
