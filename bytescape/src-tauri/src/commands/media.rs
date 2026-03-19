@@ -633,12 +633,18 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     let mp4_path = cache_dir.join(format!("{}.mp4", url_hash));
     let ts_path = cache_dir.join(format!("{}.ts", url_hash));
 
-    // ── Cache hit — prefer MP4 ──────────────────────────────────────────────
+    // ── Cache hit — prefer MP4 (validate to catch old broken conversions) ──
     if mp4_path.exists() {
         if let Ok(meta) = std::fs::metadata(&mp4_path) {
             if meta.len() > 1000 {
-                println!("resolve_hls_video: MP4 cache hit ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
-                return Ok(mp4_path.to_string_lossy().into_owned());
+                // Validate cached file — old FFmpeg flags (discardcorrupt + fps_mode cfr
+                // with stream copy) produced stuttery MP4s. Re-convert if invalid.
+                if validate_mp4_with_ffprobe(&mp4_path) {
+                    println!("resolve_hls_video: MP4 cache hit ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
+                    return Ok(mp4_path.to_string_lossy().into_owned());
+                }
+                println!("resolve_hls_video: Cached MP4 failed validation, re-converting...");
+                let _ = std::fs::remove_file(&mp4_path);
             }
         }
     }
