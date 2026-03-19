@@ -574,7 +574,7 @@ export function ChatScreen() {
                                             <button
                                                 className="friend-item-action-btn"
                                                 onClick={() => {
-                                                    // Find or select the conversation with this buddy
+                                                    // Find existing conversation with this buddy
                                                     const convoId = Object.keys(byConvo).find(cid => {
                                                         const msgs = byConvo[cid];
                                                         return msgs.some(m =>
@@ -583,6 +583,10 @@ export function ChatScreen() {
                                                     });
                                                     if (convoId) {
                                                         setSelectedConvoId(convoId);
+                                                    } else {
+                                                        // No existing conversation — switch to Bluesky tab
+                                                        // and show a hint to the user
+                                                        setActiveTab('bluesky');
                                                     }
                                                 }}
                                                 title={`Message ${buddy.handle}`}
