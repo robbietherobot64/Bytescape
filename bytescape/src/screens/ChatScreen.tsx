@@ -574,31 +574,18 @@ export function ChatScreen() {
                                             <button
                                                 className="friend-item-action-btn"
                                                 onClick={() => {
-                                                    // 1. Try to find existing conversation by DID
-                                                    let convoId = Object.keys(byConvo).find(cid => {
+                                                    // Find existing conversation with this buddy
+                                                    const convoId = Object.keys(byConvo).find(cid => {
                                                         const msgs = byConvo[cid];
                                                         return msgs.some(m =>
                                                             m.peer_did === buddy.did || m.sender_did === buddy.did
                                                         );
                                                     });
-                                                    // 2. Fallback: try matching by handle
-                                                    if (!convoId) {
-                                                        convoId = Object.keys(byConvo).find(cid => {
-                                                            const msgs = byConvo[cid];
-                                                            return msgs.some(m =>
-                                                                m.sender_handle === buddy.handle ||
-                                                                m.peer_handle === buddy.handle
-                                                            );
-                                                        });
-                                                    }
                                                     if (convoId) {
                                                         setSelectedConvoId(convoId);
-                                                        // Ensure we're on the correct tab so the convo is visible
-                                                        if (!convoId.startsWith(P2P_PREFIX)) {
-                                                            setActiveTab('bluesky');
-                                                        }
                                                     } else {
                                                         // No existing conversation — switch to Bluesky tab
+                                                        // and show a hint to the user
                                                         setActiveTab('bluesky');
                                                     }
                                                 }}
