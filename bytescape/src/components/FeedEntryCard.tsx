@@ -1,19 +1,27 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { openBlueskyProfile } from '../utils/openInApp';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { FeedEntry, TaggedPerson, Audience, LikeResult, ThreadReply } from '../types';
-import { BlobImage } from './BlobImage';
-import { VideoPlayer } from './VideoPlayer';
+import { FeedEntry, Audience, LikeResult, ThreadReply } from '../types';
 import { AudiencePills } from './AudiencePills';
 import { AudienceDrawer } from './AudienceDrawer';
 import { ReplyCompose } from './ReplyCompose';
-import { ReactionPicker } from './ReactionPicker';
 import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
-import { stripHtml } from '../utils/sanitize';
 import { RichText } from './RichText';
 import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
+import {
+    RepostIcon,
+    parseTaggedPeople,
+    renderTaggedPeople,
+    formatTimestamp,
+    sanitizeDisplayContent,
+    resolveAtUri,
+    MediaGrid,
+    EngagementBar,
+    ThreadReplies,
+    GalleryOverlay,
+} from './feed';
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
@@ -23,122 +31,9 @@ interface FeedEntryCardProps {
     isQuote?: boolean;
 }
 
-/* ─── SVG Icons for Engagement Bar ─── */
-
-function ReplyIcon() {
-    return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </svg>
-    );
-}
-
-function RepostIcon() {
-    return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="17 1 21 5 17 9" />
-            <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-            <polyline points="7 23 3 19 7 15" />
-            <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-        </svg>
-    );
-}
-
-
-function ShareIcon() {
-    return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-            <polyline points="16 6 12 2 8 6" />
-            <line x1="12" y1="2" x2="12" y2="15" />
-        </svg>
-    );
-}
-
-function ExpandIcon() {
-    return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
-            <polyline points="15 3 21 3 21 9" />
-            <polyline points="9 21 3 21 3 15" />
-            <line x1="21" y1="3" x2="14" y2="10" />
-            <line x1="3" y1="21" x2="10" y2="14" />
-        </svg>
-    );
-}
-
-/* ─── Helpers ─── */
-
-function parseTaggedPeople(input?: TaggedPerson[] | string): TaggedPerson[] {
-    if (!input) return [];
-    // New typed format: already an array
-    if (Array.isArray(input)) return input;
-    // Legacy string format: JSON-encoded
-    try {
-        return JSON.parse(input) as TaggedPerson[];
-    } catch {
-        return [];
-    }
-}
-
-function renderTaggedPeople(tags: TaggedPerson[]): string | null {
-    if (tags.length === 0) return null;
-    const names = tags.map(t => t.linked_handle ? `@${t.linked_handle}` : '👤');
-    if (names.length === 1) return `with ${names[0]}`;
-    if (names.length === 2) return `with ${names[0]} and ${names[1]}`;
-    return `with ${names[0]} and ${names.length - 1} others`;
-}
-
-function formatTimestamp(ts: number): string {
-    const date = new Date(ts * 1000);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    const diffMin = Math.floor(diffSec / 60);
-    const diffHrs = Math.floor(diffMin / 60);
-    const diffDays = Math.floor(diffHrs / 24);
-
-    if (diffSec < 60) return 'just now';
-    if (diffMin < 60) return `${diffMin}m`;
-    if (diffHrs < 24) return `${diffHrs}h`;
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return date.toLocaleDateString(undefined, { weekday: 'short' });
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function formatCount(n?: number): string {
-    if (!n || n === 0) return '';
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-    return n.toString();
-}
-
-function sanitizeDisplayContent(raw: string): string {
-    // Strip all HTML to prevent XSS from imported archive content (HIGH-3)
-    const cleaned = stripHtml(raw);
-    return cleaned.replace(/https?:\/\/[^\s]+/g, (match) => {
-        if (match.length > 50) return match.substring(0, 47) + '...';
-        return match;
-    });
-}
-
-
-
 /* ─── Component ─── */
 
-/** Resolve the AT-URI for a FeedEntry. Live posts use entry.id (already an AT-URI),
- *  but vault items store the CID as id and the AT-URI in original_url / syndicated_uri. */
-function resolveAtUri(entry: FeedEntry): string {
-    // AT-URIs start with 'at://'
-    if (entry.id.startsWith('at://')) return entry.id;
-    if (entry.original_url) return entry.original_url;
-    if (entry.syndicated_uri) return entry.syndicated_uri;
-    // Fallback: check share_history for a bluesky URI
-    const bskyEvent = entry.share_history?.find(e => e.platform === 'bluesky' && e.active);
-    if (bskyEvent?.uri) return bskyEvent.uri;
-    return entry.id;
-}
-
-export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
+function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -424,52 +319,14 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
 
                 {/* Media Grid */}
                 {hasMedia && (
-                    <div className={`post-media-grid items-${Math.min(entry.media_urls.length, 4)}`}>
-                        {entry.media_urls.slice(0, 4).map((_, i) => {
-                            const kind = (entry.media_kinds && entry.media_kinds[i]) || 'image';
-                            const thumb = thumbnailSources[i] || mediaSources[i];
-
-                            return (
-                                <div key={i} className="media-item">
-                                    {kind === 'video' ? (
-                                        /* Inline video player — plays directly in the feed */
-                                        <div onClick={(e) => e.stopPropagation()}>
-                                            <VideoPlayer
-                                                src={mediaSources[i]}
-                                                poster={thumb}
-                                                className="inline-video-container"
-                                                style={{ width: '100%', height: '100%' }}
-                                            />
-                                            <button
-                                                className="media-expand-btn"
-                                                onClick={(e) => { e.stopPropagation(); openGallery(i); }}
-                                                title="Open fullscreen"
-                                            >
-                                                <ExpandIcon />
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        /* Image */
-                                        <div onClick={(e) => { e.stopPropagation(); openGallery(i); }}>
-                                            <BlobImage
-                                                src={mediaSources[i]}
-                                                alt=""
-                                                mediaDir={mediaDir}
-                                                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                                            />
-                                            <button
-                                                className="media-expand-btn"
-                                                onClick={(e) => { e.stopPropagation(); openGallery(i); }}
-                                                title="Open fullscreen"
-                                            >
-                                                <ExpandIcon />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
+                    <MediaGrid
+                        mediaUrls={entry.media_urls}
+                        mediaKinds={entry.media_kinds}
+                        mediaSources={mediaSources}
+                        thumbnailSources={thumbnailSources}
+                        mediaDir={mediaDir}
+                        openGallery={openGallery}
+                    />
                 )}
 
                 {/* Link Preview — show for article/external links even with media */}
@@ -496,62 +353,24 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
 
             {/* Engagement Action Bar — React · Comment · Repost · Share */}
             {!isQuote && (
-                <div className="engagement-bar">
-                    <ReactionPicker
-                        currentReaction={reactionEmoji}
-                        onReact={handleReaction}
-                        disabled={!isBluesky}
-                    />
-                    <span className="count">{formatCount(likeCount)}</span>
-
-                    <button
-                        className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
-                        title="Comment"
-                        onClick={handleReplyToggle}
-                        disabled={!isBluesky}
-                    >
-                        <ReplyIcon />
-                        <span className="count">{formatCount(entry.reply_count)}</span>
-                    </button>
-
-                    <div className="repost-btn-container">
-                        <button
-                            className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
-                            title={reposted ? 'Undo repost' : 'Repost'}
-                            onClick={handleRepostClick}
-                            disabled={!isBluesky}
-                        >
-                            <RepostIcon />
-                            <span className="count">{formatCount(repostCount)}</span>
-                        </button>
-                        {repostMenuOpen && (
-                            <div className="repost-menu" onClick={e => e.stopPropagation()}>
-                                <button className="repost-menu-item" onClick={handleDirectRepost}>
-                                    🔁 Repost
-                                </button>
-                                <button className="repost-menu-item" onClick={handleQuoteRepost}>
-                                    💬 Quote Post
-                                </button>
-                            </div>
-                        )}
-                    </div>
-
-                    {isBluesky && entry.reply_count && entry.reply_count > 0 ? (
-                        <button
-                            className={`engagement-btn btn-thread ${threadOpen ? 'active' : ''}`}
-                            title={threadOpen ? 'Hide replies' : 'Show replies'}
-                            onClick={handleThreadToggle}
-                        >
-                            💬 <span className="count">{formatCount(entry.reply_count)}</span>
-                        </button>
-                    ) : null}
-
-                    <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' }}
-                        onClick={handleShareClick}
-                    >
-                        <ShareIcon />
-                    </button>
-                </div>
+                <EngagementBar
+                    isBluesky={isBluesky}
+                    likeCount={likeCount}
+                    reactionEmoji={reactionEmoji}
+                    replyOpen={replyOpen}
+                    replyCount={entry.reply_count}
+                    reposted={reposted}
+                    repostCount={repostCount}
+                    repostMenuOpen={repostMenuOpen}
+                    threadOpen={threadOpen}
+                    onReaction={handleReaction}
+                    onReplyToggle={handleReplyToggle}
+                    onRepostClick={handleRepostClick}
+                    onDirectRepost={handleDirectRepost}
+                    onQuoteRepost={handleQuoteRepost}
+                    onThreadToggle={handleThreadToggle}
+                    onShareClick={handleShareClick}
+                />
             )}
 
             {/* Inline Reply Compose */}
@@ -568,43 +387,12 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
             )}
 
             {/* Thread / Replies */}
-            {threadOpen && !isQuote && (
-                <div className="thread-replies">
-                    {threadLoading ? (
-                        <div className="thread-loading">Loading replies…</div>
-                    ) : threadReplies.length === 0 ? (
-                        <div className="thread-empty">No replies yet</div>
-                    ) : (
-                        threadReplies.map(reply => (
-                            <div key={reply.uri} className="thread-reply">
-                                <div className="thread-reply-header">
-                                    <div className="avatar small">
-                                        {reply.author_avatar ? (
-                                            <img src={reply.author_avatar} alt="" />
-                                        ) : (
-                                            reply.author_handle.charAt(0).toUpperCase()
-                                        )}
-                                    </div>
-                                    <span className="author-name">{reply.author_handle}</span>
-                                    <span className="post-time">{formatTimestamp(reply.created_at)}</span>
-                                </div>
-                                <div className="thread-reply-body"><RichText text={reply.text} /></div>
-                                {reply.image_urls.length > 0 && (
-                                    <div className="thread-reply-images">
-                                        {reply.image_urls.map((url, i) => (
-                                            <img key={i} src={url} alt="" className="thread-reply-img" />
-                                        ))}
-                                    </div>
-                                )}
-                                <div className="thread-reply-stats">
-                                    <span>❤️ {formatCount(reply.like_count)}</span>
-                                    <span>💬 {formatCount(reply.reply_count)}</span>
-                                    <span>🔁 {formatCount(reply.repost_count)}</span>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
+            {!isQuote && (
+                <ThreadReplies
+                    threadOpen={threadOpen}
+                    threadLoading={threadLoading}
+                    threadReplies={threadReplies}
+                />
             )}
 
             {/* Owner Replies – your comments on this post, rendered as full interactive cards */}
@@ -636,38 +424,16 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
                 document.body
             )}
 
-            {/* Fullscreen Gallery Portal — UNCHANGED from original */}
-            {isGalleryOpen && createPortal(
-                <div className="gallery-overlay" onClick={() => setIsGalleryOpen(false)}>
-                    <div className="gallery-content" onClick={e => e.stopPropagation()}>
-                        {(entry.media_kinds && entry.media_kinds[galleryIndex]) === 'video' ? (
-                            <VideoPlayer
-                                src={mediaSources[galleryIndex]}
-                                poster={thumbnailSources[galleryIndex] || mediaSources[galleryIndex]}
-                                autoPlay={true}
-                            />
-                        ) : (
-                            <img
-                                src={mediaSources[galleryIndex]}
-                                alt=""
-                                style={{ maxWidth: '100%', maxHeight: '90vh', objectFit: 'contain' }}
-                            />
-                        )}
-                        {entry.media_urls.length > 1 && (
-                            <div className="gallery-dots">
-                                {entry.media_urls.map((_, i) => (
-                                    <button
-                                        key={i}
-                                        className={`gallery-dot ${i === galleryIndex ? 'active' : ''}`}
-                                        onClick={() => setGalleryIndex(i)}
-                                    />
-                                ))}
-                            </div>
-                        )}
-                        <button className="gallery-close-btn" onClick={() => setIsGalleryOpen(false)}>✕</button>
-                    </div>
-                </div>,
-                document.body
+            {/* Fullscreen Gallery */}
+            {isGalleryOpen && (
+                <GalleryOverlay
+                    mediaSources={mediaSources}
+                    thumbnailSources={thumbnailSources}
+                    mediaKinds={entry.media_kinds}
+                    galleryIndex={galleryIndex}
+                    setGalleryIndex={setGalleryIndex}
+                    onClose={() => setIsGalleryOpen(false)}
+                />
             )}
 
             {/* Audience Drawer */}
@@ -683,3 +449,17 @@ export function FeedEntryCard({ entry, resolveMediaPath, mediaDir, onEntryUpdate
         </div>
     );
 }
+
+/** Memoized FeedEntryCard — skips re-render when entry identity and interaction state haven't changed. */
+export const FeedEntryCard = React.memo(FeedEntryCardInner, (prev, next) => {
+    return (
+        prev.entry.id === next.entry.id &&
+        prev.entry.timestamp === next.entry.timestamp &&
+        prev.entry.viewer_like === next.entry.viewer_like &&
+        prev.entry.viewer_repost === next.entry.viewer_repost &&
+        prev.entry.like_count === next.entry.like_count &&
+        prev.entry.repost_count === next.entry.repost_count &&
+        prev.entry.reply_count === next.entry.reply_count &&
+        prev.isQuote === next.isQuote
+    );
+});
