@@ -152,7 +152,11 @@ export function useUnifiedFeed({
                 if (isStale()) return;
 
                 const adapted = posts.map(adaptBlueskyPost);
-                const deduped = deduplicateFeedEntries(adapted);
+                // Apply client-side source filter
+                const filtered = archiveSourceFilter
+                    ? adapted.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase())
+                    : adapted;
+                const deduped = deduplicateFeedEntries(filtered);
 
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
@@ -186,7 +190,11 @@ export function useUnifiedFeed({
                 const merged = [...bskyEntries, ...vaultEntries].sort(
                     (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
                 );
-                const dedupedYou = deduplicateFeedEntries(merged);
+                // Apply client-side source filter to merged results
+                const filtered = archiveSourceFilter
+                    ? merged.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase())
+                    : merged;
+                const dedupedYou = deduplicateFeedEntries(filtered);
                 setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
                 setCache(cacheKey, dedupedYou, bskyCursor);
@@ -226,7 +234,11 @@ export function useUnifiedFeed({
                         setCachedSavedFeeds(feedsData);
 
                         const adapted = posts.map(adaptBlueskyPost);
-                        const deduped = deduplicateFeedEntries(adapted);
+                        // Apply client-side source filter
+                        const filtered = archiveSourceFilter
+                            ? adapted.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase())
+                            : adapted;
+                        const deduped = deduplicateFeedEntries(filtered);
                         setFeedEntries(deduped);
                         setCursor(nextCur);
                         setCache(cacheKey, deduped, nextCur);
@@ -315,10 +327,14 @@ export function useUnifiedFeed({
     useEffect(() => {
         clearCache('all');
         clearCache('you');
+        clearCache('following');
+        clearCache('subscribed');
         // Also clear filter-specific keys
         if (archiveSourceFilter) {
             clearCache(`all:${archiveSourceFilter}`);
             clearCache(`you:${archiveSourceFilter}`);
+            clearCache(`following:${archiveSourceFilter}`);
+            clearCache(`subscribed:${archiveSourceFilter}`);
         }
     }, [archiveSourceFilter, clearCache]);
 
@@ -378,7 +394,11 @@ export function useUnifiedFeed({
         try {
             if (activeTab === 'following' && cursor) {
                 const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
+                let newEntries = posts.map(adaptBlueskyPost);
+                if (archiveSourceFilter) {
+                    newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
+                }
+                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newEntries]));
                 setCursor(nextCursor);
 
             } else if (activeTab === 'you') {
@@ -398,9 +418,12 @@ export function useUnifiedFeed({
                 const [bskyPosts, bskyCursor] = bskyResult;
                 const bskyEntries = bskyPosts.map(adaptBlueskyPost);
                 const vaultEntries = vaultResult.items.map(adaptBytescapeItem);
-                const newEntries = [...bskyEntries, ...vaultEntries].sort(
+                let newEntries: FeedEntry[] = [...bskyEntries, ...vaultEntries].sort(
                     (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
                 );
+                if (archiveSourceFilter) {
+                    newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
+                }
                 setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...newEntries])));
                 setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
                 setCursor(bskyCursor);
@@ -415,7 +438,11 @@ export function useUnifiedFeed({
                 });
 
                 if (posts.length > 0) {
-                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...posts.map(adaptBlueskyPost)]));
+                    let newEntries = posts.map(adaptBlueskyPost);
+                    if (archiveSourceFilter) {
+                        newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
+                    }
+                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newEntries]));
                     setCursor(nextCur);
                 }
 
@@ -429,7 +456,11 @@ export function useUnifiedFeed({
                 });
 
                 if (response) {
-                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...response.items]));
+                    let newItems = response.items;
+                    if (archiveSourceFilter) {
+                        newItems = newItems.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
+                    }
+                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newItems]));
                     setCursor(response.next_cursor);
                     setArchiveOffset(prev => prev + 200);
                 }
