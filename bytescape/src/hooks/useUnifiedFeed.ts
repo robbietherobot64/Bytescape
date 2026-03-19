@@ -126,9 +126,12 @@ export function useUnifiedFeed({
         const requestId = ++fetchTokenRef.current;
         const isStale = () => fetchTokenRef.current !== requestId;
 
+        // Cache key includes source filter to prevent cross-filter cache corruption
+        const cacheKey = archiveSourceFilter ? `${tab}:${archiveSourceFilter}` : tab;
+
         // Cache-first: show stale data immediately while refreshing in background
         if (!background) {
-            const cached = getCache(tab);
+            const cached = getCache(cacheKey);
             if (cached) {
                 // Instant render from cache — no loading spinner
                 setFeedEntries(cached.entries);
@@ -153,7 +156,7 @@ export function useUnifiedFeed({
 
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
-                setCache('following', deduped, nextCursor);
+                setCache(cacheKey, deduped, nextCursor);
                 // Batch-prefetch blob URLs for images (P6)
                 prefetchBlobUrls(deduped).catch(() => {});
                 await fetchFollowingList(auth.did);
@@ -166,7 +169,7 @@ export function useUnifiedFeed({
                     invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
                         limit: ARCHIVE_PAGE_SIZE,
                         offset: 0,
-                        source: archiveSourceFilter || 'Manual',
+                        source: archiveSourceFilter || null,
                     }),
                     invoke<string[]>('list_vault_sources').catch((): string[] => []),
                 ]);
@@ -186,7 +189,7 @@ export function useUnifiedFeed({
                 const dedupedYou = deduplicateFeedEntries(merged);
                 setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
-                setCache('you', dedupedYou, bskyCursor);
+                setCache(cacheKey, dedupedYou, bskyCursor);
                 // Batch-prefetch blob URLs for images (P6)
                 prefetchBlobUrls(dedupedYou).catch(() => {});
 
@@ -226,7 +229,7 @@ export function useUnifiedFeed({
                         const deduped = deduplicateFeedEntries(adapted);
                         setFeedEntries(deduped);
                         setCursor(nextCur);
-                        setCache('subscribed', deduped, nextCur);
+                        setCache(cacheKey, deduped, nextCur);
                         // Batch-prefetch blob URLs for images (P6)
                         prefetchBlobUrls(deduped).catch(() => {});
                     } catch (e) {
@@ -264,10 +267,17 @@ export function useUnifiedFeed({
                     setSavedFeeds(feedsData);
                     setCachedSavedFeeds(feedsData);
 
-                    const deduped = deduplicateFeedEntries(response.items);
+                    let items = response.items;
+                    // Apply client-side source filter (backend has no source_filter param)
+                    if (archiveSourceFilter) {
+                        items = items.filter(item =>
+                            item.source.toLowerCase() === archiveSourceFilter.toLowerCase()
+                        );
+                    }
+                    const deduped = deduplicateFeedEntries(items);
                     setFeedEntries(deduped);
                     setCursor(response.next_cursor);
-                    setCache('all', deduped, response.next_cursor);
+                    setCache(cacheKey, deduped, response.next_cursor);
                     setArchiveOffset(200);
                     // Batch-prefetch blob URLs for images (P6)
                     prefetchBlobUrls(deduped).catch(() => {});
@@ -300,6 +310,17 @@ export function useUnifiedFeed({
     useEffect(() => {
         clearCache('subscribed');
     }, [selectedFeedUri, clearCache]);
+
+    // Invalidate all tab caches when source filter changes to prevent stale data
+    useEffect(() => {
+        clearCache('all');
+        clearCache('you');
+        // Also clear filter-specific keys
+        if (archiveSourceFilter) {
+            clearCache(`all:${archiveSourceFilter}`);
+            clearCache(`you:${archiveSourceFilter}`);
+        }
+    }, [archiveSourceFilter, clearCache]);
 
     // Trigger reload on tab/filter change
     useEffect(() => {
@@ -370,7 +391,7 @@ export function useUnifiedFeed({
                     invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
                         limit: ARCHIVE_PAGE_SIZE,
                         offset: archiveOffset,
-                        source: archiveSourceFilter || 'Manual',
+                        source: archiveSourceFilter || null,
                     }),
                 ]);
 
