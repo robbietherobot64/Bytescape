@@ -1,7 +1,8 @@
-//! Profile Layout & Widget Commands
+//! Profile Layout, Widget, Section & Guestbook Commands
 //!
 //! Save and load the user's custom GrapesJS profile layout from redb.
-//! Also manages widget configuration data (away message, music playlist, etc.)
+//! Also manages widget configuration data (away message, music playlist, etc.),
+//! editable profile sections (About Me, Connections, Photos, Links, etc.),
 //! and guestbook entries.
 
 use tauri::State;
@@ -191,4 +192,59 @@ pub async fn delete_guestbook_entry(
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
     db.delete_guestbook_entry(&entry_id).await
+}
+
+// ─── Profile Sections (MySpace-style editable blocks) ───
+
+/// A single editable profile section (About Me, Photos, Links, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileSection {
+    /// Unique section identifier (e.g. "about-me", "photos", "links")
+    pub id: String,
+    /// Section type hint for the renderer (e.g. "text", "gallery", "links", "connections")
+    #[serde(rename = "type")]
+    pub section_type: String,
+    /// User-visible section title
+    pub title: String,
+    /// Section body content (HTML, Markdown, or JSON depending on type)
+    pub content: String,
+    /// Display order (lower = higher on page)
+    pub order: u32,
+    /// Whether the section is visible on the public profile
+    pub visible: bool,
+}
+
+/// Save the user's profile sections (replaces all sections atomically).
+///
+/// Frontend usage:
+/// ```typescript
+/// await invoke('save_profile_sections', { sections: [...] });
+/// ```
+#[tauri::command]
+pub async fn save_profile_sections(
+    sections: Vec<ProfileSection>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.save_profile_sections(&sections).await
+}
+
+/// Load the user's profile sections, ordered by `order` field.
+///
+/// Returns an empty array if no sections have been saved yet.
+///
+/// Frontend usage:
+/// ```typescript
+/// const sections = await invoke<ProfileSection[]>('get_profile_sections');
+/// ```
+#[tauri::command]
+pub async fn get_profile_sections(
+    state: State<'_, AppState>,
+) -> Result<Vec<ProfileSection>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.get_profile_sections().await
 }

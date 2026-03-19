@@ -327,6 +327,47 @@ impl DbManager {
         Ok(())
     }
 
+    // ─── Profile Sections ───
+
+    pub async fn save_profile_sections(
+        &self,
+        sections: &[crate::commands::profile::ProfileSection],
+    ) -> Result<(), String> {
+        let serialized = serde_json::to_string(sections).map_err(|e| e.to_string())?;
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            table
+                .insert("user_profile_sections", serialized.as_str())
+                .map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_profile_sections(
+        &self,
+    ) -> Result<Vec<crate::commands::profile::ProfileSection>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn
+            .open_table(PROFILE_LAYOUT_TABLE)
+            .map_err(|e| e.to_string())?;
+        match table.get("user_profile_sections") {
+            Ok(Some(value)) => {
+                let mut sections: Vec<crate::commands::profile::ProfileSection> =
+                    serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+                sections.sort_by_key(|s| s.order);
+                Ok(sections)
+            }
+            Ok(None) => Ok(Vec::new()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     // ─── Guestbook ───
 
     pub async fn add_guestbook_entry(
