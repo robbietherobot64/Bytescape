@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { AuthStatus } from '../types';
 import { ThemePicker } from '../components/ThemePicker';
 
@@ -14,6 +15,10 @@ interface SettingsScreenProps {
 export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onAuthUpdated }: SettingsScreenProps) {
     const [error, setError] = useState("");
     const [status, setStatus] = useState("");
+
+    // Export state
+    const [isExporting, setIsExporting] = useState(false);
+    const [exportStatus, setExportStatus] = useState<string | null>(null);
 
     // Link Bluesky account state
     const [showLinkBluesky, setShowLinkBluesky] = useState(false);
@@ -77,6 +82,46 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
             } catch (e: any) {
                 setError(typeof e === "string" ? e : "Failed to clear vault");
             }
+        }
+    }
+
+    async function handleExport() {
+        setExportStatus(null);
+        try {
+            const includeMedia = confirm('Include media files in export? (This will make the file larger but includes all images/videos.)');
+            const filePath = await save({
+                title: 'Export Vault Data',
+                defaultPath: `bytescape-export-${new Date().toISOString().slice(0, 10)}.zip`,
+                filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+            });
+            if (!filePath) return; // user cancelled
+
+            setIsExporting(true);
+            setExportStatus('Exporting…');
+
+            const result = await invoke<{
+                path: string;
+                item_count: number;
+                contact_count: number;
+                message_count: number;
+                media_count: number;
+                size_bytes: number;
+            }>('export_vault_data', {
+                outputPath: filePath,
+                includeMedia: includeMedia,
+            });
+
+            const sizeMb = (result.size_bytes / (1024 * 1024)).toFixed(1);
+            setExportStatus(
+                `✅ Exported ${result.item_count} items, ${result.contact_count} contacts, ${result.message_count} messages` +
+                (includeMedia ? `, ${result.media_count} media files` : '') +
+                ` (${sizeMb} MB)`
+            );
+        } catch (e: any) {
+            console.error('Export failed:', e);
+            setExportStatus(`❌ Export failed: ${typeof e === 'string' ? e : 'Unknown error'}`);
+        } finally {
+            setIsExporting(false);
         }
     }
 
@@ -274,13 +319,14 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                     {archiveCount} items in your vault
                 </p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' } as React.CSSProperties}>
-                    <button className="btn" onClick={() => alert('Export coming soon — this feature is being built.')} style={{ opacity: 0.7 } as React.CSSProperties}>
-                        📤 Export Data
+                    <button className="btn" onClick={handleExport} disabled={isExporting}>
+                        {isExporting ? '⏳ Exporting…' : '📤 Export Data'}
                     </button>
                     <button className="btn btn-danger" onClick={handleClearVault}>
                         🗑️ Delete Account ({archiveCount} items)
                     </button>
                 </div>
+                {exportStatus && <p className="text-sm" style={{ marginTop: 8, color: exportStatus.startsWith('❌') ? 'var(--accent-red)' : 'var(--accent-green)' }}>{exportStatus}</p>}
                 {status && <p className="text-sm" style={{ marginTop: 8, color: 'var(--accent-green)' }}>{status}</p>}
                 {error && <p className="text-sm" style={{ marginTop: 8, color: "var(--accent-red)" }}>{error}</p>}
             </div>
