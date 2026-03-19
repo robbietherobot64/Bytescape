@@ -1919,6 +1919,49 @@ pub async fn send_bsky_dm(
     }))
 }
 
+/// Get or create a Bluesky DM conversation with another user.
+///
+/// Returns the convo_id string. Supports both OAuth and app-password auth.
+/// Frontend usage: `invoke<string>('get_or_create_bsky_convo', { memberDid })`
+#[tauri::command]
+pub async fn get_or_create_bsky_convo(
+    state: State<'_, AppState>,
+    member_did: String,
+) -> std::result::Result<String, String> {
+    if member_did.is_empty() {
+        return Err("member_did is required".into());
+    }
+
+    if state.is_oauth_session() {
+        // OAuth path: use xrpc_chat_get which handles DPoP + atproto-proxy
+        let endpoint = format!(
+            "chat.bsky.convo.getConvoForMembers?members={}",
+            member_did
+        );
+        let resp = state.xrpc_chat_get(&endpoint).await
+            .map_err(|e| format!("Failed to get/create convo: {}", e))?;
+
+        let convo_id = resp
+            .get("convo")
+            .and_then(|c| c.get("id"))
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| "Response missing convo.id".to_string())?;
+
+        Ok(convo_id.to_string())
+    } else {
+        // App-password path: use ChatClient directly
+        let access_jwt = state.get_fresh_access_jwt().await?;
+        let user_did = state.get_user_did()?;
+        let chat_client = state.chat_client.clone();
+
+        let convo = chat_client
+            .get_or_create_convo(&access_jwt, &user_did, &member_did)
+            .await?;
+
+        Ok(convo.id)
+    }
+}
+
 /// List saved Bluesky custom feeds (cached for 5 minutes).
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {

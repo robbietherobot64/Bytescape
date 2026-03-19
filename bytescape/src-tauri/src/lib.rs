@@ -466,6 +466,7 @@ pub fn run() {
             commands::import::import_vault_messages,
             commands::import::import_archive_messages,
             commands::import::send_bsky_dm,
+            commands::import::get_or_create_bsky_convo,
             commands::import::list_saved_feeds,
             commands::import::list_follows,
             commands::import::list_followers,
@@ -524,6 +525,9 @@ pub fn run() {
             commands::profile::add_guestbook_entry,
             commands::profile::list_guestbook_entries,
             commands::profile::delete_guestbook_entry,
+            // Profile section commands (B2.4 — editable blocks)
+            commands::profile::save_profile_sections,
+            commands::profile::get_profile_sections,
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
             // Classification commands
