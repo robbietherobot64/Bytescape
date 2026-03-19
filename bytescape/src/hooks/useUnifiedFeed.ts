@@ -270,6 +270,7 @@ export function useUnifiedFeed({
                         limit: 50,
                         cursor: null,
                         vaultOffset: 0,
+                        sourceFilter: archiveSourceFilter || null,
                     }),
                 ]);
 
@@ -280,7 +281,7 @@ export function useUnifiedFeed({
                     setCachedSavedFeeds(feedsData);
 
                     let items = response.items;
-                    // Apply client-side source filter (backend has no source_filter param)
+                    // Safety: client-side filter in case backend missed anything
                     if (archiveSourceFilter) {
                         items = items.filter(item =>
                             item.source.toLowerCase() === archiveSourceFilter.toLowerCase()

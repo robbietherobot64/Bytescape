@@ -552,6 +552,7 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
     const [people, setPeople] = useState<ProfileView[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [chattingWith, setChattingWith] = useState<string | null>(null);
 
     useEffect(() => {
         if (auth) fetchPeople();
@@ -574,6 +575,16 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
         }
     };
 
+    const handleChat = async (person: ProfileView) => {
+        if (!onOpenChat || !person.did || chattingWith) return;
+        setChattingWith(person.did);
+        try {
+            await onOpenChat(person.did, person.displayName || person.handle);
+        } finally {
+            setChattingWith(null);
+        }
+    };
+
     return (
         <>
             <div className="friends-header">
@@ -589,12 +600,6 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
                     <div
                         key={person.did}
                         className="friend-card"
-                        onClick={() => {
-                            if (person.handle) {
-                                openBlueskyProfile(person.handle);
-                            }
-                        }}
-                        title={`View @${person.handle}'s profile`}
                     >
                         <div className="friend-avatar">
                             {person.avatar ? (
@@ -605,7 +610,14 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
                                 </div>
                             )}
                         </div>
-                        <div className="friend-info">
+                        <div
+                            className="friend-info"
+                            style={{ cursor: 'pointer', minWidth: 0 } as React.CSSProperties}
+                            onClick={() => {
+                                if (person.handle) openBlueskyProfile(person.handle);
+                            }}
+                            title={`View @${person.handle}'s profile`}
+                        >
                             <div className="friend-name">
                                 {person.displayName || person.handle}
                             </div>
@@ -614,28 +626,54 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
                                 <div className="friend-bio">{person.description}</div>
                             )}
                         </div>
-                        {onOpenChat && person.did && (
+                        <div style={{
+                            display: 'flex',
+                            gap: '4px',
+                            flexShrink: 0,
+                            alignSelf: 'center',
+                        } as React.CSSProperties}>
+                            {onOpenChat && person.did && (
+                                <button
+                                    onClick={() => handleChat(person)}
+                                    disabled={chattingWith === person.did}
+                                    title={`Chat with @${person.handle}`}
+                                    style={{
+                                        padding: '8px 14px',
+                                        fontSize: '0.9rem',
+                                        background: chattingWith === person.did
+                                            ? 'var(--accent-purple, #a78bfa)'
+                                            : 'var(--bg-secondary)',
+                                        color: chattingWith === person.did
+                                            ? '#fff'
+                                            : 'var(--text-primary)',
+                                        border: '1px solid var(--border-color, #333)',
+                                        borderRadius: 4,
+                                        cursor: chattingWith === person.did ? 'wait' : 'pointer',
+                                        transition: 'all 0.15s',
+                                    } as React.CSSProperties}
+                                >
+                                    {chattingWith === person.did ? '⏳' : '💬'}
+                                </button>
+                            )}
                             <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onOpenChat(person.did, person.displayName || person.handle);
+                                onClick={() => {
+                                    if (person.handle) openBlueskyProfile(person.handle);
                                 }}
-                                title={`Chat with @${person.handle}`}
+                                title={`View @${person.handle}'s profile`}
                                 style={{
-                                    padding: '6px 10px',
-                                    fontSize: '0.85rem',
+                                    padding: '8px 14px',
+                                    fontSize: '0.9rem',
                                     background: 'var(--bg-secondary)',
                                     color: 'var(--text-primary)',
                                     border: '1px solid var(--border-color, #333)',
                                     borderRadius: 4,
                                     cursor: 'pointer',
-                                    flexShrink: 0,
-                                    alignSelf: 'center',
+                                    transition: 'all 0.15s',
                                 } as React.CSSProperties}
                             >
-                                💬
+                                👤
                             </button>
-                        )}
+                        </div>
                     </div>
                 ))}
 

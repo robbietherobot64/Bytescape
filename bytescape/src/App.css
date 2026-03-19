@@ -3082,7 +3082,6 @@ textarea::placeholder {
     background: var(--bg-card);
     border: 1px solid #999;
     padding: 8px 10px;
-    cursor: pointer;
     box-shadow: 1px 1px 0 #888;
 }
 
