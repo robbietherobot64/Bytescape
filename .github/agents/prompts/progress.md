@@ -4,6 +4,84 @@
 
 ---
 
+## 2026-03-19 — Frontend Sprint v6 Round 2: "Fix Feedback from Round 1"
+
+### Build Status
+- **cargo check**: ✅ 0 errors, 0 warnings
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 264/264 passing
+- **HEAD**: `c10a41a` on `main`
+
+### Commits This Session
+| Commit | Description |
+|--------|-------------|
+| `0906559` | Source filter applied to all 4 feed tabs, not just "all" |
+| `4a02200` | Chat button wired to `get_or_create_bsky_convo` for Bluesky contacts |
+| `748d181` | New Bluesky convos show as live (not "archived") + flipped `USE_SYSTEM_BROWSER=false` |
+| `c10a41a` | `pointer-events: none` on sparkle pseudo-element + webview `show()`/`setFocus()` |
+
+### P1 — Source Filter on All Tabs — ✅ FIXED (user confirmed)
+**Commit**: `0906559`
+
+The `archiveSourceFilter` was only applied in the "all" tab branch of `useUnifiedFeed.ts`. The "following", "subscribed", and "you" tabs all bypassed filtering entirely. Applied client-side filtering to all 4 tabs in both initial fetch and load-more paths. Also fixed cache invalidation to clear all tab keys on filter change.
+
+**User feedback**: "The filter does seem to actually work on the all tab" → after fix, user confirmed it works on all tabs.
+
+### P3 — Profile Bio Sections — ✅ ACCEPTED (from Round 1)
+No changes needed. User said: "Good first implementation, we will refine this later."
+
+### P5 — Chat Button on Friends List — ❌ NOT FIXED
+**Commits**: `4a02200`, `748d181`, `c10a41a`
+
+Three rounds of fixes attempted:
+1. **Round 1** (`4a02200`): Wired `get_or_create_bsky_convo` in App.tsx `onOpenChat` callbacks + ChatScreen buddy panel fallback
+2. **Round 2** (`748d181`): Added `pendingConvoMeta` to chat store so new convos show as live with participant name, Bluesky badge, and input field instead of "archived — read only"
+3. **Round 3** (`c10a41a`): Found `.friend-card::after` sparkle pseudo-element stealing ~80% of clicks — added `pointer-events: none`. Also increased button padding/opacity.
+
+**User feedback after all 3 fixes**: "The chat button works now, but only sometimes, and only after clicking like 5 times in a row. Most other times, it is still just completely unresponsive."
+
+**Assessment**: The backend command works, the convo creation logic works, the sparkle click-stealing was a real bug and is fixed. But something else is still intercepting or swallowing clicks. Likely causes:
+- Additional overlapping elements not yet found (need browser DevTools inspection)
+- The async `invoke` call has no loading indicator — user may be multi-clicking and creating race conditions
+- The parent `.friend-card` `onClick` (opens Bluesky profile) may still be winning the event race despite `e.stopPropagation()`
+
+**Recommendation for next sprint**: Add `console.log` breadcrumbs to every click handler in the FriendsScreen friend-card to trace exactly which handler fires. Add a visible loading spinner on the button during the async call. Inspect with browser DevTools to check for additional overlapping elements.
+
+### P2 — In-App Browser Tabs — ❌ NOT FIXED
+**Commits**: `748d181`, `c10a41a`
+
+Two approaches attempted:
+1. **Round 1** (`748d181`): Flipped `USE_SYSTEM_BROWSER = false` in `openInApp.ts` — tabs now open in-app instead of system browser. Backend window label mismatch was already fixed by Track A (`7b3acf8`).
+2. **Round 2** (`c10a41a`): Added `Webview.getByLabel(label).show()` + `.setFocus()` via `@tauri-apps/api/webview` JS API after `browser_create` succeeds, to address potential z-ordering issue where child webview renders behind main webview on Linux/WebKitGTK.
+
+**User feedback**: "The profiles now open in an in app tab, which is good, but they are still not loading."
+
+**Assessment**: The frontend side is doing everything it can — the `browser_create` invoke succeeds (no error thrown, no error UI shown), and we're calling `.show()` + `.setFocus()` afterward. The problem is in the Rust `window.add_child()` call or in WebKitGTK's handling of child webviews on Linux. **This requires backend debugging** — someone needs to:
+1. Check the `eprintln!` output from `browser_create` at runtime to see if `add_child` actually succeeds
+2. Test if child webviews render on the specific Linux/WebKitGTK version
+3. Consider alternative approach: use `WebviewWindow::builder()` (creates a separate OS-managed window) instead of `window.add_child()`, then position it over the app
+
+### P4 — Image Hover Shift — ❌ NOT ATTEMPTED
+User clarified this is a 1px shift on mouse hover, not scroll jitter. The fix from Round 1 (`32cf033`) addressed scroll-related placeholder sizing but not the hover issue. Not attempted in Round 2 due to time spent on chat button and browser debugging.
+
+---
+
+### Sprint v6 Frontend Summary
+
+| Priority | Issue | Status | User Verified |
+|----------|-------|--------|---------------|
+| P1 | Source filter on all tabs | ✅ Fixed | ✅ Yes |
+| P2 | In-app browser content loading | ❌ Not fixed | ❌ Still blank |
+| P3 | Profile bio sections | ✅ Accepted | ✅ Yes |
+| P4 | Image hover 1px shift | ❌ Not attempted | — |
+| P5 | Chat button on friends list | ❌ Partially fixed | ❌ Still unreliable |
+
+**Items requiring backend (Track A) involvement for next sprint:**
+1. **In-app browser**: Debug `browser_create` → `window.add_child()` at runtime on Linux. Check `eprintln!` diagnostic output. Consider `WebviewWindow` alternative.
+2. **Chat button**: May benefit from runtime logging on the `get_or_create_bsky_convo` command to check if calls are actually reaching the backend vs being dropped.
+
+---
+
 ## 2026-03-19 — Backend Sprint v6: "Unblock Frontend & Source Fix"
 
 ### Build Status
