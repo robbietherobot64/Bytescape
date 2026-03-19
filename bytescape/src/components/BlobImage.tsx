@@ -69,11 +69,10 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
                     alignItems: 'center', 
                     justifyContent: 'center',
                     backgroundColor: 'var(--bg-secondary, #1a1a1a)',
-                    minHeight: 100 
+                    width: '100%',
+                    height: '100%',
                 }}
-            >
-                <span style={{ color: 'var(--text-muted, #666)' }}>Loading...</span>
-            </div>
+            />
         );
     }
 
@@ -88,7 +87,8 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
                     alignItems: 'center', 
                     justifyContent: 'center',
                     backgroundColor: 'var(--bg-secondary, #1a1a1a)',
-                    minHeight: 100 
+                    width: '100%',
+                    height: '100%',
                 }}
             >
                 <span style={{ color: 'var(--text-muted, #666)' }}>

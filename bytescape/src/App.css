@@ -1025,6 +1025,8 @@ a:hover {
     background:
         var(--stars-bg),
         var(--bg-content);
+    will-change: scroll-position;
+    overscroll-behavior-y: contain;
 }
 
 /* ── Pull-to-Refresh ── */
@@ -1345,6 +1347,8 @@ a:hover {
     overflow: hidden;
     box-shadow: 1px 1px 0 #666;
     transition: none;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 400px;
 }
 
 .feed-entry-card:hover {
@@ -1511,11 +1515,13 @@ a:hover {
     overflow: hidden;
     cursor: pointer;
     background: #ddd;
-    aspect-ratio: auto;
+    aspect-ratio: 16 / 9;
+    contain: layout style;
 }
 
 .post-media-grid.items-1 .media-item {
     aspect-ratio: auto;
+    min-height: 200px;
     max-height: 600px;
 }
 
