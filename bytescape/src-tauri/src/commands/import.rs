@@ -944,7 +944,16 @@ async fn save_posts(
             media_base_dir,
         ).await;
         let media_blobs: Vec<String> = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
-        let media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
+        let mut media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
+        let mut media_paths = post.image_local_paths.clone();
+
+        // Preserve video URL so vault items retain video metadata for the video
+        // filter lens. Bluesky HLS videos aren't downloaded as blobs — the URL
+        // is stored in media_paths and resolved on-demand via resolve_hls_video.
+        if let Some(ref video_url) = post.video_url {
+            media_paths.push(video_url.clone());
+            media_mimes.push("video/mp4".to_string());
+        }
 
         let item_type = classify_bluesky_post(
             &post.text,
@@ -957,7 +966,7 @@ async fn save_posts(
             id: post.cid.clone(),
             original_timestamp: post.created_at,
             content: post.text.clone(),
-            media_paths: post.image_local_paths.clone(),
+            media_paths,
             source: Source::Bluesky.as_str().to_string(),
             path: willow_path_for_item(Source::Bluesky.as_str(), item_type, post.created_at, &post.cid),
             imported_at: now,
@@ -2179,7 +2188,12 @@ async fn get_unified_feed_oauth(
         }
     }
 
-    // 2. Custom feed posts — get raw JSON via OAuth, parse with parse_feed_json
+    // 2. Custom feed posts — fetch ALL feeds concurrently via OAuth
+    //
+    // Previously this was a serial `for` loop — with N feeds × 1.5–3s per
+    // round-trip, this caused 15–25s delays. Now that the OAuth session lock
+    // is released before network calls (Arc<OAuthSession> restructuring),
+    // join_all runs all fetches truly in parallel.
     let uris = if feed_uris.is_empty() {
         match list_saved_feeds_oauth(state).await {
             Ok(views) => views.into_iter()
@@ -2192,7 +2206,7 @@ async fn get_unified_feed_oauth(
         feed_uris
     };
 
-    for feed_uri in &uris {
+    let feed_futures: Vec<_> = uris.iter().map(|feed_uri| {
         let mut endpoint = format!(
             "app.bsky.feed.getFeed?feed={}&limit={}",
             urlencoding::encode(feed_uri),
@@ -2201,19 +2215,32 @@ async fn get_unified_feed_oauth(
         if let Some(c) = parsed_cursor.feed_cursors.get(feed_uri.as_str()) {
             endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
         }
-
-        match state.xrpc_get(&endpoint).await {
-            Ok(resp) => {
-                // getFeed returns { feed: [...], cursor: ... } — same shape as getTimeline
-                let json_str = serde_json::to_string(&resp).unwrap_or_default();
-                if let Ok((posts, _)) = crate::connectors::bluesky::parse_feed_json(&json_str) {
-                    all_posts.extend(posts);
+        let uri_clone = feed_uri.clone();
+        async move {
+            match state.xrpc_get(&endpoint).await {
+                Ok(resp) => {
+                    let json_str = serde_json::to_string(&resp).unwrap_or_default();
+                    let posts = crate::connectors::bluesky::parse_feed_json(&json_str)
+                        .map(|(posts, _)| posts)
+                        .unwrap_or_default();
+                    let cursor = resp.get("cursor")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string());
+                    (uri_clone, posts, cursor)
                 }
-                if let Some(c) = resp.get("cursor").and_then(|c| c.as_str()) {
-                    next_cursor.feed_cursors.insert(feed_uri.clone(), c.to_string());
+                Err(e) => {
+                    eprintln!("OAuth unified feed: getFeed error for {}: {}", uri_clone, e);
+                    (uri_clone, Vec::new(), None)
                 }
             }
-            Err(e) => eprintln!("OAuth unified feed: getFeed error for {}: {}", feed_uri, e),
+        }
+    }).collect();
+
+    let feed_results = futures::future::join_all(feed_futures).await;
+    for (uri, posts, cursor) in feed_results {
+        all_posts.extend(posts);
+        if let Some(c) = cursor {
+            next_cursor.feed_cursors.insert(uri, c);
         }
     }
 

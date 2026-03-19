@@ -865,18 +865,21 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
 /// ── Strategy A: Stream copy with PTS fixup (fastest, <1 second) ──
 ///
 /// Copies both video and audio streams without re-encoding.
-/// Fixes PTS discontinuities via `genpts+discardcorrupt` and `-fps_mode cfr`.
+/// Uses genpts+igndts to regenerate PTS from stream data (igndts avoids DTS
+/// discontinuities at HLS segment boundaries that discardcorrupt would drop).
+/// Does NOT use -fps_mode cfr — cfr requires frame decoding which stream copy skips.
 fn ffmpeg_hls_stream_copy(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
             "-c:v", "copy",
             "-c:a", "copy",
             "-bsf:a", "aac_adtstoasc",
-            "-fps_mode", "cfr",
             "-movflags", "+faststart",
             "-f", "mp4",
             &mp4_path.to_string_lossy(),
@@ -897,19 +900,21 @@ fn ffmpeg_hls_stream_copy(playlist_url: &str, mp4_path: &std::path::Path) -> std
 /// ── Strategy B: Copy video, re-encode audio only (1-2 seconds) ──
 ///
 /// Fixes AAC-in-TS framing issues by re-encoding audio while keeping
-/// video stream-copy speed. Most common fix for HLS→MP4 audio glitches.
+/// video stream-copy speed. The AAC encoder outputs correct MP4 framing
+/// natively — no aac_adtstoasc bitstream filter needed (that filter
+/// expects ADTS input, not encoder output).
 fn ffmpeg_hls_audio_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "128k",
-            "-bsf:a", "aac_adtstoasc",
-            "-fps_mode", "cfr",
             "-movflags", "+faststart",
             "-f", "mp4",
             &mp4_path.to_string_lossy(),
@@ -931,11 +936,14 @@ fn ffmpeg_hls_audio_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> 
 ///
 /// Re-encodes both video and audio to regenerate all timestamps from scratch.
 /// Only used when stream copy and audio-only re-encode both fail validation.
+/// fps_mode cfr is valid here because the decoder produces real frames.
 fn ffmpeg_hls_full_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
             "-c:v", "libx264",
@@ -1000,13 +1008,14 @@ fn ts_stream_copy_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::res
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", ts_input,
             "-c:v", "copy",
             "-c:a", "copy",
             "-bsf:a", "aac_adtstoasc",
-            "-fps_mode", "cfr",
             "-movflags", "+faststart",
             "-f", "mp4",
             &mp4_path.to_string_lossy(),
@@ -1028,14 +1037,14 @@ fn ts_audio_reencode_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", ts_input,
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "128k",
-            "-bsf:a", "aac_adtstoasc",
-            "-fps_mode", "cfr",
             "-movflags", "+faststart",
             "-f", "mp4",
             &mp4_path.to_string_lossy(),
@@ -1057,7 +1066,9 @@ fn ts_full_reencode_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::r
     let output = std::process::Command::new("ffmpeg")
         .args([
             "-y",
-            "-fflags", "+genpts+discardcorrupt",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
             "-avoid_negative_ts", "make_zero",
             "-i", ts_input,
             "-c:v", "libx264",
@@ -1092,9 +1103,10 @@ fn validate_mp4_file_size(mp4_path: &std::path::Path) -> std::result::Result<Str
     }
 }
 
-/// Validate an MP4 file using ffprobe for PTS discontinuities.
+/// Validate an MP4 file using ffprobe for stream integrity.
 ///
-/// Returns true if the file is playable (no fatal PTS issues).
+/// Checks: file size, ffprobe exit code, video stream presence, duration sanity,
+/// and stderr for any errors (at -v error level, any output indicates problems).
 /// Falls back to true if ffprobe is not available (permissive).
 fn validate_mp4_with_ffprobe(mp4_path: &std::path::Path) -> bool {
     // Quick size check first
@@ -1106,7 +1118,7 @@ fn validate_mp4_with_ffprobe(mp4_path: &std::path::Path) -> bool {
         return false;
     }
 
-    // Run ffprobe to check for stream errors
+    // Run ffprobe to check for stream errors and get duration
     let result = std::process::Command::new("ffprobe")
         .args([
             "-v", "error",
@@ -1121,16 +1133,35 @@ fn validate_mp4_with_ffprobe(mp4_path: &std::path::Path) -> bool {
 
     match result {
         Ok(output) => {
-            // If ffprobe exits with error, the file is probably broken
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("validate_mp4: ffprobe error: {}", stderr.chars().take(200).collect::<String>());
+                println!("validate_mp4: ffprobe exited with error: {}", stderr.chars().take(200).collect::<String>());
                 return false;
             }
-            // If ffprobe printed errors to stderr, the file may have issues
+            // At -v error level, ANY stderr output means something is wrong
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Invalid data") || stderr.contains("error") {
-                println!("validate_mp4: ffprobe warnings: {}", stderr.chars().take(200).collect::<String>());
+            if !stderr.trim().is_empty() {
+                println!("validate_mp4: ffprobe reported errors: {}", stderr.chars().take(200).collect::<String>());
+                return false;
+            }
+            // Check stdout has a video stream with reasonable duration
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.contains("video") {
+                println!("validate_mp4: no video stream found in output");
+                return false;
+            }
+            // Check duration is > 0.5s (guard against truncated files)
+            let has_valid_duration = stdout.lines().any(|line| {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 2 {
+                    if let Ok(dur) = parts[1].trim().parse::<f64>() {
+                        return dur > 0.5;
+                    }
+                }
+                false
+            });
+            if !has_valid_duration {
+                println!("validate_mp4: no valid duration found or duration too short");
                 return false;
             }
             true
