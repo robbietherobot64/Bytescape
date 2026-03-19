@@ -1291,6 +1291,125 @@ Kills active FFmpeg process by PID, cleans up partial output files. Prevents CPU
 
 ---
 
+## 2026-03-18 — Backend Agent: Sprint v5 Phase 3 — Root Cause Fixes (P1 Video + P8 Feed)
+
+### Session Overview
+
+User reported both P1 (video stutter) and P8 (feed 29s load) as **failures** from Phase 2. Directive: *"Both failures. Do it again, and this time identify the root causes rather than trying something random."*
+
+Two sub-agent investigations performed before any code changes. Root causes identified, targeted fixes applied.
+
+---
+
+### Commits (chronological)
+
+| Commit | Priority | Description |
+|--------|----------|-------------|
+| `b017091` | P1 + P1-video-filter | fix(track-a): video stutter root causes — wrong FFmpeg flags + lost video metadata |
+| `fd3ebd1` | P8 | fix(track-a): feed 29s→~2s — unlock OAuth session before network calls + parallel feed fetches |
+| `6be698b` | P1 | fix(track-a): validate cached MP4s on hit — invalidate old broken conversions |
+
+---
+
+### P1 — Video Stutter: 5 Root Causes Fixed (commit `b017091`)
+
+**Previous approach** (tiered A→B→C with stream copy first) had the right architecture but **wrong FFmpeg flags** in every strategy function.
+
+**Root causes identified via sub-agent investigation:**
+
+| # | Bug | Impact | Fix |
+|---|-----|--------|-----|
+| 1 | `-fps_mode cfr` used with `-c:v copy` | Stream copy doesn't decode frames — can't adjust frame timing. Flag is silently ignored or causes undefined behavior. | Removed from Strategies A & B (stream copy). Kept in C (full re-encode where it's valid). |
+| 2 | `+discardcorrupt` flag | Drops valid frames at HLS segment boundaries — PTS jumps between segments look "corrupt" to FFmpeg. Caused visible stutter. | Replaced with `+igndts` (ignore DTS, reconstruct from PTS) in all 6 strategy functions. |
+| 3 | `-bsf:a aac_adtstoasc` in Strategy B (audio re-encode) | This bitstream filter converts ADTS→ASC headers. But Strategy B re-encodes audio via `-c:a aac`, which already outputs ASC format. Double-conversion corrupted audio frames. | Removed from audio re-encode path. Kept only in stream copy (Strategy A) where audio is passed through unchanged. |
+| 4 | `validate_mp4_with_ffprobe` too permissive | Only checked for "Invalid data"/"error" substring in stderr. Many broken MP4s pass this test. | Now rejects if ANY stderr output at `-v error` level. Also validates: video stream present, duration > 0.5s. |
+| 5 | No `-analyzeduration`/`-probesize` | FFmpeg defaults to 5s/5MB which can miss codec parameters in complex HLS streams. Caused incorrect stream detection. | Added `-analyzeduration 10M -probesize 10M` to all 6 strategy functions. |
+
+**Video filter bug (only user's own videos visible):**
+
+| Root cause | `save_posts()` discarded `video_url` during Bluesky import — no URL stored in `media_paths`, no MIME in `media_mimes`. Vault video items had empty media arrays → invisible to video filter. |
+|---|---|
+| Fix | Store `video_url` in `media_paths` + add `"video/mp4"` to `media_mimes` during import. Added fallback in `BytescapeItem→FeedEntry`: inject `"video"` into `media_kinds` when `item_type == Video` but `media_mimes` is empty. |
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `commands/media.rs` | All 6 strategy functions fixed (3 HLS-direct + 3 TS). `validate_mp4_with_ffprobe` hardened. |
+| `commands/import.rs` | `save_posts()` now preserves `video_url` in `media_paths` + `media_mimes`. |
+| `commands/feed_aggregation.rs` | `From<BytescapeItem> for FeedEntry` — fallback: inject `"video"` into `media_kinds` when `item_type == Video` but `media_mimes` empty. |
+
+---
+
+### P8 — Feed 29s Load: 2 Root Causes Fixed (commit `fd3ebd1`)
+
+**Previous approach** (FeedCache + SHARED_CLIENT + header_cache) addressed downstream symptoms but not the real bottleneck.
+
+**Root causes identified via sub-agent investigation of `atrium-oauth` crate internals:**
+
+| # | Root Cause | Impact | Fix |
+|---|-----------|--------|-----|
+| 1 | `OAuthManager.session` was `Mutex<Option<ConcreteOAuthSession>>` | Lock held across entire `send_xrpc` network call (1-3s per request). ALL OAuth API calls globally serialized — only one XRPC request could execute at a time. | Changed to `tokio::sync::RwLock<Option<Arc<ConcreteOAuthSession>>>`. All 6 accessor methods (xrpc_get, xrpc_post, get_pds_url, authenticated_chat_get/post, callback) restructured: clone Arc + drop lock BEFORE network calls. |
+| 2 | `get_unified_feed_oauth` fetched N custom feeds in serial `for` loop | 10 feeds × 2.5s per fetch = 25s serial wait. | Replaced with `futures::future::join_all` — all feeds fetched concurrently. |
+
+**Architecture change in `oauth.rs`:**
+
+```
+Before: Mutex<Option<ConcreteOAuthSession>>
+  → lock() → send_xrpc (1-3s network) → unlock()
+  → Next request waits for lock → serial execution
+
+After: RwLock<Option<Arc<ConcreteOAuthSession>>>
+  → read().await → clone Arc → drop lock (microseconds)
+  → All requests execute concurrently with their own Arc ref
+```
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `oauth.rs` | Session field type change. All 6 accessor methods restructured. `restore_session` wraps in `Arc::new()`. `clear_session`/`has_session` use `write()`/`read()`. |
+| `commands/import.rs` | `get_unified_feed_oauth`: serial `for` loop → `futures::future::join_all`. |
+| `Cargo.toml` | Added `futures = "0.3"` dependency. |
+
+**Expected performance:** 10 feeds fetched in parallel ≈ max(2.5s) instead of sum(25s). Combined with existing FeedCache, subsequent loads are near-instant.
+
+---
+
+### P1 Cache Validation (commit `6be698b`)
+
+Old MP4s converted with the previous (incorrect) FFmpeg flags remain in `blob_cache/`. Without cache invalidation, they'd continue to stutter.
+
+**Fix:** In `resolve_hls_video()`, when a cache hit occurs, run ffprobe validation on the cached file. If validation fails (ANY stderr at `-v error`, missing video stream, duration ≤ 0.5s), delete the cached file and re-convert with the corrected flags.
+
+**File modified:** `commands/media.rs` — `resolve_hls_video()` cache hit path.
+
+---
+
+### Build & Test Status
+
+- **cargo check**: ✅ 0 errors, **0 warnings**
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 250/250 passing
+- **Working tree**: Clean
+- **Branch**: `main`
+- **Last verified**: 2026-03-18
+
+---
+
+### User Feedback Status — Backend Items (Updated)
+
+| UF Item | Status | Notes |
+|---------|--------|-------|
+| Video stutter | ✅ Root causes fixed | 5 FFmpeg flag bugs + video filter bug + cache invalidation *(commits: `b017091`, `6be698b`)* |
+| Feed 29s load | ✅ Root causes fixed | OAuth session lock → `RwLock<Arc<>>` + parallel feed fetches *(commit: `fd3ebd1`)* |
+| Chat friends list | ✅ Previously done | `bf56e20` + `ae4bf4b` |
+| Export vault data | ✅ Wired by frontend | Backend: `77702d9`, Frontend: `aab39db` |
+| Facebook import quality | ✅ Previously done | Classification + tracker categories shipped |
+| `get_or_create_bsky_convo` | ⬜ Not started | Blocked: frontend needs Track A to expose this as Tauri command |
+
+---
+
 ## 2026-03-18 — Content Agent: User Feedback Bugfixes
 
 ### Summary
