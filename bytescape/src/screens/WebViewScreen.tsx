@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { Webview } from '@tauri-apps/api/webview';
 import { useNavStore } from '../store';
 import { openInApp } from '../utils/openInApp';
 
@@ -106,6 +107,19 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                             createdRef.current = true;
                             setIsCreating(false);
 
+                            // Explicitly show and focus the child webview via Tauri JS API
+                            // On some platforms (Linux/WebKitGTK), child webviews need this
+                            // to render on top of the main webview.
+                            try {
+                                const wv = await Webview.getByLabel(labelRef.current);
+                                if (wv) {
+                                    await wv.show();
+                                    await wv.setFocus();
+                                }
+                            } catch (focusErr) {
+                                console.warn('[WebView] show/focus failed (non-fatal):', focusErr);
+                            }
+
                             // If the user switched away during creation, hide immediately
                             if (!isActiveRef.current) {
                                 invoke('browser_hide', { label: labelRef.current }).catch(() => {});
@@ -122,7 +136,18 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 create();
             } else {
                 // Already created: restore position/size (show)
-                requestAnimationFrame(() => syncBounds());
+                requestAnimationFrame(async () => {
+                    await syncBounds();
+                    try {
+                        const wv = await Webview.getByLabel(labelRef.current);
+                        if (wv) {
+                            await wv.show();
+                            await wv.setFocus();
+                        }
+                    } catch {
+                        // non-fatal
+                    }
+                });
             }
         } else if (createdRef.current) {
             // Tab is inactive: hide the webview (move off-screen)
