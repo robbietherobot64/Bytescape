@@ -26,13 +26,24 @@ pub async fn browser_create(
     let parsed_url: url::Url = url.parse()
         .map_err(|e: url::ParseError| format!("Invalid URL: {}", e))?;
 
+    // Debug: log available windows to help diagnose label mismatches
+    let available_windows: Vec<String> = app.windows().keys().cloned().collect();
+    eprintln!("browser_create: available windows: {:?}", available_windows);
+
     // Find the main window — label defaults to "main" from tauri.conf.json
     let window = app.get_window("main")
         .or_else(|| {
+            eprintln!("browser_create: get_window(\"main\") returned None, trying fallback");
             // Fallback: use the first available window
             app.windows().into_values().next()
         })
-        .ok_or_else(|| "No window found".to_string())?;
+        .ok_or_else(|| {
+            let msg = format!("No window found (available: {:?})", available_windows);
+            eprintln!("browser_create: {}", msg);
+            msg
+        })?;
+
+    eprintln!("browser_create: using window label={:?}, creating webview label={:?} url={}", window.label(), label, url);
 
     // Clone app handles for the event callbacks
     let app_for_title = app.clone();
@@ -76,7 +87,11 @@ pub async fn browser_create(
         webview_builder,
         LogicalPosition::new(x, y),
         LogicalSize::new(width, height),
-    ).map_err(|e| format!("Failed to create webview: {}", e))?;
+    ).map_err(|e| {
+        let msg = format!("Failed to create webview '{}': {}", label, e);
+        eprintln!("browser_create: {}", msg);
+        msg
+    })?;
 
     Ok(())
 }
