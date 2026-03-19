@@ -9,6 +9,9 @@ const BG_KEY = 'bytescape-theme-bg';
 const BG_MODE_KEY = 'bytescape-theme-bg-mode';
 const USER_BGS_KEY = 'bytescape-theme-user-bgs';
 
+/** Module-level guard: localStorage restore runs exactly once across all useTheme() consumers. */
+let _restored = false;
+
 /**
  * useTheme — reads the active theme from the store,
  * applies it as `data-theme` on <html>, applies custom colour overrides
@@ -31,8 +34,11 @@ export function useTheme() {
     const addUserBackground = useThemeStore((s) => s.addUserBackground);
     const removeUserBackground = useThemeStore((s) => s.removeUserBackground);
 
-    /* On mount: restore from localStorage (runs once per app lifecycle) */
+    /* On mount: restore from localStorage (runs exactly once across all consumers) */
     useEffect(() => {
+        if (_restored) return;
+        _restored = true;
+
         const saved = localStorage.getItem(STORAGE_KEY) as ThemeId | null;
         if (saved && saved !== activeTheme) {
             setTheme(saved);
@@ -79,7 +85,7 @@ export function useTheme() {
     /* Whenever activeTheme changes → apply to DOM + persist */
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', activeTheme);
-        localStorage.setItem(STORAGE_KEY, activeTheme);
+        try { localStorage.setItem(STORAGE_KEY, activeTheme); } catch { /* quota */ }
     }, [activeTheme]);
 
     /* Apply custom colour overrides as inline CSS variables on :root */
@@ -90,7 +96,7 @@ export function useTheme() {
             root.style.setProperty(variable, value);
         }
         // Persist
-        localStorage.setItem(OVERRIDES_KEY, JSON.stringify(customOverrides));
+        try { localStorage.setItem(OVERRIDES_KEY, JSON.stringify(customOverrides)); } catch { /* quota */ }
 
         // Cleanup: remove any overrides that were removed from the store
         return () => {
@@ -127,12 +133,12 @@ export function useTheme() {
         } else {
             document.documentElement.classList.remove('bg-tiled');
         }
-        localStorage.setItem(BG_MODE_KEY, backgroundMode);
+        try { localStorage.setItem(BG_MODE_KEY, backgroundMode); } catch { /* quota */ }
     }, [backgroundMode]);
 
     /* Persist user-uploaded backgrounds */
     useEffect(() => {
-        localStorage.setItem(USER_BGS_KEY, JSON.stringify(userBackgrounds));
+        try { localStorage.setItem(USER_BGS_KEY, JSON.stringify(userBackgrounds)); } catch { /* quota */ }
     }, [userBackgrounds]);
 
     return {

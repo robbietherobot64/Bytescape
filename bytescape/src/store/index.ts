@@ -387,7 +387,10 @@ export const useThemeStore = create<ThemeState>((set) => ({
     setCustomBackground: (bg) => set({ customBackground: bg }),
     setBackgroundMode: (mode) => set({ backgroundMode: mode }),
     addUserBackground: (bg) =>
-        set((s) => ({ userBackgrounds: [...s.userBackgrounds, bg] })),
+        set((s) => {
+            if (s.userBackgrounds.some((b) => b.id === bg.id)) return s;
+            return { userBackgrounds: [...s.userBackgrounds, bg] };
+        }),
     removeUserBackground: (id) =>
         set((s) => ({
             userBackgrounds: s.userBackgrounds.filter((b) => b.id !== id),
