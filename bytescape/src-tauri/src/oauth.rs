@@ -312,8 +312,9 @@ pub struct OAuthManager {
     callback_shutdown: Mutex<Option<oneshot::Sender<()>>>,
     /// The live OAuth session after successful authentication.
     /// Used for DPoP-authenticated API calls.
-    /// Access via `clear_session()`, `has_session()`, etc.
-    pub(crate) session: Mutex<Option<ConcreteOAuthSession>>,
+    /// Wrapped in Arc so callers can clone the reference and release the lock
+    /// before making network calls — this enables concurrent XRPC requests.
+    pub(crate) session: tokio::sync::RwLock<Option<Arc<ConcreteOAuthSession>>>,
 }
 
 impl OAuthManager {
@@ -367,7 +368,7 @@ impl OAuthManager {
         Ok(Self {
             client: Arc::new(client),
             callback_shutdown: Mutex::new(None),
-            session: Mutex::new(None),
+            session: tokio::sync::RwLock::new(None),
         })
     }
 
@@ -388,7 +389,7 @@ impl OAuthManager {
             .await
             .map_err(|e| format!("OAuth session restore failed: {}", e))?;
 
-        *self.session.lock().await = Some(session);
+        *self.session.write().await = Some(Arc::new(session));
         #[cfg(debug_assertions)]
         println!("OAuth: Restored persisted session");
         Ok(())
@@ -651,7 +652,7 @@ impl OAuthManager {
                 );
 
                 // Store the live OAuth session for future DPoP-authenticated API calls
-                *app_state.oauth_manager.session.lock().await = Some(session);
+                *app_state.oauth_manager.session.write().await = Some(Arc::new(session));
 
                 // Auto-generate local identity if one doesn't exist yet
                 let recovery_status = app_state
@@ -737,12 +738,12 @@ impl OAuthManager {
 
     /// Clear the stored OAuth session (used during logout).
     pub async fn clear_session(&self) {
-        *self.session.lock().await = None;
+        *self.session.write().await = None;
     }
 
     /// Check whether an OAuth session is currently active.
     pub async fn has_session(&self) -> bool {
-        self.session.lock().await.is_some()
+        self.session.read().await.is_some()
     }
 
     /// Get the user's PDS URL from the active OAuth session.
@@ -753,10 +754,11 @@ impl OAuthManager {
     pub async fn get_pds_url(&self) -> Result<String, String> {
         use atrium_xrpc::XrpcClient;
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+        let session = {
+            let guard = self.session.read().await;
+            Arc::clone(guard.as_ref()
+                .ok_or_else(|| "No OAuth session — please log in again".to_string())?)
+        };
 
         Ok(session.base_uri())
     }
@@ -775,10 +777,13 @@ impl OAuthManager {
     ) -> Result<String, String> {
         use atrium_xrpc::XrpcClient;
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+        // Clone Arc and drop the lock BEFORE the network call.
+        // This allows concurrent XRPC requests — critical for feed parallelization.
+        let session = {
+            let guard = self.session.read().await;
+            Arc::clone(guard.as_ref()
+                .ok_or_else(|| "No OAuth session — please log in again".to_string())?)
+        };
 
         // Build a raw XrpcRequest with no typed params/input.
         // We'll manually append query params to the nsid since the serde
@@ -825,10 +830,11 @@ impl OAuthManager {
     ) -> Result<String, String> {
         use atrium_xrpc::XrpcClient;
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+        let session = {
+            let guard = self.session.read().await;
+            Arc::clone(guard.as_ref()
+                .ok_or_else(|| "No OAuth session — please log in again".to_string())?)
+        };
 
         let request = atrium_xrpc::XrpcRequest::<(), ()> {
             method: atrium_xrpc::http::Method::POST,
@@ -905,14 +911,13 @@ impl OAuthManager {
 
         let (nsid, query) = Self::parse_xrpc_url(url)?;
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+        // Clone Arc, drop lock, then create chat proxy clone — no lock held during network call.
+        let session = {
+            let guard = self.session.read().await;
+            Arc::clone(guard.as_ref()
+                .ok_or_else(|| "No OAuth session — please log in again".to_string())?)
+        };
 
-        // Clone the session with the chat proxy header — this creates a
-        // separate client that routes through the chat service without
-        // polluting the main session's proxy_header state.
         let chat_session = session.clone_with_proxy(
             "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
             "bsky_chat",
@@ -960,13 +965,12 @@ impl OAuthManager {
         use atrium_api::agent::CloneWithProxy;
         let (nsid, _query) = Self::parse_xrpc_url(url)?;
 
-        let session_guard = self.session.lock().await;
-        let session = session_guard
-            .as_ref()
-            .ok_or_else(|| "No OAuth session — please log in again".to_string())?;
+        let session = {
+            let guard = self.session.read().await;
+            Arc::clone(guard.as_ref()
+                .ok_or_else(|| "No OAuth session — please log in again".to_string())?)
+        };
 
-        // Clone the session with the chat proxy header — keeps the main
-        // session clean so subsequent feed/timeline calls aren't affected.
         let chat_session = session.clone_with_proxy(
             "did:web:api.bsky.chat".parse().map_err(|_| "Invalid chat proxy DID")?,
             "bsky_chat",
