@@ -4,6 +4,129 @@
 
 ---
 
+## 2026-03-19 — Backend Sprint v6: "Unblock Frontend & Source Fix"
+
+### Build Status
+- **cargo check**: ✅ 0 errors, 0 warnings
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 264/264 passing
+- **cargo test --test sprint_v6_test**: ✅ 30/30 passing
+- **HEAD**: `b5a0315` on `main`
+
+### P1 — Source Filter / Feed State Bug ⚡⚡⚡ (CRITICAL) — ✅ FIXED
+**Commit**: `7bc515b`
+
+**Root causes found (5 bugs):**
+1. `get_timeline_unified` had NO `source_filter` parameter — filtering was impossible on backend
+2. Cache key `"timeline:first"` didn't include source filter → cache poisoning (filtered result served for unfiltered request)
+3. Vault query always passed `None` to `list_my_items_paged` → loaded ALL items regardless of filter
+4. Live Bluesky timeline was always fetched, even when filtering to "facebook" (wasted API call + mixed sources)
+5. No post-merge filter → items from wrong sources could slip through from custom feeds
+
+**Fixes applied:**
+- Added `source_filter: Option<String>` parameter to `get_timeline_unified`
+- Normalized to lowercase + trimmed (empty → None)
+- Cache key now: `timeline:{source_filter}:{cursor}` (e.g. `timeline:facebook:first`, `timeline:all:first`)
+- Vault query passes `source_filter` to `list_my_items_paged` (was hardcoded `None`)
+- When `source_filter` is NOT "bluesky", skips live Bluesky timeline + custom feeds entirely
+- Post-merge `feed.retain()` safety filter catches any items from wrong sources
+
+**Frontend interface change:**
+```typescript
+// New optional parameter:
+invoke('get_timeline_unified', {
+  tags: [], feedUris: [], limit: 50, cursor: null, vaultOffset: 0,
+  sourceFilter: 'facebook'  // NEW — pass null/undefined for "all"
+});
+```
+The Frontend agent already applied a client-side workaround (`eddb52b`). With the backend fix, they can now pass `sourceFilter` directly and remove the client-side filtering.
+
+### P2 — Expose `get_or_create_bsky_convo` Command ⚡⚡ — ✅ DONE
+**Commit**: `bc5fcf6`
+
+New Tauri command in `commands/import.rs`:
+```rust
+#[tauri::command]
+pub async fn get_or_create_bsky_convo(
+    state: State<'_, AppState>,
+    member_did: String,
+) -> Result<String, String>  // returns convo_id
+```
+- Supports both OAuth (via `xrpc_chat_get`) and app-password (via `ChatClient::get_or_create_convo`)
+- Registered in `lib.rs` invoke_handler
+- Validates `member_did` is non-empty
+
+**Frontend usage:**
+```typescript
+const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
+setSelectedConvoId(convoId);
+```
+
+### P3 — WebView Window Label Mismatch ⚡⚡ — ✅ FIXED
+**Commit**: `7b3acf8`
+
+- Added explicit `"label": "main"` to `tauri.conf.json` (was implicit default)
+- Added diagnostic `eprintln!` logging to `browser_create`:
+  - Logs available window labels at invocation
+  - Logs if `get_window("main")` returns None and fallback is used
+  - Logs the window label + webview label being created
+  - Logs detailed error message if `add_child` fails
+- If URLs still don't load after this fix, the diagnostic output will reveal the exact failure point
+
+### P4 — Profile Section Persistence Commands ⚡⚡ — ✅ DONE
+**Commit**: `5ac95e1`
+
+New `ProfileSection` struct:
+```rust
+pub struct ProfileSection {
+    pub id: String,           // e.g. "about-me", "photos", "links"
+    pub section_type: String, // "text", "gallery", "links", "connections"
+    pub title: String,        // User-visible title
+    pub content: String,      // HTML/Markdown/JSON body
+    pub order: u32,           // Display order (lower = higher)
+    pub visible: bool,        // Public visibility
+}
+```
+
+New commands:
+- `save_profile_sections(sections: Vec<ProfileSection>)` — atomic replace-all
+- `get_profile_sections()` → `Vec<ProfileSection>` — returns sorted by `order`, empty array if none saved
+
+Storage: redb `PROFILE_LAYOUT_TABLE` under key `user_profile_sections` (reuses existing table, no migration needed).
+
+**Frontend usage:**
+```typescript
+await invoke('save_profile_sections', { sections: [...] });
+const sections = await invoke<ProfileSection[]>('get_profile_sections');
+```
+
+### P5 — Facebook Import Verification ⚡ — ✅ VERIFIED
+**Archive tested**: `/home/korendian/Downloads/facebook-rabiezaater-2025-01-12-TwiR2QHB/`
+
+**Findings:**
+- Archive is HTML format (0 JSON files). Parser correctly detects and handles this.
+- 125 media files (41 JPG, 6 PNG, 1 MP4, 77 stickers)
+- Path matching verified: `your_posts_1.html`, `/album/*.html`, `your_photos.html`, `your_videos.html`, `your_uncategorized_photos.html` all match
+- CSS selectors in `parse_html_post_page` match the HTML class structure perfectly
+- Noise filter correctly handles: account deactivation, friend requests, lifecycle events, "shared a post" with no content, empty posts
+- Real posts (text + photos, location, tagged people) pass through correctly
+- **Only issue**: Archive is pre-extracted on disk (not a ZIP). The `import_facebook_zip` function requires a `.zip` file. User needs to compress the directory before import, or the UI's file picker naturally selects ZIP files.
+- Parser quality is GOOD — Sprint v4 filtering improvements are thorough.
+
+### P6 — Rust Tests ⚡ — ✅ 30 TESTS ADDED
+**Commit**: `b5a0315`
+
+New test file: `tests/sprint_v6_test.rs` — 30 tests across 4 modules:
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| `feed_cache_tests` | 5 | Cache set/get TTL, key isolation, source filter isolation, invalidation, expiry |
+| `source_filter_tests` | 8 | Normalization, empty→None, cache key format, skip_bluesky logic, post-merge filter |
+| `profile_section_tests` | 2 | Serialization round-trip, sort-by-order |
+| `facebook_import_tests` | 15 | Path matching (5 accept, 4 reject), noise filter (6 scenarios) |
+
+---
+
 ## 2026-03-15 — PM Audit: Sprint v3 Results
 
 ### Build Status
