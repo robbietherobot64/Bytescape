@@ -200,13 +200,24 @@ pub async fn get_timeline_unified(
     feed_uris: Vec<String>,
     limit: Option<u8>,
     cursor: Option<String>,
-    vault_offset: Option<usize>
+    vault_offset: Option<usize>,
+    source_filter: Option<String>,
 ) -> Result<UnifiedFeedResponse, String> {
     #[cfg(debug_assertions)]
     let t_start = std::time::Instant::now();
 
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
+
+    // Normalize the source filter (lowercase, trim, None if empty)
+    let source_filter = source_filter
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
+
+    #[cfg(debug_assertions)]
+    if let Some(ref sf) = source_filter {
+        println!("get_timeline_unified: source_filter={:?}", sf);
+    }
 
     // Feed cache TTL — 30 seconds balances freshness vs speed.
     // The frontend has its own 2-minute stale-while-revalidate layer on top.
@@ -219,14 +230,21 @@ pub async fn get_timeline_unified(
         .map(|(did, _)| did);
 
     // ── Prepare vault future (will run in parallel with network) ──
+    // Pass source_filter to the vault query so the DB returns only matching items.
     let db_manager_clone = state.db_manager.clone();
     let vault_offset_val = vault_offset.unwrap_or(0);
     let owner_did_clone = owner_did.clone();
+    let vault_source_filter = source_filter.clone();
     let vault_fut = async move {
         if let Some(did) = owner_did_clone {
             let db_guard = db_manager_clone.read().await;
             if let Some(db) = db_guard.as_ref() {
-                if let Ok((items, _)) = db.list_my_items_paged(&did, None, 200, vault_offset_val).await {
+                if let Ok((items, _)) = db.list_my_items_paged(
+                    &did,
+                    vault_source_filter.as_deref(),
+                    200,
+                    vault_offset_val,
+                ).await {
                     return items.into_iter().map(FeedEntry::from).collect::<Vec<_>>();
                 }
             }
@@ -237,17 +255,32 @@ pub async fn get_timeline_unified(
     // ── 1 + 2. Live timeline + custom feeds — with feed cache ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
-    // Build a cache key incorporating cursor/offset to avoid serving stale pages
-    let cache_key_timeline = format!("timeline:{}", cursor.as_deref().unwrap_or("first"));
+    // When filtering to a non-bluesky source, skip the entire Bluesky API
+    // round-trip — those posts will just be discarded anyway.
+    let skip_bluesky = source_filter.as_deref()
+        .map(|sf| sf != "bluesky")
+        .unwrap_or(false);
+
+    // Build a cache key incorporating cursor/offset AND source filter to prevent
+    // cache poisoning (filtered result served for unfiltered request or vice-versa).
+    let filter_tag = source_filter.as_deref().unwrap_or("all");
+    let cache_key_timeline = format!("timeline:{}:{}", filter_tag, cursor.as_deref().unwrap_or("first"));
 
     // Try to serve timeline from cache (avoids Bluesky API round-trip)
-    let cached_timeline = if cursor.is_none() {
+    let cached_timeline = if cursor.is_none() && !skip_bluesky {
         state.feed_cache.get(&cache_key_timeline, cache_ttl).await
     } else {
-        None // don't cache paginated requests
+        None // don't cache paginated requests or when skipping Bluesky
     };
 
     let timeline_fut = async {
+        // When filtering to a non-bluesky source, return empty immediately
+        if skip_bluesky {
+            #[cfg(debug_assertions)]
+            println!("get_timeline_unified: skipping Bluesky (source_filter is non-bluesky)");
+            return Ok((Vec::new(), None));
+        }
+
         if let Some(cached) = cached_timeline {
             // Cache hit — deserialize cached response
             #[cfg(debug_assertions)]
@@ -272,7 +305,7 @@ pub async fn get_timeline_unified(
         result
     };
 
-    if has_custom {
+    if has_custom && !skip_bluesky {
         let custom_fut = crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         );
@@ -375,6 +408,17 @@ pub async fn get_timeline_unified(
         });
 
         feed.extend(vault_entries);
+    }
+
+    // ── 4. Post-merge source filter ──
+    // Even though we skip Bluesky API calls for non-bluesky filters and pass
+    // the filter to the vault query, apply a final safety filter to catch any
+    // items that slipped through (e.g. custom feeds returning mixed sources).
+    if let Some(ref sf) = source_filter {
+        let before = feed.len();
+        feed.retain(|entry| entry.source.eq_ignore_ascii_case(sf));
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: post-merge source filter '{}' removed {} items", sf, before - feed.len());
     }
 
     // ── 5. Sort by timestamp descending ──
