@@ -140,45 +140,64 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
 
         loadVideo();
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+            // Cancel in-progress video resolve when scrolling away (P8)
+            // Prevents CPU thrashing from multiple concurrent FFmpeg processes
+            if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
+                invoke('cancel_video_resolve', { url: src }).catch(() => {});
+            }
+        };
     }, [src, isVisible]);
 
     return (
         <div ref={containerRef} className={className} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
-            {isLoading && !resolvedUrl && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ color: '#aaa', fontSize: '0.86rem' }}>⏳ Loading native media...</span>
-                </div>
-            )}
-
             {error && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center' }}>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center', zIndex: 2 }}>
                     <span style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {error}</span>
                 </div>
             )}
 
-            {/* 
-               Only render the actual video tag once we have a fully resolved, local asset URI.
-               This prevents WebKitGTK from aggressively locking up on unready streams.
-            */}
-            {resolvedUrl && (
-                <video
-                    ref={videoRefCallback}
-                    src={resolvedUrl}
-                    poster={resolvedPoster || undefined}
-                    controls
-                    autoPlay={autoPlay}
-                    loop
-                    playsInline
-                    preload="metadata"
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                    onPlay={handlePlay}
-                    // Handle edge-case WebKit decoding errors gracefully
-                    onError={(e) => {
-                        console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
-                    }}
-                />
+            {/* Loading indicator — overlaid on poster, not replacing it */}
+            {isLoading && !resolvedUrl && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: 8,
+                    right: 8,
+                    background: 'rgba(0,0,0,0.6)',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    zIndex: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                }}>
+                    <span style={{ color: '#aaa', fontSize: '0.75rem' }}>Loading…</span>
+                </div>
             )}
+
+            {/*
+               Progressive playback: render the video element immediately
+               with the poster so the user sees a frame right away.
+               Once resolvedUrl is ready, it becomes the src and playback begins.
+            */}
+            <video
+                ref={videoRefCallback}
+                src={resolvedUrl || undefined}
+                poster={resolvedPoster || undefined}
+                controls={!!resolvedUrl}
+                autoPlay={autoPlay && !!resolvedUrl}
+                loop
+                playsInline
+                preload="metadata"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                onPlay={handlePlay}
+                onError={(e) => {
+                    if (resolvedUrl) {
+                        console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
+                    }
+                }}
+            />
         </div>
     );
 }
