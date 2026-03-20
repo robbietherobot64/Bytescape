@@ -498,10 +498,22 @@ function App() {
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
             onOpenChat={async (peerNodeId, peerName) => {
-              const { setSelectedConvoId, setPendingConvoMeta } = useChatStore.getState();
+              const { setSelectedConvoId, setPendingConvoMeta, messages } = useChatStore.getState();
+              
               if (peerNodeId.startsWith('did:plc:') || peerNodeId.startsWith('did:web:')) {
                 try {
-                  const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  // Bypass backend command if possible by finding an existing chat in local state
+                  const existingConvo = Array.from(messages.values()).find(
+                    msg => msg.protocol === 'bluesky' && (msg.sender_did === peerNodeId || msg.recipient_did === peerNodeId || msg.convo_id?.includes(peerNodeId))
+                  );
+                  
+                  let convoId;
+                  if (existingConvo && existingConvo.convo_id) {
+                     convoId = existingConvo.convo_id;
+                  } else {
+                     convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  }
+                  
                   setSelectedConvoId(convoId);
                   setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
                 } catch (e) {
@@ -572,10 +584,22 @@ function App() {
           <FriendsScreen
             auth={auth}
             onOpenChat={async (peerNodeId, peerName) => {
-              const { setSelectedConvoId, setPendingConvoMeta } = useChatStore.getState();
+              const { setSelectedConvoId, setPendingConvoMeta, messages } = useChatStore.getState();
+              
               if (peerNodeId.startsWith('did:plc:') || peerNodeId.startsWith('did:web:')) {
                 try {
-                  const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  // Bypass backend command if possible by finding an existing chat in local state
+                  const existingConvo = Array.from(messages.values()).find(
+                    msg => msg.protocol === 'bluesky' && (msg.sender_did === peerNodeId || msg.recipient_did === peerNodeId || msg.convo_id?.includes(peerNodeId))
+                  );
+                  
+                  let convoId;
+                  if (existingConvo && existingConvo.convo_id) {
+                     convoId = existingConvo.convo_id;
+                  } else {
+                     convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                  }
+                  
                   setSelectedConvoId(convoId);
                   setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
                 } catch (e) {

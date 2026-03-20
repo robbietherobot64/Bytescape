@@ -10,7 +10,7 @@
  * The in-app webview path is preserved for future re-enablement.
  */
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useNavStore } from '../store';
+import { useNavStore, useAuthStore } from '../store';
 
 /**
  * Open a URL. Routes to the system browser because the in-app WebView
@@ -18,7 +18,7 @@ import { useNavStore } from '../store';
  * on Linux. This has been broken across 3+ sprints — system browser is
  * the reliable path until a native profile screen replaces raw webviews.
  */
-const USE_SYSTEM_BROWSER = true;
+const USE_SYSTEM_BROWSER = false;
 
 export function openInApp(url: string, title?: string): void {
     if (USE_SYSTEM_BROWSER) {
@@ -53,17 +53,56 @@ export function openInApp(url: string, title?: string): void {
 /**
  * Open a profile in the native ProfileViewScreen tab.
  */
-export function openProfile(handle: string, protocol: 'bluesky' | 'activitypub' | 'mastodon' = 'bluesky'): void {
+export function openProfile(handle: string, protocol?: 'bluesky' | 'activitypub' | 'mastodon' | 'local' | 'p2p'): void {
     if (!handle) return;
+
+    let derivedProtocol = protocol;
+    if (!derivedProtocol) {
+        if (handle.includes('@')) {
+            derivedProtocol = 'activitypub';
+        } else {
+            derivedProtocol = 'bluesky';
+        }
+    }
+    
     const store = useNavStore.getState();
-    const existing = store.tabs.find(
-        (t) => t.screen === 'profile-view' && t.meta?.handle === handle
-    );
-    if (existing) {
-        store.switchTab(existing.id);
+    const { auth } = useAuthStore.getState();
+    
+    // Check if it's "me" or explicitly local/p2p
+    const isMe = auth && (auth.handle === handle || auth.did === handle || auth.local_username === handle);
+    const hasBytescapeProfile = isMe || derivedProtocol === 'p2p' || derivedProtocol === 'local';
+
+    if (hasBytescapeProfile) {
+        const existing = store.tabs.find(
+            (t) => t.screen === 'profile-view' && t.meta?.handle === handle
+        );
+        if (existing) {
+            store.switchTab(existing.id);
+            return;
+        }
+        store.openTab('profile-view', `@${handle}`, { handle, protocol: derivedProtocol });
         return;
     }
-    store.openTab('profile-view', `@${handle}`, { handle, protocol });
+
+    // Default to in-app browser tab for regular social media profiles
+    if (derivedProtocol === 'bluesky') {
+        const url = `https://bsky.app/profile/${handle}`;
+        openInApp(url, `@${handle}`);
+    } else if (derivedProtocol === 'activitypub' || derivedProtocol === 'mastodon') {
+        // basic parser: @username@instance.social -> https://instance.social/@username
+        let url = `https://${handle}`;
+        if (handle.includes('@')) {
+            const parts = handle.split('@').filter(Boolean); // remove leading @
+            if (parts.length >= 2) {
+                const domain = parts[1];
+                const username = parts[0];
+                url = `https://${domain}/@${username}`;
+            }
+        }
+        openInApp(url, `@${handle}`);
+    } else {
+        openInApp(`https://${handle}`, `@${handle}`);
+    }
 }
 
 /**

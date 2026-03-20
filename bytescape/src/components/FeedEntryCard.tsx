@@ -250,7 +250,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     className="avatar"
                     onClick={() => {
                         if (entry.author_handle && entry.author_handle !== 'You') {
-                            openProfile(entry.author_handle);
+                            openProfile(entry.author_handle, entry.source as any);
                         }
                     }}
                     style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
@@ -267,7 +267,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                         className="author-name"
                         onClick={() => {
                             if (entry.author_handle && entry.author_handle !== 'You') {
-                                openProfile(entry.author_handle);
+                                openProfile(entry.author_handle, entry.source as any);
                             }
                         }}
                         style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
