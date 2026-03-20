@@ -1156,51 +1156,103 @@ async fn import_item_media_into_vault(
     imported_blobs
 }
 
-/// Get the Bluesky timeline (friends feed)
+/// Get the merged timeline (Bluesky + Mastodon following feeds)
 #[tauri::command]
 pub async fn get_timeline(
     state: State<'_, AppState>,
     limit: Option<u8>,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    let session = state.keychain.load_session()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
-    let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    use crate::connectors::bluesky::BlueskyImportedPost;
 
-    if state.is_oauth_session() {
-        // OAuth path: use DPoP-authenticated requests via OAuthManager.
-        // DPoP tokens are audience-bound to the user's PDS, not the public
-        // appview (bsky.social). The PDS proxies reads to the AppView.
-        let pds_url = state.oauth_manager.get_pds_url().await?;
-        let limit_val = limit.unwrap_or(50);
-        let mut url = format!(
-            "{}/xrpc/app.bsky.feed.getTimeline?limit={}",
-            pds_url, limit_val
-        );
-        if let Some(ref c) = cursor {
-            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+    let limit_val = limit.unwrap_or(50);
+    let mut all_posts: Vec<BlueskyImportedPost> = Vec::new();
+    let mut next_cursor: Option<String> = None;
+
+    // ── 1. Try Bluesky ──
+    let bluesky_result: Result<(Vec<BlueskyImportedPost>, Option<String>), String> = async {
+        let session = state.keychain.load_session()
+            .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+        let (_user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+        if state.is_oauth_session() {
+            let pds_url = state.oauth_manager.get_pds_url().await?;
+            let mut url = format!(
+                "{}/xrpc/app.bsky.feed.getTimeline?limit={}",
+                pds_url, limit_val
+            );
+            if let Some(ref c) = cursor {
+                url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+            }
+
+            let json = state.oauth_manager.authenticated_get(&url).await?;
+            let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+            return Ok((posts, next_cursor));
         }
 
-        let json = state.oauth_manager.authenticated_get(&url).await?;
-        let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
-        return Ok((posts, next_cursor));
+        let access_jwt = state.get_fresh_access_jwt().await
+            .map_err(|e| BytescapeError::AuthFailed(e))?;
+
+        let app_handle = state.app_handle.clone();
+        let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
+            &access_jwt,
+            std::path::PathBuf::new(),
+            &app_handle,
+            limit,
+            cursor.clone(),
+            None,
+            false,
+        ).await?;
+
+        Ok((posts, next_cursor))
+    }.await;
+
+    match bluesky_result {
+        Ok((posts, nc)) => {
+            next_cursor = nc;
+            all_posts.extend(posts);
+        }
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("get_timeline: Bluesky fetch skipped/failed: {}", e);
+        }
     }
 
-    let access_jwt = state.get_fresh_access_jwt().await
-        .map_err(|e| BytescapeError::AuthFailed(e))?;
+    // ── 2. Try Mastodon (if session exists) ──
+    let mastodon_result: Result<Vec<BlueskyImportedPost>, String> = async {
+        let session = crate::connectors::mastodon::get_session_from_keychain(&state.keychain)?;
+        crate::connectors::mastodon::get_home_timeline_as_bsky(
+            &state.http_client,
+            &session,
+            Some(limit_val as i32),
+        ).await
+    }.await;
 
-    let app_handle = state.app_handle.clone();
-    let (posts, next_cursor) = crate::connectors::bluesky::import_bluesky_timeline(
-        &access_jwt,
-        std::path::PathBuf::new(),
-        &app_handle,
-        limit,
-        cursor,
-        None,
-        false,
-    ).await?;
+    match mastodon_result {
+        Ok(posts) => {
+            #[cfg(debug_assertions)]
+            println!("get_timeline: Mastodon returned {} posts", posts.len());
+            all_posts.extend(posts);
+        }
+        Err(_) => {
+            // No Mastodon session or fetch failed — that's fine
+        }
+    }
 
-    Ok((posts, next_cursor))
+    // If no posts from either source, return an error only if truly unauthenticated
+    if all_posts.is_empty() && next_cursor.is_none() {
+        let has_bluesky = state.keychain.load_session().ok().flatten().is_some();
+        let has_mastodon = crate::connectors::mastodon::get_session_from_keychain(&state.keychain).is_ok();
+        if !has_bluesky && !has_mastodon {
+            return Err("Not authenticated with any service".to_string());
+        }
+    }
+
+    // ── 3. Sort merged results by timestamp ──
+    all_posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all_posts.truncate(limit_val as usize);
+
+    Ok((all_posts, next_cursor))
 }
 
 /// Get the current user's Bluesky author feed (their own posts)

@@ -575,6 +575,26 @@ pub async fn mastodon_unfollow(
     serde_json::to_value(&rel).map_err(|e| format!("Serialize error: {}", e))
 }
 
+/// Get the list of accounts the authenticated user follows.
+#[tauri::command]
+pub async fn mastodon_get_following(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
+    let session = get_active_session(&state).await?;
+    let accounts = mastodon::get_following_list(&state.http_client, &session, None).await?;
+    Ok(accounts.iter().map(|a| mastodon::account_to_profile_view(&session.instance, a)).collect())
+}
+
+/// Get the list of accounts that follow the authenticated user.
+#[tauri::command]
+pub async fn mastodon_get_followers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
+    let session = get_active_session(&state).await?;
+    let accounts = mastodon::get_followers_list(&state.http_client, &session, None).await?;
+    Ok(accounts.iter().map(|a| mastodon::account_to_profile_view(&session.instance, a)).collect())
+}
+
 /// Follow a remote actor via AP S2S (signed Follow activity).
 #[tauri::command]
 pub async fn send_ap_follow(

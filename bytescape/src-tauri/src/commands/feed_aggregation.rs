@@ -38,6 +38,18 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
+        // Detect source from URI prefix — Mastodon adapter encodes "mastodon:{instance}:{id}"
+        let source = if post.uri.starts_with("mastodon:") {
+            "mastodon".to_string()
+        } else {
+            "bluesky".to_string()
+        };
+        let audience = if source == "mastodon" {
+            vec![Audience::Local, Audience::Activitypub]
+        } else {
+            vec![Audience::Local, Audience::Bluesky]
+        };
+
         let mut entry = FeedEntry {
             id: post.uri.clone(),
             cid: Some(post.cid.clone()),
@@ -48,7 +60,7 @@ impl From<BlueskyImportedPost> for FeedEntry {
             author_did: Some(post.author_did),
             author_handle: Some(post.author_handle),
             author_avatar: post.author_avatar,
-            source: "bluesky".to_string(),
+            source: source.clone(),
             media_urls,
             media_thumbnails,
             media_kinds,
@@ -67,10 +79,10 @@ impl From<BlueskyImportedPost> for FeedEntry {
             quoted_post: post.quoted_post.map(|q| Box::new(FeedEntry::from(*q))),
             item_type: None,
             syndication_status: None,
-            audiences: vec![Audience::Local, Audience::Bluesky],
+            audiences: audience,
             share_history: vec![
                 crate::models::SyndicationEvent {
-                    platform: "bluesky".to_string(),
+                    platform: source,
                     uri: post.uri.clone(),
                     timestamp: post.created_at as u64,
                     active: true,

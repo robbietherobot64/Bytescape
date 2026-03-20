@@ -289,6 +289,39 @@ pub async fn get_home_timeline(
         .collect())
 }
 
+/// Fetch the home timeline and return as BlueskyImportedPost for unified feed merging.
+pub async fn get_home_timeline_as_bsky(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    limit: Option<i32>,
+) -> Result<Vec<crate::connectors::bluesky::BlueskyImportedPost>, String> {
+    let url = format!(
+        "{}/api/v1/timelines/home?limit={}",
+        session.instance,
+        limit.unwrap_or(20).min(40),
+    );
+
+    let resp = rate_limit_request(
+        http_client
+            .get(&url)
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Timeline fetch failed ({}): {}", status, body));
+    }
+
+    let statuses: Vec<MastodonStatus> = resp.json().await
+        .map_err(|e| format!("Invalid timeline response: {}", e))?;
+
+    Ok(statuses
+        .iter()
+        .map(|s| status_to_bsky_post(&session.instance, s))
+        .collect())
+}
+
 // ──────────────────────────────────────────────────
 // Direct Messages
 // ──────────────────────────────────────────────────
@@ -461,6 +494,70 @@ pub async fn get_account(
 }
 
 // ──────────────────────────────────────────────────
+// Following / Followers Lists
+// ──────────────────────────────────────────────────
+
+/// Fetch the accounts the authenticated user follows.
+pub async fn get_following_list(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    limit: Option<i32>,
+) -> Result<Vec<MastodonAccount>, String> {
+    let url = format!(
+        "{}/api/v1/accounts/{}/following?limit={}",
+        session.instance,
+        session.account_id,
+        limit.unwrap_or(80).min(80),
+    );
+
+    let resp = http_client
+        .get(&url)
+        .bearer_auth(&session.access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Following list fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Following list fetch failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid following list response: {}", e))
+}
+
+/// Fetch the accounts that follow the authenticated user.
+pub async fn get_followers_list(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    limit: Option<i32>,
+) -> Result<Vec<MastodonAccount>, String> {
+    let url = format!(
+        "{}/api/v1/accounts/{}/followers?limit={}",
+        session.instance,
+        session.account_id,
+        limit.unwrap_or(80).min(80),
+    );
+
+    let resp = http_client
+        .get(&url)
+        .bearer_auth(&session.access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Followers list fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Followers list fetch failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid followers list response: {}", e))
+}
+
+// ──────────────────────────────────────────────────
 // Normalization Helpers
 // ──────────────────────────────────────────────────
 
@@ -597,6 +694,115 @@ pub fn status_to_vault_message(
         peer_did: None,
         peer_handle: None,
     }
+}
+
+/// Convert a Mastodon status to a BlueskyImportedPost for unified feed display.
+///
+/// This adapter lets Mastodon posts flow through the same frontend pipeline as
+/// Bluesky posts without requiring frontend changes.
+pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::connectors::bluesky::BlueskyImportedPost {
+    let effective = status.reblog.as_ref().map(|b| b.as_ref()).unwrap_or(status);
+
+    let text_content = strip_html(&effective.content);
+    let instance_host = instance.replace("https://", "").replace("http://", "");
+
+    let image_urls: Vec<String> = effective.media_attachments.iter()
+        .filter(|m| m.media_type == "image" || m.media_type == "gifv")
+        .map(|m| m.url.clone())
+        .collect();
+
+    let video_url = effective.media_attachments.iter()
+        .find(|m| m.media_type == "video")
+        .map(|m| m.url.clone());
+    let video_thumbnail = effective.media_attachments.iter()
+        .find(|m| m.media_type == "video")
+        .and_then(|m| m.preview_url.clone());
+
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&effective.created_at)
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    let author_handle = if effective.account.display_name.is_empty() {
+        format!("{}@{}", effective.account.acct, instance_host)
+    } else {
+        format!("{} (@{}@{})", effective.account.display_name, effective.account.acct, instance_host)
+    };
+
+    crate::connectors::bluesky::BlueskyImportedPost {
+        uri: format!("mastodon:{}:{}", instance_host, status.id),
+        cid: status.id.clone(),
+        text: text_content,
+        created_at: timestamp,
+        image_urls,
+        image_local_paths: vec![],
+        author_did: format!("mastodon:{}:{}", instance_host, effective.account.id),
+        author_handle,
+        author_avatar: Some(effective.account.avatar.clone()),
+        reply_count: Some(effective.replies_count),
+        repost_count: Some(effective.reblogs_count),
+        like_count: Some(effective.favourites_count),
+        video_url,
+        video_thumbnail,
+        external_url: effective.url.clone(),
+        external_title: None,
+        external_description: None,
+        external_thumb: None,
+        reposted_by: if status.reblog.is_some() {
+            Some(format!("mastodon:{}:{}", instance_host, status.account.id))
+        } else {
+            None
+        },
+        reposted_by_handle: if status.reblog.is_some() {
+            Some(if status.account.display_name.is_empty() {
+                status.account.acct.clone()
+            } else {
+                status.account.display_name.clone()
+            })
+        } else {
+            None
+        },
+        reply_parent_handle: None,
+        reply_parent_uri: effective.in_reply_to_id.clone(),
+        quoted_post: None,
+        viewer_like: if effective.favourited { Some("liked".to_string()) } else { None },
+        viewer_repost: if effective.reblogged { Some("reblogged".to_string()) } else { None },
+    }
+}
+
+/// Convert a MastodonAccount to a ProfileView for the friends list.
+pub fn account_to_profile_view(instance: &str, account: &MastodonAccount) -> crate::connectors::bluesky::ProfileView {
+    let instance_host = instance.replace("https://", "").replace("http://", "");
+    crate::connectors::bluesky::ProfileView {
+        did: format!("mastodon:{}:{}", instance_host, account.id),
+        handle: if account.acct.contains('@') {
+            account.acct.clone()
+        } else {
+            format!("{}@{}", account.acct, instance_host)
+        },
+        display_name: if account.display_name.is_empty() {
+            None
+        } else {
+            Some(account.display_name.clone())
+        },
+        avatar: if account.avatar.is_empty() { None } else { Some(account.avatar.clone()) },
+        description: if account.note.is_empty() { None } else { Some(strip_html(&account.note)) },
+    }
+}
+
+/// Restore a Mastodon session directly from the keychain, without the
+/// in-memory session cache (used by cross-module code like `get_timeline`).
+pub fn get_session_from_keychain(
+    keychain: &crate::keychain_encrypted::EncryptedKeychain,
+) -> Result<MastodonSession, String> {
+    let json_str = keychain.get_mastodon_session()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("No Mastodon session stored")?;
+    let blob: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Parse error: {}", e))?;
+    let session: MastodonSession = serde_json::from_value(
+        blob.get("session").cloned().ok_or("Missing session key in Mastodon keychain blob")?
+    ).map_err(|e| format!("Deserialize error: {}", e))?;
+    Ok(session)
 }
 
 /// Execute a request builder with rate-limit retry.
