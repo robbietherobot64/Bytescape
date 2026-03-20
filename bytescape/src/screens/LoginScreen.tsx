@@ -22,6 +22,7 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     // Mastodon Flow State
     const [isMastodonPending, setIsMastodonPending] = useState(false);
     const [mastodonAuthCode, setMastodonAuthCode] = useState("");
+    const [mastodonOauthPending, setMastodonOauthPending] = useState(false);
 
     // Recovery flow state
     const [recoveryStep, setRecoveryStep] = useState<'paste' | 'code' | 'confirm'>('paste');
@@ -67,6 +68,42 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
             unlistenError?.();
         };
     }, [oauthPending, importOnLogin, onLoginSuccess]);
+
+    // Listen for Mastodon OAuth callback events from the backend
+    useEffect(() => {
+        let unlistenComplete: UnlistenFn | undefined;
+        let unlistenError: UnlistenFn | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        if (mastodonOauthPending) {
+            timeoutId = setTimeout(() => {
+                setMastodonOauthPending(false);
+                setLoading(false);
+                setError("Mastodon login timed out. Please try again.");
+            }, 5 * 60 * 1000);
+
+            listen<AuthStatus>('mastodon-auth-complete', (event) => {
+                setMastodonOauthPending(false);
+                setIsMastodonPending(false);
+                setLoading(false);
+                if (timeoutId) clearTimeout(timeoutId);
+                onLoginSuccess(event.payload, importOnLogin);
+            }).then(fn => { unlistenComplete = fn; });
+
+            listen<string>('mastodon-auth-error', (event) => {
+                setMastodonOauthPending(false);
+                setLoading(false);
+                if (timeoutId) clearTimeout(timeoutId);
+                setError(typeof event.payload === 'string' ? event.payload : 'Mastodon login failed');
+            }).then(fn => { unlistenError = fn; });
+        }
+
+        return () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            unlistenComplete?.();
+            unlistenError?.();
+        };
+    }, [mastodonOauthPending, importOnLogin, onLoginSuccess]);
 
     async function handleBlueskyOAuth() {
         if (!identifier.trim()) {
@@ -131,8 +168,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
             setIdentifier(instance);
 
             const authUrl = await invoke<string>('mastodon_register_app', { instance });
+            setMastodonOauthPending(true);
             await openUrl(authUrl);
-            setIsMastodonPending(true);
         } catch (e: any) {
             console.error("Mastodon auth start error:", e);
             setError(e.toString());

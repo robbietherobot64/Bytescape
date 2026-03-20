@@ -13,7 +13,7 @@ use crate::models::{
 };
 
 /// Default redirect URI used during OAuth2 authorization.
-pub const REDIRECT_URI: &str = "http://127.0.0.1:28457/mastodon/callback";
+pub const REDIRECT_URI: &str = "http://127.0.0.1:28461/mastodon/callback";
 
 /// Default OAuth2 scopes requested by Bytescape.
 pub const SCOPES: &str = "read write push";

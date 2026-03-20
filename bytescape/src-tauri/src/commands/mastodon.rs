@@ -7,11 +7,14 @@
 //! P5: Follow/Unfollow (Mastodon C2S + AP S2S)
 //! P6: Unified resolve_profile
 
-use tauri::State;
+use tauri::{State, Emitter, Manager};
 use crate::AppState;
 use crate::connectors::mastodon::{
     self, MastodonApp, MastodonSession,
 };
+
+/// Port for the Mastodon OAuth callback server.
+const MASTODON_CALLBACK_PORT: u16 = 28461;
 
 /// In-memory storage for pending Mastodon app registrations (pre-auth).
 static PENDING_APP: std::sync::OnceLock<tokio::sync::Mutex<Option<MastodonApp>>> = std::sync::OnceLock::new();
@@ -27,22 +30,203 @@ fn masto_session_lock() -> &'static tokio::sync::Mutex<Option<MastodonSession>> 
     MASTODON_SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
 }
 
+/// Shutdown sender for the Mastodon callback server.
+static MASTODON_CALLBACK_SHUTDOWN: std::sync::OnceLock<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>> = std::sync::OnceLock::new();
+
+fn mastodon_shutdown_lock() -> &'static tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>> {
+    MASTODON_CALLBACK_SHUTDOWN.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
 // ═══════════════════════════════════════════════════
 // P1: Mastodon OAuth2
 // ═══════════════════════════════════════════════════
 
 /// Register Bytescape as an OAuth app on a Mastodon instance.
 ///
+/// Spawns a local callback server on port 28461 to catch the OAuth redirect.
 /// Returns the OAuth authorization URL as a plain string for `openUrl()`.
+/// When the callback is received, emits `mastodon-auth-complete` with AuthStatus.
 #[tauri::command]
 pub async fn mastodon_register_app(
     state: State<'_, AppState>,
     instance: String,
 ) -> Result<String, String> {
+    // Stop any previous callback server
+    if let Some(tx) = mastodon_shutdown_lock().lock().await.take() {
+        let _ = tx.send(());
+    }
+
     let (app, auth_url) = mastodon::register_app(&state.http_client, &instance).await?;
-    *pending_app().lock().await = Some(app);
+    *pending_app().lock().await = Some(app.clone());
+
+    // Bind the callback server
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", MASTODON_CALLBACK_PORT))
+        .await
+        .map_err(|e| format!("Failed to bind Mastodon callback server on port {}: {}", MASTODON_CALLBACK_PORT, e))?;
+
+    println!("Mastodon OAuth: Callback server listening on http://127.0.0.1:{}/mastodon/callback", MASTODON_CALLBACK_PORT);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    *mastodon_shutdown_lock().lock().await = Some(shutdown_tx);
+
+    let app_handle = state.app_handle.clone();
+    let http_client = state.http_client.clone();
+
+    tokio::spawn(async move {
+        run_mastodon_callback_server(listener, shutdown_rx, app, http_client, app_handle).await;
+    });
 
     Ok(auth_url)
+}
+
+/// Run the Mastodon OAuth callback server.
+///
+/// Listens for the browser redirect to `/mastodon/callback?code=...`,
+/// exchanges the code for tokens, and emits `mastodon-auth-complete`.
+async fn run_mastodon_callback_server(
+    listener: tokio::net::TcpListener,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    app: MastodonApp,
+    http_client: reqwest::Client,
+    app_handle: tauri::AppHandle,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                if let Ok((mut stream, _)) = result {
+                    let mut buf = vec![0u8; 8192];
+                    let n = match stream.read(&mut buf).await {
+                        Ok(n) if n > 0 => n,
+                        _ => continue,
+                    };
+
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = request.lines().next().unwrap_or("");
+                    let path = first_line.split_whitespace().nth(1).unwrap_or("");
+
+                    let html = if path.starts_with("/mastodon/callback") {
+                        if let Some(query_str) = path.split_once('?').map(|(_, q)| q) {
+                            // Extract the code parameter
+                            let mut code: Option<String> = None;
+                            let mut error: Option<String> = None;
+                            for pair in query_str.split('&') {
+                                if let Some((key, value)) = pair.split_once('=') {
+                                    let decoded = urlencoding::decode(value)
+                                        .unwrap_or(std::borrow::Cow::Borrowed(value))
+                                        .to_string();
+                                    match key {
+                                        "code" => code = Some(decoded),
+                                        "error" => error = Some(decoded),
+                                        _ => {}
+                                    }
+                                }
+                            }
+
+                            if let Some(err) = error {
+                                let _ = app_handle.emit("mastodon-auth-error", err.clone());
+                                mastodon_error_html(&err)
+                            } else if let Some(auth_code) = code {
+                                handle_mastodon_callback(
+                                    &http_client, &app, &auth_code, &app_handle,
+                                ).await
+                            } else {
+                                let msg = "Missing authorization code in callback";
+                                let _ = app_handle.emit("mastodon-auth-error", msg.to_string());
+                                mastodon_error_html(msg)
+                            }
+                        } else {
+                            mastodon_error_html("Missing query parameters")
+                        }
+                    } else {
+                        // Not the callback path — return a simple 404
+                        "<html><body>Not found</body></html>".to_string()
+                    };
+
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        html.len(), html,
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.flush().await;
+
+                    // If we handled the callback, shut down after a brief delay
+                    if path.starts_with("/mastodon/callback") {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        return;
+                    }
+                }
+            }
+            _ = &mut shutdown_rx => {
+                println!("Mastodon OAuth: Callback server stopped");
+                return;
+            }
+        }
+    }
+}
+
+/// Handle the Mastodon OAuth callback: exchange code → session → emit event.
+async fn handle_mastodon_callback(
+    http_client: &reqwest::Client,
+    app: &MastodonApp,
+    auth_code: &str,
+    app_handle: &tauri::AppHandle,
+) -> String {
+    match mastodon::complete_auth(http_client, app, auth_code).await {
+        Ok(session) => {
+            // Persist to keychain
+            let blob = serde_json::json!({ "session": &session, "app": app });
+            let json_str = serde_json::to_string(&blob).unwrap_or_default();
+
+            let app_state = app_handle.state::<crate::AppState>();
+            let _ = app_state.keychain.set_mastodon_session(&json_str);
+
+            // Build AuthStatus for the frontend
+            let instance_host = session.instance.replace("https://", "").replace("http://", "");
+            let auth_status = serde_json::json!({
+                "handle": session.acct,
+                "did": format!("mastodon:{}:{}", instance_host, session.account_id),
+                "source": "mastodon",
+                "identity_ready": true,
+            });
+
+            *masto_session_lock().lock().await = Some(session);
+
+            let _ = app_handle.emit("mastodon-auth-complete", auth_status);
+
+            mastodon_success_html()
+        }
+        Err(e) => {
+            eprintln!("Mastodon OAuth callback error: {}", e);
+            let _ = app_handle.emit("mastodon-auth-error", e.clone());
+            mastodon_error_html(&e)
+        }
+    }
+}
+
+fn mastodon_success_html() -> String {
+    r#"<!DOCTYPE html>
+<html><body style="background:#1a1a2e;color:#e0e0e0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+<div style="text-align:center;">
+<h1 style="font-size:48px;margin-bottom:16px;">✅</h1>
+<h2>Mastodon Authentication Successful</h2>
+<p style="color:#a0a0b0;">You can close this tab and return to Bytescape.</p>
+</div></body></html>"#.to_string()
+}
+
+fn mastodon_error_html(message: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html><body style="background:#1a1a2e;color:#e0e0e0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
+<div style="text-align:center;">
+<h1 style="font-size:48px;margin-bottom:16px;">❌</h1>
+<h2>Authentication Failed</h2>
+<p style="color:#ff6b6b;">{}</p>
+<p style="color:#a0a0b0;">Return to Bytescape and try again.</p>
+</div></body></html>"#,
+        message,
+    )
 }
 
 /// Complete Mastodon OAuth2 by exchanging the auth code for an access token.
