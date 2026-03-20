@@ -6,14 +6,13 @@ Feedback:
 
 Critical priorities:
 
-- Links and profiles don't load in new tabs, just open a new tab and it says "loading page" pretty much forever. 
-- User profile needs default boxes added for "About me:", "Connections:", etc, that users can enter some basic info about themselves if they want, or delete those sections and add other custom widgets/boxes.  Let's turn it into a robust social media bio by default that you can edit and customize in terms of size, location, color, background, adding gifs, animations, etc.  Use spacehey.come or myspace as the 
+- We need to be able to unlink and link accounts in the identity screen more effectively.  The disconnect button doesn't work, and connect only allows to connect bluesky, and uses app passwords still rather than oAuth.  This section needs a major refresh.
+- In a similar vein, it says "mastodon:instance_name:hashnumber".  What the hell is that?  Aren't we supposed to be using DIDs to identify users? 
+- Some Mastodon data not fully loading, namely friends list (which would pull following), and posts on the profile wall and most of the posts on the "you" feed.
+- Links and profiles don't load in new tabs, just open a new tab and it says "loading page" pretty much forever. We want this to be a browser-like experience, where links open and load seamlessly. Right now, they're not loading at all.
+- Chat button on friendslist contacts still does not work.  Works fine on the feed screen.  On the chat screen it just lags out like a mother, and only works once in a blue moon.  
 
 Lower priorities:
 
-- Chat button on friendslist contacts does not work.  Works fine on the feed screen.  
-- Images somewhat jittery when scrolling.
-
-**New Issues**
-
-- "Sources" drop down on the feed does not properly filter facebook, it shows up as bluesky posts.  Also, it seems to break the feed in general, when you return to All after filtering, it only shows your posts, not the posts of others.  
+- Hashtags need work.  They don't seem to actually work at all or save properly, and the subscribed feed gives a "failed to load feed" error, due to "no access token available".  Also, we should add lists to the subscribed section, which are basically just custom feeds that let you add people to a single selectable feed.  Let's add that as a drop down list like the feeds selection.
+- Images somewhat jittery when scrolling.  This is due to a reaction when the mouse goes over them.  It doesn't happen on every image/link, just some.  It seems related to the frames around the images possibly.

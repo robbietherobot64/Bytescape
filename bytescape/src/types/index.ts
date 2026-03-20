@@ -316,6 +316,8 @@ export interface VaultMessage {
     imported_at: number;
     peer_did?: string;
     peer_handle?: string;
+    protocol?: string;
+    recipient_did?: string;
 }
 
 export interface PublishResult {
