@@ -51,13 +51,19 @@ export function openInApp(url: string, title?: string): void {
 }
 
 /**
- * Open a Bluesky profile. Opens in system browser for now.
- * Future: render in a native BlueskyProfileScreen tab.
+ * Open a profile in the native ProfileViewScreen tab.
  */
-export function openBlueskyProfile(handle: string): void {
+export function openProfile(handle: string, protocol: 'bluesky' | 'activitypub' | 'mastodon' = 'bluesky'): void {
     if (!handle) return;
-    const url = `https://bsky.app/profile/${handle}`;
-    openInApp(url, `@${handle}`);
+    const store = useNavStore.getState();
+    const existing = store.tabs.find(
+        (t) => t.screen === 'profile-view' && t.meta?.handle === handle
+    );
+    if (existing) {
+        store.switchTab(existing.id);
+        return;
+    }
+    store.openTab('profile-view', `@${handle}`, { handle, protocol });
 }
 
 /**

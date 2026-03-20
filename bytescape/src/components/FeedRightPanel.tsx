@@ -1,6 +1,6 @@
 import { ProfileView, GeneratorView } from '../types';
 import { Win98Box } from './Win98Box';
-import { openBlueskyProfile } from '../utils/openInApp';
+import { openProfile } from '../utils/openInApp';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
 interface FeedRightPanelProps {
@@ -71,7 +71,7 @@ export function FeedRightPanel({
                                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', cursor: 'pointer' } as React.CSSProperties}
                                 onClick={() => {
                                     if (profile.handle) {
-                                        openBlueskyProfile(profile.handle);
+                                        openProfile(profile.handle);
                                     }
                                 }}
                                 title={`@${profile.handle}`}
@@ -186,7 +186,7 @@ export function FeedRightPanel({
                                 style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', cursor: 'pointer' } as React.CSSProperties}
                                 onClick={() => {
                                     if (profile.handle) {
-                                        openBlueskyProfile(profile.handle);
+                                        openProfile(profile.handle);
                                     }
                                 }}
                                 title={`@${profile.handle}`}

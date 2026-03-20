@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { BsChatDotsFill, BsPersonFill } from 'react-icons/bs';
 import { usePeerStore, useAuthStore } from '../store';
-import { openBlueskyProfile } from '../utils/openInApp';
+import { openProfile } from '../utils/openInApp';
 import { PeerInfo, ProfileView } from '../types';
 
 interface FriendsPanelProps {
@@ -270,7 +270,7 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
             onProfile(friend.nodeId, friend.displayName);
         } else if (isBsky && friend.handle) {
             // Open Bluesky profile in-app
-            openBlueskyProfile(friend.handle);
+            openProfile(friend.handle);
         }
     };
 

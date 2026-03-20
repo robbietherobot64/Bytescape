@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from '../types';
 import { usePeerStore, useNavStore } from '../store';
-import { openBlueskyProfile } from '../utils/openInApp';
+import { openProfile } from '../utils/openInApp';
 
 interface FriendsScreenProps {
     auth: AuthStatus | null;
@@ -614,7 +614,7 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
                             className="friend-info"
                             style={{ cursor: 'pointer', minWidth: 0 } as React.CSSProperties}
                             onClick={() => {
-                                if (person.handle) openBlueskyProfile(person.handle);
+                                if (person.handle) openProfile(person.handle);
                             }}
                             title={`View @${person.handle}'s profile`}
                         >
@@ -657,7 +657,7 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
                             )}
                             <button
                                 onClick={() => {
-                                    if (person.handle) openBlueskyProfile(person.handle);
+                                    if (person.handle) openProfile(person.handle);
                                 }}
                                 title={`View @${person.handle}'s profile`}
                                 style={{

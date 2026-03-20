@@ -11,13 +11,17 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenProps) {
-    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'import-only' | 'local-vault' | 'recover'>('welcome');
+    const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'connect-mastodon' | 'import-only' | 'local-vault' | 'recover'>('welcome');
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [importOnLogin, setImportOnLogin] = useState(true);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [oauthPending, setOauthPending] = useState(false);
+    
+    // Mastodon Flow State
+    const [isMastodonPending, setIsMastodonPending] = useState(false);
+    const [mastodonAuthCode, setMastodonAuthCode] = useState("");
 
     // Recovery flow state
     const [recoveryStep, setRecoveryStep] = useState<'paste' | 'code' | 'confirm'>('paste');
@@ -108,6 +112,51 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
             onLoginSuccess(status, importOnLogin);
         } catch (e: any) {
             setError(typeof e === "string" ? e : e.message || "Login failed");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleMastodonStart() {
+        setLoading(true);
+        setError("");
+        try {
+            // Trim and normalize instance URL
+            let instance = identifier.trim();
+            if (!instance) throw new Error("Instance URL is required");
+            if (instance.startsWith("http://")) instance = instance.slice(7);
+            if (instance.startsWith("https://")) instance = instance.slice(8);
+            instance = instance.split('/')[0];
+            
+            setIdentifier(instance);
+
+            const authUrl = await invoke<string>('mastodon_register_app', { instance });
+            await openUrl(authUrl);
+            setIsMastodonPending(true);
+        } catch (e: any) {
+            console.error("Mastodon auth start error:", e);
+            setError(e.toString());
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleMastodonComplete() {
+        if (!mastodonAuthCode.trim()) {
+            setError("Please enter the authorization code");
+            return;
+        }
+        setLoading(true);
+        setError("");
+        try {
+            const result = await invoke<AuthStatus>('mastodon_complete_auth', { 
+                instance: identifier, 
+                authCode: mastodonAuthCode.trim() 
+            });
+            onLoginSuccess(result, importOnLogin);
+        } catch (e: any) {
+            console.error("Mastodon auth complete error:", e);
+            setError(e.toString());
         } finally {
             setLoading(false);
         }
@@ -231,6 +280,14 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                         </div>
                                     </Win98Box>
 
+                                    <Win98Box variant="raised" className="login-option-card" onClick={() => setMode('connect-mastodon')}>
+                                        <span className="login-option-icon">🌐</span>
+                                        <div className="login-option-text">
+                                            <strong>Connect with Mastodon</strong>
+                                            <span className="text-muted">Federate with the open web</span>
+                                        </div>
+                                    </Win98Box>
+
                                     <Win98Box variant="raised" className="login-option-card" onClick={() => setMode('import-only')}>
                                         <span className="login-option-icon">📦</span>
                                         <div className="login-option-text">
@@ -347,6 +404,93 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
                                 <p className="login-hint">
                                     Your data never leaves your device. Bytescape stores everything locally.
                                 </p>
+                            </div>
+                        )}
+
+                        {mode === 'connect-mastodon' && (
+                            <div className="login-form">
+                                <div className="login-form-header">
+                                    <button className="btn btn-ghost login-back-btn" onClick={() => { 
+                                        setMode('welcome'); 
+                                        setError('');
+                                        setIsMastodonPending(false); 
+                                    }}>
+                                        ← Back
+                                    </button>
+                                    <span className="login-form-title">🌐 Connect Mastodon</span>
+                                </div>
+                                <p style={{ fontSize: '0.9rem', marginBottom: 15, color: 'var(--text-muted)' }}>
+                                    Enter your Mastodon instance URL to authorize Bytescape. Support and unified feed commands coming shortly.
+                                </p>
+
+                                {!isMastodonPending ? (
+                                    <>
+                                        <div className="field-group">
+                                            <label>Instance URL</label>
+                                            <input 
+                                                type="text" 
+                                                placeholder="e.g. mastodon.social" 
+                                                className="retro-input" 
+                                                value={identifier} 
+                                                onChange={e => setIdentifier(e.target.value)}
+                                                onKeyDown={(e) => { 
+                                                    if (e.key === 'Enter') handleMastodonStart();
+                                                }}
+                                                disabled={loading}
+                                            />
+                                        </div>
+                                        {error && <div className="login-error">{error}</div>}
+                                        <button
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', marginTop: 10 }}
+                                            onClick={handleMastodonStart}
+                                            disabled={loading}
+                                        >
+                                            {loading ? 'Connecting...' : 'Proceed to Instance'}
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="field-group">
+                                            <label>Authorization Code</label>
+                                            <p className="login-hint" style={{ marginTop: 0, marginBottom: 8 }}>
+                                                Paste the code from your browser below.
+                                            </p>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Paste code here" 
+                                                className="retro-input" 
+                                                value={mastodonAuthCode} 
+                                                onChange={e => setMastodonAuthCode(e.target.value)}
+                                                onKeyDown={(e) => { 
+                                                    if (e.key === 'Enter') handleMastodonComplete();
+                                                }}
+                                                disabled={loading}
+                                            />
+                                        </div>
+
+                                        <div className="login-options-row" style={{ marginTop: 15 }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem' }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={importOnLogin} 
+                                                    onChange={e => setImportOnLogin(e.target.checked)} 
+                                                />
+                                                Sync Feed on Login
+                                            </label>
+                                        </div>
+
+                                        {error && <div className="login-error">{error}</div>}
+                                        <button
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', marginTop: 10 }}
+                                            onClick={handleMastodonComplete}
+                                            disabled={loading}
+                                        >
+                                            {loading ? 'Completing...' : 'Complete Login'}
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
 

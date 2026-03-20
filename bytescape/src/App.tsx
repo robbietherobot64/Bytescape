@@ -54,6 +54,7 @@ import { AuditScreen } from "./screens/AuditScreen";
 import { ChatScreen } from "./screens/ChatScreen";
 import { FriendsScreen } from "./screens/FriendsScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
+import { ProfileViewScreen } from "./screens/ProfileViewScreen";
 import { ProfileBuilderScreen } from "./screens/ProfileBuilderScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { VaultScreen } from "./screens/VaultScreen";
@@ -498,13 +499,21 @@ function App() {
             isImporting={isImporting}
             onOpenChat={async (peerNodeId, peerName) => {
               const { setSelectedConvoId, setPendingConvoMeta } = useChatStore.getState();
-              if (peerNodeId.startsWith('did:')) {
+              if (peerNodeId.startsWith('did:plc:') || peerNodeId.startsWith('did:web:')) {
                 try {
                   const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
                   setSelectedConvoId(convoId);
-                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId });
+                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
                 } catch (e) {
                   console.error('Failed to get/create convo:', e);
+                }
+              } else if (peerNodeId.startsWith('http') || (peerName && peerName.includes('@'))) {
+                try {
+                  const convoId = peerNodeId;
+                  setSelectedConvoId(convoId);
+                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'activitypub' });
+                } catch (e) {
+                  console.error('Failed to get/create AP convo:', e);
                 }
               } else {
                 setSelectedConvoId(`p2p:${peerNodeId}`);
@@ -550,6 +559,8 @@ function App() {
         );
       case 'profile':
         return <ProfileScreen auth={auth} archiveCount={archiveCount} />;
+      case 'profile-view':
+        return <ProfileViewScreen handle={tab.meta?.handle || ''} protocol={tab.meta?.protocol as "bluesky" | "activitypub" | "mastodon" | undefined} />;
       case 'profile-builder':
         return <ProfileBuilderScreen />;
       case 'profile-browser':
@@ -562,13 +573,21 @@ function App() {
             auth={auth}
             onOpenChat={async (peerNodeId, peerName) => {
               const { setSelectedConvoId, setPendingConvoMeta } = useChatStore.getState();
-              if (peerNodeId.startsWith('did:')) {
+              if (peerNodeId.startsWith('did:plc:') || peerNodeId.startsWith('did:web:')) {
                 try {
                   const convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
                   setSelectedConvoId(convoId);
-                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId });
+                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
                 } catch (e) {
                   console.error('Failed to get/create convo:', e);
+                }
+              } else if (peerNodeId.startsWith('http') || (peerName && peerName.includes('@'))) {
+                try {
+                  const convoId = peerNodeId;
+                  setSelectedConvoId(convoId);
+                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'activitypub' });
+                } catch (e) {
+                  console.error('Failed to get/create AP convo:', e);
                 }
               } else {
                 setSelectedConvoId(`p2p:${peerNodeId}`);

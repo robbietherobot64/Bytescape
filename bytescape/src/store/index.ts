@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 // ─── Navigation Store ───
-export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile" | "webview";
+export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile" | "webview" | "profile-view";
 
 /** Browser-style tab descriptor */
 export interface TabItem {
@@ -244,6 +244,7 @@ export const usePeerStore = create<PeerState>((set) => ({
 interface PendingConvoMeta {
     did: string;
     handle: string;
+    protocol?: string;
 }
 
 interface ChatState {

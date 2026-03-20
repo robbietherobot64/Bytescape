@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { openBlueskyProfile } from '../utils/openInApp';
+import { openProfile } from '../utils/openInApp';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { FeedEntry, Audience, LikeResult, ThreadReply } from '../types';
@@ -250,7 +250,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     className="avatar"
                     onClick={() => {
                         if (entry.author_handle && entry.author_handle !== 'You') {
-                            openBlueskyProfile(entry.author_handle);
+                            openProfile(entry.author_handle);
                         }
                     }}
                     style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}
@@ -267,7 +267,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                         className="author-name"
                         onClick={() => {
                             if (entry.author_handle && entry.author_handle !== 'You') {
-                                openBlueskyProfile(entry.author_handle);
+                                openProfile(entry.author_handle);
                             }
                         }}
                         style={{ cursor: entry.author_handle && entry.author_handle !== 'You' ? 'pointer' : 'default' } as React.CSSProperties}

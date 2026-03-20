@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useAuthStore } from '../store';
-import { openBlueskyProfile } from '../utils/openInApp';
+import { openProfile } from '../utils/openInApp';
 import { VaultMessage, P2pConversation } from '../types';
 import { formatDate } from '../utils/date';
 import { Win98Box } from '../components/Win98Box';
@@ -14,10 +14,10 @@ import './ChatScreen.css';
    Layout: [Tabs + Convo List 240px] [Chat Area flex-1] [Buddy List 200px]
    ──────────────────────────────────────────────────────── */
 
-type ChatTab = 'bluesky' | 'p2p' | 'archives';
+type ChatTab = 'live' | 'p2p' | 'archives';
 
 const P2P_PREFIX = 'p2p:';
-const BLUESKY_SOURCES = new Set(['bluesky']);
+const LIVE_SOURCES = new Set(['bluesky', 'activitypub', 'mastodon']);
 
 interface BuddyInfo {
     handle: string;
@@ -39,7 +39,7 @@ export function ChatScreen() {
     const [showScrollBtn, setShowScrollBtn] = useState(false);
     const [buddies, setBuddies] = useState<BuddyInfo[]>([]);
     const [p2pConvos, setP2pConvos] = useState<P2pConversation[]>([]);
-    const [activeTab, setActiveTab] = useState<ChatTab>('bluesky');
+    const [activeTab, setActiveTab] = useState<ChatTab>('live');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -133,13 +133,13 @@ export function ChatScreen() {
     // Bluesky: source is "bluesky" and NOT p2p
     // Archives: everything else (Facebook, Instagram, etc.)
     const p2pConvoIds = filteredConvoIds.filter(cid => cid.startsWith(P2P_PREFIX));
-    const blueskyConvoIds = filteredConvoIds.filter(cid => {
+    const liveConvoIds = filteredConvoIds.filter(cid => {
         if (cid.startsWith(P2P_PREFIX)) return false;
         const src = (byConvo[cid]?.[0]?.source || '').toLowerCase();
-        return BLUESKY_SOURCES.has(src);
+        return LIVE_SOURCES.has(src);
     });
     const archivedConvoIds = filteredConvoIds.filter(cid =>
-        !cid.startsWith(P2P_PREFIX) && !blueskyConvoIds.includes(cid)
+        !cid.startsWith(P2P_PREFIX) && !liveConvoIds.includes(cid)
     );
 
     // P2P peers that have no messages yet — show them as empty convos
@@ -150,12 +150,12 @@ export function ChatScreen() {
 
     // Get the convo list for the active tab
     const tabConvoIds = activeTab === 'p2p' ? p2pConvoIds
-        : activeTab === 'bluesky' ? blueskyConvoIds
+        : activeTab === 'live' ? liveConvoIds
         : archivedConvoIds;
 
     // Tab counts for badges
     const tabCounts: Record<ChatTab, number> = {
-        bluesky: blueskyConvoIds.length,
+        live: liveConvoIds.length,
         p2p: p2pConvoIds.length + emptyP2pConvos.length,
         archives: archivedConvoIds.length,
     };
@@ -164,8 +164,8 @@ export function ChatScreen() {
     const activeIsP2p = selectedConvoId?.startsWith(P2P_PREFIX) ?? false;
     const activeSource = (activeConvoMsgs?.[0]?.source || '').toLowerCase();
     // A convo is "live" (can send messages) if it's P2P, Bluesky, or a newly created Bluesky convo with no messages yet
-    const isNewBlueskyConvo = !!(selectedConvoId && !activeIsP2p && !activeConvoMsgs && pendingConvoMeta);
-    const activeIsLive = activeIsP2p || BLUESKY_SOURCES.has(activeSource) || isNewBlueskyConvo;
+    const isNewConvo = !!(selectedConvoId && !activeIsP2p && !activeConvoMsgs && pendingConvoMeta);
+    const activeIsLive = activeIsP2p || LIVE_SOURCES.has(activeSource) || isNewConvo;
 
     // Derive title from participants
     let activeTitle = 'Chat';
@@ -178,15 +178,15 @@ export function ChatScreen() {
         const peerHandles = [...new Set(activeConvoMsgs.map(m => m.peer_handle).filter(Boolean))].filter(h => h !== auth?.handle);
         const allHandles = [...new Set([...senderHandles, ...peerHandles])];
         activeTitle = allHandles.length > 0 ? allHandles.join(', ') : 'Just You';
-    } else if (isNewBlueskyConvo && pendingConvoMeta) {
+    } else if (isNewConvo && pendingConvoMeta) {
         activeTitle = pendingConvoMeta.handle;
     }
 
     // Auto-switch to Bluesky tab when a Bluesky convo is selected (new or existing)
     useEffect(() => {
         if (!selectedConvoId || activeIsP2p) return;
-        if (isNewBlueskyConvo || BLUESKY_SOURCES.has(activeSource)) {
-            setActiveTab('bluesky');
+        if (isNewConvo || LIVE_SOURCES.has(activeSource)) {
+            setActiveTab('live');
         }
     }, [selectedConvoId]);
 
@@ -259,7 +259,8 @@ export function ChatScreen() {
                 // Reload to replace optimistic message with the persisted one
                 await loadMessages();
             } else {
-                // Bluesky DM
+                // Live protocol message (Bluesky, ActivityPub, etc)
+                const msgSource = activeSource || pendingConvoMeta?.protocol || 'bluesky';
                 const optimisticMsg: VaultMessage = {
                     id: `temp-${now}`,
                     convo_id: selectedConvoId,
@@ -267,16 +268,30 @@ export function ChatScreen() {
                     sender_handle: auth?.handle || '',
                     text,
                     sent_at: new Date().toISOString(),
-                    source: 'bluesky',
+                    source: msgSource,
                     imported_at: now,
                 };
                 setMessages(prev => [optimisticMsg, ...prev]);
 
-                await invoke<any>('send_bsky_dm', {
-                    convoId: selectedConvoId,
-                    recipientDid: null,
-                    content: text,
-                });
+                try {
+                    await invoke('send_message', {
+                        protocol: msgSource,
+                        convoId: selectedConvoId,
+                        text: text,
+                    });
+                } catch (err) {
+                    // Fallback for Bluesky until unified command is deployed
+                    if (msgSource === 'bluesky') {
+                        await invoke<any>('send_bsky_dm', {
+                            convoId: selectedConvoId,
+                            recipientDid: null,
+                            content: text,
+                        });
+                    } else {
+                        console.error('Unified send_message failed or unavailable for protocol:', msgSource, err);
+                        throw err;
+                    }
+                }
             }
         } catch (e) {
             console.error('Send failed:', e);
@@ -339,7 +354,7 @@ export function ChatScreen() {
                 {/* ── Tab Bar ── */}
                 <div className="chat-tab-bar">
                     {([
-                        { key: 'bluesky' as ChatTab, label: '🦋 Bluesky', color: '#1185fe' },
+                        { key: 'live' as ChatTab, label: '💬 Messages', color: '#1185fe' },
                         { key: 'p2p' as ChatTab,     label: '🔗 P2P',     color: '#a78bfa' },
                         { key: 'archives' as ChatTab, label: '📚 Archives', color: '#f59e0b' },
                     ]).map(tab => (
@@ -370,7 +385,7 @@ export function ChatScreen() {
                 <div className="chat-convo-scroll">
                     {tabConvoIds.length === 0 && (activeTab !== 'p2p' || emptyP2pConvos.length === 0) ? (
                         <div className="chat-convo-empty">
-                            {activeTab === 'bluesky' && 'No Bluesky conversations yet.'}
+                            {activeTab === 'live' && 'No Bluesky conversations yet.'}
                             {activeTab === 'p2p' && 'No P2P conversations yet.'}
                             {activeTab === 'archives' && 'No archived conversations.'}
                         </div>
@@ -417,7 +432,7 @@ export function ChatScreen() {
                             )}
 
                             {/* Bluesky tab */}
-                            {activeTab === 'bluesky' && blueskyConvoIds.map(cid => (
+                            {activeTab === 'live' && liveConvoIds.map(cid => (
                                 <ConvoItem
                                     key={cid}
                                     cid={cid}
@@ -458,7 +473,14 @@ export function ChatScreen() {
                             <span className="chat-main-title">{activeTitle}</span>
                             {activeIsP2p && <span className="chat-tab-badge" style={{ background: '#a78bfa', color: '#fff' }}>P2P</span>}
                             {!activeIsLive && !activeIsP2p && <span className="chat-tab-badge" style={{ background: '#f59e0b', color: '#fff' }}>Archive</span>}
-                            {!activeIsP2p && (BLUESKY_SOURCES.has(activeSource) || isNewBlueskyConvo) && <span className="chat-tab-badge" style={{ background: '#1185fe', color: '#fff' }}>Bluesky</span>}
+                            {!activeIsP2p && (LIVE_SOURCES.has(activeSource) || isNewConvo) && (
+                                <span className="chat-tab-badge" style={{ 
+                                    background: activeSource === 'activitypub' || activeSource === 'mastodon' ? '#10b981' : '#1185fe', 
+                                    color: '#fff' 
+                                }}>
+                                    {activeSource === 'activitypub' || activeSource === 'mastodon' ? '🌐 Fediverse' : '🦋 Bluesky'}
+                                </span>
+                            )}
                         </Win98Box>
 
                         <div className="chat-msg-scroll" ref={chatContainerRef} onScroll={handleChatScroll}>
@@ -471,12 +493,14 @@ export function ChatScreen() {
                                     </div>
                                 </div>
                             )}
-                            {(!activeConvoMsgs || activeConvoMsgs.length === 0) && isNewBlueskyConvo && (
+                            {(!activeConvoMsgs || activeConvoMsgs.length === 0) && isNewConvo && (
                                 <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
-                                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>🦋</div>
+                                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>
+                                        {pendingConvoMeta?.protocol === 'activitypub' || pendingConvoMeta?.protocol === 'mastodon' ? '🌐' : '🦋'}
+                                    </div>
                                     <div>New conversation with {pendingConvoMeta?.handle}</div>
                                     <div style={{ fontSize: '0.8rem', marginTop: 4, opacity: 0.7 }}>
-                                        Send a message to start chatting via Bluesky DM.
+                                        Send a message to start chatting via {pendingConvoMeta?.protocol === 'activitypub' || pendingConvoMeta?.protocol === 'mastodon' ? 'Fediverse' : 'Bluesky'} DM.
                                     </div>
                                 </div>
                             )}
@@ -571,9 +595,9 @@ export function ChatScreen() {
                         </div>
                     ) : (
                         <div className="friends-panel-group">
-                            <div className="friends-panel-group-label">
-                                <span className="friends-group-source-icon">🦋</span>
-                                Bluesky ({displayBuddies.length})
+                            <div className="friends-panel-group-label" style={{ display: 'flex', alignItems: 'center' }}>
+                                <span className="friends-group-source-icon" style={{ marginRight: 6 }}>👥</span>
+                                Contacts ({displayBuddies.length})
                             </div>
                             {displayBuddies.map(buddy => {
                                 const initial = (buddy.handle || '?')[0]?.toUpperCase() || '?';
@@ -631,7 +655,7 @@ export function ChatScreen() {
                                             <button
                                                 className="friend-item-action-btn"
                                                 onClick={() => {
-                                                    openBlueskyProfile(buddy.handle);
+                                                    openProfile(buddy.handle);
                                                 }}
                                                 title={`${buddy.handle}'s profile`}
                                             >
