@@ -4,6 +4,51 @@
 
 ---
 
+## 📋 Sprint v7 — Backend Track A: Mastodon/Lemmy Client (A1.2)
+
+**Commit**: `05d6d4b` on `main`
+**Date**: 2026-03-20
+**Build**: cargo 0 errors 0 warnings, 78/78 Rust tests, 264/264 frontend tests, tsc clean
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P1 | Mastodon OAuth2 | `register_app`, `complete_auth`, `mastodon_get_session`, `mastodon_disconnect` + keychain persistence | ✅ Complete |
+| P2 | Home Timeline | `mastodon_get_timeline` with 30s FeedCache TTL + rate limiting | ✅ Complete |
+| P3 | AP DMs | `send_mastodon_dm` (C2S) + `send_ap_dm` (S2S signed Create(Note)) + inbox DM detection | ✅ Complete |
+| P4 | Unified send_message | Dispatches across bluesky/mastodon/activitypub/p2p protocols | ✅ Complete |
+| P5 | Follow/Unfollow | C2S `mastodon_follow`/`mastodon_unfollow` + S2S `send_ap_follow`/`send_ap_unfollow` | ✅ Complete |
+| P6 | resolve_profile | Auto-detects protocol from handle format (@ → AP, did:/bsky → Bluesky) | ✅ Complete |
+| P7 | Harden get_or_create_bsky_convo | 10s timeout, retry on expired token, DID validation, chat scope error | ✅ Complete |
+| P8 | Rate limit handling | `rate_limit_request()` with 429 retry + Retry-After + X-RateLimit-Remaining monitoring | ✅ Complete |
+
+### New Files
+- `src-tauri/src/connectors/mastodon.rs` — 872 lines, complete Mastodon C2S API client (10 unit tests)
+- `src-tauri/src/commands/mastodon.rs` — 680 lines, 13 Tauri commands
+
+### Modified Files
+- `keychain_encrypted.rs` — `mastodon_session_json` field + `set/get/clear_mastodon_session()` methods
+- `activitypub/inbox.rs` — `DirectMessageReceived` variant, DM detection via as:Public absence in to/cc
+- `commands/import.rs` — `get_or_create_bsky_convo` hardened with timeout/retry/validation
+- `lib.rs` — 13 new commands registered in invoke_handler
+- `commands/mod.rs` — `pub mod mastodon` + re-export
+- `connectors/mod.rs` — `pub mod mastodon`
+
+### Frontend Unblocked
+Track B can now build Mastodon integration UI:
+- Connect/disconnect to Mastodon instances via OAuth2
+- Display Mastodon posts in unified feed
+- Send DMs across protocols with `send_message`
+- Follow/unfollow across protocols
+- Resolve profiles with auto-protocol detection
+
+### ROADMAP Items Advanced
+- **A1.2** Basic Mastodon/Lemmy Support → ✅ Complete (C2S client, DMs, follow/unfollow)
+- **A1.1** AP Actor dependency → Inbox DM detection added
+
+---
+
 ## 📋 Sprint v6 — PM Brief (2026-03-19)
 
 **Combined Sprint v6 delivery across Track A (Backend) and Track B (Frontend).**

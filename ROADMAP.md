@@ -144,7 +144,7 @@ To build a local-first Social Vault—an "Engine and Lens" system that bridges t
 Federation with the wider fediverse. Protocol implementation informed by [Streams](https://codeberg.org/streams/streams) / [Forte](https://codeberg.org/fortified/forte).
 
 - [x] **A1.1 AP Actor & Inbox/Outbox**: Create Bytescape AP actor at `bytescape.social/@{username}`. Implement HTTP signature verification, inbox POST handler, outbox GET endpoint. Add `ActivityPub` variant to `Source` enum. *(8 files, 1,636 lines, 22 tests. Commits: `7c58c40`, `a4e4062`, `28a6b8c`)*
-- [ ] **A1.2 Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via custom AP C2S/S2S client. Follow/Accept/Reject activities.
+- [x] **A1.2 Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via custom AP C2S/S2S client. Follow/Accept/Reject activities. *(Sprint v7 — `05d6d4b`)*
 - [ ] **A1.3 Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate.
 - [ ] **A1.4 Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
 - [ ] **A1.5 Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
