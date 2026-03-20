@@ -430,6 +430,8 @@ pub fn run() {
             commands::vault::delete_hashtag,
             commands::vault::list_followed_hashtags,
             commands::vault::list_hashtags,
+            commands::vault::add_followed_hashtag,
+            commands::vault::remove_followed_hashtag,
             commands::vault::clear_vault,
             commands::vault::list_vault_messages,
             commands::vault::count_archive_posts,

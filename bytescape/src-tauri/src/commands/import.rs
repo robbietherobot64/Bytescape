@@ -1255,80 +1255,124 @@ pub async fn get_timeline(
     Ok((all_posts, next_cursor))
 }
 
-/// Get the current user's Bluesky author feed (their own posts)
+/// Get the current user's own posts (Bluesky author feed + Mastodon statuses)
 #[tauri::command]
 pub async fn get_author_feed(
     state: State<'_, AppState>,
     limit: Option<u8>,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
-    let session = state.keychain.load_session()
-        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
-    let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+    use crate::connectors::bluesky::BlueskyImportedPost;
 
     let limit_val = limit.unwrap_or(50);
+    let mut all_posts: Vec<BlueskyImportedPost> = Vec::new();
+    let mut next_cursor: Option<String> = None;
 
-    if state.is_oauth_session() {
-        let pds_url = state.oauth_manager.get_pds_url().await?;
-        let mut url = format!(
-            "{}/xrpc/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
-            pds_url, urlencoding::encode(&user_did), limit_val
-        );
-        if let Some(ref c) = cursor {
-            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+    // ── 1. Try Bluesky author feed ──
+    let bluesky_result: Result<(Vec<BlueskyImportedPost>, Option<String>), String> = async {
+        let session = state.keychain.load_session()
+            .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+        let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
+
+        if state.is_oauth_session() {
+            let pds_url = state.oauth_manager.get_pds_url().await?;
+            let mut url = format!(
+                "{}/xrpc/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+                pds_url, urlencoding::encode(&user_did), limit_val
+            );
+            if let Some(ref c) = cursor {
+                url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+            }
+
+            let json = state.oauth_manager.authenticated_get(&url).await?;
+            let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
+            return Ok((posts, next_cursor));
         }
 
-        let json = state.oauth_manager.authenticated_get(&url).await?;
-        let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&json)?;
-        return Ok((posts, next_cursor));
+        let access_jwt = state.get_fresh_access_jwt().await
+            .map_err(|e| BytescapeError::AuthFailed(e))?;
+
+        let client = reqwest::Client::new();
+        let token = access_jwt.trim();
+
+        let mut feed_res = None;
+        let mut last_error = String::new();
+
+        for base in crate::connectors::bluesky::authenticated_xrpc_candidates(token, false) {
+            let mut url = format!(
+                "{}/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
+                base, urlencoding::encode(&user_did), limit_val
+            );
+            if let Some(ref c) = cursor {
+                url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+            }
+
+            let resp = client
+                .get(&url)
+                .bearer_auth(token)
+                .header("Accept", "application/json")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if resp.status().is_success() {
+                let body_text = resp.text().await.map_err(|e| e.to_string())?;
+                let (posts, nc) = crate::connectors::bluesky::parse_feed_json(&body_text)?;
+                feed_res = Some((posts, nc));
+                break;
+            }
+
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            last_error = format!("Failed to fetch author feed from {}: {} {}", base, status, body);
+        }
+
+        feed_res.ok_or_else(|| {
+            if last_error.is_empty() {
+                "No Bluesky session".to_string()
+            } else {
+                last_error
+            }
+        })
+    }.await;
+
+    match bluesky_result {
+        Ok((posts, nc)) => {
+            next_cursor = nc;
+            all_posts.extend(posts);
+        }
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("get_author_feed: Bluesky fetch skipped/failed: {}", e);
+        }
     }
 
-    let access_jwt = state.get_fresh_access_jwt().await
-        .map_err(|e| BytescapeError::AuthFailed(e))?;
+    // ── 2. Try Mastodon author statuses ──
+    let mastodon_result: Result<Vec<BlueskyImportedPost>, String> = async {
+        let session = crate::connectors::mastodon::get_session_from_keychain(&state.keychain)?;
+        crate::connectors::mastodon::get_account_statuses_as_bsky(
+            &state.http_client,
+            &session,
+            Some(limit_val as i32),
+        ).await
+    }.await;
 
-    let client = reqwest::Client::new();
-    let token = access_jwt.trim();
-
-    let mut feed_res = None;
-    let mut last_error = String::new();
-
-    for base in crate::connectors::bluesky::authenticated_xrpc_candidates(token, false) {
-        let mut url = format!(
-            "{}/app.bsky.feed.getAuthorFeed?actor={}&limit={}&filter=posts_and_author_threads",
-            base, urlencoding::encode(&user_did), limit_val
-        );
-        if let Some(ref c) = cursor {
-            url.push_str(&format!("&cursor={}", urlencoding::encode(c)));
+    match mastodon_result {
+        Ok(posts) => {
+            #[cfg(debug_assertions)]
+            println!("get_author_feed: Mastodon returned {} posts", posts.len());
+            all_posts.extend(posts);
         }
-
-        let resp = client
-            .get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if resp.status().is_success() {
-            let body_text = resp.text().await.map_err(|e| e.to_string())?;
-            let (posts, next_cursor) = crate::connectors::bluesky::parse_feed_json(&body_text)?;
-            feed_res = Some((posts, next_cursor));
-            break;
+        Err(_) => {
+            // No Mastodon session or fetch failed — that's fine
         }
-
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        last_error = format!("Failed to fetch author feed from {}: {} {}", base, status, body);
-        println!("{}", last_error);
     }
 
-    feed_res.ok_or_else(|| {
-        if last_error.is_empty() {
-            "Failed to fetch author feed: unknown error".to_string()
-        } else {
-            last_error
-        }
-    })
+    // ── 3. Sort merged results by timestamp ──
+    all_posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all_posts.truncate(limit_val as usize);
+
+    Ok((all_posts, next_cursor))
 }
 
 /// Import Bluesky DM messages
@@ -2252,12 +2296,33 @@ pub async fn get_unified_feed(
     }
 
     // Cache miss — hit network
-    let result = if state.is_oauth_session() {
-        get_unified_feed_oauth(&state, tags, feed_uris, limit, cursor).await
+    let mut result = if state.is_oauth_session() {
+        get_unified_feed_oauth(&state, tags.clone(), feed_uris, limit, cursor).await
     } else {
         let access_jwt = state.get_fresh_access_jwt().await?;
-        crate::connectors::bluesky::get_unified_feed(&access_jwt, tags, Some(feed_uris), limit, cursor).await
+        crate::connectors::bluesky::get_unified_feed(&access_jwt, tags.clone(), Some(feed_uris), limit, cursor).await
     };
+
+    // Merge Mastodon hashtag posts into non-OAuth path results too
+    if !tags.is_empty() {
+        if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+            if let Ok((ref mut posts, _)) = result {
+                let per_tag = (limit / tags.len().max(1) as u8).max(5);
+                for tag in &tags {
+                    if let Ok(masto_posts) = crate::connectors::mastodon::get_hashtag_timeline_as_bsky(
+                        &state.http_client, &session, tag, Some(per_tag as i32),
+                    ).await {
+                        posts.extend(masto_posts);
+                    }
+                }
+                // Re-dedup and re-sort after merge
+                let mut seen = std::collections::HashSet::new();
+                posts.retain(|p| seen.insert(p.uri.clone()));
+                posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                posts.truncate(limit as usize);
+            }
+        }
+    }
 
     // Store in cache on success (first page only)
     if let (Some(ref key), Ok(ref data)) = (&cache_key, &result) {
@@ -2381,6 +2446,28 @@ async fn get_unified_feed_oauth(
         all_posts.extend(posts);
         if let Some(c) = cursor {
             next_cursor.feed_cursors.insert(uri, c);
+        }
+    }
+
+    // 2b. Mastodon hashtag timelines — fetch each subscribed tag from Mastodon
+    if !tags.is_empty() {
+        if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+            let http = &state.http_client;
+            let per_tag_limit = (limit / tags.len().max(1) as u8).max(5);
+            for tag in &tags {
+                match crate::connectors::mastodon::get_hashtag_timeline_as_bsky(
+                    http, &session, tag, Some(per_tag_limit as i32),
+                ).await {
+                    Ok(posts) => {
+                        #[cfg(debug_assertions)]
+                        println!("get_unified_feed_oauth: Mastodon #{} returned {} posts", tag, posts.len());
+                        all_posts.extend(posts);
+                    }
+                    Err(e) => {
+                        eprintln!("get_unified_feed_oauth: Mastodon #{} error: {}", tag, e);
+                    }
+                }
+            }
         }
     }
 

@@ -373,6 +373,37 @@ pub async fn list_hashtags(state: State<'_, AppState>) -> std::result::Result<Ve
     list_followed_hashtags(state).await
 }
 
+/// Add a followed hashtag and return the refreshed list.
+///
+/// The frontend calls this (not `save_hashtag`) because it expects
+/// the updated list back immediately.
+#[tauri::command]
+pub async fn add_followed_hashtag(state: State<'_, AppState>, hashtag: String) -> std::result::Result<Vec<String>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    db.save_hashtag(hashtag).await
+        .map_err(|e| e.to_string())?;
+
+    db.list_followed_hashtags().await
+        .map_err(|e| e.to_string())
+}
+
+/// Remove a followed hashtag and return the refreshed list.
+#[tauri::command]
+pub async fn remove_followed_hashtag(state: State<'_, AppState>, hashtag: String) -> std::result::Result<Vec<String>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    db.delete_hashtag(hashtag).await
+        .map_err(|e| e.to_string())?;
+
+    db.list_followed_hashtags().await
+        .map_err(|e| e.to_string())
+}
+
 /// Clear all items from the vault
 #[tauri::command]
 pub async fn clear_vault(state: State<'_, AppState>) -> std::result::Result<usize, String> {

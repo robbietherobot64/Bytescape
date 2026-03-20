@@ -322,6 +322,81 @@ pub async fn get_home_timeline_as_bsky(
         .collect())
 }
 
+/// Fetch the authenticated user's own statuses as BlueskyImportedPost.
+///
+/// Mastodon API: `GET /api/v1/accounts/:id/statuses`
+pub async fn get_account_statuses_as_bsky(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    limit: Option<i32>,
+) -> Result<Vec<crate::connectors::bluesky::BlueskyImportedPost>, String> {
+    let url = format!(
+        "{}/api/v1/accounts/{}/statuses?limit={}&exclude_replies=false&exclude_reblogs=false",
+        session.instance,
+        session.account_id,
+        limit.unwrap_or(40).min(40),
+    );
+
+    let resp = rate_limit_request(
+        http_client
+            .get(&url)
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Account statuses fetch failed ({}): {}", status, body));
+    }
+
+    let statuses: Vec<MastodonStatus> = resp.json().await
+        .map_err(|e| format!("Invalid account statuses response: {}", e))?;
+
+    Ok(statuses
+        .iter()
+        .map(|s| status_to_bsky_post(&session.instance, s))
+        .collect())
+}
+
+/// Fetch a public hashtag timeline as BlueskyImportedPost.
+///
+/// Mastodon API: `GET /api/v1/timelines/tag/:hashtag`
+/// Does NOT require authentication on most instances (public endpoint).
+pub async fn get_hashtag_timeline_as_bsky(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    hashtag: &str,
+    limit: Option<i32>,
+) -> Result<Vec<crate::connectors::bluesky::BlueskyImportedPost>, String> {
+    let tag = hashtag.trim_start_matches('#');
+    let url = format!(
+        "{}/api/v1/timelines/tag/{}?limit={}",
+        session.instance,
+        urlencoding::encode(tag),
+        limit.unwrap_or(20).min(40),
+    );
+
+    let resp = rate_limit_request(
+        http_client
+            .get(&url)
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Hashtag timeline fetch failed ({}): {}", status, body));
+    }
+
+    let statuses: Vec<MastodonStatus> = resp.json().await
+        .map_err(|e| format!("Invalid hashtag timeline response: {}", e))?;
+
+    Ok(statuses
+        .iter()
+        .map(|s| status_to_bsky_post(&session.instance, s))
+        .collect())
+}
+
 // ──────────────────────────────────────────────────
 // Direct Messages
 // ──────────────────────────────────────────────────
