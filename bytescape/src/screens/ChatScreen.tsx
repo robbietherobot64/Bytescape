@@ -40,6 +40,8 @@ export function ChatScreen() {
     const [buddies, setBuddies] = useState<BuddyInfo[]>([]);
     const [p2pConvos, setP2pConvos] = useState<P2pConversation[]>([]);
     const [activeTab, setActiveTab] = useState<ChatTab>('live');
+    const [messagesLoading, setMessagesLoading] = useState(true);
+    const [startingConvoDid, setStartingConvoDid] = useState<string | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -81,10 +83,13 @@ export function ChatScreen() {
 
     async function loadMessages() {
         try {
+            setMessagesLoading(true);
             const msgs = await invoke<VaultMessage[]>('list_vault_messages');
             setMessages(msgs);
         } catch (e) {
             console.error('Failed to load messages:', e);
+        } finally {
+            setMessagesLoading(false);
         }
     }
 
@@ -383,7 +388,20 @@ export function ChatScreen() {
                     />
                 </div>
                 <div className="chat-convo-scroll">
-                    {tabConvoIds.length === 0 && (activeTab !== 'p2p' || emptyP2pConvos.length === 0) ? (
+                    {messagesLoading && Object.keys(byConvo).length === 0 ? (
+                        <div style={{ padding: 12 }}>
+                            {Array.from({ length: 5 }).map((_, i) => (
+                                <div key={i} style={{ 
+                                    height: 50, 
+                                    background: 'var(--bg-tertiary)', 
+                                    marginBottom: 8, 
+                                    borderRadius: 4, 
+                                    opacity: 0.6 - (i * 0.1),
+                                    animation: 'pulse 1.5s infinite' 
+                                }} />
+                            ))}
+                        </div>
+                    ) : tabConvoIds.length === 0 && (activeTab !== 'p2p' || emptyP2pConvos.length === 0) ? (
                         <div className="chat-convo-empty">
                             {activeTab === 'live' && 'No Bluesky conversations yet.'}
                             {activeTab === 'p2p' && 'No P2P conversations yet.'}
@@ -627,6 +645,7 @@ export function ChatScreen() {
                                         <div className="friend-item-actions">
                                             <button
                                                 className="friend-item-action-btn"
+                                                disabled={startingConvoDid === buddy.did}
                                                 onClick={async () => {
                                                     // Find or select the conversation with this buddy
                                                     const convoId = Object.keys(byConvo).find(cid => {
@@ -640,17 +659,20 @@ export function ChatScreen() {
                                                     } else {
                                                         // Create a new conversation with this buddy
                                                         try {
+                                                            setStartingConvoDid(buddy.did);
                                                             const newConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
                                                             setSelectedConvoId(newConvoId);
                                                             setPendingConvoMeta({ did: buddy.did, handle: buddy.handle });
                                                         } catch (e) {
                                                             console.error('Failed to create convo:', e);
+                                                        } finally {
+                                                            setStartingConvoDid(null);
                                                         }
                                                     }
                                                 }}
                                                 title={`Message ${buddy.handle}`}
                                             >
-                                                <BsChatDotsFill size={11} />
+                                                {startingConvoDid === buddy.did ? '⏳' : <BsChatDotsFill size={11} />}
                                             </button>
                                             <button
                                                 className="friend-item-action-btn"

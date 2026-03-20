@@ -1,3 +1,4 @@
+import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AuthStatus, BytescapeItem } from '../types';

@@ -1,0 +1,144 @@
+/* ─── 17. FRIENDS / SOCIAL SCREEN ─── */
+.friends-layout {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Also match friends-screen which is used in the component */
+.friends-screen {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    max-width: var(--screen-max-width, 1200px);
+    margin: 0 auto;
+    width: 100%;
+}
+
+.friends-sidebar {
+    width: 160px;
+    background: var(--bg-panel);
+    border-right: 2px solid #999;
+    padding: 8px;
+    padding-top: calc(8px + var(--safe-top));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-shrink: 0;
+    box-shadow: var(--bevel-sunken);
+}
+
+.friends-sidebar-btn {
+    padding: 4px 8px;
+    background: var(--bg-toolbar);
+    color: var(--text-secondary);
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: normal;
+    text-align: left;
+    font-family: var(--font-sans);
+    box-shadow: var(--bevel-raised);
+    border-radius: 0;
+}
+
+.friends-sidebar-btn:hover { background: #d8d0c8; }
+.friends-sidebar-btn.active {
+    background: var(--bg-content);
+    font-weight: bold;
+    box-shadow: var(--bevel-pressed);
+}
+
+.friends-content {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    min-width: 0;
+    padding: 12px;
+    background: var(--bg-content);
+}
+
+.friends-header {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: static;
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: auto;
+    box-shadow: none;
+}
+
+.friends-header h1 {
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.friends-count-badge {
+    background: var(--bg-toolbar);
+    color: var(--text-primary);
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border: 1px solid #999;
+    font-family: var(--font-mono);
+    border-radius: 0;
+}
+
+.friends-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+.friend-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-card);
+    border: 1px solid #999;
+    padding: 8px 10px;
+    box-shadow: 1px 1px 0 #888;
+}
+
+.friend-card:hover {
+    border-color: var(--link-blue);
+    box-shadow: 2px 2px 0 #666;
+}
+
+.friend-avatar {
+    width: 36px; height: 36px;
+    overflow: hidden; flex-shrink: 0;
+    background: var(--bg-toolbar);
+    border: 2px solid #888;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 0;
+}
+
+.friend-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.avatar-placeholder {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: bold;
+}
+
+.friend-info { flex: 1; min-width: 0; }
+.friend-handle { font-size: 11px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--link-blue); }
+.friend-display-name { font-size: 10px; color: var(--text-muted); }
+
+.friend-bio {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.friend-source { flex-shrink: 0; }
+
