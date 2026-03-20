@@ -1,6 +1,7 @@
 pub mod bluesky;
 pub mod facebook;
 pub mod instagram;
+pub mod mastodon;
 
 use serde::{Deserialize, Serialize};
 

@@ -20,6 +20,7 @@ pub mod unfurl;
 pub mod classify;
 pub mod export;
 pub mod browser;
+pub mod mastodon;
 
 // Re-export all commands for easy registration in lib.rs
 pub use node::*;
@@ -36,3 +37,4 @@ pub use ap::*;
 pub use profile::*;
 pub use unfurl::*;
 pub use browser::*;
+pub use mastodon::*;

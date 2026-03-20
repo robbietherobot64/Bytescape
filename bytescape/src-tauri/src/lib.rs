@@ -547,6 +547,21 @@ pub fn run() {
             commands::ap::send_ap_activity,
             commands::ap::fetch_remote_actor,
             commands::ap::resolve_webfinger,
+            
+            // Mastodon & AP commands (A1.2)
+            commands::mastodon::mastodon_register_app,
+            commands::mastodon::mastodon_complete_auth,
+            commands::mastodon::mastodon_get_session,
+            commands::mastodon::mastodon_disconnect,
+            commands::mastodon::mastodon_get_timeline,
+            commands::mastodon::send_mastodon_dm,
+            commands::mastodon::send_ap_dm,
+            commands::mastodon::send_message,
+            commands::mastodon::mastodon_follow,
+            commands::mastodon::mastodon_unfollow,
+            commands::mastodon::send_ap_follow,
+            commands::mastodon::send_ap_unfollow,
+            commands::mastodon::resolve_profile,
         ])
         .setup(|app| {
             // Initialize application state

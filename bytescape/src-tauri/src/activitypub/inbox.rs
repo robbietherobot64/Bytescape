@@ -8,6 +8,13 @@ pub enum InboxResult {
     Accepted,
     FollowReceived { from: String },
     ObjectReceived { activity_type: String, object_id: String },
+    /// A DM was received (Create(Note) addressed only to specific actors, not as:Public).
+    DirectMessageReceived {
+        from_actor: String,
+        from_name: String,
+        object_id: String,
+        text: String,
+    },
     Undone { activity_type: String },
     Ignored,
 }
@@ -186,13 +193,70 @@ async fn handle_announce(activity: &serde_json::Value) -> Result<InboxResult, St
 }
 
 async fn handle_create(activity: &serde_json::Value) -> Result<InboxResult, String> {
-    let object_id = activity.get("object")
+    let object = activity.get("object");
+
+    let object_id = object
         .and_then(|o| o.get("id"))
         .and_then(|id| id.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    let from_actor = activity.get("actor")
+        .and_then(|a| a.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // DM detection: a Note is a DM if `to` does NOT contain as:Public and
+    // `cc` also does NOT contain as:Public. This matches the Mastodon convention
+    // where direct messages are Notes addressed only to specific actors.
+    let ap_public = "https://www.w3.org/ns/activitystreams#Public";
+
+    let is_dm = if let Some(obj) = object {
+        let to_contains_public = obj.get("to")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().any(|v| v.as_str() == Some(ap_public)))
+            .unwrap_or(false);
+        let cc_contains_public = obj.get("cc")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().any(|v| v.as_str() == Some(ap_public)))
+            .unwrap_or(false);
+
+        !to_contains_public && !cc_contains_public
+    } else {
+        false
+    };
+
+    if is_dm {
+        let text = object
+            .and_then(|o| o.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Strip HTML from the content
+        let clean_text = crate::connectors::mastodon::strip_html(&text);
+
+        // Try to get a human-readable name from attributedTo or actor
+        let from_name = object
+            .and_then(|o| o.get("attributedTo"))
+            .and_then(|a| a.as_str())
+            .unwrap_or(&from_actor)
+            .to_string();
+
+        #[cfg(debug_assertions)]
+        println!("[AP inbox] DM received from {} — object: {}", from_actor, object_id);
+
+        return Ok(InboxResult::DirectMessageReceived {
+            from_actor,
+            from_name,
+            object_id,
+            text: clean_text,
+        });
+    }
+
     #[cfg(debug_assertions)]
     println!("[AP inbox] Create received for: {}", object_id);
+
     Ok(InboxResult::ObjectReceived {
         activity_type: "Create".to_string(),
         object_id,

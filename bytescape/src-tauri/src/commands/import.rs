@@ -1932,30 +1932,75 @@ pub async fn get_or_create_bsky_convo(
         return Err("member_did is required".into());
     }
 
+    // Guard: member_did should look like a DID
+    if !member_did.starts_with("did:") {
+        return Err(format!(
+            "Invalid member_did '{}' — expected a DID (e.g., did:plc:...)",
+            member_did,
+        ));
+    }
+
+    // 10s timeout to prevent indefinite hangs
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        get_or_create_bsky_convo_inner(&state, &member_did),
+    )
+    .await
+    .map_err(|_| "Bluesky chat convo lookup timed out after 10s — try again".to_string())?;
+
+    match result {
+        Ok(id) => Ok(id),
+        Err(ref e) if e.contains("ExpiredToken") || e.contains("401") => {
+            // Retry once after forcing a session refresh
+            #[cfg(debug_assertions)]
+            println!("[get_or_create_bsky_convo] Token expired, retrying after refresh");
+            if !state.is_oauth_session() {
+                let _ = state.get_fresh_access_jwt().await;
+            }
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                get_or_create_bsky_convo_inner(&state, &member_did),
+            )
+            .await
+            .map_err(|_| "Retry timed out after 10s".to_string())?
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Inner implementation without timeout/retry wrappers.
+async fn get_or_create_bsky_convo_inner(
+    state: &AppState,
+    member_did: &str,
+) -> std::result::Result<String, String> {
     if state.is_oauth_session() {
-        // OAuth path: use xrpc_chat_get which handles DPoP + atproto-proxy
         let endpoint = format!(
             "chat.bsky.convo.getConvoForMembers?members={}",
-            member_did
+            member_did,
         );
         let resp = state.xrpc_chat_get(&endpoint).await
-            .map_err(|e| format!("Failed to get/create convo: {}", e))?;
+            .map_err(|e| {
+                if e.contains("chat") && (e.contains("scope") || e.contains("403")) {
+                    "Chat scope not enabled for this OAuth session — re-authenticate with chat permissions".to_string()
+                } else {
+                    format!("Failed to get/create convo: {}", e)
+                }
+            })?;
 
         let convo_id = resp
             .get("convo")
             .and_then(|c| c.get("id"))
             .and_then(|id| id.as_str())
-            .ok_or_else(|| "Response missing convo.id".to_string())?;
+            .ok_or_else(|| "Response missing convo.id — unexpected API response format".to_string())?;
 
         Ok(convo_id.to_string())
     } else {
-        // App-password path: use ChatClient directly
         let access_jwt = state.get_fresh_access_jwt().await?;
         let user_did = state.get_user_did()?;
         let chat_client = state.chat_client.clone();
 
         let convo = chat_client
-            .get_or_create_convo(&access_jwt, &user_did, &member_did)
+            .get_or_create_convo(&access_jwt, &user_did, member_did)
             .await?;
 
         Ok(convo.id)

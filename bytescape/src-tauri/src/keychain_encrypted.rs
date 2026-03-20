@@ -60,6 +60,9 @@ pub struct AuthData {
     pub recovery_pending_verified_secret: Option<String>,
     /// Last successful recovery timestamp.
     pub recovery_last_recovered_at: Option<u64>,
+    /// Serialized Mastodon session + app credentials (JSON blob).
+    #[serde(default)]
+    pub mastodon_session_json: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -913,6 +916,47 @@ impl EncryptedKeychain {
         }
         
         Ok(true) // No refresh timestamp, needs refresh
+    }
+
+    /// Save a serialized Mastodon session JSON blob.
+    pub fn set_mastodon_session(&self, json: &str) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        let mut data = cache.clone().unwrap_or_default();
+        data.mastodon_session_json = Some(json.to_string());
+        self.save_encrypted(&data)?;
+        *cache = Some(data);
+        Ok(())
+    }
+
+    /// Retrieve the stored Mastodon session JSON blob, if any.
+    pub fn get_mastodon_session(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.mastodon_session_json.clone());
+        }
+        // Attempt load from disk
+        drop(cache);
+        if let Some(data) = self.load_encrypted()? {
+            let result = data.mastodon_session_json.clone();
+            let mut cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            *cache = Some(data);
+            return Ok(result);
+        }
+        Ok(None)
+    }
+
+    /// Clear the stored Mastodon session.
+    pub fn clear_mastodon_session(&self) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref mut data) = *cache {
+            data.mastodon_session_json = None;
+            self.save_encrypted(data)?;
+        }
+        Ok(())
     }
 }
 
