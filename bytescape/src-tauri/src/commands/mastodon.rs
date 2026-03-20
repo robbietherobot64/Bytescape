@@ -33,20 +33,16 @@ fn masto_session_lock() -> &'static tokio::sync::Mutex<Option<MastodonSession>> 
 
 /// Register Bytescape as an OAuth app on a Mastodon instance.
 ///
-/// Returns `{ auth_url, instance, client_id }`.
+/// Returns the OAuth authorization URL as a plain string for `openUrl()`.
 #[tauri::command]
 pub async fn mastodon_register_app(
     state: State<'_, AppState>,
     instance: String,
-) -> Result<serde_json::Value, String> {
+) -> Result<String, String> {
     let (app, auth_url) = mastodon::register_app(&state.http_client, &instance).await?;
-    *pending_app().lock().await = Some(app.clone());
+    *pending_app().lock().await = Some(app);
 
-    Ok(serde_json::json!({
-        "auth_url": auth_url,
-        "instance": app.instance,
-        "client_id": app.client_id,
-    }))
+    Ok(auth_url)
 }
 
 /// Complete Mastodon OAuth2 by exchanging the auth code for an access token.
@@ -78,11 +74,17 @@ pub async fn mastodon_complete_auth(
     state.keychain.set_mastodon_session(&json_str)
         .map_err(|e| format!("Keychain save failed: {}", e))?;
 
-    let session_json = serde_json::to_value(&session)
-        .map_err(|e| format!("Serialize error: {}", e))?;
+    // Build AuthStatus-shaped response that frontend expects
+    let instance_host = session.instance.replace("https://", "").replace("http://", "");
+    let auth_status = serde_json::json!({
+        "handle": session.acct,
+        "did": format!("mastodon:{}:{}", instance_host, session.account_id),
+        "source": "mastodon",
+        "identity_ready": true,
+    });
     *masto_session_lock().lock().await = Some(session);
 
-    Ok(session_json)
+    Ok(auth_status)
 }
 
 /// Get current Mastodon session (from memory or restore from keychain).
