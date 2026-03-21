@@ -428,38 +428,32 @@ pub async fn clear_vault(state: State<'_, AppState>) -> std::result::Result<usiz
     Ok(cleared_db + cleared_files)
 }
 
-/// List vault messages
+/// List vault messages.
+///
+/// Uses `all_owner_dids()` so messages stamped under any of the user's
+/// historical DIDs (Bluesky did:plc, web_did, Mastodon acct: URI, did:key)
+/// are all returned. This prevents the "messages disappear" bug that
+/// occurs when the user's primary DID changes (e.g. after setting a
+/// Bytescape username or linking a new account).
 #[tauri::command]
 pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Result<Vec<crate::db::VaultMessage>, String> {
-    let owner_did = state.keychain.get_owner_did()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| BytescapeError::Unauthenticated)?;
+    let all_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
 
-    println!("list_vault_messages: filtering by owner_did={}", owner_did);
+    if all_dids.is_empty() {
+        return Err(BytescapeError::Unauthenticated.to_string());
+    }
+
+    println!("list_vault_messages: filtering by {} DIDs: {:?}", all_dids.len(), all_dids);
 
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
-    let msgs = db.list_vault_messages(Some(&owner_did)).await
+    let msgs = db.list_vault_messages_multi(all_dids.clone()).await
         .map_err(|e| e.to_string())?;
     
-    println!("list_vault_messages: found {} messages for owner {}", msgs.len(), owner_did);
-    
-    // If zero messages but there ARE messages in the DB for other owners, log it
-    if msgs.is_empty() {
-        let all_msgs = db.list_vault_messages(None).await.unwrap_or_default();
-        if !all_msgs.is_empty() {
-            let sample_owners: Vec<String> = all_msgs.iter()
-                .take(5)
-                .filter_map(|m| m.owner_did.clone())
-                .collect();
-            eprintln!(
-                "list_vault_messages: WARNING — {} messages exist in DB but NONE match owner_did={}. Sample stored owner_dids: {:?}",
-                all_msgs.len(), owner_did, sample_owners
-            );
-        }
-    }
+    println!("list_vault_messages: found {} messages across {} DIDs", msgs.len(), all_dids.len());
     
     Ok(msgs)
 }

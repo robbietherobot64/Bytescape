@@ -1395,6 +1395,13 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
     println!("import_vault_messages: user_did={}, is_oauth={}", user_did, state.is_oauth_session());
     let db_manager = state.db_manager.clone();
 
+    // Use get_owner_did() for stamping messages — this is the identity-stable
+    // DID that list_vault_messages will match against via all_owner_dids().
+    // user_did (Bluesky DID) is still needed for API calls (member filtering).
+    let stamp_did = state.keychain.get_owner_did()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| user_did.clone());
+
     if state.is_oauth_session() {
         // OAuth path: use xrpc_chat_get with DPoP + atproto-proxy
         // Paginate through all conversations using cursor-based pagination.
@@ -1534,7 +1541,7 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
 
                     let vault_msg = VaultMessage {
                         id: msg_id.to_string(),
-                        owner_did: Some(user_did.clone()),
+                        owner_did: Some(stamp_did.clone()),
                         convo_id: convo_id.to_string(),
                         sender_did,
                         sender_handle,
@@ -1596,7 +1603,7 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
         for msg in messages {
             let vault_msg = VaultMessage {
                 id: msg.id.clone(),
-                owner_did: Some(user_did.clone()),
+                owner_did: Some(stamp_did.clone()),
                 convo_id: convo.id.clone(),
                 sender_did: msg.sender.did.clone(),
                 sender_handle: msg.sender.handle.clone().unwrap_or_default(),
@@ -1930,6 +1937,11 @@ pub async fn send_bsky_dm(
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
     let (user_did, _user_handle) = session.ok_or_else(|| BytescapeError::Unauthenticated)?;
 
+    // Stamp with the identity-stable owner DID so messages survive DID changes
+    let stamp_did = state.keychain.get_owner_did()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| user_did.clone());
+
     if state.is_oauth_session() {
         // OAuth path: use xrpc_chat_post with DPoP + atproto-proxy
         let body = serde_json::json!({
@@ -1950,7 +1962,7 @@ pub async fn send_bsky_dm(
 
         let vault_msg = crate::db::VaultMessage {
             id: msg_id.clone(),
-            owner_did: Some(user_did.clone()),
+            owner_did: Some(stamp_did.clone()),
             convo_id: convo_id.clone(),
             sender_did: user_did.clone(),
             sender_handle: _user_handle.clone(),
@@ -1991,7 +2003,7 @@ pub async fn send_bsky_dm(
     
     let vault_msg = crate::db::VaultMessage {
         id: msg.id.clone(),
-        owner_did: Some(user_did.clone()),
+        owner_did: Some(stamp_did.clone()),
         convo_id: convo_id.clone(),
         sender_did: user_did.clone(),
         sender_handle: _user_handle.clone(),
@@ -2516,19 +2528,25 @@ async fn get_unified_feed_oauth(
         }
     }
 
-    // 2. Custom feed posts — fetch ALL feeds concurrently via OAuth
+    // 2. Custom feed posts — fetch feeds concurrently via OAuth
     //
-    // Previously this was a serial `for` loop — with N feeds × 1.5–3s per
-    // round-trip, this caused 15–25s delays. Now that the OAuth session lock
-    // is released before network calls (Arc<OAuthSession> restructuring),
-    // join_all runs all fetches truly in parallel.
+    // When feed_uris is empty AND tags are provided, the caller wants
+    // hashtag-only results — do NOT fall back to all saved feeds.
+    // Only fall back when BOTH are empty (show-everything default).
     let uris = if feed_uris.is_empty() {
-        match list_saved_feeds_oauth(state).await {
-            Ok(views) => views.into_iter()
-                .map(|v| v.uri)
-                .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
-                .collect(),
-            Err(_) => Vec::new(),
+        if !tags.is_empty() {
+            // Hashtag solo mode — skip feed fetching entirely
+            #[cfg(debug_assertions)]
+            println!("OAuth unified feed: tags provided with empty feed_uris, skipping feed fetch");
+            Vec::new()
+        } else {
+            match list_saved_feeds_oauth(state).await {
+                Ok(views) => views.into_iter()
+                    .map(|v| v.uri)
+                    .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
         }
     } else {
         feed_uris

@@ -1012,6 +1012,56 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
+    /// Collect ALL known DIDs for the current user.
+    ///
+    /// Messages/items may have been stamped with *any* of these DIDs at
+    /// different points in the identity lifecycle (before username was set,
+    /// before Mastodon was linked, etc.). Use this set for inclusive
+    /// owner-matching instead of `get_owner_did()` which returns only the
+    /// current highest-priority DID.
+    pub fn all_owner_dids(&self) -> Result<Vec<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+
+        let data = match &*cache {
+            Some(d) => d.clone(),
+            None => {
+                drop(cache);
+                match self.load_encrypted()? {
+                    Some(d) => {
+                        let mut c = self.cache.lock()
+                            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+                        *c = Some(d.clone());
+                        d
+                    }
+                    None => return Ok(Vec::new()),
+                }
+            }
+        };
+
+        let mut dids: Vec<String> = Vec::new();
+        if let Some(ref d) = data.web_did { dids.push(d.clone()); }
+        if let Some(ref d) = data.did { dids.push(d.clone()); }
+        for la in &data.linked_accounts {
+            if !dids.contains(&la.identifier) {
+                dids.push(la.identifier.clone());
+            }
+            // Also include the platform_identifier (acct: URI) for Mastodon DMs
+            if let Some(ref pi) = la.platform_identifier {
+                if !dids.contains(pi) {
+                    dids.push(pi.clone());
+                }
+            }
+        }
+        if let Some(ref d) = data.master_did {
+            if !dids.contains(d) { dids.push(d.clone()); }
+        }
+        if let Some(ref d) = data.local_identity_did {
+            if !dids.contains(d) { dids.push(d.clone()); }
+        }
+        Ok(dids)
+    }
+
     /// Get the Bluesky DID specifically (for AT Protocol API calls).
     /// This returns the did:plc:... used for Bluesky authentication.
     pub fn get_bluesky_did(&self) -> Result<Option<String>, BytescapeError> {

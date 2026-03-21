@@ -119,6 +119,16 @@ impl DbManager {
     }
 
     pub async fn list_vault_messages(&self, owner_did: Option<&str>) -> Result<Vec<VaultMessage>, String> {
+        self.list_vault_messages_multi(owner_did.map(|d| vec![d.to_string()]).unwrap_or_default()).await
+    }
+
+    /// List vault messages matching ANY of the given owner DIDs.
+    ///
+    /// The user's identity can change over time (Bluesky did:plc, web_did,
+    /// Mastodon acct: URI, did:key, etc.) and messages stamped under older
+    /// DIDs must still be visible. Pass `all_owner_dids()` from the keychain
+    /// to get comprehensive results.
+    pub async fn list_vault_messages_multi(&self, owner_dids: Vec<String>) -> Result<Vec<VaultMessage>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
         let table = read_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
@@ -126,9 +136,11 @@ impl DbManager {
         for item in table.iter().map_err(|e| e.to_string())? {
             let (_key, value) = item.map_err(|e| e.to_string())?;
             let msg: VaultMessage = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            if let Some(owner) = owner_did {
-                if msg.owner_did.as_deref() != Some(owner) {
-                    continue;
+            if !owner_dids.is_empty() {
+                match &msg.owner_did {
+                    Some(d) if owner_dids.iter().any(|od| od == d) => {},
+                    Some(_) => continue,
+                    None => continue,
                 }
             }
             messages.push(msg);
@@ -140,7 +152,7 @@ impl DbManager {
     /// Paginated version of list_vault_messages. Returns (messages, total_count).
     pub async fn list_vault_messages_paged(
         &self,
-        owner_did: Option<&str>,
+        owner_dids: &[String],
         convo_id: Option<&str>,
         limit: usize,
         offset: usize,
@@ -152,9 +164,11 @@ impl DbManager {
         for item in table.iter().map_err(|e| e.to_string())? {
             let (_key, value) = item.map_err(|e| e.to_string())?;
             let msg: VaultMessage = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            if let Some(owner) = owner_did {
-                if msg.owner_did.as_deref() != Some(owner) {
-                    continue;
+            if !owner_dids.is_empty() {
+                match &msg.owner_did {
+                    Some(d) if owner_dids.iter().any(|od| od == d) => {},
+                    Some(_) => continue,
+                    None => continue,
                 }
             }
             if let Some(cid) = convo_id {

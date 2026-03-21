@@ -1518,15 +1518,23 @@ pub async fn get_unified_feed(
     };
 
     // 2. Resolve Feed URIs
+    //
+    // When feed_uris is explicitly empty AND tags are provided, the caller
+    // wants hashtag-only results — do NOT fall back to all saved feeds.
     let uris_future = async {
         if let Some(provided_uris) = feed_uris {
             if !provided_uris.is_empty() {
                 #[cfg(debug_assertions)]
                 println!("UnifiedFeed: Using {} provided URIs", provided_uris.len());
                 Ok(provided_uris)
+            } else if !tags.is_empty() {
+                // Tags are being searched — don't pollute with all feeds
+                #[cfg(debug_assertions)]
+                println!("UnifiedFeed: tags provided with empty feed_uris, skipping feed fetch");
+                Ok(Vec::new())
             } else {
                 #[cfg(debug_assertions)]
-                println!("UnifiedFeed: Provided feed URI list was empty, falling back to saved feeds");
+                println!("UnifiedFeed: No tags or feeds, falling back to saved feeds");
                 match get_saved_feeds(access_jwt).await {
                     Ok(views) => {
                         let uris: Vec<String> = views.into_iter()
