@@ -4,6 +4,53 @@
 
 ---
 
+## 📋 Sprint v8 — Backend Track A: Identity Overhaul + Bug Fixes
+
+**Commits**: `50590d6`, `22cebcc` on `main`
+**Date**: 2026-03-21
+**Build**: cargo 0 errors 0 warnings, tsc clean, 264/264 frontend tests
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P1 | Fix AP actor DID derivation | All 5 `bs58::encode(secret_key.public())` → `EncryptedKeychain::did_key_from_ed25519_bytes()` | ✅ Complete (in 7e400ab) |
+| P2 | LinkedAccount data structure | `LinkedAccount` struct + `linked_accounts` field in `AuthData` + CRUD methods + Tauri commands | ✅ Complete (in 7e400ab) |
+| P3 | Fix mastodon_complete_auth | Returns `master_did` instead of fake DID, creates `LinkedAccount` on auth | ✅ Complete (50590d6) |
+| P4 | Replace fake mastodon: DIDs | All 13 `mastodon:instance:id` → proper URIs (`https://` for posts, `acct:` for authors) | ✅ Complete (50590d6) |
+| P5 | Wire Mastodon into list_follows | `list_follows` + `list_followers` now merge Mastodon following/followers | ✅ Complete (50590d6) |
+| P6 | Fix Mastodon on profile/"You" feed | Fixed `skip_bluesky` → `skip_network` bug that dropped live Mastodon posts when source filter was "mastodon" | ✅ Complete (22cebcc) |
+| P7 | Add Mastodon to P2P also_known_as | All 5 peer profile builder locations now include Mastodon `acct:` URI | ✅ Complete (50590d6) |
+| P8 | unlink_account command | Clears LinkedAccount + protocol-specific session data (Mastodon session / Bluesky OAuth) | ✅ Complete (50590d6) |
+
+### Files Modified (Track A)
+| File | Changes |
+|------|---------|
+| `commands/ap.rs` | 4 DID derivation fixes + EncryptedKeychain import (P1) |
+| `commands/auth.rs` | `list_linked_accounts`, `unlink_account` commands + LinkedAccount on Bluesky login (P2/P8) |
+| `commands/mastodon.rs` | `mastodon_complete_auth` returns master_did + creates LinkedAccount; callback handler fixed; `resolve_ap_profile` uses acct: URI (P3/P4) |
+| `commands/feed_aggregation.rs` | Source detection updated for new URI format; `skip_bluesky` → `skip_network` fix (P4/P6) |
+| `commands/import.rs` | `list_follows` + `list_followers` merge Mastodon contacts (P5) |
+| `commands/peers.rs` | 4 peer profile builders add Mastodon `acct:` to `also_known_as` (P7) |
+| `connectors/mastodon.rs` | All 11 `format!("mastodon:...")` replaced with proper URIs (P4) |
+| `keychain_encrypted.rs` | `LinkedAccount` struct, `linked_accounts` field, CRUD methods (P2) |
+| `oauth.rs` | Bluesky OAuth callback creates LinkedAccount (P3) |
+| `protocol.rs` | P2P profile builder adds Mastodon `acct:` URI (P7) |
+| `lib.rs` | Registered `list_linked_accounts` + `unlink_account` commands (P2) |
+
+### Identity Architecture (Post-Sprint)
+- **Master DID**: `did:key:z6Mk...` — derived from Iroh Ed25519 keypair, universally consistent
+- **Bluesky accounts**: Identified by `did:plc:...`, stored as `LinkedAccount`
+- **Mastodon accounts**: Identified by `acct:user@instance`, stored as `LinkedAccount`
+- **Post URIs**: Bluesky uses `at://...`, Mastodon uses `https://{instance}/statuses/{id}`
+- **Feed source detection**: By URI pattern (`/statuses/` = mastodon) or `author_did` prefix (`acct:` = mastodon)
+
+### Bug Fixes
+- **P6**: `get_timeline_unified` with `source_filter="mastodon"` now fetches live Mastodon posts (was broken — `skip_bluesky` flag killed the network fetch)
+- **P4**: Frontend `FriendsScreen` and `ChatScreen` Mastodon DM guards work with new `acct:` prefix (frontend already checked for both `mastodon:` and `acct:`)
+
+---
+
 ## 📋 Sprint v7 — Backend Track A: Mastodon/Lemmy Client (A1.2)
 
 **Commit**: `05d6d4b` on `main`
