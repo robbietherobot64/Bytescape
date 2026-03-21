@@ -116,9 +116,16 @@ export function ChatScreen() {
         }
     }
 
-    // ── Group messages by conversation ──
+    // ── Group messages by conversation (deduplicated) ──
+    // Messages may be duplicated if they were imported under different owner_dids
+    // (e.g. once under did:plc:xxx before web_did was set, then under did:web:xxx).
+    // Dedup by (convo_id, id) to prevent showing the same message twice.
     const byConvo: Record<string, VaultMessage[]> = {};
+    const seenMsgKeys = new Set<string>();
     for (const m of messages) {
+        const dedupKey = `${m.convo_id}:${m.id}`;
+        if (seenMsgKeys.has(dedupKey)) continue;
+        seenMsgKeys.add(dedupKey);
         if (!byConvo[m.convo_id]) byConvo[m.convo_id] = [];
         byConvo[m.convo_id].push(m);
     }

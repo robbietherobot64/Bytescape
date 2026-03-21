@@ -2497,40 +2497,13 @@ async fn get_unified_feed_oauth(
                 // searchPosts returns { posts: [...], cursor: ... }
                 // Convert to the feed format that parse_feed_json expects
                 if let Some(posts_arr) = resp.get("posts").and_then(|p| p.as_array()) {
-                    let strict_tags: Vec<String> = tags.iter()
-                        .map(|t| t.trim_start_matches('#').to_lowercase())
-                        .collect();
                     for post_val in posts_arr {
-                        // Parse each post using manual extraction (search results are FeedPost, not FeedItem)
+                        // Parse each post — trust the Bluesky searchPosts API to return
+                        // relevant results. Don't re-filter by facet tags because many
+                        // relevant posts use bare text hashtags without ATProto facets,
+                        // or the API matched on topic relevance.
                         if let Some(post) = parse_search_post_json(post_val) {
-                            // Use ATProto facets to match actual #hashtags, not bare words.
-                            // Facets are in record.facets[].features[] where $type == "app.bsky.richtext.facet#tag"
-                            let has_tag_facet = post_val.get("record")
-                                .and_then(|r| r.get("facets"))
-                                .and_then(|f| f.as_array())
-                                .map(|facets| {
-                                    facets.iter().any(|facet| {
-                                        facet.get("features")
-                                            .and_then(|feats| feats.as_array())
-                                            .map(|feats| feats.iter().any(|feat| {
-                                                let is_tag = feat.get("$type")
-                                                    .and_then(|t| t.as_str())
-                                                    .map(|t| t == "app.bsky.richtext.facet#tag")
-                                                    .unwrap_or(false);
-                                                if !is_tag { return false; }
-                                                feat.get("tag")
-                                                    .and_then(|t| t.as_str())
-                                                    .map(|tag_val| strict_tags.contains(&tag_val.to_lowercase()))
-                                                    .unwrap_or(false)
-                                            }))
-                                            .unwrap_or(false)
-                                    })
-                                })
-                                .unwrap_or(false);
-
-                            if has_tag_facet {
-                                all_posts.push(post);
-                            }
+                            all_posts.push(post);
                         }
                     }
                 }
@@ -2645,7 +2618,7 @@ async fn get_unified_feed_oauth(
 ///
 /// Search results have a flat structure unlike timeline items which wrap posts in FeedItem.
 fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connectors::bluesky::BlueskyImportedPost> {
-    use crate::connectors::bluesky::BlueskyImportedPost;
+    use crate::connectors::bluesky::{BlueskyImportedPost, extract_image_urls_from_view};
 
     let uri = post_val.get("uri")?.as_str()?.to_string();
     let cid = post_val.get("cid").and_then(|c| c.as_str()).unwrap_or_default().to_string();
@@ -2675,12 +2648,56 @@ fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connect
         .and_then(|r| r.as_str())
         .map(|s| s.to_string());
 
+    // Extract embeds — search results have the same embed structure as timeline posts
+    let mut image_urls: Vec<String> = Vec::new();
+    let mut video_url: Option<String> = None;
+    let mut video_thumbnail: Option<String> = None;
+    let mut external_url: Option<String> = None;
+    let mut external_title: Option<String> = None;
+    let mut external_description: Option<String> = None;
+    let mut external_thumb: Option<String> = None;
+
+    if let Some(embed) = post_val.get("embed") {
+        // Images
+        extract_image_urls_from_view(embed, &mut image_urls);
+
+        // Video
+        let embed_type = embed.get("$type").and_then(|t| t.as_str()).unwrap_or("");
+        if embed_type == "app.bsky.embed.video#view" {
+            video_url = embed.get("playlist").and_then(|p| p.as_str()).map(|s| s.to_string());
+            video_thumbnail = embed.get("thumbnail").and_then(|t| t.as_str()).map(|s| s.to_string());
+        } else if let Some(media) = embed.get("media") {
+            if media.get("$type").and_then(|t| t.as_str()) == Some("app.bsky.embed.video#view") {
+                video_url = media.get("playlist").and_then(|p| p.as_str()).map(|s| s.to_string());
+                video_thumbnail = media.get("thumbnail").and_then(|t| t.as_str()).map(|s| s.to_string());
+            }
+        }
+
+        // External link
+        if embed_type == "app.bsky.embed.external#view" {
+            if let Some(ext) = embed.get("external") {
+                external_url = ext.get("uri").and_then(|s| s.as_str()).map(|s| s.to_string());
+                external_title = ext.get("title").and_then(|s| s.as_str()).map(|s| s.to_string());
+                external_description = ext.get("description").and_then(|s| s.as_str()).map(|s| s.to_string());
+                external_thumb = ext.get("thumb").and_then(|s| s.as_str()).map(|s| s.to_string());
+            }
+        }
+    }
+
+    // Reply context
+    let reply_parent_uri = post_val.get("record")
+        .and_then(|r| r.get("reply"))
+        .and_then(|r| r.get("parent"))
+        .and_then(|p| p.get("uri"))
+        .and_then(|u| u.as_str())
+        .map(|s| s.to_string());
+
     Some(BlueskyImportedPost {
         uri,
         cid,
         text,
         created_at,
-        image_urls: Vec::new(),
+        image_urls,
         image_local_paths: Vec::new(),
         author_did,
         author_handle,
@@ -2688,16 +2705,16 @@ fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connect
         reply_count,
         repost_count,
         like_count,
-        video_url: None,
-        video_thumbnail: None,
-        external_url: None,
-        external_title: None,
-        external_description: None,
-        external_thumb: None,
+        video_url,
+        video_thumbnail,
+        external_url,
+        external_title,
+        external_description,
+        external_thumb,
         reposted_by: None,
         reposted_by_handle: None,
         reply_parent_handle: None,
-        reply_parent_uri: None,
+        reply_parent_uri,
         quoted_post: None,
         viewer_like,
         viewer_repost,
