@@ -303,6 +303,8 @@ interface FeedCacheState {
     getCache: (tab: string, maxAgeMs?: number) => FeedCacheEntry | null;
     appendCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
     clearCache: (tab: string) => void;
+    /** Nuke all cached data — call on account disconnect */
+    clearAllCaches: () => void;
 
     /** Cached context data */
     cachedSavedFeeds: GeneratorView[];
@@ -339,6 +341,11 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     clearCache: (tab) => set((state) => {
         const { [tab]: _, ...rest } = state.cache;
         return { cache: rest };
+    }),
+    clearAllCaches: () => set({
+        cache: {},
+        cachedSavedFeeds: [],
+        cachedFollowingList: [],
     }),
     cachedSavedFeeds: [],
     setCachedSavedFeeds: (feeds) => set({ cachedSavedFeeds: feeds }),

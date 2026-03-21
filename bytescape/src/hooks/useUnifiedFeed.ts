@@ -93,6 +93,27 @@ export function useUnifiedFeed({
 
     const fetchTokenRef = useRef(0);
     const verifiedIdsRef = useRef<Set<string>>(new Set());
+    const prevAuthDidRef = useRef<string | null>(null);
+
+    const { setCache, getCache, clearCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
+
+    // When the auth identity changes (e.g. account disconnected), nuke all
+    // local state so stale data from the old account doesn't flash.
+    useEffect(() => {
+        const currentDid = auth?.did ?? null;
+        if (prevAuthDidRef.current !== null && prevAuthDidRef.current !== currentDid) {
+            setFeedEntries([]);
+            setFollowingList([]);
+            setSavedFeeds([]);
+            setCursor(null);
+            setArchiveOffset(0);
+            clearCache('all');
+            clearCache('following');
+            clearCache('subscribed');
+            clearCache('you');
+        }
+        prevAuthDidRef.current = currentDid;
+    }, [auth?.did, clearCache]);
 
     const fetchFollowingList = async (actorDid: string) => {
         try {
@@ -117,8 +138,6 @@ export function useUnifiedFeed({
     //
     // All paths end with deduplicateFeedEntries to collapse duplicates
     // while preserving reposts as distinct events.
-
-    const { setCache, getCache, clearCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
 
     const fetchFeed = useCallback(async (tab: FeedTab, background = false) => {
         if (!auth) return;

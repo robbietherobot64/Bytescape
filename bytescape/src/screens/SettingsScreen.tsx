@@ -4,6 +4,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { AuthStatus, LinkedAccount } from '../types';
 import { ThemePicker } from '../components/ThemePicker';
+import { useFeedCacheStore } from '../store';
 
 interface SettingsScreenProps {
     auth: AuthStatus | null;
@@ -159,6 +160,8 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         }
     }
 
+    const { clearAllCaches } = useFeedCacheStore();
+
     async function handleDisconnect(account: LinkedAccount) {
         try {
             try {
@@ -171,6 +174,9 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                     await invoke('logout_bluesky');
                 }
             }
+            // Flush ALL frontend caches so stale feed/friends data
+            // doesn't flash when switching tabs
+            clearAllCaches();
             await loadLinkedAccounts();
             // Refresh auth status so the feed/friends views pick up the change
             if (onAuthUpdated) {
