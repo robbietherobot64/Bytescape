@@ -38,8 +38,10 @@ impl From<BlueskyImportedPost> for FeedEntry {
             vec![]
         };
 
-        // Detect source from URI prefix — Mastodon adapter encodes "mastodon:{instance}:{id}"
-        let source = if post.uri.starts_with("mastodon:") {
+        // Detect source from URI — Mastodon adapter encodes "https://{instance}/statuses/{id}"
+        let source = if post.uri.contains("/statuses/") && post.uri.starts_with("https://") {
+            "mastodon".to_string()
+        } else if post.author_did.starts_with("acct:") {
             "mastodon".to_string()
         } else {
             "bluesky".to_string()

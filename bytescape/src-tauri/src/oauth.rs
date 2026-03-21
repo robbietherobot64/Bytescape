@@ -676,6 +676,21 @@ impl OAuthManager {
                 let local_username = app_state.keychain.get_local_username().unwrap_or(None);
                 let identity_ready = local_username.is_some();
 
+                // Register Bluesky as a linked account
+                let linked = crate::keychain_encrypted::LinkedAccount {
+                    protocol: "bluesky".to_string(),
+                    identifier: did.clone(),
+                    display_handle: format!("@{}", handle),
+                    display_name: None,
+                    avatar_url: None,
+                    connected_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    active: true,
+                };
+                let _ = app_state.keychain.add_linked_account(linked);
+
                 // Emit success event to frontend
                 let auth_status = serde_json::json!({
                     "handle": handle,

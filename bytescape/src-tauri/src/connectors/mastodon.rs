@@ -688,8 +688,15 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
         format!("{} (@{})", effective.account.display_name, effective.account.acct)
     };
 
+    // Build proper acct: URI for the author (handles both local and remote accounts)
+    let author_acct = if effective.account.acct.contains('@') {
+        format!("acct:{}", effective.account.acct)
+    } else {
+        format!("acct:{}@{}", effective.account.acct, instance_host)
+    };
+
     BytescapeItem {
-        id: format!("mastodon:{}:{}", instance_host, status.id),
+        id: format!("https://{}/statuses/{}", instance_host, status.id),
         original_timestamp: timestamp,
         content: text_content,
         media_paths: media_urls,
@@ -698,7 +705,7 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
         imported_at: now_secs,
         title: effective.spoiler_text.clone().filter(|s| !s.is_empty()),
         original_id: Some(status.id.clone()),
-        author_did: Some(format!("mastodon:{}:{}", instance_host, effective.account.id)),
+        author_did: Some(author_acct),
         author_handle: Some(author_handle),
         author_avatar: Some(effective.account.avatar.clone()),
         tagged_people: vec![],
@@ -726,7 +733,11 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
         syndicated_at: Default::default(),
         share_history: vec![],
         reposted_by_did: if status.reblog.is_some() {
-            Some(format!("mastodon:{}:{}", instance_host, status.account.id))
+            Some(if status.account.acct.contains('@') {
+                format!("acct:{}", status.account.acct)
+            } else {
+                format!("acct:{}@{}", status.account.acct, instance_host)
+            })
         } else {
             None
         },
@@ -752,11 +763,22 @@ pub fn status_to_vault_message(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
 
+    let sender_acct = if status.account.acct.contains('@') {
+        format!("acct:{}", status.account.acct)
+    } else {
+        format!("acct:{}@{}", status.account.acct, instance_host)
+    };
+    let owner_acct_uri = if owner_acct.contains('@') {
+        format!("acct:{}", owner_acct)
+    } else {
+        format!("acct:{}@{}", owner_acct, instance_host)
+    };
+
     VaultMessage {
-        id: format!("mastodon:{}:{}", instance_host, status.id),
-        owner_did: Some(format!("mastodon:{}:{}", instance_host, owner_acct)),
-        convo_id: format!("mastodon:dm:{}", status.account.acct),
-        sender_did: format!("mastodon:{}:{}", instance_host, status.account.id),
+        id: format!("https://{}/statuses/{}", instance_host, status.id),
+        owner_did: Some(owner_acct_uri),
+        convo_id: format!("mastodon-dm:{}@{}", status.account.acct, instance_host),
+        sender_did: sender_acct,
         sender_handle: if status.account.display_name.is_empty() {
             status.account.acct.clone()
         } else {
@@ -803,14 +825,20 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
         format!("{} (@{}@{})", effective.account.display_name, effective.account.acct, instance_host)
     };
 
+    let author_acct = if effective.account.acct.contains('@') {
+        format!("acct:{}", effective.account.acct)
+    } else {
+        format!("acct:{}@{}", effective.account.acct, instance_host)
+    };
+
     crate::connectors::bluesky::BlueskyImportedPost {
-        uri: format!("mastodon:{}:{}", instance_host, status.id),
+        uri: format!("https://{}/statuses/{}", instance_host, status.id),
         cid: status.id.clone(),
         text: text_content,
         created_at: timestamp,
         image_urls,
         image_local_paths: vec![],
-        author_did: format!("mastodon:{}:{}", instance_host, effective.account.id),
+        author_did: author_acct,
         author_handle,
         author_avatar: Some(effective.account.avatar.clone()),
         reply_count: Some(effective.replies_count),
@@ -823,7 +851,11 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
         external_description: None,
         external_thumb: None,
         reposted_by: if status.reblog.is_some() {
-            Some(format!("mastodon:{}:{}", instance_host, status.account.id))
+            Some(if status.account.acct.contains('@') {
+                format!("acct:{}", status.account.acct)
+            } else {
+                format!("acct:{}@{}", status.account.acct, instance_host)
+            })
         } else {
             None
         },
@@ -847,8 +879,14 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
 /// Convert a MastodonAccount to a ProfileView for the friends list.
 pub fn account_to_profile_view(instance: &str, account: &MastodonAccount) -> crate::connectors::bluesky::ProfileView {
     let instance_host = instance.replace("https://", "").replace("http://", "");
+    let acct_uri = if account.acct.contains('@') {
+        format!("acct:{}", account.acct)
+    } else {
+        format!("acct:{}@{}", account.acct, instance_host)
+    };
+
     crate::connectors::bluesky::ProfileView {
-        did: format!("mastodon:{}:{}", instance_host, account.id),
+        did: acct_uri,
         handle: if account.acct.contains('@') {
             account.acct.clone()
         } else {

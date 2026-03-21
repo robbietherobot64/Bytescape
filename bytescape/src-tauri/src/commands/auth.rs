@@ -129,6 +129,21 @@ pub async fn login(
         session.refresh_jwt.clone()
     ).map_err(|e| BytescapeError::KeychainSave(e.to_string()))?;
 
+    // Create a LinkedAccount entry for this Bluesky connection
+    let linked = LinkedAccount {
+        protocol: "bluesky".to_string(),
+        identifier: session.did.clone(),
+        display_handle: format!("@{}", session.handle),
+        display_name: None,
+        avatar_url: None,
+        connected_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        active: true,
+    };
+    let _ = state.keychain.add_linked_account(linked);
+
     // Auto-generate local identity if one doesn't exist yet
     let recovery_status = state.keychain.get_identity_recovery_status()
         .unwrap_or(IdentityRecoveryStatus {

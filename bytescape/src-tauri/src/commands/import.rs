@@ -2233,32 +2233,63 @@ async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<cra
     Ok(resolved_feeds)
 }
 
-/// List profiles this actor follows.
+/// List profiles this actor follows (Bluesky + Mastodon merged).
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    // getFollows is a public endpoint — empty JWT works
+    // Bluesky follows
     let access_jwt = if state.is_oauth_session() {
         String::new()
     } else {
         state.get_fresh_access_jwt().await?
     };
-    let (profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+    let (mut profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+
+    // Merge Mastodon following if session available
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        match crate::connectors::mastodon::get_following_list(&state.http_client, &session, None).await {
+            Ok(accounts) => {
+                let mastodon_profiles: Vec<_> = accounts.iter()
+                    .map(|a| crate::connectors::mastodon::account_to_profile_view(&session.instance, a))
+                    .collect();
+                profiles.extend(mastodon_profiles);
+            }
+            Err(e) => {
+                eprintln!("list_follows: Failed to fetch Mastodon following: {}", e);
+            }
+        }
+    }
+
     Ok(profiles)
 }
 
-/// List profiles following this actor.
+/// List profiles following this actor (Bluesky + Mastodon merged).
 #[tauri::command]
 pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
     let members = state.chat_client.get_followers(&actor).await
         .map_err(BytescapeError::BlueskyApi)?;
 
-    let profiles = members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
+    let mut profiles: Vec<_> = members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
         did: m.did,
         handle: m.handle.unwrap_or_default(),
         display_name: m.display_name,
         avatar: None,
         description: None,
     }).collect();
+
+    // Merge Mastodon followers if session available
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        match crate::connectors::mastodon::get_followers_list(&state.http_client, &session, None).await {
+            Ok(accounts) => {
+                let mastodon_profiles: Vec<_> = accounts.iter()
+                    .map(|a| crate::connectors::mastodon::account_to_profile_view(&session.instance, a))
+                    .collect();
+                profiles.extend(mastodon_profiles);
+            }
+            Err(e) => {
+                eprintln!("list_followers: Failed to fetch Mastodon followers: {}", e);
+            }
+        }
+    }
 
     Ok(profiles)
 }

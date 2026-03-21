@@ -38,6 +38,11 @@ pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, 
     if let Ok(Some(handle)) = state.keychain.get_handle() {
         also_known_as.push(format!("at://{}", handle));
     }
+    // Add Mastodon acct: URI if connected
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        let ih = session.instance.replace("https://", "").replace("http://", "");
+        also_known_as.push(format!("acct:{}@{}", session.acct, ih));
+    }
 
     let node_id = {
         let guard = state.endpoint.lock().await;
@@ -181,6 +186,10 @@ pub async fn check_peer_connectivity(
     }
     if let Ok(Some(handle)) = state.keychain.get_handle() {
         also_known_as.push(format!("at://{}", handle));
+    }
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        let ih = session.instance.replace("https://", "").replace("http://", "");
+        also_known_as.push(format!("acct:{}@{}", session.acct, ih));
     }
 
     let my_profile = PeerProfile {
@@ -397,6 +406,10 @@ pub async fn send_p2p_chat_message(
     if let Ok(Some(handle)) = state.keychain.get_handle() {
         chat_also_known_as.push(format!("at://{}", handle));
     }
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        let ih = session.instance.replace("https://", "").replace("http://", "");
+        chat_also_known_as.push(format!("acct:{}@{}", session.acct, ih));
+    }
 
     let my_profile = PeerProfile {
         node_id: my_node_id.clone(),
@@ -536,6 +549,10 @@ pub async fn request_peer_feed(
     }
     if let Ok(Some(handle)) = state.keychain.get_handle() {
         also_known_as.push(format!("at://{}", handle));
+    }
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        let ih = session.instance.replace("https://", "").replace("http://", "");
+        also_known_as.push(format!("acct:{}@{}", session.acct, ih));
     }
 
     let my_profile = PeerProfile {

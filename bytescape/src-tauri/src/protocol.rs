@@ -451,6 +451,11 @@ impl BytescapeProtocol {
         if let Ok(Some(handle)) = app_state.keychain.get_handle() {
             also_known_as.push(format!("at://{}", handle));
         }
+        // Add Mastodon acct: URI if connected
+        if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&app_state.keychain) {
+            let ih = session.instance.replace("https://", "").replace("http://", "");
+            also_known_as.push(format!("acct:{}@{}", session.acct, ih));
+        }
 
         PeerProfile {
             node_id: self.my_profile.node_id.clone(),

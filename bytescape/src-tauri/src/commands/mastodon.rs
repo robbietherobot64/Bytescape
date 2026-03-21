@@ -182,11 +182,31 @@ async fn handle_mastodon_callback(
             let app_state = app_handle.state::<crate::AppState>();
             let _ = app_state.keychain.set_mastodon_session(&json_str);
 
-            // Build AuthStatus for the frontend
+            // Get master DID and create LinkedAccount
+            let master_did = app_state.keychain.ensure_master_did()
+                .ok().flatten()
+                .unwrap_or_else(|| "unknown".to_string());
             let instance_host = session.instance.replace("https://", "").replace("http://", "");
+
+            let linked = crate::keychain_encrypted::LinkedAccount {
+                protocol: "mastodon".to_string(),
+                identifier: format!("acct:{}@{}", session.acct, instance_host),
+                display_handle: format!("@{}@{}", session.acct, instance_host),
+                display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
+                avatar_url: if session.avatar.is_empty() { None } else { Some(session.avatar.clone()) },
+                connected_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                active: true,
+            };
+            let _ = app_state.keychain.add_linked_account(linked);
+
+            // Build AuthStatus for the frontend
             let auth_status = serde_json::json!({
                 "handle": session.acct,
-                "did": format!("mastodon:{}:{}", instance_host, session.account_id),
+                "did": master_did,
+                "mastodon_acct": format!("acct:{}@{}", session.acct, instance_host),
                 "source": "mastodon",
                 "identity_ready": true,
             });
@@ -819,9 +839,14 @@ async fn resolve_ap_profile(
     if let Ok(session) = get_active_session(state).await {
         if let Ok(account) = mastodon::lookup_account(&state.http_client, &session, handle).await {
             let instance_host = session.instance.replace("https://", "").replace("http://", "");
+            let acct_uri = if account.acct.contains('@') {
+                format!("acct:{}", account.acct)
+            } else {
+                format!("acct:{}@{}", account.acct, instance_host)
+            };
             return Ok(serde_json::json!({
                 "protocol": "activitypub",
-                "did": format!("mastodon:{}:{}", instance_host, account.id),
+                "did": acct_uri,
                 "actor_url": account.url,
                 "handle": account.acct,
                 "display_name": account.display_name,
