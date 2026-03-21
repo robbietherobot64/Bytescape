@@ -2476,8 +2476,32 @@ async fn get_unified_feed_oauth(
                     for post_val in posts_arr {
                         // Parse each post using manual extraction (search results are FeedPost, not FeedItem)
                         if let Some(post) = parse_search_post_json(post_val) {
-                            let post_text = post.text.to_lowercase();
-                            if strict_tags.iter().any(|t| post_text.contains(t)) {
+                            // Use ATProto facets to match actual #hashtags, not bare words.
+                            // Facets are in record.facets[].features[] where $type == "app.bsky.richtext.facet#tag"
+                            let has_tag_facet = post_val.get("record")
+                                .and_then(|r| r.get("facets"))
+                                .and_then(|f| f.as_array())
+                                .map(|facets| {
+                                    facets.iter().any(|facet| {
+                                        facet.get("features")
+                                            .and_then(|feats| feats.as_array())
+                                            .map(|feats| feats.iter().any(|feat| {
+                                                let is_tag = feat.get("$type")
+                                                    .and_then(|t| t.as_str())
+                                                    .map(|t| t == "app.bsky.richtext.facet#tag")
+                                                    .unwrap_or(false);
+                                                if !is_tag { return false; }
+                                                feat.get("tag")
+                                                    .and_then(|t| t.as_str())
+                                                    .map(|tag_val| strict_tags.contains(&tag_val.to_lowercase()))
+                                                    .unwrap_or(false)
+                                            }))
+                                            .unwrap_or(false)
+                                    })
+                                })
+                                .unwrap_or(false);
+
+                            if has_tag_facet {
                                 all_posts.push(post);
                             }
                         }

@@ -29,12 +29,12 @@ interface FeedRightPanelProps {
 /* ── Style tokens ─────────────────────────────────────────────────────── */
 const sectionHeaderStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 4px', cursor: 'pointer', userSelect: 'none',
+    padding: '6px 0', cursor: 'pointer', userSelect: 'none',
     borderBottom: '1px solid var(--border-color)',
     marginBottom: 6,
 };
 const caretStyle: React.CSSProperties = {
-    marginLeft: 'auto', fontSize: 10, opacity: 0.5, flexShrink: 0,
+    marginLeft: 'auto', fontSize: 12, color: 'var(--text-primary)', flexShrink: 0,
 };
 const chipContainerStyle: React.CSSProperties = {
     display: 'flex', flexWrap: 'wrap', gap: 5, padding: '4px 0 8px',

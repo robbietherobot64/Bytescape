@@ -435,12 +435,33 @@ pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Res
         .map_err(|e| e.to_string())?
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
+    println!("list_vault_messages: filtering by owner_did={}", owner_did);
+
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
-    db.list_vault_messages(Some(&owner_did)).await
-        .map_err(|e| e.to_string())
+    let msgs = db.list_vault_messages(Some(&owner_did)).await
+        .map_err(|e| e.to_string())?;
+    
+    println!("list_vault_messages: found {} messages for owner {}", msgs.len(), owner_did);
+    
+    // If zero messages but there ARE messages in the DB for other owners, log it
+    if msgs.is_empty() {
+        let all_msgs = db.list_vault_messages(None).await.unwrap_or_default();
+        if !all_msgs.is_empty() {
+            let sample_owners: Vec<String> = all_msgs.iter()
+                .take(5)
+                .filter_map(|m| m.owner_did.clone())
+                .collect();
+            eprintln!(
+                "list_vault_messages: WARNING — {} messages exist in DB but NONE match owner_did={}. Sample stored owner_dids: {:?}",
+                all_msgs.len(), owner_did, sample_owners
+            );
+        }
+    }
+    
+    Ok(msgs)
 }
 
 /// Legacy archive post count used by fallback UI.

@@ -67,8 +67,9 @@ export function ChatScreen() {
         const poll = async () => {
             try {
                 const result = await invoke<any>('import_vault_messages');
+                console.log('ChatScreen: import_vault_messages result:', JSON.stringify(result));
                 if (result?.error === 'chat_scope_missing') {
-                    console.warn('ChatScreen: Chat scope missing — re-login required');
+                    console.warn('ChatScreen: Chat scope missing — re-login required for chat.');
                 }
                 await loadMessages();
             } catch (e) {
@@ -84,6 +85,11 @@ export function ChatScreen() {
         try {
             setMessagesLoading(true);
             const msgs = await invoke<VaultMessage[]>('list_vault_messages');
+            console.log(`ChatScreen: list_vault_messages returned ${msgs.length} messages`);
+            if (msgs.length > 0) {
+                const convos = new Set(msgs.map(m => m.convo_id));
+                console.log(`ChatScreen: ${convos.size} conversations, sample owner_did:`, msgs[0].owner_did);
+            }
             setMessages(msgs);
         } catch (e) {
             console.error('Failed to load messages:', e);
