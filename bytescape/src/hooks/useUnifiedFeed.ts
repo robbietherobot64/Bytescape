@@ -369,29 +369,34 @@ export function useUnifiedFeed({
         }
     }, [auth, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter]);
 
-    // Invalidate subscribed cache when feed URI changes — prevents stale-while-revalidate
-    // from showing the old feed's content while the new one loads.
-    // Must clear ALL cache keys that start with 'subscribed' since the full key
-    // includes filter suffixes (e.g. 'subscribed:::cats').
-    useEffect(() => {
-        clearCachePrefix('subscribed');
-    }, [selectedFeedUris, selectedHashtagsFilter, clearCachePrefix]);
-
-    // Invalidate all tab caches when source filter changes to prevent stale data
-    useEffect(() => {
-        clearCachePrefix('all');
-        clearCachePrefix('you');
-        clearCachePrefix('following');
-        clearCachePrefix('subscribed');
-    }, [archiveSourceFilter, clearCachePrefix]);
-
-    // Trigger reload on tab/filter change
+    // Unified effect: clear stale cache AND trigger reload on any filter/tab change.
+    // Previously these were separate effects with the same deps, which could race
+    // (fetch might hit stale cache before the clear effect ran).
+    const prevFiltersRef = useRef({ selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter });
     useEffect(() => {
         if (!auth) return;
+
+        const prev = prevFiltersRef.current;
+        const feedUrisChanged = prev.selectedFeedUris !== selectedFeedUris;
+        const hashtagsChanged = prev.selectedHashtagsFilter !== selectedHashtagsFilter;
+        const sourceChanged = prev.archiveSourceFilter !== archiveSourceFilter;
+        prevFiltersRef.current = { selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter };
+
+        // Clear relevant caches BEFORE fetching
+        if (feedUrisChanged || hashtagsChanged) {
+            clearCachePrefix('subscribed');
+        }
+        if (sourceChanged) {
+            clearCachePrefix('all');
+            clearCachePrefix('you');
+            clearCachePrefix('following');
+            clearCachePrefix('subscribed');
+        }
+
         setCursor(null);
         setArchiveOffset(0);
         fetchFeed(activeTab, false);
-    }, [auth, activeTab, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter, fetchFeed]);
+    }, [auth, activeTab, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter, fetchFeed, clearCachePrefix]);
 
     // Auto-refresh for live tabs
     useEffect(() => {

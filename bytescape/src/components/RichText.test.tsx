@@ -74,6 +74,6 @@ describe('RichText', () => {
     it('renders hashtag with title attribute', () => {
         const { container } = render(<RichText text="Hello #bytescape" />);
         const hashtag = container.querySelector('.facet-hashtag');
-        expect(hashtag?.getAttribute('title')).toBe('Search #bytescape');
+        expect(hashtag?.getAttribute('title')).toBe('View #bytescape in Subscribed');
     });
 });

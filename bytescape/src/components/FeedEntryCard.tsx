@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { openProfile } from '../utils/openInApp';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,6 +22,30 @@ import {
     ThreadReplies,
     GalleryOverlay,
 } from './feed';
+
+/** Extract unique hashtags from post text content */
+function extractHashtags(text: string | undefined): string[] {
+    if (!text) return [];
+    const matches = text.match(/#[\w\u00C0-\u024F\u1E00-\u1EFF]+/g);
+    if (!matches) return [];
+    // Deduplicate case-insensitively, keep original casing of first occurrence
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const tag of matches) {
+        const lower = tag.toLowerCase();
+        if (!seen.has(lower)) {
+            seen.add(lower);
+            result.push(tag);
+        }
+    }
+    return result;
+}
+
+/** Dispatch a custom event to navigate to a hashtag in the Subscribed tab */
+function navigateToHashtag(tag: string) {
+    const cleaned = tag.replace(/^#/, '');
+    window.dispatchEvent(new CustomEvent('navigate-hashtag', { detail: cleaned }));
+}
 
 interface FeedEntryCardProps {
     entry: FeedEntry;
@@ -68,6 +92,9 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const externalHost = entry.link_url ? safeHostname(entry.link_url) : '';
     const hasMedia = entry.media_urls.length > 0;
     const shareHistory = entry.share_history || [];
+
+    // Extract hashtags from post content for chips
+    const hashtags = useMemo(() => extractHashtags(entry.content), [entry.content]);
 
     // Compute active syndicatedURIs for explicit links and the Drawer
     const syndicatedUris = shareHistory
@@ -297,6 +324,41 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                             style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textDecoration: 'none' }}>
                             🔗 View on {platform.charAt(0).toUpperCase() + platform.slice(1)}
                         </a>
+                    ))}
+                </div>
+            )}
+
+            {/* Hashtag Chips */}
+            {hashtags.length > 0 && !isQuote && (
+                <div className="hashtag-chips" style={{
+                    padding: '0 16px 4px',
+                    display: 'flex',
+                    gap: 4,
+                    flexWrap: 'wrap',
+                } as React.CSSProperties}>
+                    {hashtags.slice(0, 6).map(tag => (
+                        <button
+                            key={tag}
+                            className="hashtag-chip"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                navigateToHashtag(tag);
+                            }}
+                            title={`View posts tagged ${tag}`}
+                            style={{
+                                background: 'var(--bg-tertiary, #1a1a2e)',
+                                border: '1px solid var(--border-color, #333)',
+                                borderRadius: 12,
+                                padding: '1px 8px',
+                                fontSize: '0.7rem',
+                                color: 'var(--accent-blue, #3498db)',
+                                cursor: 'pointer',
+                                lineHeight: 1.6,
+                                whiteSpace: 'nowrap',
+                            } as React.CSSProperties}
+                        >
+                            {tag}
+                        </button>
                     ))}
                 </div>
             )}

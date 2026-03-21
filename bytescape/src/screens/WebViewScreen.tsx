@@ -5,6 +5,7 @@ import { Webview } from '@tauri-apps/api/webview';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavStore } from '../store';
 import { openInApp } from '../utils/openInApp';
+import { BsArrowLeft, BsArrowRight, BsArrowClockwise, BsXLg, BsBoxArrowUpRight } from 'react-icons/bs';
 
 /** Wrap an invoke in a timeout so a hanging Rust command doesn't freeze the UI. */
 function invokeWithTimeout<T>(cmd: string, args: Record<string, unknown>, ms: number): Promise<T> {
@@ -49,6 +50,12 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
     const [createError, setCreateError] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
+
+    // Omnibar state
+    const [currentUrl, setCurrentUrl] = useState(url);
+    const [urlInput, setUrlInput] = useState(url);
+    const [isUrlFocused, setIsUrlFocused] = useState(false);
+    const [isPageLoading, setIsPageLoading] = useState(false);
 
     /** Measure the container and sync the native webview to match. */
     const syncBounds = useCallback(async () => {
@@ -181,6 +188,22 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         return () => observer.disconnect();
     }, [syncBounds]);
 
+    // ─── Listen for URL changes from in-page navigation ───
+    useEffect(() => {
+        const label = labelRef.current;
+        let unlisten: (() => void) | null = null;
+
+        listen<string>(`browser-url-${label}`, (event) => {
+            const newUrl = event.payload;
+            if (!newUrl) return;
+            setCurrentUrl(newUrl);
+            if (!isUrlFocused) setUrlInput(newUrl);
+            setIsPageLoading(false);
+        }).then(fn => { unlisten = fn; });
+
+        return () => { unlisten?.(); };
+    }, [isUrlFocused]);
+
     // ─── Listen for title changes from the native webview ───
     useEffect(() => {
         const label = labelRef.current;
@@ -272,72 +295,248 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         create();
     };
 
+    // ─── Omnibar Navigation Helpers ───
+
+    const handleNavigate = useCallback(async (targetUrl: string) => {
+        let normalized = targetUrl.trim();
+        if (!normalized) return;
+        // If no protocol, add https://
+        if (!/^https?:\/\//i.test(normalized)) {
+            // Check if it looks like a domain (contains a dot)
+            if (normalized.includes('.') && !normalized.includes(' ')) {
+                normalized = `https://${normalized}`;
+            } else {
+                // Treat as search query
+                normalized = `https://duckduckgo.com/?q=${encodeURIComponent(normalized)}`;
+            }
+        }
+        setUrlInput(normalized);
+        setCurrentUrl(normalized);
+        setIsPageLoading(true);
+        if (createdRef.current && !destroyedRef.current) {
+            try {
+                await invoke('browser_navigate', { label: labelRef.current, url: normalized });
+            } catch (err) {
+                console.error('[WebView] navigate:', err);
+                setIsPageLoading(false);
+            }
+        }
+    }, []);
+
+    const handleBack = useCallback(() => {
+        if (!createdRef.current || destroyedRef.current) return;
+        invoke('browser_eval', { label: labelRef.current, js: 'history.back()' }).catch(() => {});
+    }, []);
+
+    const handleForward = useCallback(() => {
+        if (!createdRef.current || destroyedRef.current) return;
+        invoke('browser_eval', { label: labelRef.current, js: 'history.forward()' }).catch(() => {});
+    }, []);
+
+    const handleReload = useCallback(() => {
+        if (!createdRef.current || destroyedRef.current) return;
+        setIsPageLoading(true);
+        invoke('browser_eval', { label: labelRef.current, js: 'location.reload()' }).catch(() => {});
+    }, []);
+
+    const handleStop = useCallback(() => {
+        if (!createdRef.current || destroyedRef.current) return;
+        invoke('browser_eval', { label: labelRef.current, js: 'window.stop()' }).catch(() => {});
+        setIsPageLoading(false);
+    }, []);
+
+    const handleUrlKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            handleNavigate(urlInput);
+            (e.target as HTMLInputElement).blur();
+        } else if (e.key === 'Escape') {
+            setUrlInput(currentUrl);
+            (e.target as HTMLInputElement).blur();
+        }
+    };
+
     return (
         <div
-            ref={containerRef}
-            className="webview-container"
+            className="webview-outer"
             style={{
                 width: '100%',
                 height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
                 background: 'var(--bg-primary)',
-                position: 'relative',
             } as React.CSSProperties}
         >
-            {(isCreating || createError) && (
-                <div style={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '12px',
-                    color: 'var(--text-secondary, #aaa)',
-                    fontSize: '14px',
-                    zIndex: 1,
-                } as React.CSSProperties}>
-                    {isCreating && !createError && (
-                        <span>Loading page…</span>
-                    )}
-                    {createError && (
-                        <>
-                            <span style={{ color: 'var(--error-color, #e74c3c)' } as React.CSSProperties}>
-                                {createError}
-                            </span>
-                            <div style={{ display: 'flex', gap: 10 } as React.CSSProperties}>
-                                <button
-                                    onClick={handleRetry}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--border-color, #444)',
-                                        background: 'var(--bg-secondary, #222)',
-                                        color: 'var(--text-primary, #fff)',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    } as React.CSSProperties}
-                                >
-                                    Retry
-                                </button>
-                                <button
-                                    onClick={() => openUrl(url).catch(() => {})}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--accent-purple, #9b59b6)',
-                                        background: 'var(--accent-purple, #9b59b6)',
-                                        color: '#fff',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    } as React.CSSProperties}
-                                >
-                                    Open in System Browser
-                                </button>
-                            </div>
-                        </>
-                    )}
-                </div>
-            )}
+            {/* Omnibar */}
+            <div className="webview-omnibar" style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 8px',
+                background: 'var(--bg-secondary, #1a1a2e)',
+                borderBottom: '1px solid var(--border-color, #333)',
+                flexShrink: 0,
+                minHeight: 36,
+            } as React.CSSProperties}>
+                {/* Back */}
+                <button
+                    onClick={handleBack}
+                    title="Back"
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-secondary, #aaa)',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                    } as React.CSSProperties}
+                >
+                    <BsArrowLeft size={16} />
+                </button>
+                {/* Forward */}
+                <button
+                    onClick={handleForward}
+                    title="Forward"
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-secondary, #aaa)',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                    } as React.CSSProperties}
+                >
+                    <BsArrowRight size={16} />
+                </button>
+                {/* Reload / Stop */}
+                <button
+                    onClick={isPageLoading ? handleStop : handleReload}
+                    title={isPageLoading ? 'Stop' : 'Reload'}
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-secondary, #aaa)',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                    } as React.CSSProperties}
+                >
+                    {isPageLoading ? <BsXLg size={14} /> : <BsArrowClockwise size={15} />}
+                </button>
+                {/* URL Input */}
+                <input
+                    type="text"
+                    value={urlInput}
+                    onChange={e => setUrlInput(e.target.value)}
+                    onKeyDown={handleUrlKeyDown}
+                    onFocus={() => {
+                        setIsUrlFocused(true);
+                        // Select all text on focus for easy replace
+                    }}
+                    onBlur={() => setIsUrlFocused(false)}
+                    spellCheck={false}
+                    style={{
+                        flex: 1,
+                        background: 'var(--bg-tertiary, #111)',
+                        border: '1px solid var(--border-color, #333)',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        color: 'var(--text-primary, #eee)',
+                        fontSize: 13,
+                        fontFamily: 'monospace',
+                        outline: 'none',
+                        minWidth: 0,
+                    } as React.CSSProperties}
+                />
+                {/* Open externally */}
+                <button
+                    onClick={() => openUrl(currentUrl).catch(() => {})}
+                    title="Open in system browser"
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--text-secondary, #aaa)',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                    } as React.CSSProperties}
+                >
+                    <BsBoxArrowUpRight size={14} />
+                </button>
+            </div>
+
+            {/* Webview Container */}
+            <div
+                ref={containerRef}
+                className="webview-container"
+                style={{
+                    flex: 1,
+                    position: 'relative',
+                } as React.CSSProperties}
+            >
+                {(isCreating || createError) && (
+                    <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '12px',
+                        color: 'var(--text-secondary, #aaa)',
+                        fontSize: '14px',
+                        zIndex: 1,
+                    } as React.CSSProperties}>
+                        {isCreating && !createError && (
+                            <span>Loading page…</span>
+                        )}
+                        {createError && (
+                            <>
+                                <span style={{ color: 'var(--error-color, #e74c3c)' } as React.CSSProperties}>
+                                    {createError}
+                                </span>
+                                <div style={{ display: 'flex', gap: 10 } as React.CSSProperties}>
+                                    <button
+                                        onClick={handleRetry}
+                                        style={{
+                                            padding: '8px 16px',
+                                            borderRadius: '6px',
+                                            border: '1px solid var(--border-color, #444)',
+                                            background: 'var(--bg-secondary, #222)',
+                                            color: 'var(--text-primary, #fff)',
+                                            cursor: 'pointer',
+                                            fontSize: '13px',
+                                        } as React.CSSProperties}
+                                    >
+                                        Retry
+                                    </button>
+                                    <button
+                                        onClick={() => openUrl(url).catch(() => {})}
+                                        style={{
+                                            padding: '8px 16px',
+                                            borderRadius: '6px',
+                                            border: '1px solid var(--accent-purple, #9b59b6)',
+                                            background: 'var(--accent-purple, #9b59b6)',
+                                            color: '#fff',
+                                            cursor: 'pointer',
+                                            fontSize: '13px',
+                                        } as React.CSSProperties}
+                                    >
+                                        Open in System Browser
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

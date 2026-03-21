@@ -49,6 +49,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const activeTabRef = useRef(activeTab);
     activeTabRef.current = activeTab;
     const PULL_THRESHOLD = 80;
+    const triggerRefreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
     // === Data Hook ===
     const {
         feedEntries,
@@ -76,6 +77,20 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     useEffect(() => {
         appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
     }, []);
+
+    // Listen for hashtag chip clicks from FeedEntryCard (navigate-hashtag custom event)
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const tag = (e as CustomEvent<string>).detail;
+            if (!tag) return;
+            // Switch to subscribed tab and set the hashtag filter
+            setActiveTab('subscribed');
+            setSelectedHashtagsFilter([tag]);
+            setSelectedFeedUris([]);
+        };
+        window.addEventListener('navigate-hashtag', handler);
+        return () => window.removeEventListener('navigate-hashtag', handler);
+    }, [setActiveTab]);
 
     // Refresh feed after boot import finishes (isImporting: true → false)
     const wasImportingRef = useRef(false);
@@ -209,7 +224,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 if (!isRefreshing) {
                     // Check if we passed threshold before decaying
                     if (overscrollAccum.current >= PULL_THRESHOLD) {
-                        triggerRefresh();
+                        triggerRefreshRef.current();
                     } else {
                         overscrollAccum.current = 0;
                         setPullDistance(0);
@@ -237,6 +252,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
             setPullDistance(0);
         }
     }, [fetchFeed]);
+    triggerRefreshRef.current = triggerRefresh;
 
     // Cleanup decay timer on unmount
     useEffect(() => {

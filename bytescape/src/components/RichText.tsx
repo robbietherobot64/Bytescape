@@ -45,9 +45,13 @@ export function RichText({ text, className }: RichTextProps) {
                             <a
                                 key={i}
                                 className="facet-hashtag"
-                                title={`Search #${seg.value}`}
+                                title={`View #${seg.value} in Subscribed`}
                                 role="link"
                                 tabIndex={0}
+                                onClick={() => {
+                                    window.dispatchEvent(new CustomEvent('navigate-hashtag', { detail: seg.value }));
+                                }}
+                                style={{ cursor: 'pointer' } as React.CSSProperties}
                             >
                                 {seg.text}
                             </a>
