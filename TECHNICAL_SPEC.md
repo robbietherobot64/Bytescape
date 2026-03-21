@@ -233,6 +233,7 @@ User profiles are **customizable** in the spirit of MySpace/iGoogle:
 - **AT Protocol:** `bsky-sdk` for Bluesky identity and data
 - **ActivityPub:** `megalodon-rs` for Mastodon/Lemmy
 - **RSS/Atom:** `feed-rs` + `readability` for blogs and newsletters
+- **Email (IMAP/SMTP):** `async-imap` + `lettre` + `mail-parser` for linked email accounts
 
 ### 7.2 WASM Web Portal
 Public HTTP profiles serve static, blurred previews. Full-fidelity content requires loading a WebAssembly Iroh node in the browser to decrypt the P2P stream.
@@ -245,6 +246,111 @@ Groups and affiliations operate as cryptographic records rather than hosted spac
 - **No Central Host Required:** The webring exists as a set of distributed records. Any member can run an indexer to reconstruct the full loop from the firehose. If all indexers go offline, the records still exist on each member's PDS and can be re-indexed at any time.
 
 
+## 8. Email Engine
+
+Bytescape integrates email as a first-class communication channel, extending the multi-protocol vault to unify social posts, DMs, and email in one local-first interface.
+
+### 8.1 Operating Modes
+
+| Mode | Description | Server Dependency |
+|------|-------------|-------------------|
+| **A: Linked Email** | IMAP/SMTP client for existing accounts (Gmail, Outlook, etc.) | None |
+| **B: AP Messaging** | Private AP messages via `@user@bytescape.social` addressing | AP host required |
+| **C: Hosted Email** | Full `user@bytescape.social` email with MX infrastructure | MX server required |
+
+Mode A ships first. Modes B and C build incrementally on Phase 4/5 infrastructure.
+
+### 8.2 Architecture
+
+```
+┌──────────── FRONTEND (Lens) ─────────────┐   ┌──────────── BACKEND (Engine) ─────────────┐
+│                                           │   │                                            │
+│  EmailScreen.tsx (3-panel layout)         │   │  connectors/email.rs                       │
+│    ├─ FolderSidebar                       │   │    ├─ ImapClient (async-imap)               │
+│    ├─ ThreadList                          │   │    │   ├─ connect / authenticate             │
+│    └─ MessageView (sandboxed HTML)        │   │    │   ├─ list_folders / fetch_headers       │
+│                                           │   │    │   ├─ fetch_body (lazy, on demand)       │
+│  EmailComposer.tsx (Tiptap-based)         │   │    │   ├─ IDLE (push) / poll (fallback)      │
+│    ├─ To/CC/BCC with contact autocomplete │   │    │   └─ search (server-side IMAP SEARCH)   │
+│    ├─ Subject + rich text body            │   │    │                                         │
+│    └─ Attachment picker                   │   │    ├─ SmtpSender (lettre)                   │
+│                                           │   │    │   ├─ send / reply / forward             │
+│  hooks/useEmail.ts                        │   │    │   └─ multipart (HTML + plaintext)       │
+│  store/emailStore.ts (Zustand)            │   │    │                                         │
+│                                           │   │    ├─ EmailParser (mail-parser)              │
+│                                           │   │    │   ├─ RFC 5322 / MIME parsing            │
+│                                           │   │    │   ├─ JWZ thread reconstruction          │
+│                                           │   │    │   └─ attachment extraction → Iroh blobs │
+│                                           │   │    │                                         │
+│                                           │   │    └─ VaultBridge                            │
+│                                           │   │        └─ email → BytescapeItem (Article)    │
+│                                           │   │                                              │
+│                                           │   │  db/email.rs                                 │
+│                                           │   │    ├─ EMAIL_HEADERS_TABLE (redb)             │
+│                                           │   │    ├─ EMAIL_BODIES_TABLE (redb, lazy)        │
+│                                           │   │    └─ EMAIL_ACCOUNTS_TABLE (redb)            │
+│                                           │   │                                              │
+└───────────────────────────────────────────┘   └──────────────────────────────────────────────┘
+          │ Tauri IPC (invoke / events)                         │
+          └─────────────────────────────────────────────────────┘
+```
+
+### 8.3 Data Model
+
+**EmailAccount** — linked email account configuration:
+- `id` (UUID), `owner_did`, `display_name`, `email_address`
+- `imap_host`, `imap_port`, `smtp_host`, `smtp_port`
+- `auth_method`: `Password` | `OAuth2` | `AppPassword`
+- Credentials stored encrypted in keychain (NOT in the account record)
+- `last_sync`, `active`
+
+**EmailHeader** — envelope metadata (stored in redb for fast listing):
+- `uid` (IMAP UID), `account_id`, `message_id` (RFC 2822)
+- `in_reply_to`, `references[]` — for JWZ threading
+- `from`, `to[]`, `cc[]`, `subject`, `date`, `folder`, `flags[]`
+- `has_attachments`, `snippet` (first ~200 chars), `thread_id` (computed)
+
+**EmailBody** — full message content (fetched lazily from IMAP on demand):
+- `uid`, `account_id`, `text_plain`, `text_html`
+- `attachments[]`: `{ filename, mime_type, size, blob_hash?, inline }`
+
+### 8.4 Integration Points
+
+The email engine reuses existing infrastructure extensively:
+
+| System | Reuse |
+|--------|-------|
+| Identity (`LinkedAccount`) | Add `protocol: "email"` with IMAP/SMTP credentials |
+| Message vault (`VaultMessage`) | Emails stored with `source: "email"` |
+| Connector pattern (`Source` enum) | Add `Email` variant |
+| Navigation (`Screen`/`SidebarItem`) | Add `"email"` as singleton module tab |
+| Vault archival (`BytescapeItem`) | Emails archived as `Article` type |
+| Blob storage (Iroh) | Attachments stored content-addressed |
+| Contact graph | Email addresses merged with social contacts |
+| Keychain (ChaCha20-Poly1305) | IMAP/SMTP credentials encrypted at rest |
+| HTML sanitizer (DOMPurify) | Reused for email HTML rendering |
+| Rich text editor (Tiptap) | Reused for email composition |
+| OAuth2 flows | Reused for Gmail/Outlook authentication |
+
+### 8.5 Security Considerations
+
+- **HTML rendering**: Email HTML is adversarial. Rendered in sandboxed `<iframe srcdoc>` with DOMPurify sanitization. No `<script>`, `<iframe>` (nested), `onclick`, or remote resource loading by default.
+- **Tracking pixel blocking**: Remote images blocked by default. User explicitly opts in per-message.
+- **Credential storage**: IMAP/SMTP passwords and OAuth2 tokens stored in the existing encrypted keychain (ChaCha20-Poly1305 + Argon2id KDF). Never stored in plaintext.
+- **OAuth2 token refresh**: Gmail/Outlook tokens require periodic refresh. Handled by the same token lifecycle management used for Bluesky and Mastodon OAuth.
+- **Rate limiting**: Gmail IMAP has aggressive rate limits for OAuth2 apps. Exponential backoff on `THROTTLED` responses. Configurable sync intervals.
+
+### 8.6 Crate Dependencies
+
+| Crate | Purpose | Downloads | Status |
+|-------|---------|-----------|--------|
+| `async-imap` v0.11 | Async IMAP client (tokio-native) | 344K | Stable |
+| `lettre` v0.11 | SMTP email sending | 7.7M | Very mature |
+| `mail-parser` v0.11 | RFC 5322 / MIME parsing | 1.3M | Stalwart Labs |
+| `mail-builder` | RFC 5322 message construction | ~500K | Stalwart Labs |
+
+All crates use tokio async runtime (already in dependency tree). TLS via `tokio-rustls` (transitive through `reqwest`).
+
 ---
 
 # SYSTEM DESIGN & DATA FLOWS
@@ -256,6 +362,7 @@ This document defines the end-to-end data flow and storage architecture for:
 2. Media extraction and Vault storage/display
 3. Messaging import + real-time chat + archived chat partitions
 4. Hard deletion pathways (Clear Vault + account switch)
+5. Email reading, composing, and vault archival
 
 ## 1) Data Sources
 
@@ -272,10 +379,18 @@ This document defines the end-to-end data flow and storage architecture for:
   - `send_bsky_dm`
 - Walled-garden archives (Facebook) — archived/read-only lane in UI model
 
+## Email sources
+- Linked IMAP accounts (Gmail, Outlook, ProtonMail Bridge, Fastmail, custom)
+  - Headers synced incrementally (UIDVALIDITY + HIGHESTMODSEQ)
+  - Bodies fetched lazily on demand
+  - IDLE push notifications when app is focused
+- ActivityPub direct messages (routed to email lens, Mode B)
+
 ## Media sources
 - Remote media URLs discovered from Bluesky/Facebook connectors
 - Local filesystem media extracted from archive ZIPs
 - Blob-addressed media (`blob:<hash>`) in Iroh
+- Email attachments (downloaded on demand, cached in Iroh blobs)
 
 ## 2) Display Interfaces
 
@@ -292,6 +407,12 @@ This document defines the end-to-end data flow and storage architecture for:
 - Live lane: Bluesky/Mastodon sources (interactive composer)
 - Archived lane: walled-garden sources (read-only)
 
+## Email screen
+- Folder sidebar: INBOX, Sent, Drafts, Spam, Trash, custom labels (per linked account)
+- Thread list: sender, subject, snippet, date, unread/flagged indicators
+- Message view: full email with threaded conversation history, sandboxed HTML rendering
+- Composer: To/CC/BCC, subject, rich text body (Tiptap), attachments
+
 ## 3) Storage Configuration
 
 ## Local index store (redb)
@@ -302,6 +423,12 @@ This document defines the end-to-end data flow and storage architecture for:
 ## Sync/media store (Iroh)
 - Iroh Blobs: binary media bytes (content-addressed)
 - Iroh Docs: Vault file catalog entries (`vault/file/{id}` -> `VaultFile`)
+
+## Email store (redb)
+- `EMAIL_HEADERS_TABLE`: envelope metadata (uid, message_id, threading refs, flags, snippet)
+- `EMAIL_BODIES_TABLE`: full text/html bodies (fetched lazily from IMAP, cached locally)
+- `EMAIL_ACCOUNTS_TABLE`: linked account config (credentials in encrypted keychain, not here)
+- Attachments: downloaded on demand, stored in Iroh blob cache (content-addressed)
 
 ## Ownership and isolation
 - Session owner DID is the tenant boundary.
@@ -331,6 +458,18 @@ This document defines the end-to-end data flow and storage architecture for:
    - archived: everything else
 3. Send composer is enabled only for live conversations.
 
+## E. Email reading, composing, and archival
+1. User links an external email account (IMAP/SMTP credentials stored in encrypted keychain).
+2. IMAP sync engine fetches headers incrementally → stored in `EMAIL_HEADERS_TABLE`.
+3. Email screen renders thread list from cached headers (no body fetch yet).
+4. User opens a thread → `email_fetch_body` fetches full MIME from IMAP → parsed via `mail-parser` → stored in `EMAIL_BODIES_TABLE`.
+5. HTML body rendered in sandboxed iframe with DOMPurify sanitization. Remote images blocked by default.
+6. Attachments listed but not downloaded until user clicks → saved to Iroh blob cache.
+7. Compose/reply/forward → `lettre` sends via SMTP with proper `In-Reply-To` + `References` headers.
+8. "Archive to Vault" action converts email → `BytescapeItem` (Article type) + attachments → Iroh blobs.
+9. IMAP IDLE provides push notifications for new messages (emits `email-new-message` Tauri event).
+10. Background sync polls every 60s when app is minimized (IMAP IDLE requires active TCP connection).
+
 ## D. Deletion pathways
 - Clear Vault button:
   - clears all local user-scoped redb tables
@@ -355,6 +494,20 @@ This document defines the end-to-end data flow and storage architecture for:
 - `vault_add_file`, `vault_upload_file`, `vault_upload_files_from_paths`
 - `vault_list_files`, `vault_get_file_data`, `vault_get_thumbnail`
 - `vault_delete_file`, `vault_deduplicate_files`, `vault_clear_all_files`
+
+## Email contracts
+- `email_add_account`, `email_remove_account`, `email_list_accounts`
+- `email_list_folders(account_id)`
+- `email_fetch_headers(account_id, folder, page, limit)`
+- `email_fetch_body(account_id, uid)` — lazy fetch from IMAP
+- `email_send(account_id, to, cc, bcc, subject, body, attachments)`
+- `email_reply(account_id, in_reply_to_uid, body)`, `email_forward(...)`
+- `email_search(account_id, query)` — server-side IMAP SEARCH
+- `email_mark_read(account_id, uid)`, `email_mark_flagged(...)`
+- `email_move_to_folder(account_id, uid, folder)`
+- `email_delete(account_id, uid)`
+- `email_sync_status(account_id)` — returns sync state + unread counts
+- `email_archive_to_vault(account_id, uid)` — email → BytescapeItem + blobs
 
 ## Chat contracts
 - `import_vault_messages`
@@ -1576,12 +1729,14 @@ Based on this analysis, here is the recommended priority ordering for the next d
 3. **Background syndication queue** — consume `PendingSyndication` with rate limiting + exponential backoff
 4. **Secondary indexes or SQLite** — break the 10K-item performance ceiling
 5. **Structured logging** — `tracing` crate with filterable spans for critical paths
+6. **Email Engine (Mode A)** — linked IMAP/SMTP accounts via `async-imap` + `lettre` + `mail-parser`. ~3–4 weeks with 2 agents parallel. See §8 and Phase 6 in ROADMAP.
 
 ### Long-Term (Next 6 Months)
 1. **Community Station Protocol** — encrypted store-and-forward relay
-2. **AI local search** — on-device embedding model for semantic vault queries
-3. **Lens Extension API** — WASM/iframe plugin system for third-party views
-4. **Geospatial features** — map view, local groups, marketplace
+2. **Email Engine (Mode B/C)** — AP-address messaging + hosted `@bytescape.social` email (depends on Phase 5 hosting)
+3. **AI local search** — on-device embedding model for semantic vault queries
+4. **Lens Extension API** — WASM/iframe plugin system for third-party views
+5. **Geospatial features** — map view, local groups, marketplace
 
 ---
 

@@ -424,6 +424,137 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 ---
 
+## Phase 6: Email Engine 📧
+**Goal:** Integrate email as a first-class communication channel within Bytescape, starting with linked external accounts (IMAP/SMTP client) and progressing toward native `@username@bytescape.social` email addresses.
+
+> **Philosophy:** Email is the oldest federated protocol. Adding it to Bytescape's multi-protocol vault unifies a user's entire communication history — social posts, DMs, and email — in one sovereign, local-first interface. The same Engine & Lens pattern applies: email data is normalized into the vault, displayed through a dedicated lens.
+
+> **Phasing:** Mode A (linked accounts) ships first with zero server dependency. Mode B (AP messaging) leverages existing AP DM infrastructure. Mode C (hosted email) requires `bytescape.social` MX infrastructure from Phase 4/5.
+
+### Mode A — Linked Email (IMAP/SMTP Client) 📬
+*User links an existing Gmail/Outlook/ProtonMail/Fastmail account. Bytescape acts as a local email client — reads via IMAP, sends via SMTP. No server infrastructure needed.*
+
+#### Backend (Track A)
+- [ ] **E-A1 Email Connector**: `connectors/email.rs` — IMAP client using `async-imap` crate. Connect, authenticate (password/OAuth2/app-password), list folders, fetch headers (envelope + flags), fetch full message bodies on demand, IDLE for push notifications, IMAP SEARCH for server-side search. Add `Email` variant to `Source` enum.
+- [ ] **E-A2 SMTP Sender**: SMTP client using `lettre` crate. Send new messages, reply (with `In-Reply-To` + `References` headers), forward with attachments. Support HTML + plaintext multipart bodies via `mail-builder`.
+- [ ] **E-A3 Email Storage Tables**: Three new redb tables — `EMAIL_HEADERS_TABLE` (envelope data, threading references, flags, snippet), `EMAIL_BODIES_TABLE` (text/html bodies, fetched lazily on demand), `EMAIL_ACCOUNTS_TABLE` (linked account config, encrypted credentials in keychain). Pagination + folder filtering + search.
+- [ ] **E-A4 Email OAuth2 Providers**: Gmail and Outlook OAuth2 flows for IMAP/SMTP access. Reuse localhost callback server pattern from Mastodon connector (`connectors/mastodon.rs`). Gmail scope: `https://mail.google.com/`. Outlook scope: `https://outlook.office365.com/IMAP.AccessAsUser.All`.
+- [ ] **E-A5 Email Credential Storage**: Extend `LinkedAccount` in keychain with `protocol: "email"`. IMAP/SMTP credentials (password or OAuth2 tokens) stored via existing ChaCha20-Poly1305 encrypted keychain. Token refresh handling for OAuth2 providers.
+- [ ] **E-A6 MIME Parser Integration**: `mail-parser` crate for RFC 5322 / MIME parsing — extract headers, text/html bodies, inline images, attachments. Thread reconstruction using `In-Reply-To` + `References` header chains (JWZ threading algorithm).
+- [ ] **E-A7 IMAP Sync Engine**: Background sync with IMAP IDLE (push when app focused) + polling fallback (60s interval when minimized). Incremental fetch using UIDVALIDITY + HIGHESTMODSEQ. Emit Tauri events (`email-new-message`, `email-sync-complete`) for frontend reactivity. Configurable sync depth (last 30/90/365 days).
+- [ ] **E-A8 Vault Bridge**: "Archive to Vault" action — email → `BytescapeItem` mapping (`Article` type for email bodies, `Gallery` for attachments). Attachments stored in Iroh blob cache (content-addressed, deduplicated). Archived emails appear in the main vault alongside social posts.
+- [ ] **E-A9 Tauri Commands**: Register ~15 commands: `email_add_account`, `email_remove_account`, `email_list_accounts`, `email_list_folders`, `email_fetch_headers`, `email_fetch_body`, `email_send`, `email_reply`, `email_forward`, `email_search`, `email_mark_read`, `email_mark_flagged`, `email_move_to_folder`, `email_delete`, `email_sync_status`, `email_archive_to_vault`.
+
+#### Frontend (Track B)
+- [ ] **E-B1 EmailScreen**: Three-panel layout — folder sidebar (INBOX, Sent, Drafts, Spam, Trash, custom labels), thread list (sender, subject, snippet, date, unread indicator), message view (full email with thread history). Add `"email"` to `Screen` type and `SidebarItem` type. Singleton module tab.
+- [ ] **E-B2 EmailComposer**: Modal/panel composer with To/CC/BCC fields (with contact autocomplete from unified contact graph), Subject line, rich text body (reuse Tiptap from ArticleEditor C3.2), attachment picker (reuse ComposeBox media attachment pattern). Support new message, reply, reply-all, and forward flows.
+- [ ] **E-B3 EmailThreadView**: Threaded conversation display with collapsible messages. HTML email rendering in sandboxed `<iframe srcdoc>` with DOMPurify sanitization (reuse existing `sanitizeHtml` utility from HIGH-3). Remote image blocking by default (privacy) — load on explicit user click. Plaintext fallback toggle.
+- [ ] **E-B4 Email Hooks**: `useEmailFolders()`, `useEmailThreads(folder, page)`, `useEmailMessage(uid)`, `useEmailCompose()` — standard Tauri `invoke()` pattern matching existing feed/chat hooks.
+- [ ] **E-B5 Email Zustand Store**: `emailStore.ts` — folders, selectedFolder, threads[], selectedThread, draftState, linkedAccounts[], unreadCounts, syncStatus.
+- [ ] **E-B6 Navigation Integration**: Add `"email"` to `Screen` and sidebar. Unread count badge on sidebar icon. Email tab opens as singleton module tab (same pattern as Feed, Chat).
+- [ ] **E-B7 Email Account Settings**: Account linking UI in SettingsScreen — add/remove/configure email accounts. Provider presets (Gmail, Outlook, Yahoo, ProtonMail Bridge, Fastmail, custom IMAP/SMTP). OAuth2 flow for Gmail/Outlook, manual credentials for others. Per-account sync depth and notification preferences.
+- [ ] **E-B8 HTML Email Sanitizer**: DOMPurify-based sanitization with strict allowlist. Strip `<script>`, `<iframe>`, `onclick`, tracking pixels, remote fonts. Block external image loading by default. CSP-enforced sandboxed rendering. Plaintext extraction fallback.
+- [ ] **E-B9 Email Theme Styles**: CSS for all 4 themes (geocities, win98, midnight, hacker). Three-panel responsive layout. Thread list density options (compact/comfortable). Inline attachment previews.
+
+#### Infrastructure
+- [ ] **E-I1 Gmail OAuth2 App Registration**: Google Cloud Console → OAuth consent screen → client ID/secret. Gmail API restricted scopes. Note: Google verification process can take weeks.
+- [ ] **E-I2 Outlook OAuth2 App Registration**: Azure AD → App registration for Microsoft Graph mail scopes.
+- [ ] **E-I3 Provider Integration Testing**: End-to-end testing against Gmail, Outlook, ProtonMail Bridge, Fastmail, Yahoo. Verify IMAP IDLE, OAuth2 token refresh, folder hierarchy, search, flag sync.
+
+### Mode B — AP-Address Messaging 💬 *(unlocked by A1.1 + hosting)*
+*`@username@bytescape.social` addresses become usable for private ActivityPub messages. Not real SMTP email — but provides the "email-like" address that works across the fediverse.*
+
+- [ ] **E-M1 AP DM as Email**: Route inbound AP direct messages (already handled by `inbox.rs`) to the Email tab in addition to Chat. User can choose which lens displays AP DMs.
+- [ ] **E-M2 Email-Style AP Compose**: Allow composing AP DMs from the EmailComposer using `@user@instance` addressing. WebFinger resolution (already implemented) discovers the target inbox.
+- [ ] **E-M3 Unified Inbox View**: Option to merge AP DMs and IMAP email into a single inbox view, filterable by source.
+
+### Mode C — Hosted Email *(unlocked by Phase 5 — bytescape.social infrastructure)*
+*Full `user@bytescape.social` email addresses with SMTP send/receive capability.*
+
+- [ ] **E-H1 MX Infrastructure**: MX records on `bytescape.social` domain. Mail Transfer Agent (Postfix/Stalwart) receiving inbound SMTP. DKIM/SPF/DMARC for deliverability.
+- [ ] **E-H2 Mailbox Storage**: Server-side mailbox storage for `@bytescape.social` accounts. IMAP access so the Bytescape client (Mode A connector) can read hosted mailboxes with no code changes.
+- [ ] **E-H3 Anti-Spam**: Inbound spam filtering (rspamd or similar). Outbound rate limiting to protect domain reputation.
+- [ ] **E-H4 Encryption at Rest**: All stored email encrypted with user's public key. Server cannot read mailbox contents (zero-knowledge where possible).
+
+### Email Data Model
+
+```
+EmailAccount {
+    id: UUID,
+    owner_did: String,              // Links to master identity
+    display_name: String,           // "Work Gmail", "Personal"
+    email_address: String,          // user@gmail.com
+    imap_host/port, smtp_host/port, // Server config
+    auth_method: Password | OAuth2 | AppPassword,
+    last_sync: u64,
+    active: bool,
+}
+
+EmailHeader {
+    uid: u64,                       // IMAP UID (unique per folder)
+    account_id: String,
+    message_id: String,             // RFC 2822 Message-ID
+    in_reply_to: Option<String>,    // Threading
+    references: Vec<String>,        // Full threading chain
+    from, to: Vec<String>, cc, bcc,
+    subject: String,
+    date: u64,
+    folder: String,                 // INBOX, Sent, etc.
+    flags: Vec<String>,             // \Seen, \Flagged, etc.
+    has_attachments: bool,
+    snippet: String,                // First ~200 chars plaintext
+    thread_id: String,              // Computed from References chain
+}
+
+EmailBody {                         // Fetched lazily from IMAP on demand
+    uid: u64,
+    account_id: String,
+    text_plain: Option<String>,
+    text_html: Option<String>,
+    attachments: Vec<EmailAttachment>,
+}
+
+EmailAttachment {
+    filename: String,
+    mime_type: String,
+    size: usize,
+    blob_hash: Option<String>,      // Iroh blob if saved to vault
+    inline: bool,                   // Content-Disposition: inline
+}
+```
+
+### Rust Crate Stack
+| Crate | Purpose | Maturity |
+|---|---|---|
+| `async-imap` | Async IMAP client (tokio) | Stable, 344K downloads |
+| `lettre` | SMTP email sending | Very mature, 7.7M downloads |
+| `mail-parser` | RFC 5322 / MIME parsing | Stalwart Labs, 1.3M downloads |
+| `mail-builder` | RFC 5322 message construction | Stalwart Labs, pairs with parser |
+
+### Integration with Existing Systems
+| Existing System | Email Reuse |
+|---|---|
+| `LinkedAccount` in keychain | Add `protocol: "email"` with IMAP/SMTP credentials |
+| `VaultMessage` with `source` field | Emails stored as `source: "email"`, threaded by conversation |
+| `Source` enum in connectors | Add `Email` variant |
+| `Screen` / `SidebarItem` types | Add `"email"` — singleton module tab |
+| `BytescapeItem` | Emails archived to vault as `Article` type |
+| Iroh blob store | Attachments stored content-addressed, deduplicated |
+| Unified contact graph | Email addresses merged with social contacts |
+| ChaCha20-Poly1305 keychain | IMAP/SMTP credentials encrypted at rest |
+| DOMPurify sanitizer (HIGH-3) | Reused for HTML email rendering |
+| Tiptap editor (C3.2) | Reused for rich text email composition |
+| OAuth2 infrastructure | Reused for Gmail/Outlook authentication |
+
+### Effort Estimates
+| Scope | Effort | Dependencies |
+|---|---|---|
+| **Mode A (Linked Email)** — full local client | ~3–4 weeks (2 agents parallel) | None — zero server dependency |
+| **Mode B (AP Messaging)** — AP DMs in email UI | ~3–5 days | A1.1 (AP inbox), bytescape.social hosting |
+| **Mode C (Hosted Email)** — @bytescape.social | ~2–3 weeks + ongoing ops | Phase 5 server infrastructure |
+
+---
+
 ## 🐛 Open Issues
 - [ ] **Identity Architecture — 3 Critical Inconsistencies (Sprint v8)** 🔥: (1) Mastodon connector uses fake `mastodon:instance:id` format in `did` fields — 13 locations in `connectors/mastodon.rs` + `commands/mastodon.rs` line 267. Not real DIDs. (2) AP actor DID derivation (`commands/ap.rs` line 23) uses raw bs58 encoding without multicodec prefix — produces different DID from same keypair vs keychain's `did_key_from_ed25519_bytes()`. (3) No formal identity linking — `AuthData` has no `linked_accounts` field, linkage is implicit via shared keychain file. Full audit: `.github/agents/prompts/identity-architecture-audit.md`. Fix planned in `backend-sprint-v8.md` + `frontend-sprint-v8.md`.
 - [ ] **Settings Screen Identity Section Broken**: Disconnect button is `alert()` placeholder. Connect only shows Bluesky app passwords (no OAuth, no Mastodon). Source label doesn't handle Mastodon. Linked Accounts only renders for Bluesky. Raw fake DIDs shown to user. Backend commands exist (`mastodon_disconnect`, `logout_bluesky`) but frontend doesn't wire them. Fix in `frontend-sprint-v8.md` P4.
