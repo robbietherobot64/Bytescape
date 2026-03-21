@@ -172,6 +172,13 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                 }
             }
             await loadLinkedAccounts();
+            // Refresh auth status so the feed/friends views pick up the change
+            if (onAuthUpdated) {
+                try {
+                    const status = await invoke<AuthStatus | null>('check_auth_status');
+                    if (status) onAuthUpdated(status);
+                } catch {}
+            }
         } catch (e: any) {
             alert('Failed to disconnect: ' + e);
         }

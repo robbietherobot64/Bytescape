@@ -1347,20 +1347,20 @@ pub async fn get_author_feed(
         }
     }
 
-    // ── 2. Try Mastodon author statuses ──
-    let mastodon_result: Result<Vec<BlueskyImportedPost>, String> = async {
+    // ── 2. Try Mastodon author statuses (auto-paginates up to 10 pages) ──
+    let mastodon_result: Result<(Vec<BlueskyImportedPost>, Option<String>), String> = async {
         let session = crate::connectors::mastodon::get_session_from_keychain(&state.keychain)?;
         crate::connectors::mastodon::get_account_statuses_as_bsky(
             &state.http_client,
             &session,
-            Some(limit_val as i32),
+            Some(40),   // max per page (Mastodon limit)
+            None,       // no max_id — start from newest
+            Some(10),   // fetch up to 10 pages (~400 posts)
         ).await
     }.await;
 
     match mastodon_result {
-        Ok(posts) => {
-            #[cfg(debug_assertions)]
-            println!("get_author_feed: Mastodon returned {} posts", posts.len());
+        Ok((posts, _mastodon_cursor)) => {
             all_posts.extend(posts);
         }
         Err(_) => {

@@ -325,37 +325,69 @@ pub async fn get_home_timeline_as_bsky(
 /// Fetch the authenticated user's own statuses as BlueskyImportedPost.
 ///
 /// Mastodon API: `GET /api/v1/accounts/:id/statuses`
+///
+/// Automatically paginates via `max_id` to fetch up to `max_pages` pages
+/// (default 10 = ~400 posts). Pass `max_id` to resume from a specific point.
 pub async fn get_account_statuses_as_bsky(
     http_client: &reqwest::Client,
     session: &MastodonSession,
     limit: Option<i32>,
-) -> Result<Vec<crate::connectors::bluesky::BlueskyImportedPost>, String> {
-    let url = format!(
-        "{}/api/v1/accounts/{}/statuses?limit={}&exclude_replies=false&exclude_reblogs=false",
-        session.instance,
-        session.account_id,
-        limit.unwrap_or(40).min(40),
-    );
+    max_id: Option<&str>,
+    max_pages: Option<u32>,
+) -> Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
+    let per_page = limit.unwrap_or(40).min(40);
+    let pages = max_pages.unwrap_or(10) as usize;
+    let mut all_posts = Vec::new();
+    let mut current_max_id: Option<String> = max_id.map(|s| s.to_string());
 
-    let resp = rate_limit_request(
-        http_client
-            .get(&url)
-            .bearer_auth(&session.access_token),
-    ).await?;
+    for _ in 0..pages {
+        let mut url = format!(
+            "{}/api/v1/accounts/{}/statuses?limit={}&exclude_replies=false&exclude_reblogs=false",
+            session.instance,
+            session.account_id,
+            per_page,
+        );
+        if let Some(ref mid) = current_max_id {
+            url.push_str(&format!("&max_id={}", urlencoding::encode(mid)));
+        }
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Account statuses fetch failed ({}): {}", status, body));
+        let resp = rate_limit_request(
+            http_client
+                .get(&url)
+                .bearer_auth(&session.access_token),
+        ).await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Account statuses fetch failed ({}): {}", status, body));
+        }
+
+        let statuses: Vec<MastodonStatus> = resp.json().await
+            .map_err(|e| format!("Invalid account statuses response: {}", e))?;
+
+        if statuses.is_empty() {
+            break;
+        }
+
+        // The last status ID becomes the cursor for the next page
+        let last_id = statuses.last().map(|s| s.id.clone());
+
+        all_posts.extend(
+            statuses.iter().map(|s| status_to_bsky_post(&session.instance, s))
+        );
+
+        // If we got fewer than requested, there are no more pages
+        if (statuses.len() as i32) < per_page {
+            return Ok((all_posts, None));
+        }
+
+        current_max_id = last_id;
     }
 
-    let statuses: Vec<MastodonStatus> = resp.json().await
-        .map_err(|e| format!("Invalid account statuses response: {}", e))?;
-
-    Ok(statuses
-        .iter()
-        .map(|s| status_to_bsky_post(&session.instance, s))
-        .collect())
+    // Return the cursor for the next page (last status ID)
+    let next_cursor = current_max_id;
+    Ok((all_posts, next_cursor))
 }
 
 /// Fetch a public hashtag timeline as BlueskyImportedPost.

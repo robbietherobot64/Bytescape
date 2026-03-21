@@ -77,6 +77,12 @@ impl FeedCache {
         let mut map = self.entries.write().await;
         map.remove(key);
     }
+
+    /// Flush the entire cache (e.g. after unlinking an account).
+    pub async fn clear_all(&self) {
+        let mut map = self.entries.write().await;
+        map.clear();
+    }
 }
 
 /// Application-wide state shared across all commands

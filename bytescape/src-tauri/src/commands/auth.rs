@@ -3,7 +3,7 @@
 //! Commands for user authentication, session management, and keychain operations.
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::error::BytescapeError;
 use crate::keychain_encrypted::{
@@ -500,7 +500,7 @@ pub async fn list_linked_accounts(
         .map_err(|e| format!("Failed to list linked accounts: {}", e))
 }
 
-/// Unlink a platform account: remove LinkedAccount entry + clear session tokens.
+/// Unlink a platform account: remove LinkedAccount entry + clear session tokens + flush caches.
 #[tauri::command]
 pub async fn unlink_account(
     state: State<'_, AppState>,
@@ -516,14 +516,25 @@ pub async fn unlink_account(
         "mastodon" => {
             state.keychain.clear_mastodon_session()
                 .map_err(|e| format!("Failed to clear Mastodon session: {}", e))?;
+            // Clear in-memory Mastodon session
+            super::mastodon::clear_mastodon_memory().await;
         }
         "bluesky" => {
             // Clear OAuth session
             state.oauth_manager.clear_session().await;
             state.oauth_manager.stop_callback_server().await;
+            // Clear Bluesky session tokens from keychain
+            let _ = state.keychain.delete_session();
         }
         _ => {}
     }
+
+    // Flush the entire feed cache so stale data from the disconnected
+    // account doesn't keep appearing in the UI.
+    state.feed_cache.clear_all().await;
+
+    // Notify the frontend so it can refresh its feed/friends views
+    let _ = state.app_handle.emit("account-unlinked", &protocol);
 
     // Return updated list
     state.keychain.list_linked_accounts()
