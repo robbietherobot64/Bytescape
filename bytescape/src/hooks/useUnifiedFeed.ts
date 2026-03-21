@@ -236,13 +236,34 @@ export function useUnifiedFeed({
                 const allFeedUris = feedsData.map(f => f.uri);
                 setFollowedHashtags(tags);
 
-                const activeFeedUris = selectedFeedUris.length > 0
-                    ? selectedFeedUris.filter(uri => allFeedUris.includes(uri))
-                    : allFeedUris;
-                
-                const activeTags = selectedHashtagsFilter.length > 0
-                    ? selectedHashtagsFilter.filter(tag => tags.includes(tag))
-                    : tags;
+                // Solo logic: when a specific tag is soloed, don't include all feeds
+                // (and vice-versa). This prevents e.g. #cats returning political feed posts.
+                const feedsDisabled = selectedFeedUris.includes('__disabled__');
+                const tagsDisabled = selectedHashtagsFilter.includes('__disabled__');
+                const specificFeedSoloed = selectedFeedUris.length > 0 && !feedsDisabled;
+                const specificTagSoloed = selectedHashtagsFilter.length > 0 && !tagsDisabled;
+
+                let activeFeedUris: string[];
+                if (feedsDisabled) {
+                    activeFeedUris = [];                    // feeds checkbox off
+                } else if (specificFeedSoloed) {
+                    activeFeedUris = selectedFeedUris.filter(uri => allFeedUris.includes(uri));
+                } else if (specificTagSoloed) {
+                    activeFeedUris = [];                    // tag soloed → skip feeds
+                } else {
+                    activeFeedUris = allFeedUris;           // nothing soloed → all
+                }
+
+                let activeTags: string[];
+                if (tagsDisabled) {
+                    activeTags = [];                        // tags checkbox off
+                } else if (specificTagSoloed) {
+                    activeTags = selectedHashtagsFilter.filter(tag => tags.includes(tag));
+                } else if (specificFeedSoloed) {
+                    activeTags = [];                        // feed soloed → skip tags
+                } else {
+                    activeTags = tags;                      // nothing soloed → all
+                }
 
                 if (activeFeedUris.length > 0 || activeTags.length > 0) {
                     try {

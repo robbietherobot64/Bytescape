@@ -276,6 +276,113 @@
     text-transform: uppercase;
 }
 
+.panel-hint--clickable {
+    margin-top: 8px;
+    cursor: pointer;
+}
+
+/* ═══ Subscription Panel (.sub-*) ═════════════════════════════════════ */
+.sub-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.sub-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 6px;
+}
+
+.sub-section-header input[type="checkbox"] {
+    flex-shrink: 0;
+    margin: 0;
+    cursor: pointer;
+}
+
+.sub-section-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+.sub-section-caret {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.sub-section-body {
+    padding: 0 0 8px;
+}
+
+.sub-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 4px 0 8px;
+}
+
+.sub-chip {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    background: var(--bg-tertiary, #1a1a2e);
+    color: var(--text-muted);
+}
+
+.sub-chip--active {
+    background: var(--accent-purple);
+    color: #fff;
+    border-color: var(--accent-purple);
+}
+
+.sub-chip--inactive {
+    background: var(--bg-tertiary, #1a1a2e);
+    color: var(--text-muted);
+    border-color: var(--border-color);
+}
+
+.sub-chip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.sub-add-row {
+    display: flex;
+    gap: 4px;
+    padding: 4px 0 2px;
+}
+
+.sub-add-input {
+    flex: 1;
+    font-size: 0.8rem;
+    padding: 3px 6px;
+}
+
+.sub-add-btn {
+    padding: 3px 8px;
+    font-size: 0.8rem;
+}
+
+.sub-tag-add-row {
+    margin-top: 6px;
+}
+
 .panel-hint {
     color: var(--text-muted);
     font-size: 0.8rem;

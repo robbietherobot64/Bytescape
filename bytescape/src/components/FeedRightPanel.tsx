@@ -26,39 +26,7 @@ interface FeedRightPanelProps {
     onNavigateTab?: (tab: FeedTab, opts?: { feedUri?: string }) => void;
 }
 
-/* ── Style tokens ─────────────────────────────────────────────────────── */
-const sectionHeaderStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 0', cursor: 'pointer', userSelect: 'none',
-    borderBottom: '1px solid var(--border-color)',
-    marginBottom: 6,
-};
-const caretStyle: React.CSSProperties = {
-    marginLeft: 'auto', fontSize: 12, color: 'var(--text-primary)', flexShrink: 0,
-};
-const chipContainerStyle: React.CSSProperties = {
-    display: 'flex', flexWrap: 'wrap', gap: 5, padding: '4px 0 8px',
-};
-const chipBase: React.CSSProperties = {
-    padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-color)',
-    cursor: 'pointer', fontSize: '0.82rem', fontWeight: 500,
-    transition: 'background 0.12s, color 0.12s, border-color 0.12s',
-    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-    maxWidth: '100%',
-};
-const chipActive: React.CSSProperties = {
-    ...chipBase,
-    background: 'var(--accent-purple)', color: '#fff',
-    borderColor: 'var(--accent-purple)',
-};
-const chipInactive: React.CSSProperties = {
-    ...chipBase,
-    background: 'var(--bg-tertiary, #1a1a2e)', color: 'var(--text-muted)',
-    borderColor: 'var(--border-color)',
-};
-const addRowStyle: React.CSSProperties = {
-    display: 'flex', gap: 4, padding: '4px 0 2px',
-};
+/* ── (styles moved to FeedScreen.css — .sub-* classes) ─────────────── */
 
 export function FeedRightPanel({
     activeTab,
@@ -156,9 +124,9 @@ export function FeedRightPanel({
 
                 {/* ═══ SUBSCRIBED ═════════════════════════════════════════ */}
                 {activeTab === 'subscribed' && (
-                    <div>
+                    <div className="sub-panel">
                         {/* Feeds header */}
-                        <div style={sectionHeaderStyle} onClick={() => setFeedsExpanded(v => !v)}>
+                        <div className="sub-section-header" onClick={() => setFeedsExpanded(v => !v)}>
                             <input
                                 type="checkbox"
                                 checked={feedsEnabled}
@@ -166,22 +134,22 @@ export function FeedRightPanel({
                                 onClick={e => e.stopPropagation()}
                                 title="Include feeds in your subscribed timeline"
                             />
-                            <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Feeds</span>
-                            <span style={caretStyle}>{feedsExpanded ? '▾' : '▸'}</span>
+                            <span className="sub-section-label">Feeds</span>
+                            <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
                         </div>
 
                         {feedsExpanded && (
-                            <div>
+                            <div className="sub-section-body">
                                 {visibleFeeds.length === 0 && (
-                                    <div className="panel-hint" style={{ padding: '4px 8px' } as React.CSSProperties}>No custom feeds found.</div>
+                                    <div className="panel-hint">No custom feeds found.</div>
                                 )}
-                                <div style={chipContainerStyle}>
+                                <div className="sub-chip-list">
                                     {visibleFeeds.map(feed => (
                                         <button
                                             key={feed.uri}
-                                            style={isFeedActive(feed.uri) && feedsEnabled ? chipActive : chipInactive}
+                                            className={`sub-chip ${isFeedActive(feed.uri) && feedsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}
                                             onClick={() => { if (feedsEnabled) toggleFeedChip(feed.uri); }}
-                                            title={isFeedActive(feed.uri) ? 'Click to filter to only this feed' : 'Click to show only this feed'}
+                                            title={feed.displayName || 'Custom Feed'}
                                             disabled={!feedsEnabled}
                                         >
                                             {feed.displayName || 'Custom Feed'}
@@ -192,7 +160,7 @@ export function FeedRightPanel({
                         )}
 
                         {/* Hashtags header */}
-                        <div style={sectionHeaderStyle} onClick={() => setTagsExpanded(v => !v)}>
+                        <div className="sub-section-header" onClick={() => setTagsExpanded(v => !v)}>
                             <input
                                 type="checkbox"
                                 checked={tagsEnabled}
@@ -200,22 +168,22 @@ export function FeedRightPanel({
                                 onClick={e => e.stopPropagation()}
                                 title="Include hashtag posts in your subscribed timeline"
                             />
-                            <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Hashtags</span>
-                            <span style={caretStyle}>{tagsExpanded ? '▾' : '▸'}</span>
+                            <span className="sub-section-label">Hashtags</span>
+                            <span className="sub-section-caret">{tagsExpanded ? '▾' : '▸'}</span>
                         </div>
 
                         {tagsExpanded && (
-                            <div>
+                            <div className="sub-section-body">
                                 {followedHashtags.length === 0 && (
-                                    <div className="panel-hint" style={{ padding: '4px 8px' } as React.CSSProperties}>No tags followed yet.</div>
+                                    <div className="panel-hint">No tags followed yet.</div>
                                 )}
-                                <div style={chipContainerStyle}>
+                                <div className="sub-chip-list">
                                     {followedHashtags.map(tag => (
                                         <button
                                             key={tag}
-                                            style={isTagActive(tag) && tagsEnabled ? chipActive : chipInactive}
+                                            className={`sub-chip ${isTagActive(tag) && tagsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}
                                             onClick={() => { if (tagsEnabled) toggleTagChip(tag); }}
-                                            title={isTagActive(tag) ? 'Click to filter to only this hashtag' : 'Click to show only this hashtag'}
+                                            title={`#${tag}`}
                                             disabled={!tagsEnabled}
                                         >
                                             #{tag}
@@ -224,16 +192,15 @@ export function FeedRightPanel({
                                 </div>
 
                                 {/* Compact add row */}
-                                <div style={addRowStyle}>
+                                <div className="sub-add-row">
                                     <input
-                                        className="input-field"
+                                        className="input-field sub-add-input"
                                         value={hashtagInput}
                                         onChange={e => setHashtagInput(e.target.value)}
                                         onKeyDown={e => { if (e.key === 'Enter') handleAddHashtag(); }}
-                                        placeholder="#topic"
-                                        style={{ flex: 1, fontSize: '0.8rem', padding: '3px 6px' } as React.CSSProperties}
+                                        placeholder="Add #topic"
                                     />
-                                    <button className="btn btn-primary hashtag-add-btn" onClick={handleAddHashtag} style={{ padding: '3px 8px', fontSize: '0.8rem' } as React.CSSProperties}>+</button>
+                                    <button className="btn btn-primary sub-add-btn" onClick={handleAddHashtag}>+</button>
                                 </div>
                             </div>
                         )}
@@ -268,7 +235,6 @@ export function FeedRightPanel({
                         {followingList.length > 12 && (
                             <div
                                 className="panel-hint panel-hint--clickable"
-                                style={{ marginTop: 8, cursor: 'pointer' } as React.CSSProperties}
                                 onClick={() => onNavigateTab?.('following')}
                             >
                                 +{followingList.length - 12} more →
@@ -279,12 +245,11 @@ export function FeedRightPanel({
 
                         <div className="panel-section">
                             <div className="panel-section-label">Feeds & Hashtags</div>
-                            {/* Feed chips (compact, max 6) */}
-                            <div style={{ ...chipContainerStyle, marginTop: 4 } as React.CSSProperties}>
+                            <div className="sub-chip-list">
                                 {visibleFeeds.slice(0, 6).map(feed => (
                                     <button
                                         key={feed.uri}
-                                        style={selectedFeedUris.includes(feed.uri) ? chipActive : chipInactive}
+                                        className={`sub-chip ${selectedFeedUris.includes(feed.uri) ? 'sub-chip--active' : 'sub-chip--inactive'}`}
                                         onClick={() => {
                                             toggleFeedChip(feed.uri);
                                             onNavigateTab?.('subscribed', { feedUri: feed.uri });
@@ -296,8 +261,7 @@ export function FeedRightPanel({
                                 ))}
                             </div>
 
-                            {/* Hashtag add + pills */}
-                            <div className="hashtag-input-row" style={{ marginTop: 6 } as React.CSSProperties}>
+                            <div className="hashtag-input-row sub-tag-add-row">
                                 <input
                                     className="input-field"
                                     value={hashtagInput}
@@ -315,7 +279,7 @@ export function FeedRightPanel({
                                     onNavigateTab?.('subscribed');
                                 }}>+</button>
                             </div>
-                            <div style={{ ...chipContainerStyle, marginTop: 6 } as React.CSSProperties}>
+                            <div className="sub-chip-list">
                                 {followedHashtags.map(tag => (
                                     <div key={tag} className="hashtag-pill">
                                         <span>#{tag}</span>
