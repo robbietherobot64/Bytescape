@@ -511,7 +511,7 @@ function App() {
                   if (existingConvo && existingConvo.convo_id) {
                      convoId = existingConvo.convo_id;
                   } else {
-                     convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
+                     convoId = `pending_bsky_${peerNodeId}`;
                   }
                   
                   setSelectedConvoId(convoId);

@@ -64,7 +64,8 @@ export function customFeedUris(feeds: GeneratorView[]): string[] {
 interface UseUnifiedFeedOptions {
     auth: AuthStatus | null;
     activeTab: FeedTab;
-    selectedFeedUri: string;
+    selectedFeedUris: string[];
+    selectedHashtagsFilter: string[];
     archiveSourceFilter: string;
     autoRefreshFeeds: boolean;
 }
@@ -72,7 +73,8 @@ interface UseUnifiedFeedOptions {
 export function useUnifiedFeed({
     auth,
     activeTab,
-    selectedFeedUri,
+    selectedFeedUris,
+    selectedHashtagsFilter,
     archiveSourceFilter,
     autoRefreshFeeds
 }: UseUnifiedFeedOptions) {
@@ -146,7 +148,7 @@ export function useUnifiedFeed({
         const isStale = () => fetchTokenRef.current !== requestId;
 
         // Cache key includes source filter to prevent cross-filter cache corruption
-        const cacheKey = archiveSourceFilter ? `${tab}:${archiveSourceFilter}` : tab;
+        const cacheKey = `${tab}:${archiveSourceFilter}:${selectedFeedUris.join(',')}:${selectedHashtagsFilter.join(',')}`;
 
         // Cache-first: show stale data immediately while refreshing in background
         if (!background) {
@@ -234,15 +236,18 @@ export function useUnifiedFeed({
                 const allFeedUris = feedsData.map(f => f.uri);
                 setFollowedHashtags(tags);
 
-                // Respect selectedFeedUri — filter to a single feed if selected
-                const activeFeedUris = selectedFeedUri !== FEED_FILTER_ALL && allFeedUris.includes(selectedFeedUri)
-                    ? [selectedFeedUri]
+                const activeFeedUris = selectedFeedUris.length > 0
+                    ? selectedFeedUris.filter(uri => allFeedUris.includes(uri))
                     : allFeedUris;
+                
+                const activeTags = selectedHashtagsFilter.length > 0
+                    ? selectedHashtagsFilter.filter(tag => tags.includes(tag))
+                    : tags;
 
-                if (activeFeedUris.length > 0 || tags.length > 0) {
+                if (activeFeedUris.length > 0 || activeTags.length > 0) {
                     try {
                         const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                            tags,
+                            tags: activeTags,
                             feedUris: activeFeedUris,
                             limit: 50,
                             cursor: null,
@@ -341,13 +346,13 @@ export function useUnifiedFeed({
                 setIsLoading(false);
             }
         }
-    }, [auth, selectedFeedUri, archiveSourceFilter]);
+    }, [auth, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter]);
 
     // Invalidate subscribed cache when feed URI changes — prevents stale-while-revalidate
     // from showing the old feed's content while the new one loads
     useEffect(() => {
         clearCache('subscribed');
-    }, [selectedFeedUri, clearCache]);
+    }, [selectedFeedUris, selectedHashtagsFilter, clearCache]);
 
     // Invalidate all tab caches when source filter changes to prevent stale data
     useEffect(() => {
@@ -370,7 +375,7 @@ export function useUnifiedFeed({
         setCursor(null);
         setArchiveOffset(0);
         fetchFeed(activeTab, false);
-    }, [auth, activeTab, selectedFeedUri, archiveSourceFilter, fetchFeed]);
+    }, [auth, activeTab, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter, fetchFeed]);
 
     // Auto-refresh for live tabs
     useEffect(() => {

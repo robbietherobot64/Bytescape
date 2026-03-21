@@ -244,7 +244,7 @@ export function ChatScreen() {
                 const nodeId = selectedConvoId.slice(P2P_PREFIX.length);
                 const optimisticMsg: VaultMessage = {
                     id: `temp-${now}`,
-                    convo_id: selectedConvoId,
+                    convo_id: selectedConvoId.startsWith('pending_bsky_') ? realConvoId : selectedConvoId,
                     sender_did: auth?.did || '',
                     sender_handle: auth?.handle || auth?.local_username || 'Me',
                     text,
@@ -266,6 +266,13 @@ export function ChatScreen() {
             } else {
                 // Live protocol message (Bluesky, ActivityPub, etc)
                 const msgSource = activeSource || pendingConvoMeta?.protocol || 'bluesky';
+                let realConvoId = selectedConvoId;
+                if (selectedConvoId.startsWith('pending_bsky_')) {
+                    const targetDid = pendingConvoMeta?.did || selectedConvoId.slice('pending_bsky_'.length);
+                    realConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: targetDid });
+                    useChatStore.getState().setSelectedConvoId(realConvoId);
+                }
+
                 const optimisticMsg: VaultMessage = {
                     id: `temp-${now}`,
                     convo_id: selectedConvoId,
@@ -281,14 +288,14 @@ export function ChatScreen() {
                 try {
                     await invoke('send_message', {
                         protocol: msgSource,
-                        convoId: selectedConvoId,
+                        convoId: realConvoId,
                         text: text,
                     });
                 } catch (err) {
                     // Fallback for Bluesky until unified command is deployed
                     if (msgSource === 'bluesky') {
                         await invoke<any>('send_bsky_dm', {
-                            convoId: selectedConvoId,
+                            convoId: realConvoId,
                             recipientDid: null,
                             content: text,
                         });

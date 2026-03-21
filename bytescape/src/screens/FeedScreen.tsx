@@ -34,7 +34,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const [contextOpen, setContextOpen] = useState(false);
     const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
     const autoRefreshFeeds = true;
-    const [selectedFeedUri, setSelectedFeedUri] = useState<string>(FEED_FILTER_ALL);
+    const [selectedFeedUris, setSelectedFeedUris] = useState<string[]>([]);
+    const [selectedHashtagsFilter, setSelectedHashtagsFilter] = useState<string[]>([]);
     const [hashtagInput, setHashtagInput] = useState('');
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
     const [isPosting, setIsPosting] = useState(false);
@@ -66,7 +67,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     } = useUnifiedFeed({
         auth,
         activeTab,
-        selectedFeedUri,
+        selectedFeedUris,
+        selectedHashtagsFilter,
         archiveSourceFilter,
         autoRefreshFeeds
     });
@@ -87,14 +89,14 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
 
     useEffect(() => {
         // Only run reset if we actually have feeds loaded and current selection is invalid
-        if (savedFeeds.length > 0 && selectedFeedUri !== FEED_FILTER_ALL) {
-            const uris = customFeedUris(savedFeeds);
-            if (!uris.includes(selectedFeedUri)) {
-                console.log('FeedScreen: Selected feed no longer available, resetting to Global Timeline');
-                setSelectedFeedUri(FEED_FILTER_ALL);
+        if (savedFeeds.length > 0 && selectedFeedUris.length > 0) {
+            const uris = savedFeeds.map(f => f.uri);
+            const validUris = selectedFeedUris.filter(uri => uris.includes(uri));
+            if (validUris.length !== selectedFeedUris.length) {
+                setSelectedFeedUris(validUris);
             }
         }
-    }, [savedFeeds, selectedFeedUri]);
+    }, [savedFeeds, selectedFeedUris]);
 
     const handleAddHashtag = async () => {
         const tag = hashtagInput.trim().replace(/^#/, '');
@@ -242,7 +244,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const handleNavigateTab = useCallback((tab: FeedTab, opts?: { feedUri?: string }) => {
         setActiveTab(tab);
         if (opts?.feedUri) {
-            setSelectedFeedUri(opts.feedUri);
+            opts.feedUri ? setSelectedFeedUris([opts.feedUri]) : setSelectedFeedUris([]);
         }
     }, [setActiveTab]);
 
@@ -253,8 +255,10 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 activeTab={activeTab}
                 followingList={followingList}
                 savedFeeds={savedFeeds}
-                selectedFeedUri={selectedFeedUri}
-                setSelectedFeedUri={setSelectedFeedUri}
+                selectedFeedUris={selectedFeedUris}
+                                setSelectedFeedUris={setSelectedFeedUris}
+                                selectedHashtagsFilter={selectedHashtagsFilter}
+                                setSelectedHashtagsFilter={setSelectedHashtagsFilter}
                 FEED_FILTER_ALL={FEED_FILTER_ALL}
                 hashtagInput={hashtagInput}
                 setHashtagInput={setHashtagInput}
@@ -335,8 +339,10 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 activeTab={activeTab}
                                 followingList={followingList}
                                 savedFeeds={savedFeeds}
-                                selectedFeedUri={selectedFeedUri}
-                                setSelectedFeedUri={setSelectedFeedUri}
+                                selectedFeedUris={selectedFeedUris}
+                                setSelectedFeedUris={setSelectedFeedUris}
+                                selectedHashtagsFilter={selectedHashtagsFilter}
+                                setSelectedHashtagsFilter={setSelectedHashtagsFilter}
                                 FEED_FILTER_ALL={FEED_FILTER_ALL}
                                 hashtagInput={hashtagInput}
                                 setHashtagInput={setHashtagInput}
