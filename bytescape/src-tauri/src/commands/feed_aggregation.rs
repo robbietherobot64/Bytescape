@@ -269,10 +269,12 @@ pub async fn get_timeline_unified(
     // ── 1 + 2. Live timeline + custom feeds — with feed cache ──
     let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
-    // When filtering to a non-bluesky source, skip the entire Bluesky API
+    // When filtering to a source that doesn't come from the live timeline
+    // (e.g., archived imports like facebook, instagram), skip the network
     // round-trip — those posts will just be discarded anyway.
-    let skip_bluesky = source_filter.as_deref()
-        .map(|sf| sf != "bluesky")
+    // Mastodon posts flow through get_timeline, so don't skip for "mastodon".
+    let skip_network = source_filter.as_deref()
+        .map(|sf| sf != "bluesky" && sf != "mastodon" && sf != "all")
         .unwrap_or(false);
 
     // Build a cache key incorporating cursor/offset AND source filter to prevent
@@ -280,18 +282,18 @@ pub async fn get_timeline_unified(
     let filter_tag = source_filter.as_deref().unwrap_or("all");
     let cache_key_timeline = format!("timeline:{}:{}", filter_tag, cursor.as_deref().unwrap_or("first"));
 
-    // Try to serve timeline from cache (avoids Bluesky API round-trip)
-    let cached_timeline = if cursor.is_none() && !skip_bluesky {
+    // Try to serve timeline from cache (avoids network round-trip)
+    let cached_timeline = if cursor.is_none() && !skip_network {
         state.feed_cache.get(&cache_key_timeline, cache_ttl).await
     } else {
-        None // don't cache paginated requests or when skipping Bluesky
+        None // don't cache paginated requests or when skipping network
     };
 
     let timeline_fut = async {
-        // When filtering to a non-bluesky source, return empty immediately
-        if skip_bluesky {
+        // When filtering to an archive-only source, return empty immediately
+        if skip_network {
             #[cfg(debug_assertions)]
-            println!("get_timeline_unified: skipping Bluesky (source_filter is non-bluesky)");
+            println!("get_timeline_unified: skipping network (source_filter is archive-only)");
             return Ok((Vec::new(), None));
         }
 
@@ -319,7 +321,7 @@ pub async fn get_timeline_unified(
         result
     };
 
-    if has_custom && !skip_bluesky {
+    if has_custom && !skip_network {
         let custom_fut = crate::commands::import::get_unified_feed(
             state.clone(), tags, feed_uris, limit.unwrap_or(50), None
         );
