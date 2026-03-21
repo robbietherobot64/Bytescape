@@ -117,6 +117,36 @@ export function ChatScreen() {
         byConvo[m.convo_id].push(m);
     }
 
+    // ── Resolve pending convo IDs to real ones after messages load ──
+    // When the user clicks "chat" from FriendsScreen, we set selectedConvoId to
+    // "pending_bsky_<did>" instantly (no network call). Once ChatScreen mounts
+    // and loads the real messages, we resolve that to the actual convo_id.
+    useEffect(() => {
+        if (!selectedConvoId) return;
+        const prefix = 'pending_bsky_';
+        const apPrefix = 'pending_ap_';
+        let targetDid: string | null = null;
+        if (selectedConvoId.startsWith(prefix)) {
+            targetDid = selectedConvoId.slice(prefix.length);
+        } else if (selectedConvoId.startsWith(apPrefix)) {
+            targetDid = selectedConvoId.slice(apPrefix.length);
+        }
+        if (!targetDid) return;
+
+        // Search all conversations for one that has messages from/to this DID
+        for (const [cid, msgs] of Object.entries(byConvo)) {
+            const match = msgs.some(m =>
+                m.peer_did === targetDid ||
+                m.sender_did === targetDid ||
+                m.recipient_did === targetDid
+            );
+            if (match) {
+                setSelectedConvoId(cid);
+                return;
+            }
+        }
+    }, [messages.length, selectedConvoId]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const convoIds = Object.keys(byConvo).sort((a, b) => {
         const lastA = byConvo[a][0]?.sent_at || '';
         const lastB = byConvo[b][0]?.sent_at || '';

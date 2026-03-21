@@ -2,8 +2,19 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Webview } from '@tauri-apps/api/webview';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavStore } from '../store';
 import { openInApp } from '../utils/openInApp';
+
+/** Wrap an invoke in a timeout so a hanging Rust command doesn't freeze the UI. */
+function invokeWithTimeout<T>(cmd: string, args: Record<string, unknown>, ms: number): Promise<T> {
+    return Promise.race([
+        invoke<T>(cmd, args),
+        new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Command '${cmd}' timed out after ${ms / 1000}s`)), ms)
+        ),
+    ]);
+}
 
 interface WebViewScreenProps {
     url: string;
@@ -96,14 +107,14 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                         }
 
                         try {
-                            await invoke('browser_create', {
+                            await invokeWithTimeout('browser_create', {
                                 label: labelRef.current,
                                 url,
                                 x: rect.x,
                                 y: rect.y,
                                 width: rect.width,
                                 height: rect.height,
-                            });
+                            }, 8000);
                             createdRef.current = true;
                             setIsCreating(false);
 
@@ -240,14 +251,14 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 }
 
                 try {
-                    await invoke('browser_create', {
+                    await invokeWithTimeout('browser_create', {
                         label: labelRef.current,
                         url,
                         x: rect.x,
                         y: rect.y,
                         width: rect.width,
                         height: rect.height,
-                    });
+                    }, 8000);
                     createdRef.current = true;
                     setIsCreating(false);
                     return;
@@ -293,20 +304,36 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                             <span style={{ color: 'var(--error-color, #e74c3c)' } as React.CSSProperties}>
                                 {createError}
                             </span>
-                            <button
-                                onClick={handleRetry}
-                                style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color, #444)',
-                                    background: 'var(--bg-secondary, #222)',
-                                    color: 'var(--text-primary, #fff)',
-                                    cursor: 'pointer',
-                                    fontSize: '13px',
-                                } as React.CSSProperties}
-                            >
-                                Retry
-                            </button>
+                            <div style={{ display: 'flex', gap: 10 } as React.CSSProperties}>
+                                <button
+                                    onClick={handleRetry}
+                                    style={{
+                                        padding: '8px 16px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border-color, #444)',
+                                        background: 'var(--bg-secondary, #222)',
+                                        color: 'var(--text-primary, #fff)',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                    } as React.CSSProperties}
+                                >
+                                    Retry
+                                </button>
+                                <button
+                                    onClick={() => openUrl(url).catch(() => {})}
+                                    style={{
+                                        padding: '8px 16px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--accent-purple, #9b59b6)',
+                                        background: 'var(--accent-purple, #9b59b6)',
+                                        color: '#fff',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                    } as React.CSSProperties}
+                                >
+                                    Open in System Browser
+                                </button>
+                            </div>
                         </>
                     )}
                 </div>
