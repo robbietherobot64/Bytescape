@@ -7,7 +7,7 @@ import { FeedRightPanel } from '../components/FeedRightPanel';
 import { FriendsPanel } from '../components/FriendsPanel';
 import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
-import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS, customFeedUris } from '../hooks/useUnifiedFeed';
+import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
 
@@ -106,6 +106,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
             if (!current.includes(tag)) {
                 const refreshed = await invoke<string[]>('add_followed_hashtag', { hashtag: tag });
                 setFollowedHashtags(refreshed);
+                // Also follow on Mastodon if a session is active (silent — no-ops if not connected)
+                invoke('mastodon_follow_hashtag', { hashtag: tag }).catch(() => {});
             }
             setHashtagInput('');
         } catch (e) {
@@ -117,6 +119,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         try {
             const refreshed = await invoke<string[]>('remove_followed_hashtag', { hashtag: tag });
             setFollowedHashtags(refreshed);
+            // Also unfollow on Mastodon if connected (silent)
+            invoke('mastodon_unfollow_hashtag', { hashtag: tag }).catch(() => {});
         } catch (e) {
             console.error('Failed to remove hashtag:', e);
         }

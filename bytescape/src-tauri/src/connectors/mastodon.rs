@@ -548,6 +548,54 @@ pub async fn unfollow_account(
         .map_err(|e| format!("Invalid relationship response: {}", e))
 }
 
+/// Follow a hashtag on Mastodon (POST /api/v1/tags/:hashtag/follow).
+pub async fn follow_hashtag(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    hashtag: &str,
+) -> Result<serde_json::Value, String> {
+    let tag = hashtag.trim_start_matches('#');
+    let resp = http_client
+        .post(format!("{}/api/v1/tags/{}/follow", session.instance, tag))
+        .bearer_auth(&session.access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Follow hashtag failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Follow hashtag failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid hashtag follow response: {}", e))
+}
+
+/// Unfollow a hashtag on Mastodon (POST /api/v1/tags/:hashtag/unfollow).
+pub async fn unfollow_hashtag(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    hashtag: &str,
+) -> Result<serde_json::Value, String> {
+    let tag = hashtag.trim_start_matches('#');
+    let resp = http_client
+        .post(format!("{}/api/v1/tags/{}/unfollow", session.instance, tag))
+        .bearer_auth(&session.access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Unfollow hashtag failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Unfollow hashtag failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid hashtag unfollow response: {}", e))
+}
+
 /// Look up a Mastodon account by `acct` string (e.g., `user@instance.social`).
 pub async fn lookup_account(
     http_client: &reqwest::Client,

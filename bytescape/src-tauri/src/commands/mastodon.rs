@@ -734,6 +734,40 @@ pub async fn send_ap_unfollow(
 }
 
 // ═══════════════════════════════════════════════════
+// Hashtag follow / unfollow (Mastodon C2S API)
+// ═══════════════════════════════════════════════════
+
+/// Follow a hashtag on Mastodon. Silently no-ops if no Mastodon session.
+#[tauri::command]
+pub async fn mastodon_follow_hashtag(
+    state: State<'_, AppState>,
+    hashtag: String,
+) -> Result<(), String> {
+    let session = match get_active_session(&state).await {
+        Ok(s) => s,
+        Err(_) => return Ok(()), // not connected — skip silently
+    };
+    mastodon::follow_hashtag(&state.http_client, &session, &hashtag)
+        .await
+        .map(|_| ())
+}
+
+/// Unfollow a hashtag on Mastodon. Silently no-ops if no Mastodon session.
+#[tauri::command]
+pub async fn mastodon_unfollow_hashtag(
+    state: State<'_, AppState>,
+    hashtag: String,
+) -> Result<(), String> {
+    let session = match get_active_session(&state).await {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    mastodon::unfollow_hashtag(&state.http_client, &session, &hashtag)
+        .await
+        .map(|_| ())
+}
+
+// ═══════════════════════════════════════════════════
 // P6: Unified Profile Resolver
 // ═══════════════════════════════════════════════════
 

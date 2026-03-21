@@ -583,37 +583,28 @@ function App() {
         return (
           <FriendsScreen
             auth={auth}
-            onOpenChat={async (peerNodeId, peerName) => {
+            onOpenChat={(peerNodeId, peerName) => {
               const { setSelectedConvoId, setPendingConvoMeta, messages } = useChatStore.getState();
-              
+
+              if (peerNodeId.startsWith('mastodon:') || peerNodeId.startsWith('acct:')) {
+                alert('Mastodon DMs coming soon!');
+                return;
+              }
+
               if (peerNodeId.startsWith('did:plc:') || peerNodeId.startsWith('did:web:')) {
-                try {
-                  // Bypass backend command if possible by finding an existing chat in local state
-                  const existingConvo = Array.from(messages.values()).find(
-                    msg => msg.protocol === 'bluesky' && (msg.sender_did === peerNodeId || msg.recipient_did === peerNodeId || msg.convo_id?.includes(peerNodeId))
-                  );
-                  
-                  let convoId;
-                  if (existingConvo && existingConvo.convo_id) {
-                     convoId = existingConvo.convo_id;
-                  } else {
-                     convoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: peerNodeId });
-                  }
-                  
-                  setSelectedConvoId(convoId);
-                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
-                } catch (e) {
-                  console.error('Failed to get/create convo:', e);
-                }
+                // Find existing convo in local message state — instant, no network call
+                const existingConvo = messages.find(
+                  msg => (msg.source === 'bluesky' || msg.protocol === 'bluesky') &&
+                    (msg.peer_did === peerNodeId || msg.sender_did === peerNodeId || msg.recipient_did === peerNodeId)
+                );
+                const convoId = existingConvo?.convo_id ?? `pending_bsky_${peerNodeId}`;
+                setSelectedConvoId(convoId);
+                setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'bluesky' });
               } else if (peerNodeId.startsWith('http') || (peerName && peerName.includes('@'))) {
-                try {
-                  const convoId = peerNodeId;
-                  setSelectedConvoId(convoId);
-                  setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'activitypub' });
-                } catch (e) {
-                  console.error('Failed to get/create AP convo:', e);
-                }
+                setSelectedConvoId(`pending_ap_${peerNodeId}`);
+                setPendingConvoMeta({ did: peerNodeId, handle: peerName || peerNodeId, protocol: 'activitypub' });
               } else {
+                // P2P node ID
                 setSelectedConvoId(`p2p:${peerNodeId}`);
                 setPendingConvoMeta(null);
               }

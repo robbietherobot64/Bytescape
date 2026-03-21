@@ -569,6 +569,8 @@ pub fn run() {
             commands::mastodon::send_message,
             commands::mastodon::mastodon_follow,
             commands::mastodon::mastodon_unfollow,
+            commands::mastodon::mastodon_follow_hashtag,
+            commands::mastodon::mastodon_unfollow_hashtag,
             commands::mastodon::mastodon_get_following,
             commands::mastodon::mastodon_get_followers,
             commands::mastodon::send_ap_follow,

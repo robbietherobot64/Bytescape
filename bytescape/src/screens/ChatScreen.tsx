@@ -41,7 +41,6 @@ export function ChatScreen() {
     const [p2pConvos, setP2pConvos] = useState<P2pConversation[]>([]);
     const [activeTab, setActiveTab] = useState<ChatTab>('live');
     const [messagesLoading, setMessagesLoading] = useState(true);
-    const [startingConvoDid, setStartingConvoDid] = useState<string | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -244,7 +243,7 @@ export function ChatScreen() {
                 const nodeId = selectedConvoId.slice(P2P_PREFIX.length);
                 const optimisticMsg: VaultMessage = {
                     id: `temp-${now}`,
-                    convo_id: selectedConvoId.startsWith('pending_bsky_') ? realConvoId : selectedConvoId,
+                    convo_id: selectedConvoId,
                     sender_did: auth?.did || '',
                     sender_handle: auth?.handle || auth?.local_username || 'Me',
                     text,
@@ -652,38 +651,29 @@ export function ChatScreen() {
                                         <div className="friend-item-actions">
                                             <button
                                                 className="friend-item-action-btn"
-                                                disabled={startingConvoDid === buddy.did}
-                                                onClick={async () => {
-                                                    // Find or select the conversation with this buddy
-                                                    const convoId = Object.keys(byConvo).find(cid => {
+                                                onClick={() => {
+                                                    if (buddy.did.startsWith('mastodon:') || buddy.did.startsWith('acct:')) {
+                                                        alert('Mastodon DMs coming soon!');
+                                                        return;
+                                                    }
+                                                    // Find existing convo in local state — instant, no network call
+                                                    const existingConvoId = Object.keys(byConvo).find(cid => {
                                                         const msgs = byConvo[cid];
                                                         return msgs.some(m =>
                                                             m.peer_did === buddy.did || m.sender_did === buddy.did
                                                         );
                                                     });
-                                                    if (convoId) {
-                                                        setSelectedConvoId(convoId);
+                                                    if (existingConvoId) {
+                                                        setSelectedConvoId(existingConvoId);
                                                     } else {
-                                                        // Create a new conversation with this buddy
-                                                        try {
-                                                            setStartingConvoDid(buddy.did);
-                                                            if (buddy.did.startsWith('mastodon:') || buddy.did.startsWith('acct:')) {
-                                                                alert('Mastodon DMs coming soon!');
-                                                                return;
-                                                            }
-                                                            const newConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
-                                                            setSelectedConvoId(newConvoId);
-                                                            setPendingConvoMeta({ did: buddy.did, handle: buddy.handle });
-                                                        } catch (e) {
-                                                            console.error('Failed to create convo:', e);
-                                                        } finally {
-                                                            setStartingConvoDid(null);
-                                                        }
+                                                        // Optimistic pending convo — real convo created on first send
+                                                        setSelectedConvoId(`pending_bsky_${buddy.did}`);
+                                                        setPendingConvoMeta({ did: buddy.did, handle: buddy.handle });
                                                     }
                                                 }}
                                                 title={`Message ${buddy.handle}`}
                                             >
-                                                {startingConvoDid === buddy.did ? '⏳' : <BsChatDotsFill size={11} />}
+                                                <BsChatDotsFill size={11} />
                                             </button>
                                             <button
                                                 className="friend-item-action-btn"
