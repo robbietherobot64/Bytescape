@@ -194,10 +194,6 @@ async fn handle_mastodon_callback(
             }
             let _ = app_state.keychain.ensure_master_did();
 
-            // Get owner DID (web_did > bluesky > master_did)
-            let owner_did = app_state.keychain.get_owner_did()
-                .ok().flatten()
-                .unwrap_or_else(|| "unknown".to_string());
             let instance_host = session.instance.replace("https://", "").replace("http://", "");
 
             // Generate a did:plc for this Mastodon account
@@ -218,6 +214,12 @@ async fn handle_mastodon_callback(
                 active: true,
             };
             let _ = app_state.keychain.add_linked_account(linked);
+
+            // Get owner DID AFTER linked account is stored so did:plc is findable
+            // Priority: web_did > bluesky did > linked account did:plc > did:key
+            let owner_did = app_state.keychain.get_owner_did()
+                .ok().flatten()
+                .unwrap_or_else(|| mastodon_plc.clone());
 
             let local_username = app_state.keychain.get_local_username().unwrap_or(None);
             let identity_ready = local_username.is_some();
@@ -314,11 +316,7 @@ pub async fn mastodon_complete_auth(
         let _ = state.keychain.identity_init_full_recovery("bytescape-mastodon-auto-init");
     }
 
-    // Get the owner DID from keychain (web_did > bluesky > master_did)
     let _ = state.keychain.ensure_master_did();
-    let owner_did = state.keychain.get_owner_did()
-        .map_err(|e| format!("Owner DID error: {}", e))?
-        .unwrap_or_else(|| "unknown".to_string());
 
     // Generate a did:plc for this Mastodon account
     let instance_host = session.instance.replace("https://", "").replace("http://", "");
@@ -340,6 +338,12 @@ pub async fn mastodon_complete_auth(
     };
     state.keychain.add_linked_account(linked)
         .map_err(|e| format!("Failed to store linked account: {}", e))?;
+
+    // Get owner DID AFTER linked account is stored so did:plc is findable
+    // Priority: web_did > bluesky did > linked account did:plc > did:key
+    let owner_did = state.keychain.get_owner_did()
+        .map_err(|e| format!("Owner DID error: {}", e))?
+        .unwrap_or_else(|| mastodon_plc.clone());
 
     let local_username = state.keychain.get_local_username().unwrap_or(None);
     let identity_ready = local_username.is_some();

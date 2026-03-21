@@ -959,13 +959,14 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the owner DID — priority: web_did > Bluesky DID > master_did (did:key) > local_identity_did.
+    /// Get the owner DID — priority: web_did > Bluesky DID > linked account did:plc > master_did > local_identity_did.
     ///
     /// DID hierarchy:
-    ///   1. did:web:bytescape.social:{username} — master identity
-    ///   2. did:plc:... — Bluesky platform DID (for vault items keyed before web_did existed)
-    ///   3. did:key:z6Mk... — P2P/offline identity
-    ///   4. local_identity_did — legacy fallback
+    ///   1. did:web:bytescape.social:{username} — master identity (set when username is chosen)
+    ///   2. did:plc:... — Bluesky native DID (for vault items keyed before web_did existed)
+    ///   3. did:plc:... — any linked account's generated did:plc (e.g. Mastodon)
+    ///   4. did:key:z6Mk... — P2P/offline identity (LAST RESORT, never shown as primary)
+    ///   5. local_identity_did — legacy fallback
     ///
     /// Use this for operations that need *any* valid DID (vault writes, archive imports).
     pub fn get_owner_did(&self) -> Result<Option<String>, BytescapeError> {
@@ -978,6 +979,13 @@ impl EncryptedKeychain {
             }
             if let Some(ref did) = data.did {
                 return Ok(Some(did.clone()));
+            }
+            // Check linked accounts for a did:plc before falling back to did:key
+            if let Some(plc) = data.linked_accounts.iter()
+                .find(|a| a.identifier.starts_with("did:plc:"))
+                .map(|a| a.identifier.clone())
+            {
+                return Ok(Some(plc));
             }
             if let Some(ref did) = data.master_did {
                 return Ok(Some(did.clone()));
@@ -992,6 +1000,9 @@ impl EncryptedKeychain {
         if let Some(data) = self.load_encrypted()? {
             let result = data.web_did.clone()
                 .or_else(|| data.did.clone())
+                .or_else(|| data.linked_accounts.iter()
+                    .find(|a| a.identifier.starts_with("did:plc:"))
+                    .map(|a| a.identifier.clone()))
                 .or_else(|| data.master_did.clone())
                 .or_else(|| data.local_identity_did.clone());
             *cache = Some(data);
