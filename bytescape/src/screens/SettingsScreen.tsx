@@ -263,10 +263,10 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                             Signed in as <strong>{auth?.local_username || auth?.handle}</strong>
                         </p>
                         <p className="text-xs text-muted" style={{ opacity: 0.7 }}>
-                            Master Identity: {auth?.did?.substring(0, 16)}...
+                            Master Identity: {(auth?.web_did || auth?.did || '').substring(0, 40)}{(auth?.web_did || auth?.did || '').length > 40 ? '...' : ''}
                             <button
                                 onClick={() => {
-                                    navigator.clipboard.writeText(auth?.did || '');
+                                    navigator.clipboard.writeText(auth?.web_did || auth?.did || '');
                                     alert('DID copied to clipboard');
                                 }}
                                 style={{ background: 'none', border: 'none', color: 'var(--accent-purple)', cursor: 'pointer', marginLeft: 8 }}
@@ -291,7 +291,9 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                             <span style={{ fontSize: '1.2rem' }}>{account.protocol === 'bluesky' ? '🦋' : '🐘'}</span>
                             <div style={{ flex: 1 }}>
                                 <strong style={{ fontSize: '0.9rem' }}>{account.display_handle}</strong>
-                                <p className="text-xs text-muted" style={{ margin: 0 }}>{account.protocol.charAt(0).toUpperCase() + account.protocol.slice(1)} · Connected</p>
+                                <p className="text-xs text-muted" style={{ margin: 0 }}>
+                                    {account.protocol.charAt(0).toUpperCase() + account.protocol.slice(1)} · {account.identifier.startsWith('did:plc:') ? account.identifier.substring(0, 20) + '...' : 'Connected'}
+                                </p>
                             </div>
                             <span style={{ color: 'var(--accent-green)', fontSize: '0.82rem', fontWeight: 600 }}>✓ Linked</span>
                             <button

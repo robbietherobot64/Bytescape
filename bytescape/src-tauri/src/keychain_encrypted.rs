@@ -854,7 +854,7 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    /// Delete session (Bluesky tokens only)
+    /// Delete session (Bluesky tokens only). DEPRECATED — use delete_all_identity_data for full wipe.
     pub fn delete_session(&self) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;

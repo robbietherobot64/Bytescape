@@ -2238,6 +2238,13 @@ async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<cra
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
     let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
 
+    // Resolve the Bluesky-specific DID for AT Protocol API calls.
+    // The frontend may pass a did:web or Mastodon did:plc which Bluesky won't recognize.
+    let bluesky_actor = state.keychain.get_bluesky_did()
+        .ok().flatten()
+        .or_else(|| state.keychain.get_handle().ok().flatten())
+        .unwrap_or_else(|| actor.clone());
+
     // Bluesky follows (gracefully skip if no Bluesky session)
     let bluesky_result: Result<Vec<crate::connectors::bluesky::ProfileView>, String> = async {
         if state.is_oauth_session() {
@@ -2246,7 +2253,7 @@ pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::res
                 .map_err(|e| format!("PDS URL error: {}", e))?;
             let url = format!(
                 "{}/xrpc/app.bsky.graph.getFollows?actor={}&limit=100",
-                pds_url, urlencoding::encode(&actor),
+                pds_url, urlencoding::encode(&bluesky_actor),
             );
             let json_str = state.oauth_manager.authenticated_get(&url).await
                 .map_err(|e| format!("Follows fetch error: {}", e))?;
@@ -2266,16 +2273,15 @@ pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::res
             Ok(profiles)
         } else {
             let access_jwt = state.get_fresh_access_jwt().await?;
-            let (bsky_profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+            let (bsky_profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &bluesky_actor, 100, None).await?;
             Ok(bsky_profiles)
         }
     }.await;
 
     match bluesky_result {
         Ok(bsky_profiles) => profiles.extend(bsky_profiles),
-        Err(e) => {
-            #[cfg(debug_assertions)]
-            eprintln!("list_follows: Bluesky fetch skipped/failed: {}", e);
+        Err(_e) => {
+            // Bluesky not connected or DID not recognized — skip gracefully
         }
     }
 
@@ -2302,9 +2308,15 @@ pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::res
 pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
     let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
 
+    // Resolve the Bluesky-specific DID for AT Protocol API calls.
+    let bluesky_actor = state.keychain.get_bluesky_did()
+        .ok().flatten()
+        .or_else(|| state.keychain.get_handle().ok().flatten())
+        .unwrap_or_else(|| actor.clone());
+
     // Bluesky followers (gracefully skip if no Bluesky session)
     let bluesky_result: Result<Vec<crate::connectors::bluesky::ProfileView>, String> = async {
-        let members = state.chat_client.get_followers(&actor).await
+        let members = state.chat_client.get_followers(&bluesky_actor).await
             .map_err(|e| format!("Bluesky followers error: {}", e))?;
         Ok(members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
             did: m.did,
@@ -2317,9 +2329,8 @@ pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::r
 
     match bluesky_result {
         Ok(bsky_profiles) => profiles.extend(bsky_profiles),
-        Err(e) => {
-            #[cfg(debug_assertions)]
-            eprintln!("list_followers: Bluesky fetch skipped/failed: {}", e);
+        Err(_e) => {
+            // Bluesky not connected or DID not recognized — skip gracefully
         }
     }
 

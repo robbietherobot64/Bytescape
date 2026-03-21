@@ -397,7 +397,6 @@ impl AppState {
 /// This is the main entry point called from main.rs
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    println!("Starting Bytescape...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

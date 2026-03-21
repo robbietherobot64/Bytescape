@@ -130,7 +130,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <h1 className="profile-display-name-large">
                             {auth?.handle || 'Anonymous'}
                         </h1>
-                        <div className="profile-did">{auth?.did}</div>
+                        <div className="profile-did">{auth?.web_did || auth?.did}</div>
                     </div>
                 </div>
                 <button

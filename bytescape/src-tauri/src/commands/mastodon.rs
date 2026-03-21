@@ -213,7 +213,8 @@ async fn handle_mastodon_callback(
                     .as_secs(),
                 active: true,
             };
-            let _ = app_state.keychain.add_linked_account(linked);
+            app_state.keychain.add_linked_account(linked)
+                .unwrap_or_else(|e| eprintln!("Failed to store linked account: {}", e));
 
             // Get owner DID AFTER linked account is stored so did:plc is findable
             // Priority: web_did > bluesky did > linked account did:plc > did:key
