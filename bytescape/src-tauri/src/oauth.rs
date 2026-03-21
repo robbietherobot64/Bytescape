@@ -675,11 +675,14 @@ impl OAuthManager {
 
                 let local_username = app_state.keychain.get_local_username().unwrap_or(None);
                 let identity_ready = local_username.is_some();
+                let web_did = app_state.keychain.get_web_did().unwrap_or(None)
+                    .or_else(|| app_state.keychain.ensure_web_did().ok().flatten());
 
-                // Register Bluesky as a linked account
+                // Register Bluesky as a linked account (uses existing did:plc)
                 let linked = crate::keychain_encrypted::LinkedAccount {
                     protocol: "bluesky".to_string(),
                     identifier: did.clone(),
+                    platform_identifier: Some(did.clone()),
                     display_handle: format!("@{}", handle),
                     display_name: None,
                     avatar_url: None,
@@ -698,6 +701,7 @@ impl OAuthManager {
                     "source": "bluesky",
                     "identity_ready": identity_ready,
                     "local_username": local_username,
+                    "web_did": web_did,
                 });
                 let _ = app_handle.emit("oauth-complete", auth_status);
 

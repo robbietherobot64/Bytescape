@@ -2236,13 +2236,48 @@ async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<cra
 /// List profiles this actor follows (Bluesky + Mastodon merged).
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    // Bluesky follows
-    let access_jwt = if state.is_oauth_session() {
-        String::new()
-    } else {
-        state.get_fresh_access_jwt().await?
-    };
-    let (mut profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+    let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
+
+    // Bluesky follows (gracefully skip if no Bluesky session)
+    let bluesky_result: Result<Vec<crate::connectors::bluesky::ProfileView>, String> = async {
+        if state.is_oauth_session() {
+            // OAuth path: use authenticated XRPC
+            let pds_url = state.oauth_manager.get_pds_url().await
+                .map_err(|e| format!("PDS URL error: {}", e))?;
+            let url = format!(
+                "{}/xrpc/app.bsky.graph.getFollows?actor={}&limit=100",
+                pds_url, urlencoding::encode(&actor),
+            );
+            let json_str = state.oauth_manager.authenticated_get(&url).await
+                .map_err(|e| format!("Follows fetch error: {}", e))?;
+            let json: serde_json::Value = serde_json::from_str(&json_str)
+                .map_err(|e| format!("JSON parse error: {}", e))?;
+            let empty_vec = Vec::new();
+            let follows = json.get("follows").and_then(|v: &serde_json::Value| v.as_array()).unwrap_or(&empty_vec);
+            let profiles: Vec<crate::connectors::bluesky::ProfileView> = follows.iter().filter_map(|f: &serde_json::Value| {
+                Some(crate::connectors::bluesky::ProfileView {
+                    did: f.get("did")?.as_str()?.to_string(),
+                    handle: f.get("handle")?.as_str()?.to_string(),
+                    display_name: f.get("displayName").and_then(|v: &serde_json::Value| v.as_str()).map(|s: &str| s.to_string()),
+                    avatar: f.get("avatar").and_then(|v: &serde_json::Value| v.as_str()).map(|s: &str| s.to_string()),
+                    description: f.get("description").and_then(|v: &serde_json::Value| v.as_str()).map(|s: &str| s.to_string()),
+                })
+            }).collect();
+            Ok(profiles)
+        } else {
+            let access_jwt = state.get_fresh_access_jwt().await?;
+            let (bsky_profiles, _cursor) = crate::connectors::bluesky::get_follows(&access_jwt, &actor, 100, None).await?;
+            Ok(bsky_profiles)
+        }
+    }.await;
+
+    match bluesky_result {
+        Ok(bsky_profiles) => profiles.extend(bsky_profiles),
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("list_follows: Bluesky fetch skipped/failed: {}", e);
+        }
+    }
 
     // Merge Mastodon following if session available
     if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
@@ -2265,16 +2300,28 @@ pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::res
 /// List profiles following this actor (Bluesky + Mastodon merged).
 #[tauri::command]
 pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
-    let members = state.chat_client.get_followers(&actor).await
-        .map_err(BytescapeError::BlueskyApi)?;
+    let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
 
-    let mut profiles: Vec<_> = members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
-        did: m.did,
-        handle: m.handle.unwrap_or_default(),
-        display_name: m.display_name,
-        avatar: None,
-        description: None,
-    }).collect();
+    // Bluesky followers (gracefully skip if no Bluesky session)
+    let bluesky_result: Result<Vec<crate::connectors::bluesky::ProfileView>, String> = async {
+        let members = state.chat_client.get_followers(&actor).await
+            .map_err(|e| format!("Bluesky followers error: {}", e))?;
+        Ok(members.into_iter().map(|m| crate::connectors::bluesky::ProfileView {
+            did: m.did,
+            handle: m.handle.unwrap_or_default(),
+            display_name: m.display_name,
+            avatar: None,
+            description: None,
+        }).collect())
+    }.await;
+
+    match bluesky_result {
+        Ok(bsky_profiles) => profiles.extend(bsky_profiles),
+        Err(e) => {
+            #[cfg(debug_assertions)]
+            eprintln!("list_followers: Bluesky fetch skipped/failed: {}", e);
+        }
+    }
 
     // Merge Mastodon followers if session available
     if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
@@ -2327,11 +2374,21 @@ pub async fn get_unified_feed(
     }
 
     // Cache miss — hit network
-    let mut result = if state.is_oauth_session() {
-        get_unified_feed_oauth(&state, tags.clone(), feed_uris, limit, cursor).await
+    // Gracefully handle no Bluesky session (Mastodon-only users)
+    let mut result: Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> = if state.is_oauth_session() {
+        get_unified_feed_oauth(&state, tags.clone(), feed_uris.clone(), limit, cursor.clone()).await
     } else {
-        let access_jwt = state.get_fresh_access_jwt().await?;
-        crate::connectors::bluesky::get_unified_feed(&access_jwt, tags.clone(), Some(feed_uris), limit, cursor).await
+        match state.get_fresh_access_jwt().await {
+            Ok(access_jwt) => {
+                crate::connectors::bluesky::get_unified_feed(&access_jwt, tags.clone(), Some(feed_uris.clone()), limit, cursor.clone()).await
+            }
+            Err(_) => {
+                // No Bluesky session — start with empty result, Mastodon will fill in below
+                #[cfg(debug_assertions)]
+                eprintln!("get_unified_feed: No Bluesky session, skipping Bluesky feeds");
+                Ok((Vec::new(), None))
+            }
+        }
     };
 
     // Merge Mastodon hashtag posts into non-OAuth path results too

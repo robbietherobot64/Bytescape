@@ -182,15 +182,32 @@ async fn handle_mastodon_callback(
             let app_state = app_handle.state::<crate::AppState>();
             let _ = app_state.keychain.set_mastodon_session(&json_str);
 
-            // Get master DID and create LinkedAccount
-            let master_did = app_state.keychain.ensure_master_did()
+            // Ensure identity infrastructure exists for Mastodon-only users
+            let recovery_status = app_state.keychain.get_identity_recovery_status()
+                .unwrap_or(crate::keychain_encrypted::IdentityRecoveryStatus {
+                    has_local_identity: false, has_escrow: false,
+                    recovery_pending: false, recovery_verified_pending_finalize: false,
+                    did: None, public_key: None, last_recovered_at: None,
+                });
+            if !recovery_status.has_local_identity {
+                let _ = app_state.keychain.identity_init_full_recovery("bytescape-mastodon-auto-init");
+            }
+            let _ = app_state.keychain.ensure_master_did();
+
+            // Get owner DID (web_did > bluesky > master_did)
+            let owner_did = app_state.keychain.get_owner_did()
                 .ok().flatten()
                 .unwrap_or_else(|| "unknown".to_string());
             let instance_host = session.instance.replace("https://", "").replace("http://", "");
 
+            // Generate a did:plc for this Mastodon account
+            let acct_uri = format!("acct:{}@{}", session.acct, instance_host);
+            let mastodon_plc = crate::keychain_encrypted::EncryptedKeychain::generate_platform_plc("mastodon", &acct_uri);
+
             let linked = crate::keychain_encrypted::LinkedAccount {
                 protocol: "mastodon".to_string(),
-                identifier: format!("acct:{}@{}", session.acct, instance_host),
+                identifier: mastodon_plc.clone(),
+                platform_identifier: Some(acct_uri.clone()),
                 display_handle: format!("@{}@{}", session.acct, instance_host),
                 display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
                 avatar_url: if session.avatar.is_empty() { None } else { Some(session.avatar.clone()) },
@@ -202,13 +219,21 @@ async fn handle_mastodon_callback(
             };
             let _ = app_state.keychain.add_linked_account(linked);
 
+            let local_username = app_state.keychain.get_local_username().unwrap_or(None);
+            let identity_ready = local_username.is_some();
+            let web_did = app_state.keychain.get_web_did().unwrap_or(None)
+                .or_else(|| app_state.keychain.ensure_web_did().ok().flatten());
+
             // Build AuthStatus for the frontend
             let auth_status = serde_json::json!({
-                "handle": session.acct,
-                "did": master_did,
-                "mastodon_acct": format!("acct:{}@{}", session.acct, instance_host),
+                "handle": format!("{}@{}", session.acct, instance_host),
+                "did": owner_did,
+                "mastodon_acct": acct_uri,
+                "mastodon_plc": mastodon_plc,
                 "source": "mastodon",
-                "identity_ready": true,
+                "local_username": local_username,
+                "identity_ready": identity_ready,
+                "web_did": web_did,
             });
 
             *masto_session_lock().lock().await = Some(session);
@@ -278,17 +303,32 @@ pub async fn mastodon_complete_auth(
     state.keychain.set_mastodon_session(&json_str)
         .map_err(|e| format!("Keychain save failed: {}", e))?;
 
-    // Get the master DID from keychain (the user's universal identity)
-    let master_did = state.keychain.ensure_master_did()
-        .map_err(|e| format!("Master DID error: {}", e))?
+    // Ensure identity infrastructure exists for Mastodon-only users
+    let recovery_status = state.keychain.get_identity_recovery_status()
+        .unwrap_or(crate::keychain_encrypted::IdentityRecoveryStatus {
+            has_local_identity: false, has_escrow: false,
+            recovery_pending: false, recovery_verified_pending_finalize: false,
+            did: None, public_key: None, last_recovered_at: None,
+        });
+    if !recovery_status.has_local_identity {
+        let _ = state.keychain.identity_init_full_recovery("bytescape-mastodon-auto-init");
+    }
+
+    // Get the owner DID from keychain (web_did > bluesky > master_did)
+    let _ = state.keychain.ensure_master_did();
+    let owner_did = state.keychain.get_owner_did()
+        .map_err(|e| format!("Owner DID error: {}", e))?
         .unwrap_or_else(|| "unknown".to_string());
 
-    // Create a LinkedAccount entry for this Mastodon connection
+    // Generate a did:plc for this Mastodon account
     let instance_host = session.instance.replace("https://", "").replace("http://", "");
     let acct_uri = format!("acct:{}@{}", session.acct, instance_host);
+    let mastodon_plc = crate::keychain_encrypted::EncryptedKeychain::generate_platform_plc("mastodon", &acct_uri);
+
     let linked = crate::keychain_encrypted::LinkedAccount {
         protocol: "mastodon".to_string(),
-        identifier: acct_uri.clone(),
+        identifier: mastodon_plc.clone(),
+        platform_identifier: Some(acct_uri.clone()),
         display_handle: format!("@{}@{}", session.acct, instance_host),
         display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
         avatar_url: if session.avatar.is_empty() { None } else { Some(session.avatar.clone()) },
@@ -301,13 +341,21 @@ pub async fn mastodon_complete_auth(
     state.keychain.add_linked_account(linked)
         .map_err(|e| format!("Failed to store linked account: {}", e))?;
 
+    let local_username = state.keychain.get_local_username().unwrap_or(None);
+    let identity_ready = local_username.is_some();
+    let web_did = state.keychain.get_web_did().unwrap_or(None)
+        .or_else(|| state.keychain.ensure_web_did().ok().flatten());
+
     // Build AuthStatus-shaped response that frontend expects
     let auth_status = serde_json::json!({
-        "handle": session.acct,
-        "did": master_did,
+        "handle": format!("{}@{}", session.acct, instance_host),
+        "did": owner_did,
         "mastodon_acct": acct_uri,
+        "mastodon_plc": mastodon_plc,
         "source": "mastodon",
-        "identity_ready": true,
+        "local_username": local_username,
+        "identity_ready": identity_ready,
+        "web_did": web_did,
     });
     *masto_session_lock().lock().await = Some(session);
 

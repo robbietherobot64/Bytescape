@@ -36,8 +36,12 @@ pub struct AuthData {
     /// Timestamp when tokens were last refreshed
     pub last_refresh: Option<u64>,
     /// Master DID (did:key:z6Mk...) derived from the Iroh Ed25519 keypair.
-    /// This is the universal umbrella identity for all users regardless of signup method.
+    /// Used for P2P/offline interactions, relay syncing, friend content access.
     pub master_did: Option<String>,
+    /// Web DID (did:web:bytescape.social:{username}) — the user's master identity.
+    /// Assigned when they set their Bytescape username. All platform accounts link to this.
+    #[serde(default)]
+    pub web_did: Option<String>,
     /// Local identity DID used for P2P identity/recovery flows.
     pub local_identity_did: Option<String>,
     /// Stable node public key for local identity.
@@ -73,8 +77,12 @@ pub struct AuthData {
 pub struct LinkedAccount {
     /// Protocol name: "bluesky", "mastodon", "activitypub"
     pub protocol: String,
-    /// Canonical identifier: "did:plc:abc" for Bluesky, "acct:user@instance" for Mastodon
+    /// Canonical DID for this linked account: did:plc:... for ALL platforms.
+    /// Bluesky uses its existing did:plc; other platforms get a generated did:plc.
     pub identifier: String,
+    /// Platform-native identifier (acct:user@instance for Mastodon, same as identifier for Bluesky)
+    #[serde(default)]
+    pub platform_identifier: Option<String>,
     /// Human-readable handle: "@user.bsky.social", "@user@mastodon.social"
     pub display_handle: String,
     /// Display name (optional)
@@ -309,6 +317,8 @@ impl EncryptedKeychain {
     ///
     /// Format: multicodec(0xed01) + pubkey_bytes → base58btc → prepend 'z' → `did:key:z...`
     /// See: https://w3c-ccg.github.io/did-method-key/
+    ///
+    /// Used for P2P/offline identity (ephemeral interactions, relay syncing).
     pub fn did_key_from_ed25519_bytes(pubkey_bytes: &[u8; 32]) -> String {
         // Multicodec prefix for Ed25519 public key: 0xed, 0x01
         let mut multicodec = Vec::with_capacity(34);
@@ -338,8 +348,8 @@ impl EncryptedKeychain {
         Ok(Some(Self::did_key_from_ed25519_bytes(pubkey.as_bytes())))
     }
 
-    /// Ensure the master_did is computed and persisted in the keychain.
-    /// Returns the master DID string.
+    /// Ensure the master_did (did:key) is computed and persisted in the keychain.
+    /// Returns the P2P identity DID string (did:key:z6Mk...).
     pub fn ensure_master_did(&self) -> Result<Option<String>, BytescapeError> {
         // Check if already cached
         {
@@ -365,6 +375,83 @@ impl EncryptedKeychain {
             *cache = Some(data);
         }
         Ok(did)
+    }
+
+    /// Generate a `did:web:bytescape.social:{username}` master identity.
+    ///
+    /// This is the user's overarching identity that all platform accounts link to.
+    /// Returns None if the user hasn't set a local username yet.
+    pub fn ensure_web_did(&self) -> Result<Option<String>, BytescapeError> {
+        // Check if already cached
+        {
+            let cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            if let Some(ref data) = *cache {
+                if data.web_did.is_some() {
+                    return Ok(data.web_did.clone());
+                }
+            }
+        }
+        // Compute from username
+        let username = self.get_local_username()?;
+        if let Some(ref name) = username {
+            let web_did = format!("did:web:bytescape.social:{}", name);
+            let mut cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            let mut data = match cache.clone() {
+                Some(d) => d,
+                None => self.load_encrypted()?.unwrap_or_default(),
+            };
+            data.web_did = Some(web_did.clone());
+            self.save_encrypted(&data)?;
+            *cache = Some(data);
+            return Ok(Some(web_did));
+        }
+        Ok(None)
+    }
+
+    /// Get the web DID (did:web:bytescape.social:{username}) if already computed.
+    pub fn get_web_did(&self) -> Result<Option<String>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.web_did.clone());
+        }
+        Ok(None)
+    }
+
+    /// Generate a deterministic `did:plc:{...}` for a platform account.
+    ///
+    /// Uses BLAKE3 hash of "bytescape:plc:{protocol}:{identifier}" truncated
+    /// to 15 bytes, then base32-encoded to produce a 24-char PLC identifier
+    /// matching the standard did:plc format.
+    ///
+    /// For Bluesky accounts, use their existing did:plc directly instead of this.
+    pub fn generate_platform_plc(protocol: &str, identifier: &str) -> String {
+        let seed = format!("bytescape:plc:{}:{}", protocol, identifier);
+        let hash = blake3::hash(seed.as_bytes());
+        let encoded = Self::base32_lower_encode(&hash.as_bytes()[..15]);
+        format!("did:plc:{}", encoded)
+    }
+
+    /// Base32 encode bytes using lowercase RFC 4648 alphabet (a-z, 2-7).
+    fn base32_lower_encode(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
+        let mut result = String::new();
+        let mut bits: u32 = 0;
+        let mut count: u32 = 0;
+        for &byte in bytes {
+            bits = (bits << 8) | byte as u32;
+            count += 8;
+            while count >= 5 {
+                count -= 5;
+                result.push(ALPHABET[((bits >> count) & 0x1f) as usize] as char);
+            }
+        }
+        if count > 0 {
+            result.push(ALPHABET[((bits << (5 - count)) & 0x1f) as usize] as char);
+        }
+        result
     }
 
     /// Legacy helper: generate a local DID from a public key string.
@@ -675,14 +762,16 @@ impl EncryptedKeychain {
     }
 
     /// Set the user's Bytescape-local username.
+    /// Also generates/updates the web_did (did:web:bytescape.social:{username}).
     pub fn set_local_username(&self, username: &str) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
         let mut data = cache.clone().unwrap_or_default();
         data.local_identity_username = Some(username.to_string());
+        data.web_did = Some(format!("did:web:bytescape.social:{}", username));
         self.save_encrypted(&data)?;
         *cache = Some(data);
-        println!("EncryptedKeychain: Saved local username '{}'", username);
+        println!("EncryptedKeychain: Saved local username '{}', web_did = did:web:bytescape.social:{}", username, username);
         Ok(())
     }
 
@@ -846,14 +935,23 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the owner DID — priority: Bluesky DID > master_did (did:key) > local_identity_did.
-    /// Bluesky DID comes first because existing vault items are keyed by did:plc:...
+    /// Get the owner DID — priority: web_did > Bluesky DID > master_did (did:key) > local_identity_did.
+    ///
+    /// DID hierarchy:
+    ///   1. did:web:bytescape.social:{username} — master identity
+    ///   2. did:plc:... — Bluesky platform DID (for vault items keyed before web_did existed)
+    ///   3. did:key:z6Mk... — P2P/offline identity
+    ///   4. local_identity_did — legacy fallback
+    ///
     /// Use this for operations that need *any* valid DID (vault writes, archive imports).
     pub fn get_owner_did(&self) -> Result<Option<String>, BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
 
         if let Some(ref data) = *cache {
+            if let Some(ref did) = data.web_did {
+                return Ok(Some(did.clone()));
+            }
             if let Some(ref did) = data.did {
                 return Ok(Some(did.clone()));
             }
@@ -868,7 +966,8 @@ impl EncryptedKeychain {
 
         // Load from disk
         if let Some(data) = self.load_encrypted()? {
-            let result = data.did.clone()
+            let result = data.web_did.clone()
+                .or_else(|| data.did.clone())
                 .or_else(|| data.master_did.clone())
                 .or_else(|| data.local_identity_did.clone());
             *cache = Some(data);
@@ -987,9 +1086,10 @@ impl EncryptedKeychain {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
         let mut data = cache.clone().unwrap_or_default();
-        // Upsert: replace existing entry for same protocol+identifier
+        // Upsert: replace existing entry for same protocol (one account per protocol).
+        // Also matches legacy entries that used a different identifier format.
         if let Some(pos) = data.linked_accounts.iter().position(|a|
-            a.protocol == account.protocol && a.identifier == account.identifier
+            a.protocol == account.protocol
         ) {
             data.linked_accounts[pos] = account;
         } else {
@@ -1001,11 +1101,18 @@ impl EncryptedKeychain {
     }
 
     /// Remove a linked account by protocol and identifier.
+    /// Also matches by platform_identifier for backward compatibility with old identifier formats.
     pub fn remove_linked_account(&self, protocol: &str, identifier: &str) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
         let mut data = cache.clone().unwrap_or_default();
-        data.linked_accounts.retain(|a| !(a.protocol == protocol && a.identifier == identifier));
+        data.linked_accounts.retain(|a| {
+            if a.protocol != protocol { return true; }
+            // Match by canonical identifier OR platform_identifier
+            let matches_id = a.identifier == identifier;
+            let matches_platform = a.platform_identifier.as_deref() == Some(identifier);
+            !(matches_id || matches_platform)
+        });
         self.save_encrypted(&data)?;
         *cache = Some(data);
         Ok(())

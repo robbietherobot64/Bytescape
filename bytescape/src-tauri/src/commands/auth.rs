@@ -21,7 +21,7 @@ use crate::AppState;
 pub struct AuthStatus {
     pub handle: String,
     pub did: String,
-    /// "bluesky" | "local" — how the user authenticated
+    /// "bluesky" | "local" | "mastodon" — how the user authenticated
     #[serde(default = "default_source")]
     pub source: String,
     /// The user's chosen Bytescape-local username (e.g. "lovingisliving")
@@ -30,6 +30,9 @@ pub struct AuthStatus {
     /// Whether the local identity setup step has been completed
     #[serde(default)]
     pub identity_ready: bool,
+    /// Master identity DID (did:web:bytescape.social:{username}), if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_did: Option<String>,
 }
 
 fn default_source() -> String { "bluesky".to_string() }
@@ -69,12 +72,15 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
         let local_username = state.keychain.get_local_username()
             .unwrap_or(None);
         let identity_ready = local_username.is_some();
+        let web_did = state.keychain.get_web_did().unwrap_or(None)
+            .or_else(|| state.keychain.ensure_web_did().ok().flatten());
         return Ok(Some(AuthStatus {
             handle,
             did,
             source: "bluesky".to_string(),
             local_username,
             identity_ready,
+            web_did,
         }));
     }
 
@@ -93,14 +99,59 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
                 .unwrap_or(None);
             // Only auto-login if the user explicitly set a local username
             if local_username.is_some() {
+                let web_did = state.keychain.get_web_did().unwrap_or(None)
+                    .or_else(|| state.keychain.ensure_web_did().ok().flatten());
                 let handle = local_username.clone()
-                    .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));
-                return Ok(Some(AuthStatus {
+                    .unwrap_or_else(|| format!("local:{}", &did[did.len().saturating_sub(8)..]));                return Ok(Some(AuthStatus {
                     handle,
                     did,
                     source: "local".to_string(),
                     local_username: local_username.clone(),
                     identity_ready: true,
+                    web_did,
+                }));
+            }
+        }
+    }
+
+    // 3. Check for Mastodon-only session
+    //
+    // If the user connected a Mastodon account but has no Bluesky or named local
+    // identity, still recognize them as logged in so the app works on restart.
+    if let Ok(Some(json_str)) = state.keychain.get_mastodon_session() {
+        if let Ok(blob) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            if let Some(session_val) = blob.get("session") {
+                let acct = session_val.get("acct").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let instance = session_val.get("instance").and_then(|v| v.as_str()).unwrap_or("");
+                let instance_host = instance.replace("https://", "").replace("http://", "");
+
+                // Ensure identity infrastructure exists for this Mastodon-only user
+                let recovery_status_2 = state.keychain.get_identity_recovery_status()
+                    .unwrap_or(IdentityRecoveryStatus {
+                        has_local_identity: false, has_escrow: false,
+                        recovery_pending: false, recovery_verified_pending_finalize: false,
+                        did: None, public_key: None, last_recovered_at: None,
+                    });
+                if !recovery_status_2.has_local_identity {
+                    let _ = state.keychain.identity_init_full_recovery("bytescape-mastodon-auto-init");
+                }
+                let _ = state.keychain.ensure_master_did();
+
+                let owner_did = state.keychain.get_owner_did()
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| format!("acct:{}@{}", acct, instance_host));
+                let local_username = state.keychain.get_local_username().unwrap_or(None);
+                let identity_ready = local_username.is_some();
+                let web_did = state.keychain.get_web_did().unwrap_or(None)
+                    .or_else(|| state.keychain.ensure_web_did().ok().flatten());
+
+                return Ok(Some(AuthStatus {
+                    handle: format!("{}@{}", acct, instance_host),
+                    did: owner_did,
+                    source: "mastodon".to_string(),
+                    local_username,
+                    identity_ready,
+                    web_did,
                 }));
             }
         }
@@ -130,9 +181,11 @@ pub async fn login(
     ).map_err(|e| BytescapeError::KeychainSave(e.to_string()))?;
 
     // Create a LinkedAccount entry for this Bluesky connection
+    // Bluesky accounts use their existing did:plc directly
     let linked = LinkedAccount {
         protocol: "bluesky".to_string(),
         identifier: session.did.clone(),
+        platform_identifier: Some(session.did.clone()),
         display_handle: format!("@{}", session.handle),
         display_name: None,
         avatar_url: None,
@@ -158,6 +211,8 @@ pub async fn login(
 
     let local_username = state.keychain.get_local_username().unwrap_or(None);
     let identity_ready = local_username.is_some();
+    let web_did = state.keychain.get_web_did().unwrap_or(None)
+        .or_else(|| state.keychain.ensure_web_did().ok().flatten());
 
     Ok(AuthStatus {
         handle: session.handle,
@@ -165,6 +220,7 @@ pub async fn login(
         source: "bluesky".to_string(),
         local_username,
         identity_ready,
+        web_did,
     })
 }
 
@@ -190,6 +246,7 @@ pub async fn create_local_identity(
         source: "local".to_string(),
         local_username,
         identity_ready: false, // user hasn't confirmed username yet
+        web_did: None, // no username yet, so no web_did
     })
 }
 
@@ -224,8 +281,9 @@ pub async fn set_local_username(
         handle: trimmed.clone(),
         did: String::new(),
         source: "local".to_string(),
-        local_username: Some(trimmed),
+        local_username: Some(trimmed.clone()),
         identity_ready: true,
+        web_did: Some(format!("did:web:bytescape.social:{}", trimmed)),
     }))
 }
 

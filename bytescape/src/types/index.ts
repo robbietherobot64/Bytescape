@@ -1,22 +1,25 @@
 export interface LinkedAccount {
-    protocol: string;        // "bluesky" | "mastodon" | "activitypub"
-    identifier: string;      // "did:plc:abc" | "acct:user@fosstodon.org"
-    display_handle: string;  // "@user.bsky.social" | "@user@fosstodon.org"
+    protocol: string;             // "bluesky" | "mastodon" | "activitypub"
+    identifier: string;           // did:plc:... for ALL platforms (canonical DID)
+    platform_identifier?: string; // Platform-native ID: acct:user@instance for Mastodon, did:plc:... for Bluesky
+    display_handle: string;       // "@user.bsky.social" | "@user@mastodon.social"
     display_name?: string;
     avatar_url?: string;
-    connected_at: number;    // Unix timestamp
+    connected_at: number;         // Unix timestamp
     active: boolean;
 }
 
 export interface AuthStatus {
     handle: string;
     did: string;
-    /** "bluesky" | "local" — how the user authenticated */
+    /** "bluesky" | "local" | "mastodon" — how the user authenticated */
     source: string;
     /** The user's chosen Bytescape-local username */
     local_username?: string | null;
     /** Whether the local identity setup step has been completed */
     identity_ready: boolean;
+    /** Master identity DID (did:web:bytescape.social:{username}), if set */
+    web_did?: string | null;
 }
 
 // ─── P2P Peer Types ───
