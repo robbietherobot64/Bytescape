@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { AuthStatus, LinkedAccount } from '../types';
 import { ThemePicker } from '../components/ThemePicker';
@@ -20,13 +21,19 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
     const [isExporting, setIsExporting] = useState(false);
     const [exportStatus, setExportStatus] = useState<string | null>(null);
 
-    // Link Bluesky account state
+    // Link account state (shared)
     const [showLinkBluesky, setShowLinkBluesky] = useState(false);
     const [linkIdentifier, setLinkIdentifier] = useState("");
-    const [linkPassword, setLinkPassword] = useState("");
     const [linkLoading, setLinkLoading] = useState(false);
     const [linkError, setLinkError] = useState("");
-    const [, setLinkSuccess] = useState<{}>("");
+
+    // Bluesky OAuth pending state
+    const [blueskyOauthPending, setBlueskyOauthPending] = useState(false);
+
+    // Mastodon OAuth pending state
+    const [showLinkMastodon, setShowLinkMastodon] = useState(false);
+    const [mastodonInstance, setMastodonInstance] = useState("");
+    const [mastodonOauthPending, setMastodonOauthPending] = useState(false);
 
     // Sync state
     const [loadingSync, setLoadingSync] = useState(false);
@@ -35,14 +42,89 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
     const [syncStatus, setSyncStatus] = useState("");
 
     const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
-    const [showLinkMastodon, setShowLinkMastodon] = useState(false);
-    const [mastodonInstance, setMastodonInstance] = useState("");
-    const [mastodonAuthCode, setMastodonAuthCode] = useState("");
-    const [mastodonStep, setMastodonStep] = useState<"instance" | "code">("instance");
 
     useEffect(() => {
         loadLinkedAccounts();
     }, [auth]);
+
+    // ── Bluesky OAuth callback listener ──
+    useEffect(() => {
+        if (!blueskyOauthPending) return;
+        let unlistenComplete: UnlistenFn | undefined;
+        let unlistenError: UnlistenFn | undefined;
+        const timeoutId = setTimeout(() => {
+            setBlueskyOauthPending(false);
+            setLinkLoading(false);
+            setLinkError('Bluesky OAuth timed out. Please try again.');
+            invoke('cancel_bluesky_oauth').catch(() => {});
+        }, 5 * 60 * 1000);
+
+        listen<AuthStatus>('oauth-complete', (_event) => {
+            setBlueskyOauthPending(false);
+            setLinkLoading(false);
+            setShowLinkBluesky(false);
+            setLinkIdentifier('');
+            clearTimeout(timeoutId);
+            loadLinkedAccounts();
+            if (onAuthUpdated) {
+                invoke<AuthStatus | null>('check_auth_status').then(status => {
+                    if (status) onAuthUpdated(status);
+                }).catch(() => {});
+            }
+        }).then(fn => { unlistenComplete = fn; });
+
+        listen<string>('oauth-error', (event) => {
+            setBlueskyOauthPending(false);
+            setLinkLoading(false);
+            clearTimeout(timeoutId);
+            setLinkError(typeof event.payload === 'string' ? event.payload : 'Bluesky OAuth failed');
+        }).then(fn => { unlistenError = fn; });
+
+        return () => {
+            clearTimeout(timeoutId);
+            unlistenComplete?.();
+            unlistenError?.();
+        };
+    }, [blueskyOauthPending, onAuthUpdated]);
+
+    // ── Mastodon OAuth callback listener ──
+    useEffect(() => {
+        if (!mastodonOauthPending) return;
+        let unlistenComplete: UnlistenFn | undefined;
+        let unlistenError: UnlistenFn | undefined;
+        const timeoutId = setTimeout(() => {
+            setMastodonOauthPending(false);
+            setLinkLoading(false);
+            setLinkError('Mastodon OAuth timed out. Please try again.');
+        }, 5 * 60 * 1000);
+
+        listen<AuthStatus>('mastodon-auth-complete', (_event) => {
+            setMastodonOauthPending(false);
+            setLinkLoading(false);
+            setShowLinkMastodon(false);
+            setMastodonInstance('');
+            clearTimeout(timeoutId);
+            loadLinkedAccounts();
+            if (onAuthUpdated) {
+                invoke<AuthStatus | null>('check_auth_status').then(status => {
+                    if (status) onAuthUpdated(status);
+                }).catch(() => {});
+            }
+        }).then(fn => { unlistenComplete = fn; });
+
+        listen<string>('mastodon-auth-error', (event) => {
+            setMastodonOauthPending(false);
+            setLinkLoading(false);
+            clearTimeout(timeoutId);
+            setLinkError(typeof event.payload === 'string' ? event.payload : 'Mastodon OAuth failed');
+        }).then(fn => { unlistenError = fn; });
+
+        return () => {
+            clearTimeout(timeoutId);
+            unlistenComplete?.();
+            unlistenError?.();
+        };
+    }, [mastodonOauthPending, onAuthUpdated]);
 
     async function loadLinkedAccounts() {
         try {
@@ -100,33 +182,19 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         setLinkLoading(true);
         setLinkError("");
         try {
-            const url = await invoke<string>('mastodon_register_app', { instance: mastodonInstance.trim() });
+            let instance = mastodonInstance.trim();
+            if (instance.startsWith('http://')) instance = instance.slice(7);
+            if (instance.startsWith('https://')) instance = instance.slice(8);
+            instance = instance.split('/')[0];
+            setMastodonInstance(instance);
+
+            const url = await invoke<string>('mastodon_register_app', { instance });
+            setMastodonOauthPending(true);
             const { openInApp } = await import('../utils/openInApp');
             openInApp(url, 'Mastodon Auth');
-            setMastodonStep("code");
         } catch (e: any) {
-            setLinkError("Failed to register app: " + e);
-        } finally {
             setLinkLoading(false);
-        }
-    }
-
-    async function finalizeMastodonAuth() {
-        if (!mastodonAuthCode) return;
-        setLinkLoading(true);
-        setLinkError("");
-        try {
-            await invoke('mastodon_complete_auth', { instance: mastodonInstance.trim(), authCode: mastodonAuthCode.trim() });
-            setLinkSuccess("Mastodon account connected!");
-            setShowLinkMastodon(false);
-            setMastodonStep("instance");
-            setMastodonInstance("");
-            setMastodonAuthCode("");
-            await loadLinkedAccounts();
-        } catch (e: any) {
-            setLinkError("Failed to complete auth: " + e);
-        } finally {
-            setLinkLoading(false);
+            setLinkError("Failed to start Mastodon auth: " + e);
         }
     }
 
@@ -222,29 +290,22 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
     }
 
     async function handleLinkBluesky() {
-        if (!linkIdentifier.trim() || !linkPassword.trim()) {
-            setLinkError("Handle and app password are required.");
+        if (!linkIdentifier.trim()) {
+            setLinkError("Enter your Bluesky handle (e.g. user.bsky.social)");
             return;
         }
         setLinkLoading(true);
         setLinkError("");
-        setLinkSuccess("");
         try {
-            const status = await invoke<AuthStatus>("login", {
-                identifier: linkIdentifier.trim(),
-                password: linkPassword.trim(),
+            const authUrl = await invoke<string>('start_bluesky_oauth', {
+                handle: linkIdentifier.trim(),
             });
-            setLinkSuccess(`✅ Linked as ${status.handle}! You can now import from Bluesky.`);
-            setShowLinkBluesky(false);
-            setLinkIdentifier("");
-            setLinkPassword("");
-            if (onAuthUpdated) {
-                onAuthUpdated(status);
-            }
+            setBlueskyOauthPending(true);
+            const { openInApp } = await import('../utils/openInApp');
+            openInApp(authUrl, 'Bluesky Auth');
         } catch (e: any) {
-            setLinkError(typeof e === "string" ? e : e.message || "Failed to link Bluesky account");
-        } finally {
             setLinkLoading(false);
+            setLinkError(typeof e === 'string' ? e : e.message || 'Failed to start Bluesky OAuth');
         }
     }
 
@@ -366,44 +427,50 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
-                                <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setLinkError(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setBlueskyOauthPending(false); setLinkLoading(false); setLinkError(''); invoke('cancel_bluesky_oauth').catch(() => {}); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
                                     Cancel
                                 </button>
                             </div>
-                            <input
-                                className="input-field"
-                                type="text"
-                                placeholder="Handle (e.g. user.bsky.social)"
-                                value={linkIdentifier}
-                                onChange={(e) => setLinkIdentifier(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
-                            />
-                            <input
-                                className="input-field"
-                                type="password"
-                                placeholder="App Password"
-                                value={linkPassword}
-                                onChange={(e) => setLinkPassword(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
-                            />
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleLinkBluesky}
-                                disabled={linkLoading}
-                            >
-                                {linkLoading ? "Linking..." : "Connect & Link"}
-                            </button>
+                            {blueskyOauthPending ? (
+                                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                                    <p style={{ fontSize: '0.9rem', margin: '0 0 8px' }}>⏳ Waiting for Bluesky authorization...</p>
+                                    <p className="text-xs text-muted" style={{ margin: 0 }}>Complete the login in your browser. This will update automatically.</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <input
+                                        className="input-field"
+                                        type="text"
+                                        placeholder="Handle (e.g. user.bsky.social)"
+                                        value={linkIdentifier}
+                                        onChange={(e) => setLinkIdentifier(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleLinkBluesky()}
+                                    />
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={handleLinkBluesky}
+                                        disabled={linkLoading}
+                                    >
+                                        {linkLoading ? 'Starting OAuth...' : 'Authorize in Browser'}
+                                    </button>
+                                </>
+                            )}
                             {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>🐘 Link Mastodon</strong>
-                                <button className="btn btn-ghost" onClick={() => { setShowLinkMastodon(false); setLinkError(''); setMastodonStep('instance'); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                <button className="btn btn-ghost" onClick={() => { setShowLinkMastodon(false); setMastodonOauthPending(false); setLinkLoading(false); setLinkError(''); setMastodonInstance(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
                                     Cancel
                                 </button>
                             </div>
-                            {mastodonStep === 'instance' ? (
+                            {mastodonOauthPending ? (
+                                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                                    <p style={{ fontSize: '0.9rem', margin: '0 0 8px' }}>⏳ Waiting for Mastodon authorization...</p>
+                                    <p className="text-xs text-muted" style={{ margin: 0 }}>Complete the login in your browser. This will update automatically.</p>
+                                </div>
+                            ) : (
                                 <>
                                     <input
                                         className="input-field"
@@ -418,25 +485,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                                         onClick={startMastodonAuth}
                                         disabled={linkLoading}
                                     >
-                                        {linkLoading ? "Loading..." : "Authorize in Browser"}
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <input
-                                        className="input-field"
-                                        type="text"
-                                        placeholder="Paste Auth Code"
-                                        value={mastodonAuthCode}
-                                        onChange={(e) => setMastodonAuthCode(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && finalizeMastodonAuth()}
-                                    />
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={finalizeMastodonAuth}
-                                        disabled={linkLoading}
-                                    >
-                                        {linkLoading ? "Connecting..." : "Complete Connection"}
+                                        {linkLoading ? 'Starting OAuth...' : 'Authorize in Browser'}
                                     </button>
                                 </>
                             )}
