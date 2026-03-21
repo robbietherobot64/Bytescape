@@ -289,7 +289,8 @@ pub async fn set_local_username(
 
 /// Log out and clear the stored session.
 ///
-/// Removes all authentication tokens from the keychain.
+/// Wipes all user data: vault, sessions, identity, linked accounts.
+/// After logout, the user must go through the full onboarding flow again.
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), String> {
     {
@@ -303,8 +304,7 @@ pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), Strin
     {
         let sync_guard = state.sync_manager.lock().await;
         if let Some(sync) = sync_guard.as_ref() {
-            sync.vault_clear_all_files().await
-                .map_err(BytescapeError::Sync)?;
+            let _ = sync.vault_clear_all_files().await;
         }
     }
 
@@ -317,8 +317,63 @@ pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), Strin
     state.oauth_manager.clear_session().await;
     state.oauth_manager.stop_callback_server().await;
 
-    state.keychain.delete_session()
+    // Clear in-memory Mastodon session
+    super::mastodon::clear_mastodon_memory().await;
+
+    // Nuclear wipe of ALL keychain identity data
+    state.keychain.delete_all_identity_data()
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+    Ok(())
+}
+
+/// **Delete Account** — permanently wipe ALL user data.
+///
+/// This is the nuclear option. It clears:
+/// - All vault items (DB + sync files)
+/// - All keychain identity data (DIDs, usernames, linked accounts, sessions)
+/// - In-memory Mastodon session
+/// - OAuth session
+/// - Pending imports
+///
+/// After this, the user is as if they freshly installed the app.
+#[tauri::command]
+pub async fn delete_account(state: State<'_, AppState>) -> std::result::Result<(), String> {
+    // 1. Clear all vault data from the database
+    {
+        let db_guard = state.db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            let _cleared = db.clear_all_user_data().await
+                .map_err(BytescapeError::DatabaseTransaction)?;
+        }
+    }
+
+    // 2. Clear all vault files from sync/blob storage
+    {
+        let sync_guard = state.sync_manager.lock().await;
+        if let Some(sync) = sync_guard.as_ref() {
+            let _ = sync.vault_clear_all_files().await;
+        }
+    }
+
+    // 3. Clear pending imports
+    {
+        let mut pending = state.pending_import.lock().await;
+        *pending = None;
+    }
+
+    // 4. Clear OAuth session
+    state.oauth_manager.clear_session().await;
+    state.oauth_manager.stop_callback_server().await;
+
+    // 5. Clear in-memory Mastodon session
+    super::mastodon::clear_mastodon_memory().await;
+
+    // 6. Nuclear wipe of ALL keychain identity data
+    //    (DIDs, usernames, linked accounts, Mastodon session, recovery data, tokens)
+    state.keychain.delete_all_identity_data()
+        .map_err(|e| BytescapeError::Keychain(e.to_string()))?;
+
+    println!("delete_account: Full account wipe complete");
     Ok(())
 }
 

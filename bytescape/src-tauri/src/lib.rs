@@ -443,6 +443,7 @@ pub fn run() {
             commands::auth::check_auth_status,
             commands::auth::login,
             commands::auth::logout,
+            commands::auth::delete_account,
             commands::auth::start_bluesky_oauth,
             commands::auth::cancel_bluesky_oauth,
             commands::auth::create_local_identity,

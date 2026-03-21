@@ -8,11 +8,11 @@ interface SettingsScreenProps {
     auth: AuthStatus | null;
     archiveCount: number;
     onLogout: () => void;
-    onClearVault: () => void;
+    onClearVault?: () => void;
     onAuthUpdated?: (auth: AuthStatus) => void;
 }
 
-export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onAuthUpdated }: SettingsScreenProps) {
+export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: SettingsScreenProps) {
     const [error, setError] = useState("");
     const [status, setStatus] = useState("");
 
@@ -170,13 +170,13 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
     }
 
     async function handleClearVault() {
-        if (confirm("Clear all files and imported items from your vault? You can re-import them.")) {
+        if (confirm("⚠️ DELETE ACCOUNT — This will permanently erase ALL your data, linked accounts, identity, and imported content. This cannot be undone. Continue?")) {
             try {
-                const cleared = await invoke<number>("clear_vault");
-                setStatus(`Cleared ${cleared} vault records/files. Re-import to get a clean copy.`);
-                onClearVault();
+                await invoke("delete_account");
+                setStatus("Account deleted. All data wiped.");
+                onLogout();
             } catch (e: any) {
-                setError(typeof e === "string" ? e : "Failed to clear vault");
+                setError(typeof e === "string" ? e : "Failed to delete account");
             }
         }
     }

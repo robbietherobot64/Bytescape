@@ -396,6 +396,13 @@ pub async fn mastodon_disconnect(
     Ok(())
 }
 
+/// Clear in-memory Mastodon session and pending app state.
+/// Called by delete_account to ensure no stale session survives in memory.
+pub async fn clear_mastodon_memory() {
+    *masto_session_lock().lock().await = None;
+    *pending_app().lock().await = None;
+}
+
 // ═══════════════════════════════════════════════════
 // P2: Mastodon Home Timeline
 // ═══════════════════════════════════════════════════

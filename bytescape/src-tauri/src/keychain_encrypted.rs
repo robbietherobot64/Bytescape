@@ -854,7 +854,7 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    /// Delete session
+    /// Delete session (Bluesky tokens only)
     pub fn delete_session(&self) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -870,6 +870,30 @@ impl EncryptedKeychain {
         }
         
         println!("EncryptedKeychain: Deleted session");
+        Ok(())
+    }
+
+    /// **Nuclear option**: Delete ALL identity and session data.
+    ///
+    /// Preserves only the `iroh_secret_key` (the underlying node keypair).
+    /// Everything else — DIDs, usernames, linked accounts, sessions, recovery
+    /// data — is wiped. This is what "Delete Account" should call.
+    pub fn delete_all_identity_data(&self) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+
+        // Preserve iroh_secret_key so the node can still start,
+        // but wipe literally everything else.
+        let iroh_key = cache.as_ref().and_then(|d| d.iroh_secret_key.clone());
+
+        let fresh = AuthData {
+            iroh_secret_key: iroh_key,
+            ..Default::default()
+        };
+        self.save_encrypted(&fresh)?;
+        *cache = Some(fresh);
+
+        println!("EncryptedKeychain: Deleted ALL identity data (full account wipe)");
         Ok(())
     }
 
