@@ -63,6 +63,28 @@ pub struct AuthData {
     /// Serialized Mastodon session + app credentials (JSON blob).
     #[serde(default)]
     pub mastodon_session_json: Option<String>,
+    /// Linked platform accounts (Bluesky, Mastodon, etc.) under this identity.
+    #[serde(default)]
+    pub linked_accounts: Vec<LinkedAccount>,
+}
+
+/// A platform account linked to the user's master identity.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LinkedAccount {
+    /// Protocol name: "bluesky", "mastodon", "activitypub"
+    pub protocol: String,
+    /// Canonical identifier: "did:plc:abc" for Bluesky, "acct:user@instance" for Mastodon
+    pub identifier: String,
+    /// Human-readable handle: "@user.bsky.social", "@user@mastodon.social"
+    pub display_handle: String,
+    /// Display name (optional)
+    pub display_name: Option<String>,
+    /// Avatar URL (optional)
+    pub avatar_url: Option<String>,
+    /// Unix timestamp when the account was linked
+    pub connected_at: u64,
+    /// Whether the account is currently active/connected
+    pub active: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -957,6 +979,54 @@ impl EncryptedKeychain {
             self.save_encrypted(data)?;
         }
         Ok(())
+    }
+
+    /// Add or update a linked account. If an account with the same protocol + identifier
+    /// already exists, it is updated in place; otherwise a new entry is appended.
+    pub fn add_linked_account(&self, account: LinkedAccount) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        let mut data = cache.clone().unwrap_or_default();
+        // Upsert: replace existing entry for same protocol+identifier
+        if let Some(pos) = data.linked_accounts.iter().position(|a|
+            a.protocol == account.protocol && a.identifier == account.identifier
+        ) {
+            data.linked_accounts[pos] = account;
+        } else {
+            data.linked_accounts.push(account);
+        }
+        self.save_encrypted(&data)?;
+        *cache = Some(data);
+        Ok(())
+    }
+
+    /// Remove a linked account by protocol and identifier.
+    pub fn remove_linked_account(&self, protocol: &str, identifier: &str) -> Result<(), BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        let mut data = cache.clone().unwrap_or_default();
+        data.linked_accounts.retain(|a| !(a.protocol == protocol && a.identifier == identifier));
+        self.save_encrypted(&data)?;
+        *cache = Some(data);
+        Ok(())
+    }
+
+    /// List all linked accounts.
+    pub fn list_linked_accounts(&self) -> Result<Vec<LinkedAccount>, BytescapeError> {
+        let cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+        if let Some(ref data) = *cache {
+            return Ok(data.linked_accounts.clone());
+        }
+        drop(cache);
+        if let Some(data) = self.load_encrypted()? {
+            let accounts = data.linked_accounts.clone();
+            let mut cache = self.cache.lock()
+                .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+            *cache = Some(data);
+            return Ok(accounts);
+        }
+        Ok(vec![])
     }
 }
 

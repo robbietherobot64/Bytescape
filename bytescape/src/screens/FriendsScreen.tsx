@@ -578,6 +578,14 @@ function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | 
 
     const handleChat = async (person: ProfileView) => {
         if (!onOpenChat || !person.did || chattingWith) return;
+
+        // Don't try to create Bluesky convos for non-Bluesky contacts
+        if (person.did.startsWith('mastodon:') || person.did.startsWith('acct:')) {
+            // TODO: Wire to send_message with protocol 'mastodon' once AP DM is ready
+            alert('Mastodon DMs coming soon!');
+            return;
+        }
+
         setChattingWith(person.did);
         try {
             await onOpenChat(person.did, person.displayName || person.handle);

@@ -18,7 +18,7 @@ import { useNavStore, useAuthStore } from '../store';
  * on Linux. This has been broken across 3+ sprints — system browser is
  * the reliable path until a native profile screen replaces raw webviews.
  */
-const USE_SYSTEM_BROWSER = false;
+const USE_SYSTEM_BROWSER = true;
 
 export function openInApp(url: string, title?: string): void {
     if (USE_SYSTEM_BROWSER) {

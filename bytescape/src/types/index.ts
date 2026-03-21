@@ -1,3 +1,13 @@
+export interface LinkedAccount {
+    protocol: string;        // "bluesky" | "mastodon" | "activitypub"
+    identifier: string;      // "did:plc:abc" | "acct:user@fosstodon.org"
+    display_handle: string;  // "@user.bsky.social" | "@user@fosstodon.org"
+    display_name?: string;
+    avatar_url?: string;
+    connected_at: number;    // Unix timestamp
+    active: boolean;
+}
+
 export interface AuthStatus {
     handle: string;
     did: string;

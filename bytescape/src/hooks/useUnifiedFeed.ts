@@ -244,10 +244,14 @@ export function useUnifiedFeed({
                         setCache(cacheKey, deduped, nextCur);
                         // Batch-prefetch blob URLs for images (P6)
                         prefetchBlobUrls(deduped).catch(() => {});
-                    } catch (e) {
+                    } catch (e: any) {
                         console.error('get_unified_feed failed for subscribed tab:', e);
                         if (!isStale()) {
-                            setFeedError(typeof e === 'string' ? e : 'Failed to load subscribed feeds');
+                            let errorMsg = typeof e === 'string' ? e : 'Failed to load subscribed feeds';
+                            if (errorMsg.includes('no access token available') || errorMsg.includes('not logged in')) {
+                                errorMsg = 'Connect Bluesky to use subscribed feeds';
+                            }
+                            setFeedError(errorMsg);
                         }
                     }
                 } else {
@@ -262,8 +266,9 @@ export function useUnifiedFeed({
                 // Parallelize list_saved_feeds with get_timeline_unified (P7)
                 // get_timeline_unified internally calls list_saved_feeds for its own logic,
                 // but we still need the GeneratorView[] data for the UI feed selector.
-                const [feedsData, response] = await Promise.all([
+                const [feedsData, tags, response] = await Promise.all([
                     invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []),
+                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
                     invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
                         tags: [],
                         feedUris: [],
@@ -279,6 +284,7 @@ export function useUnifiedFeed({
                     if (isStale()) return;
                     setSavedFeeds(feedsData);
                     setCachedSavedFeeds(feedsData);
+                    setFollowedHashtags(tags);
 
                     let items = response.items;
                     // Safety: client-side filter in case backend missed anything

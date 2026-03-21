@@ -258,11 +258,34 @@ pub async fn mastodon_complete_auth(
     state.keychain.set_mastodon_session(&json_str)
         .map_err(|e| format!("Keychain save failed: {}", e))?;
 
-    // Build AuthStatus-shaped response that frontend expects
+    // Get the master DID from keychain (the user's universal identity)
+    let master_did = state.keychain.ensure_master_did()
+        .map_err(|e| format!("Master DID error: {}", e))?
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Create a LinkedAccount entry for this Mastodon connection
     let instance_host = session.instance.replace("https://", "").replace("http://", "");
+    let acct_uri = format!("acct:{}@{}", session.acct, instance_host);
+    let linked = crate::keychain_encrypted::LinkedAccount {
+        protocol: "mastodon".to_string(),
+        identifier: acct_uri.clone(),
+        display_handle: format!("@{}@{}", session.acct, instance_host),
+        display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
+        avatar_url: if session.avatar.is_empty() { None } else { Some(session.avatar.clone()) },
+        connected_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        active: true,
+    };
+    state.keychain.add_linked_account(linked)
+        .map_err(|e| format!("Failed to store linked account: {}", e))?;
+
+    // Build AuthStatus-shaped response that frontend expects
     let auth_status = serde_json::json!({
         "handle": session.acct,
-        "did": format!("mastodon:{}:{}", instance_host, session.account_id),
+        "did": master_did,
+        "mastodon_acct": acct_uri,
         "source": "mastodon",
         "identity_ready": true,
     });
@@ -696,7 +719,7 @@ async fn get_local_ap_actor(state: &AppState) -> Result<(crate::activitypub::ApA
     let secret_key = endpoint.secret_key().clone();
     drop(endpoint_guard);
 
-    let owner_did = format!("did:key:{}", bs58::encode(secret_key.public().as_bytes()).into_string());
+    let owner_did = crate::keychain_encrypted::EncryptedKeychain::did_key_from_ed25519_bytes(secret_key.public().as_bytes());
 
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;

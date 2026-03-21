@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { AuthStatus } from '../types';
+import { AuthStatus, LinkedAccount } from '../types';
 import { ThemePicker } from '../components/ThemePicker';
 
 interface SettingsScreenProps {
@@ -26,13 +26,109 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
     const [linkPassword, setLinkPassword] = useState("");
     const [linkLoading, setLinkLoading] = useState(false);
     const [linkError, setLinkError] = useState("");
-    const [linkSuccess, setLinkSuccess] = useState("");
+    const [, setLinkSuccess] = useState<{}>("");
 
     // Sync state
     const [loadingSync, setLoadingSync] = useState(false);
     const [createdTicket, setCreatedTicket] = useState<string | null>(null);
     const [joinTicket, setJoinTicket] = useState("");
     const [syncStatus, setSyncStatus] = useState("");
+
+    const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
+    const [showLinkMastodon, setShowLinkMastodon] = useState(false);
+    const [mastodonInstance, setMastodonInstance] = useState("");
+    const [mastodonAuthCode, setMastodonAuthCode] = useState("");
+    const [mastodonStep, setMastodonStep] = useState<"instance" | "code">("instance");
+
+    useEffect(() => {
+        loadLinkedAccounts();
+    }, [auth]);
+
+    async function loadLinkedAccounts() {
+        try {
+            const accounts = await invoke<LinkedAccount[]>('list_linked_accounts');
+            setLinkedAccounts(accounts);
+        } catch (e) {
+            console.warn('Failed to load linked accounts, using fallback', e);
+            // Fallback if backend command not ready
+            const fallback: LinkedAccount[] = [];
+            if (auth?.source === 'bluesky') {
+                fallback.push({
+                    protocol: 'bluesky',
+                    identifier: auth.did,
+                    display_handle: '@' + auth.handle,
+                    connected_at: Date.now() / 1000,
+                    active: true,
+                });
+            }
+            try {
+                const mastodonSession = await invoke<any>('mastodon_get_session');
+                if (mastodonSession) {
+                    fallback.push({
+                        protocol: 'mastodon',
+                        identifier: `acct:${mastodonSession.username}@${mastodonSession.instance}`,
+                        display_handle: `@${mastodonSession.username}@${mastodonSession.instance}`,
+                        connected_at: Date.now() / 1000,
+                        active: true,
+                    });
+                }
+            } catch (e2) {}
+            setLinkedAccounts(fallback);
+        }
+    }
+
+    async function handleDisconnect(account: LinkedAccount) {
+        try {
+            try {
+                await invoke('unlink_account', { protocol: account.protocol, identifier: account.identifier });
+            } catch (e) {
+                // Fallbacks if unified command missing
+                if (account.protocol === 'mastodon') {
+                    await invoke('mastodon_disconnect');
+                } else if (account.protocol === 'bluesky') {
+                    await invoke('logout_bluesky');
+                }
+            }
+            await loadLinkedAccounts();
+        } catch (e: any) {
+            alert('Failed to disconnect: ' + e);
+        }
+    }
+
+    async function startMastodonAuth() {
+        if (!mastodonInstance) return;
+        setLinkLoading(true);
+        setLinkError("");
+        try {
+            const url = await invoke<string>('mastodon_register_app', { instance: mastodonInstance.trim() });
+            const { openInApp } = await import('../utils/openInApp');
+            openInApp(url, 'Mastodon Auth');
+            setMastodonStep("code");
+        } catch (e: any) {
+            setLinkError("Failed to register app: " + e);
+        } finally {
+            setLinkLoading(false);
+        }
+    }
+
+    async function finalizeMastodonAuth() {
+        if (!mastodonAuthCode) return;
+        setLinkLoading(true);
+        setLinkError("");
+        try {
+            await invoke('mastodon_complete_auth', { instance: mastodonInstance.trim(), authCode: mastodonAuthCode.trim() });
+            setLinkSuccess("Mastodon account connected!");
+            setShowLinkMastodon(false);
+            setMastodonStep("instance");
+            setMastodonInstance("");
+            setMastodonAuthCode("");
+            await loadLinkedAccounts();
+        } catch (e: any) {
+            setLinkError("Failed to complete auth: " + e);
+        } finally {
+            setLinkLoading(false);
+        }
+    }
 
     async function createSyncDoc() {
         setLoadingSync(true);
@@ -167,7 +263,16 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                             Signed in as <strong>{auth?.local_username || auth?.handle}</strong>
                         </p>
                         <p className="text-xs text-muted" style={{ opacity: 0.7 }}>
-                            {auth?.source === 'local' ? '🔒 Local identity' : '🦋 Bluesky'} · {auth?.did}
+                            Master Identity: {auth?.did?.substring(0, 16)}...
+                            <button
+                                onClick={() => {
+                                    navigator.clipboard.writeText(auth?.did || '');
+                                    alert('DID copied to clipboard');
+                                }}
+                                style={{ background: 'none', border: 'none', color: 'var(--accent-purple)', cursor: 'pointer', marginLeft: 8 }}
+                            >
+                                Copy
+                            </button>
                         </p>
                     </div>
                     <button className="btn btn-danger" onClick={onLogout}>
@@ -180,16 +285,17 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
                         Linked Accounts
                     </div>
-                    {auth?.source === 'bluesky' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', marginBottom: 8 }}>
-                            <span style={{ fontSize: '1.2rem' }}>🦋</span>
+                    
+                    {linkedAccounts.map(account => (
+                        <div key={account.identifier} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', marginBottom: 8 }}>
+                            <span style={{ fontSize: '1.2rem' }}>{account.protocol === 'bluesky' ? '🦋' : '🐘'}</span>
                             <div style={{ flex: 1 }}>
-                                <strong style={{ fontSize: '0.9rem' }}>{auth.handle}</strong>
-                                <p className="text-xs text-muted" style={{ margin: 0 }}>Bluesky · Connected</p>
+                                <strong style={{ fontSize: '0.9rem' }}>{account.display_handle}</strong>
+                                <p className="text-xs text-muted" style={{ margin: 0 }}>{account.protocol.charAt(0).toUpperCase() + account.protocol.slice(1)} · Connected</p>
                             </div>
                             <span style={{ color: 'var(--accent-green)', fontSize: '0.82rem', fontWeight: 600 }}>✓ Linked</span>
                             <button
-                                onClick={() => alert('Disconnect & remove Bluesky data — coming soon.')}
+                                onClick={() => handleDisconnect(account)}
                                 style={{
                                     padding: '4px 10px',
                                     fontSize: '0.75rem',
@@ -199,37 +305,62 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                                     cursor: 'pointer',
                                     fontFamily: 'inherit',
                                     fontWeight: 500,
-                                } as React.CSSProperties}
+                                }}
                             >
                                 Disconnect
                             </button>
                         </div>
-                    )}
+                    ))}
 
                     {/* Green Plus — Connect Account */}
-                    {!showLinkBluesky ? (
-                        <button
-                            onClick={() => setShowLinkBluesky(true)}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 10,
-                                padding: '12px 18px',
-                                background: 'rgba(34, 197, 94, 0.1)',
-                                border: '2px dashed #22c55e',
-                                cursor: 'pointer',
-                                width: '100%',
-                                fontFamily: 'inherit',
-                                fontSize: '0.9rem',
-                                fontWeight: 600,
-                                color: '#22c55e',
-                                transition: 'background 0.15s',
-                            } as React.CSSProperties}
-                        >
-                            <span style={{ fontSize: '1.4rem', lineHeight: 1 } as React.CSSProperties}>＋</span>
-                            Connect Account
-                        </button>
-                    ) : (
+                    {!showLinkBluesky && !showLinkMastodon ? (
+                        <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+                            <div style={{ display: 'flex', gap: 10 }}>
+                                <button
+                                    onClick={() => setShowLinkBluesky(true)}
+                                    style={{
+                                        flex: 1,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 8,
+                                        padding: '12px',
+                                        background: 'rgba(34, 197, 94, 0.1)',
+                                        border: '2px dashed #22c55e',
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        color: '#22c55e',
+                                        transition: 'background 0.15s',
+                                    }}
+                                >
+                                    ＋ Connect Bluesky
+                                </button>
+                                <button
+                                    onClick={() => setShowLinkMastodon(true)}
+                                    style={{
+                                        flex: 1,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 8,
+                                        padding: '12px',
+                                        background: 'rgba(34, 197, 94, 0.1)',
+                                        border: '2px dashed #22c55e',
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        color: '#22c55e',
+                                        transition: 'background 0.15s',
+                                    }}
+                                >
+                                    ＋ Connect Mastodon
+                                </button>
+                            </div>
+                        </div>
+                    ) : showLinkBluesky ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
@@ -261,13 +392,55 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onClearVault, onA
                                 {linkLoading ? "Linking..." : "Connect & Link"}
                             </button>
                             {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
-                            {linkSuccess && <p className="text-sm" style={{ color: 'var(--accent-green)', margin: 0 }}>{linkSuccess}</p>}
-                            <p className="text-xs text-muted" style={{ margin: 0 }}>
-                                Use an App Password from Bluesky Settings → Privacy → App Passwords.
-                            </p>
                         </div>
-                    )}
-                </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <strong style={{ fontSize: '0.9rem' }}>🐘 Link Mastodon</strong>
+                                <button className="btn btn-ghost" onClick={() => { setShowLinkMastodon(false); setLinkError(''); setMastodonStep('instance'); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                    Cancel
+                                </button>
+                            </div>
+                            {mastodonStep === 'instance' ? (
+                                <>
+                                    <input
+                                        className="input-field"
+                                        type="text"
+                                        placeholder="Instance (e.g. mastodon.social)"
+                                        value={mastodonInstance}
+                                        onChange={(e) => setMastodonInstance(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && startMastodonAuth()}
+                                    />
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={startMastodonAuth}
+                                        disabled={linkLoading}
+                                    >
+                                        {linkLoading ? "Loading..." : "Authorize in Browser"}
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <input
+                                        className="input-field"
+                                        type="text"
+                                        placeholder="Paste Auth Code"
+                                        value={mastodonAuthCode}
+                                        onChange={(e) => setMastodonAuthCode(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && finalizeMastodonAuth()}
+                                    />
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={finalizeMastodonAuth}
+                                        disabled={linkLoading}
+                                    >
+                                        {linkLoading ? "Connecting..." : "Complete Connection"}
+                                    </button>
+                                </>
+                            )}
+                            {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
+                        </div>
+                    )}</div>
             </div>
 
             {/* Appearance / Theme */}

@@ -2,6 +2,7 @@
 
 use tauri::State;
 use crate::AppState;
+use crate::keychain_encrypted::EncryptedKeychain;
 use crate::activitypub::ApActor;
 use crate::activitypub::webfinger::WebFingerResponse;
 
@@ -20,7 +21,7 @@ pub async fn create_ap_actor(
     let secret_key = endpoint.secret_key().clone();
     drop(endpoint_guard);
 
-    let owner_did = format!("did:key:{}", bs58::encode(secret_key.public().as_bytes()).into_string());
+    let owner_did = EncryptedKeychain::did_key_from_ed25519_bytes(secret_key.public().as_bytes());
 
     let mut actor = ApActor::new(&username, display_name, summary, &secret_key);
     actor.owner_did = owner_did;
@@ -46,7 +47,7 @@ pub async fn get_ap_actor(
     let secret_key = endpoint.secret_key().clone();
     drop(endpoint_guard);
 
-    let owner_did = format!("did:key:{}", bs58::encode(secret_key.public().as_bytes()).into_string());
+    let owner_did = EncryptedKeychain::did_key_from_ed25519_bytes(secret_key.public().as_bytes());
 
     let db_guard = state.db_manager.read().await;
     let db = db_guard
@@ -73,7 +74,7 @@ pub async fn send_ap_activity(
     let secret_key = endpoint.secret_key().clone();
     drop(endpoint_guard);
 
-    let owner_did = format!("did:key:{}", bs58::encode(secret_key.public().as_bytes()).into_string());
+    let owner_did = EncryptedKeychain::did_key_from_ed25519_bytes(secret_key.public().as_bytes());
 
     let db_guard = state.db_manager.read().await;
     let db = db_guard
@@ -108,7 +109,7 @@ pub async fn fetch_remote_actor(
         let secret_key = endpoint.secret_key().clone();
         drop(endpoint_guard);
 
-        let owner_did = format!("did:key:{}", bs58::encode(secret_key.public().as_bytes()).into_string());
+        let owner_did = EncryptedKeychain::did_key_from_ed25519_bytes(secret_key.public().as_bytes());
 
         let db_guard = state.db_manager.read().await;
         let db = db_guard.as_ref().ok_or("Database not initialized")?;

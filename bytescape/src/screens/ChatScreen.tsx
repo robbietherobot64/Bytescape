@@ -660,6 +660,10 @@ export function ChatScreen() {
                                                         // Create a new conversation with this buddy
                                                         try {
                                                             setStartingConvoDid(buddy.did);
+                                                            if (buddy.did.startsWith('mastodon:') || buddy.did.startsWith('acct:')) {
+                                                                alert('Mastodon DMs coming soon!');
+                                                                return;
+                                                            }
                                                             const newConvoId = await invoke<string>('get_or_create_bsky_convo', { memberDid: buddy.did });
                                                             setSelectedConvoId(newConvoId);
                                                             setPendingConvoMeta({ did: buddy.did, handle: buddy.handle });

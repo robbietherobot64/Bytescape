@@ -452,6 +452,8 @@ pub fn run() {
             commands::auth::identity_start_recovery,
             commands::auth::identity_verify_recovery,
             commands::auth::identity_finalize_recovery,
+            commands::auth::list_linked_accounts,
+            commands::auth::unlink_account,
             
             // Import commands
             commands::import::import_facebook_zip,

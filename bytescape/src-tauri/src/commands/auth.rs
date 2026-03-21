@@ -12,6 +12,7 @@ use crate::keychain_encrypted::{
     IdentityRecoveryStartResult,
     IdentityRecoveryStatus,
     IdentityRecoveryVerifyResult,
+    LinkedAccount,
 };
 use crate::AppState;
 
@@ -340,4 +341,43 @@ pub async fn cancel_bluesky_oauth(
 ) -> std::result::Result<(), String> {
     state.oauth_manager.stop_callback_server().await;
     Ok(())
+}
+
+/// List all platform accounts linked to the user's master identity.
+#[tauri::command]
+pub async fn list_linked_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<LinkedAccount>, String> {
+    state.keychain.list_linked_accounts()
+        .map_err(|e| format!("Failed to list linked accounts: {}", e))
+}
+
+/// Unlink a platform account: remove LinkedAccount entry + clear session tokens.
+#[tauri::command]
+pub async fn unlink_account(
+    state: State<'_, AppState>,
+    protocol: String,
+    identifier: String,
+) -> Result<Vec<LinkedAccount>, String> {
+    // Remove the linked account entry
+    state.keychain.remove_linked_account(&protocol, &identifier)
+        .map_err(|e| format!("Failed to remove linked account: {}", e))?;
+
+    // Clear protocol-specific session data
+    match protocol.as_str() {
+        "mastodon" => {
+            state.keychain.clear_mastodon_session()
+                .map_err(|e| format!("Failed to clear Mastodon session: {}", e))?;
+        }
+        "bluesky" => {
+            // Clear OAuth session
+            state.oauth_manager.clear_session().await;
+            state.oauth_manager.stop_callback_server().await;
+        }
+        _ => {}
+    }
+
+    // Return updated list
+    state.keychain.list_linked_accounts()
+        .map_err(|e| format!("Failed to list linked accounts: {}", e))
 }
