@@ -258,7 +258,10 @@ export function useUnifiedFeed({
                 if (tagsDisabled) {
                     activeTags = [];                        // tags checkbox off
                 } else if (specificTagSoloed) {
-                    activeTags = selectedHashtagsFilter.filter(tag => tags.includes(tag));
+                    // Pass selected tags directly — don't filter against followedHashtags.
+                    // When a user clicks a hashtag chip, that tag might not be in their
+                    // followed list, but we still want to search for it.
+                    activeTags = selectedHashtagsFilter;
                 } else if (specificFeedSoloed) {
                     activeTags = [];                        // feed soloed → skip tags
                 } else {
@@ -270,7 +273,7 @@ export function useUnifiedFeed({
                         const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                             tags: activeTags,
                             feedUris: activeFeedUris,
-                            limit: 50,
+                            limit: 200,
                             cursor: null,
                         });
 
@@ -496,14 +499,14 @@ export function useUnifiedFeed({
 
                 let moreTags: string[];
                 if (tagsOff) moreTags = [];
-                else if (tagSoloed) moreTags = selectedHashtagsFilter.filter(t => (followedHashtags || []).includes(t));
+                else if (tagSoloed) moreTags = selectedHashtagsFilter;
                 else if (feedSoloed) moreTags = [];
                 else moreTags = followedHashtags || [];
 
                 const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
                     tags: moreTags,
                     feedUris: moreFeedUris,
-                    limit: 50,
+                    limit: 200,
                     cursor,
                 });
 

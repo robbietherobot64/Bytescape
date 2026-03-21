@@ -565,7 +565,13 @@ export function ChatScreen() {
                                 </div>
                             )}
                             {activeConvoMsgs?.slice().reverse().map((m, i, arr) => {
-                                const isMe = m.sender_did === auth?.did;
+                                // Use peer_did to determine message ownership: if the sender is
+                                // the conversation's peer, it's THEIR message. Otherwise, it's ours.
+                                // This is more robust than comparing against auth?.did which may
+                                // differ in format between the keychain and Bluesky API.
+                                const isMe = m.peer_did
+                                    ? m.sender_did !== m.peer_did
+                                    : m.sender_did === auth?.did;
                                 const date = new Date(m.sent_at);
                                 const dateStr = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
                                 let showDate = false;

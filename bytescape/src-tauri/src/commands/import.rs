@@ -1452,6 +1452,18 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
         let db = db_guard.as_ref()
             .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
 
+        // Gather all DIDs that represent "self" for peer detection.
+        // Using all_owner_dids() ensures we recognize ourselves even if our
+        // Bluesky DID differs from our other identities (web_did, master_did, etc.)
+        let self_dids: std::collections::HashSet<String> = {
+            let mut set = std::collections::HashSet::new();
+            set.insert(user_did.clone());
+            if let Ok(all) = state.keychain.all_owner_dids() {
+                for d in all { set.insert(d); }
+            }
+            set
+        };
+
         let mut new_count = 0;
 
         for convo_val in &all_convos {
@@ -1463,7 +1475,9 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
                 .cloned()
                 .unwrap_or_default();
             let peer = members.iter().find(|m| {
-                m.get("did").and_then(|d| d.as_str()) != Some(&user_did)
+                m.get("did").and_then(|d| d.as_str())
+                    .map(|d| !self_dids.contains(d))
+                    .unwrap_or(true)
             });
             let peer_did = peer.and_then(|p| p.get("did").and_then(|d| d.as_str()).map(|s| s.to_string()));
             let peer_handle = peer.and_then(|p| p.get("handle").and_then(|h| h.as_str()).map(|s| s.to_string()));
@@ -2370,7 +2384,7 @@ pub async fn get_unified_feed(
     state: State<'_, AppState>,
     tags: Vec<String>,
     feed_uris: Vec<String>,
-    limit: u8,
+    limit: u16,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     let cache_ttl = std::time::Duration::from_secs(30);
@@ -2418,7 +2432,7 @@ pub async fn get_unified_feed(
     if !tags.is_empty() {
         if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
             if let Ok((ref mut posts, _)) = result {
-                let per_tag = (limit / tags.len().max(1) as u8).max(5);
+                let per_tag = (limit / tags.len().max(1) as u16).max(20);
                 for tag in &tags {
                     if let Ok(masto_posts) = crate::connectors::mastodon::get_hashtag_timeline_as_bsky(
                         &state.http_client, &session, tag, Some(per_tag as i32),
@@ -2430,7 +2444,6 @@ pub async fn get_unified_feed(
                 let mut seen = std::collections::HashSet::new();
                 posts.retain(|p| seen.insert(p.uri.clone()));
                 posts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                posts.truncate(limit as usize);
             }
         }
     }
@@ -2453,7 +2466,7 @@ async fn get_unified_feed_oauth(
     state: &AppState,
     tags: Vec<String>,
     feed_uris: Vec<String>,
-    limit: u8,
+    limit: u16,
     cursor: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     use crate::connectors::bluesky::BlueskyImportedPost;
@@ -2468,10 +2481,12 @@ async fn get_unified_feed_oauth(
     // 1. Hashtag search — get raw JSON via OAuth, then parse with existing parsers
     if !tags.is_empty() {
         let tag_query = tags.join(" OR ");
+        // Bluesky searchPosts max is 100 per call
+        let search_limit = limit.min(100);
         let mut search_endpoint = format!(
             "app.bsky.feed.searchPosts?q={}&limit={}",
             urlencoding::encode(&tag_query),
-            limit
+            search_limit
         );
         if let Some(ref c) = parsed_cursor.hashtag_cursor {
             search_endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
@@ -2552,11 +2567,13 @@ async fn get_unified_feed_oauth(
         feed_uris
     };
 
+    // Bluesky getFeed max is 100 per call
+    let feed_limit = limit.min(100);
     let feed_futures: Vec<_> = uris.iter().map(|feed_uri| {
         let mut endpoint = format!(
             "app.bsky.feed.getFeed?feed={}&limit={}",
             urlencoding::encode(feed_uri),
-            limit
+            feed_limit
         );
         if let Some(c) = parsed_cursor.feed_cursors.get(feed_uri.as_str()) {
             endpoint.push_str(&format!("&cursor={}", urlencoding::encode(c)));
@@ -2594,7 +2611,7 @@ async fn get_unified_feed_oauth(
     if !tags.is_empty() {
         if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
             let http = &state.http_client;
-            let per_tag_limit = (limit / tags.len().max(1) as u8).max(5);
+            let per_tag_limit = (limit / tags.len().max(1) as u16).max(20);
             for tag in &tags {
                 match crate::connectors::mastodon::get_hashtag_timeline_as_bsky(
                     http, &session, tag, Some(per_tag_limit as i32),

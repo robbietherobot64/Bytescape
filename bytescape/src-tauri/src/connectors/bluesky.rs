@@ -1017,7 +1017,7 @@ async fn resolve_pds(client: &Client, did: &str) -> Result<String, String> {
 pub async fn search_posts(
     access_jwt: &str,
     query: &str,
-    limit: u8,
+    limit: u16,
     cursor: Option<String>,
     required_tags: Option<Vec<String>>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
@@ -1351,7 +1351,7 @@ pub async fn get_saved_feeds(
 pub async fn get_custom_feed(
     access_jwt: &str,
     feed_uri: &str,
-    limit: u8,
+    limit: u16,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
     let client = SHARED_CLIENT.clone();
@@ -1481,7 +1481,7 @@ pub async fn get_unified_feed(
     access_jwt: &str,
     tags: Vec<String>, // Followed hashtags
     feed_uris: Option<Vec<String>>, // Optional specific feeds to fetch
-    limit: u8,
+    limit: u16,
     cursor: Option<String>,
 ) -> Result<(Vec<BlueskyImportedPost>, Option<String>), String> {
     // 1. Fetch Hashtag Posts

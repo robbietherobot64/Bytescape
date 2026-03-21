@@ -18,9 +18,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
     BsArrowLeft, BsArrowRight, BsHouseFill,
-    BsSearch, BsGlobe, BsPeopleFill
+    BsSearch, BsGlobe, BsPeopleFill,
+    BsArrowClockwise, BsXLg
 } from 'react-icons/bs';
+import { invoke } from '@tauri-apps/api/core';
 import { useLocationStore, resolveUrl } from '../hooks/useLocation';
+import { useBrowserStore } from '../store';
 import { openInApp } from '../utils/openInApp';
 
 interface OmnibarProps {
@@ -52,18 +55,27 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
     const goBack = useLocationStore(s => s.goBack);
     const goForward = useLocationStore(s => s.goForward);
 
+    // Browser store — when a webview tab is active, override navigation
+    const browserLabel = useBrowserStore(s => s.activeLabel);
+    const browserUrl = useBrowserStore(s => s.currentUrl);
+    const browserLoading = useBrowserStore(s => s.isLoading);
+    const isBrowserActive = !!browserLabel;
+
     const [inputValue, setInputValue] = useState('');
     const [isFocused, setIsFocused] = useState(false);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const suggestionsRef = useRef<HTMLDivElement>(null);
 
+    // The URL to display: browser URL when webview is active, otherwise byte:// URL
+    const displayUrl = isBrowserActive && browserUrl ? browserUrl : currentUrl;
+
     // Sync display value with current URL when not focused
     useEffect(() => {
         if (!isFocused) {
-            setInputValue(currentUrl);
+            setInputValue(displayUrl);
         }
-    }, [currentUrl, isFocused]);
+    }, [displayUrl, isFocused]);
 
     // Close suggestions on outside click
     useEffect(() => {
@@ -84,13 +96,13 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     // Determine content origin icon
     const getOriginIcon = () => {
-        if (currentUrl.startsWith('http://') || currentUrl.startsWith('https://')) {
+        if (displayUrl.startsWith('http://') || displayUrl.startsWith('https://')) {
             return <BsGlobe style={{ fontSize: 12, color: 'var(--accent-blue)' }} title="External Site" />;
         }
-        if (currentUrl.startsWith('byte://peer/')) {
+        if (displayUrl.startsWith('byte://peer/')) {
             return <BsPeopleFill style={{ fontSize: 12, color: '#50fa7b' }} title="Peer Content (P2P)" />;
         }
-        if (currentUrl === 'byte://profile-browser') {
+        if (displayUrl === 'byte://profile-browser') {
             return <BsGlobe style={{ fontSize: 12, color: 'var(--accent-blue)' }} title="Network" />;
         }
         return <BsHouseFill style={{ fontSize: 12, color: 'var(--text-muted)' }} title="Local Content" />;
@@ -98,7 +110,7 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     // Filter suggestions based on input
     const getSuggestions = useCallback(() => {
-        if (!inputValue || inputValue === currentUrl) return [];
+        if (!inputValue || inputValue === displayUrl) return [];
         const lower = inputValue.toLowerCase();
 
         // Filter known routes
@@ -115,12 +127,35 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
             .map(url => ({ url, label: url.replace('byte://', ''), icon: '📋' }));
 
         return [...matches, ...historyMatches].slice(0, 8);
-    }, [inputValue, currentUrl]);
+    }, [inputValue, displayUrl]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const value = inputValue.trim();
         if (!value) return;
+
+        // When a webview is active, navigate within the native webview
+        if (isBrowserActive && browserLabel) {
+            if (value.startsWith('http://') || value.startsWith('https://')) {
+                invoke('browser_navigate', { label: browserLabel, url: value }).catch(console.error);
+                useBrowserStore.getState().setCurrentUrl(value);
+                useBrowserStore.getState().setIsLoading(true);
+            } else if (value.startsWith('byte://') || value.startsWith('/')) {
+                // Switch away from webview to an internal route
+                const url = value.startsWith('byte://') ? value : `byte://${value}`;
+                const resolved = resolveUrl(url);
+                if (resolved) navigate(url);
+            } else {
+                // Treat as URL (add https://)
+                const fullUrl = `https://${value}`;
+                invoke('browser_navigate', { label: browserLabel, url: fullUrl }).catch(console.error);
+                useBrowserStore.getState().setCurrentUrl(fullUrl);
+                useBrowserStore.getState().setIsLoading(true);
+            }
+            inputRef.current?.blur();
+            setShowSuggestions(false);
+            return;
+        }
 
         // Check if it's an external URL (http/https) — open as in-app browser tab
         if (value.startsWith('http://') || value.startsWith('https://')) {
@@ -190,7 +225,7 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Escape') {
-            setInputValue(currentUrl);
+            setInputValue(displayUrl);
             setShowSuggestions(false);
             inputRef.current?.blur();
         }
@@ -200,31 +235,63 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     return (
         <div className="omnibar" style={omnibarContainerStyle}>
-            {/* Navigation buttons */}
+            {/* Navigation buttons — override for webview */}
             <button
-                onClick={goBack}
-                disabled={!canGoBack}
+                onClick={() => {
+                    if (isBrowserActive && browserLabel) {
+                        invoke('browser_eval', { label: browserLabel, js: 'history.back()' }).catch(console.error);
+                    } else {
+                        goBack();
+                    }
+                }}
+                disabled={isBrowserActive ? false : !canGoBack}
                 title="Back (Alt+←)"
                 className="omnibar-nav-btn"
                 style={{
                     ...navBtnStyle,
-                    opacity: canGoBack ? 1 : 0.3,
+                    opacity: (isBrowserActive || canGoBack) ? 1 : 0.3,
                 } as React.CSSProperties}
             >
                 <BsArrowLeft />
             </button>
             <button
-                onClick={goForward}
-                disabled={!canGoForward}
+                onClick={() => {
+                    if (isBrowserActive && browserLabel) {
+                        invoke('browser_eval', { label: browserLabel, js: 'history.forward()' }).catch(console.error);
+                    } else {
+                        goForward();
+                    }
+                }}
+                disabled={isBrowserActive ? false : !canGoForward}
                 title="Forward (Alt+→)"
                 className="omnibar-nav-btn"
                 style={{
                     ...navBtnStyle,
-                    opacity: canGoForward ? 1 : 0.3,
+                    opacity: (isBrowserActive || canGoForward) ? 1 : 0.3,
                 } as React.CSSProperties}
             >
                 <BsArrowRight />
             </button>
+
+            {/* Reload / Stop button — only shown for webview tabs */}
+            {isBrowserActive && (
+                <button
+                    onClick={() => {
+                        if (browserLoading) {
+                            invoke('browser_eval', { label: browserLabel, js: 'window.stop()' }).catch(console.error);
+                            useBrowserStore.getState().setIsLoading(false);
+                        } else {
+                            invoke('browser_eval', { label: browserLabel, js: 'location.reload()' }).catch(console.error);
+                            useBrowserStore.getState().setIsLoading(true);
+                        }
+                    }}
+                    title={browserLoading ? 'Stop' : 'Reload'}
+                    className="omnibar-nav-btn"
+                    style={navBtnStyle}
+                >
+                    {browserLoading ? <BsXLg /> : <BsArrowClockwise />}
+                </button>
+            )}
 
             {/* Address bar */}
             <form

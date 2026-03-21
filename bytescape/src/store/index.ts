@@ -2,6 +2,32 @@ import { create } from 'zustand';
 import { VaultMessage, SidebarItem, ThemeId } from '../types';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
+// ─── Browser (WebView) Store ───
+// Shared state between WebViewScreen and Omnibar so the global Omnibar
+// can display the current URL and control back/forward/reload in the
+// active native webview.
+
+interface BrowserState {
+    /** The webview label currently active (null when no webview tab is active) */
+    activeLabel: string | null;
+    /** Current URL being displayed by the active webview */
+    currentUrl: string | null;
+    /** Whether the active webview is loading a page */
+    isLoading: boolean;
+    setActiveLabel: (label: string | null) => void;
+    setCurrentUrl: (url: string | null) => void;
+    setIsLoading: (loading: boolean) => void;
+}
+
+export const useBrowserStore = create<BrowserState>((set) => ({
+    activeLabel: null,
+    currentUrl: null,
+    isLoading: false,
+    setActiveLabel: (label) => set({ activeLabel: label }),
+    setCurrentUrl: (url) => set({ currentUrl: url }),
+    setIsLoading: (loading) => set({ isLoading: loading }),
+}));
+
 // ─── Auth Store ───
 interface AuthInfo {
     handle: string;
