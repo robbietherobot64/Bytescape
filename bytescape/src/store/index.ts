@@ -303,6 +303,8 @@ interface FeedCacheState {
     getCache: (tab: string, maxAgeMs?: number) => FeedCacheEntry | null;
     appendCache: (tab: string, entries: FeedEntry[], cursor: string | null) => void;
     clearCache: (tab: string) => void;
+    /** Remove all cache entries whose key starts with the given prefix */
+    clearCachePrefix: (prefix: string) => void;
     /** Nuke all cached data — call on account disconnect */
     clearAllCaches: () => void;
 
@@ -341,6 +343,13 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     clearCache: (tab) => set((state) => {
         const { [tab]: _, ...rest } = state.cache;
         return { cache: rest };
+    }),
+    clearCachePrefix: (prefix) => set((state) => {
+        const filtered: Record<string, FeedCacheEntry> = {};
+        for (const [key, val] of Object.entries(state.cache)) {
+            if (!key.startsWith(prefix)) filtered[key] = val;
+        }
+        return { cache: filtered };
     }),
     clearAllCaches: () => set({
         cache: {},

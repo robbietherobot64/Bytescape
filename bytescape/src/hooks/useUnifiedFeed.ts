@@ -97,7 +97,7 @@ export function useUnifiedFeed({
     const verifiedIdsRef = useRef<Set<string>>(new Set());
     const prevAuthDidRef = useRef<string | null>(null);
 
-    const { setCache, getCache, clearCache, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
+    const { setCache, getCache, clearCache, clearCachePrefix, setCachedSavedFeeds, setCachedFollowingList } = useFeedCacheStore();
 
     // When the auth identity changes (e.g. account disconnected), nuke all
     // local state so stale data from the old account doesn't flash.
@@ -370,25 +370,20 @@ export function useUnifiedFeed({
     }, [auth, selectedFeedUris, selectedHashtagsFilter, archiveSourceFilter]);
 
     // Invalidate subscribed cache when feed URI changes — prevents stale-while-revalidate
-    // from showing the old feed's content while the new one loads
+    // from showing the old feed's content while the new one loads.
+    // Must clear ALL cache keys that start with 'subscribed' since the full key
+    // includes filter suffixes (e.g. 'subscribed:::cats').
     useEffect(() => {
-        clearCache('subscribed');
-    }, [selectedFeedUris, selectedHashtagsFilter, clearCache]);
+        clearCachePrefix('subscribed');
+    }, [selectedFeedUris, selectedHashtagsFilter, clearCachePrefix]);
 
     // Invalidate all tab caches when source filter changes to prevent stale data
     useEffect(() => {
-        clearCache('all');
-        clearCache('you');
-        clearCache('following');
-        clearCache('subscribed');
-        // Also clear filter-specific keys
-        if (archiveSourceFilter) {
-            clearCache(`all:${archiveSourceFilter}`);
-            clearCache(`you:${archiveSourceFilter}`);
-            clearCache(`following:${archiveSourceFilter}`);
-            clearCache(`subscribed:${archiveSourceFilter}`);
-        }
-    }, [archiveSourceFilter, clearCache]);
+        clearCachePrefix('all');
+        clearCachePrefix('you');
+        clearCachePrefix('following');
+        clearCachePrefix('subscribed');
+    }, [archiveSourceFilter, clearCachePrefix]);
 
     // Trigger reload on tab/filter change
     useEffect(() => {
@@ -481,10 +476,28 @@ export function useUnifiedFeed({
                 setCursor(bskyCursor);
 
             } else if (activeTab === 'subscribed' && cursor) {
+                // Respect the same solo filter logic as the initial fetch
                 const allFeedUris = savedFeeds.map(f => f.uri);
+                const feedsOff = selectedFeedUris.includes('__disabled__');
+                const tagsOff = selectedHashtagsFilter.includes('__disabled__');
+                const feedSoloed = selectedFeedUris.length > 0 && !feedsOff;
+                const tagSoloed = selectedHashtagsFilter.length > 0 && !tagsOff;
+
+                let moreFeedUris: string[];
+                if (feedsOff) moreFeedUris = [];
+                else if (feedSoloed) moreFeedUris = selectedFeedUris.filter(u => allFeedUris.includes(u));
+                else if (tagSoloed) moreFeedUris = [];
+                else moreFeedUris = allFeedUris;
+
+                let moreTags: string[];
+                if (tagsOff) moreTags = [];
+                else if (tagSoloed) moreTags = selectedHashtagsFilter.filter(t => (followedHashtags || []).includes(t));
+                else if (feedSoloed) moreTags = [];
+                else moreTags = followedHashtags || [];
+
                 const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
-                    tags: followedHashtags || [],
-                    feedUris: allFeedUris,
+                    tags: moreTags,
+                    feedUris: moreFeedUris,
                     limit: 50,
                     cursor,
                 });

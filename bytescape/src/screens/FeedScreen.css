@@ -311,8 +311,15 @@
     color: var(--text-primary);
 }
 
-.sub-section-caret {
+.sub-section-controls {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.sub-section-caret {
     font-size: 12px;
     color: var(--text-primary);
     flex-shrink: 0;
