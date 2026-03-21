@@ -6,13 +6,81 @@
 //!
 //! This bypasses iframe X-Frame-Options restrictions because the webviews are
 //! full native browser instances, not sandboxed iframes.
+//!
+//! ## Security model
+//!
+//! External webviews are **sandboxed** from the Tauri IPC bridge:
+//! - An initialization script removes `__TAURI__` and `__TAURI_INTERNALS__`
+//!   so external pages cannot invoke Tauri commands.
+//! - Navigation is restricted to `http:` / `https:` schemes — `file://`,
+//!   `javascript:`, `data:`, and `blob:` navigations are blocked.
+//! - `window.open()` / `target="_blank"` are intercepted and routed back to
+//!   the React tab system via events instead of spawning OS popups.
+//! - Each browser webview uses an isolated data directory so cookies and
+//!   storage from external sites cannot access the main app's session data.
 
 use tauri::{AppHandle, Manager, WebviewUrl, LogicalPosition, LogicalSize, Emitter};
+
+/// JavaScript injected into every external webview before any page scripts run.
+///
+/// Strips the Tauri IPC bridge so external pages can never call `invoke()` or
+/// listen for events. This is the primary defence against a compromised or
+/// malicious page reaching into the host app.
+const EXTERNAL_WEBVIEW_INIT_SCRIPT: &str = r#"
+(function() {
+    // Strip Tauri IPC from external contexts
+    if (window.location.protocol !== 'http:' || window.location.hostname !== 'tauri.localhost') {
+        delete window.__TAURI__;
+        delete window.__TAURI_INTERNALS__;
+        Object.defineProperty(window, '__TAURI__', { get() { return undefined; }, configurable: false });
+        Object.defineProperty(window, '__TAURI_INTERNALS__', { get() { return undefined; }, configurable: false });
+    }
+})();
+"#;
+
+/// Schemes that browser webviews are allowed to navigate to.
+///
+/// Everything else (`file://`, `javascript:`, `data:`, `blob:`) is blocked.
+fn is_allowed_navigation(url: &url::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// Get (or create) the isolated data directory for browser webviews.
+///
+/// All external webviews share one data directory that is separate from the
+/// main app's webview data, so cookies / localStorage / IndexedDB from
+/// visited sites cannot access the Bytescape session data.
+fn browser_data_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|p| p.join("browser_data"))
+}
+
+/// Resolve the main Tauri window.
+///
+/// Tries `"main"` first (the default label from tauri.conf.json), then falls
+/// back to the first available window. Returns an error string if no window
+/// exists.
+fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
+    app.get_window("main")
+        .or_else(|| {
+            eprintln!("browser: get_window(\"main\") returned None, trying fallback");
+            app.windows().into_values().next()
+        })
+        .ok_or_else(|| {
+            let available: Vec<String> = app.windows().keys().cloned().collect();
+            format!("No window found (available: {:?})", available)
+        })
+}
 
 /// Create a native browser webview within the main window.
 ///
 /// The webview is positioned at (x, y) with the given dimensions,
 /// overlaying the React content area for that tab.
+///
+/// ## Security
+/// - Navigation restricted to `http:`/`https:` only.
+/// - Tauri IPC bridge stripped via initialization script.
+/// - Isolated data directory for cookies/storage.
+/// - `window.open()` intercepted → emits `browser-new-tab` event.
 #[tauri::command]
 pub async fn browser_create(
     app: AppHandle,
@@ -26,24 +94,13 @@ pub async fn browser_create(
     let parsed_url: url::Url = url.parse()
         .map_err(|e: url::ParseError| format!("Invalid URL: {}", e))?;
 
-    // Debug: log available windows to help diagnose label mismatches
-    let available_windows: Vec<String> = app.windows().keys().cloned().collect();
-    eprintln!("browser_create: available windows: {:?}", available_windows);
+    if !is_allowed_navigation(&parsed_url) {
+        return Err(format!("Blocked: only http/https URLs are allowed, got {}", parsed_url.scheme()));
+    }
 
-    // Find the main window — label defaults to "main" from tauri.conf.json
-    let window = app.get_window("main")
-        .or_else(|| {
-            eprintln!("browser_create: get_window(\"main\") returned None, trying fallback");
-            // Fallback: use the first available window
-            app.windows().into_values().next()
-        })
-        .ok_or_else(|| {
-            let msg = format!("No window found (available: {:?})", available_windows);
-            eprintln!("browser_create: {}", msg);
-            msg
-        })?;
+    let window = get_main_window(&app)?;
 
-    eprintln!("browser_create: using window label={:?}, creating webview label={:?} url={}", window.label(), label, url);
+    eprintln!("browser_create: window={:?}, webview={:?}, url={}", window.label(), label, url);
 
     // Clone app handles for the event callbacks
     let app_for_title = app.clone();
@@ -52,12 +109,14 @@ pub async fn browser_create(
     let label_for_nav = label.clone();
     let app_for_new = app.clone();
 
-    let webview_builder = tauri::webview::WebviewBuilder::new(
+    let mut webview_builder = tauri::webview::WebviewBuilder::new(
         &label,
         WebviewUrl::External(parsed_url),
     )
-    // Allow all navigation — this is a browser, not a locked-down webview
-    .on_navigation(|_url| true)
+    // Block non-http(s) navigations — prevents file:// / javascript:// exploits
+    .on_navigation(|url| is_allowed_navigation(url))
+    // Strip Tauri IPC so external pages cannot call invoke()
+    .initialization_script(EXTERNAL_WEBVIEW_INIT_SCRIPT)
     // Emit title changes so the React tab bar can update
     .on_document_title_changed(move |_webview, title| {
         let _ = app_for_title.emit(
@@ -83,6 +142,11 @@ pub async fn browser_create(
     .zoom_hotkeys_enabled(true)
     .enable_clipboard_access();
 
+    // Isolate browser cookies/storage from the main app webview
+    if let Some(data_dir) = browser_data_dir(&app) {
+        webview_builder = webview_builder.data_directory(data_dir);
+    }
+
     window.add_child(
         webview_builder,
         LogicalPosition::new(x, y),
@@ -100,7 +164,6 @@ pub async fn browser_create(
 #[tauri::command]
 pub async fn browser_close(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
-        // Ignore errors — the webview may already be closing
         let _ = webview.close();
     }
     Ok(())
@@ -135,8 +198,86 @@ pub async fn browser_set_bounds(
 #[tauri::command]
 pub async fn browser_hide(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
-        // Move far off-screen to hide without destroying
         let _ = webview.set_position(LogicalPosition::new(-10000.0_f64, -10000.0_f64));
+    }
+    Ok(())
+}
+
+/// Navigate an existing browser webview to a new URL.
+///
+/// Used by the Omnibar when the user types a URL while a webview tab is
+/// active, or when following an in-page redirect.
+#[tauri::command]
+pub async fn browser_navigate(
+    app: AppHandle,
+    label: String,
+    url: String,
+) -> Result<(), String> {
+    let parsed: url::Url = url.parse()
+        .map_err(|e: url::ParseError| format!("Invalid URL: {}", e))?;
+
+    if !is_allowed_navigation(&parsed) {
+        return Err(format!("Blocked: only http/https URLs are allowed, got {}", parsed.scheme()));
+    }
+
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found", label))?;
+
+    webview.navigate(parsed)
+        .map_err(|e| format!("navigate: {}", e))?;
+    Ok(())
+}
+
+/// Execute JavaScript in a browser webview and return the result.
+///
+/// Powers back/forward/reload actions from the Omnibar and
+/// any other frontend-initiated DOM queries.
+///
+/// **Safety:** This only runs JS in an already-sandboxed external webview
+/// (no Tauri IPC bridge), so the injected script cannot escalate privileges.
+#[tauri::command]
+pub async fn browser_eval(
+    app: AppHandle,
+    label: String,
+    js: String,
+) -> Result<(), String> {
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found", label))?;
+
+    webview.eval(&js)
+        .map_err(|e| format!("eval: {}", e))?;
+    Ok(())
+}
+
+/// Get the current URL of a browser webview.
+///
+/// Returns the live URL (which may differ from the originally-opened URL
+/// after in-page navigation).
+#[tauri::command]
+pub async fn browser_get_url(
+    app: AppHandle,
+    label: String,
+) -> Result<String, String> {
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found", label))?;
+
+    webview.url()
+        .map(|u| u.to_string())
+        .map_err(|e| format!("url: {}", e))
+}
+
+/// Clear all browser data (cookies, cache, storage).
+///
+/// Called on account disconnect or explicit user action to ensure no
+/// session data leaks between accounts.
+#[tauri::command]
+pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
+    if let Some(data_dir) = browser_data_dir(&app) {
+        if data_dir.exists() {
+            std::fs::remove_dir_all(&data_dir)
+                .map_err(|e| format!("Failed to clear browser data: {}", e))?;
+            eprintln!("browser_clear_data: cleared {}", data_dir.display());
+        }
     }
     Ok(())
 }

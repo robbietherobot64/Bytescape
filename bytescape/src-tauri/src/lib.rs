@@ -550,6 +550,10 @@ pub fn run() {
             commands::browser::browser_close,
             commands::browser::browser_set_bounds,
             commands::browser::browser_hide,
+            commands::browser::browser_navigate,
+            commands::browser::browser_eval,
+            commands::browser::browser_get_url,
+            commands::browser::browser_clear_data,
             
             // ActivityPub commands (A1.1)
             commands::ap::create_ap_actor,
