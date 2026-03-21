@@ -1,38 +1,17 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Webview } from '@tauri-apps/api/webview';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavStore, useBrowserStore } from '../store';
 import { openInApp } from '../utils/openInApp';
 
-/** Wrap an invoke in a timeout so a hanging Rust command doesn't freeze the UI. */
-function invokeWithTimeout<T>(cmd: string, args: Record<string, unknown>, ms: number): Promise<T> {
-    return Promise.race([
-        invoke<T>(cmd, args),
-        new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Command '${cmd}' timed out after ${ms / 1000}s`)), ms)
-        ),
-    ]);
-}
-
 /**
- * Detect whether the native webview actually rendered by checking if it
- * emitted a page-load event within a grace period.
+ * Cached probe result for native child webview support.
+ * On Linux/Wayland, `window.add_child()` returns UnsupportedWindowHandle.
+ * On Linux/X11, child webviews have chronic z-ordering/visibility bugs.
+ * We probe once and cache so subsequent tabs skip the native path.
  */
-function waitForPageLoad(label: string, timeoutMs: number): Promise<boolean> {
-    return new Promise((resolve) => {
-        let settled = false;
-        const timer = setTimeout(() => {
-            if (!settled) { settled = true; resolve(false); }
-        }, timeoutMs);
-        listen<string>(`browser-url-${label}`, () => {
-            if (!settled) { settled = true; clearTimeout(timer); resolve(true); }
-        }).catch(() => {
-            if (!settled) { settled = true; clearTimeout(timer); resolve(false); }
-        });
-    });
-}
+let nativeWebviewSupport: 'unknown' | 'yes' | 'no' = 'unknown';
 
 interface WebViewScreenProps {
     url: string;
@@ -44,15 +23,16 @@ interface WebViewScreenProps {
 let idCounter = 0;
 
 /**
- * In-app browser tab backed by a native webview.
+ * In-app browser tab.
  *
- * Creates a real OS webview (WebKitGTK/WebView2/WKWebView) within the main
- * window, positioned over the React content area. This renders ANY URL with
- * no iframe restrictions — just like a real browser tab.
+ * Attempts to create a native OS webview (WebKitGTK/WebView2/WKWebView)
+ * within the main window. If native creation fails or the webview doesn't
+ * render within a short timeout, shows a fallback landing page with a
+ * prominent "Open in System Browser" button.
  *
- * Navigation controls live in the global Omnibar (TopBar). This component
- * communicates the current URL and webview label via useBrowserStore so
- * the Omnibar can control back/forward/reload/URL-navigate.
+ * The native approach has chronic issues on Linux (Wayland unsupported,
+ * X11 z-ordering bugs, GTK main loop deadlocks with Tauri JS API calls).
+ * The fallback is cached so subsequent tabs skip the native probe.
  */
 export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -62,9 +42,10 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
 
-    const [createError, setCreateError] = useState<string | null>(null);
-    const [isCreating, setIsCreating] = useState(false);
-    const [nativeReady, setNativeReady] = useState(false);
+    // Phase: 'loading' → attempting native | 'native' → it worked | 'fallback' → system browser
+    const [phase, setPhase] = useState<'loading' | 'native' | 'fallback'>('loading');
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [openedExternal, setOpenedExternal] = useState(false);
 
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
@@ -86,15 +67,12 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         }
     }, []);
 
-    // ─── Register/unregister this webview with the browser store ───
+    // ─── Register/unregister with browser store ───
     useEffect(() => {
-        if (isActive && createdRef.current) {
-            setActiveLabel(labelRef.current);
+        if (isActive) {
+            if (createdRef.current) setActiveLabel(labelRef.current);
             setCurrentUrl(url);
-        } else if (isActive && !createdRef.current) {
-            setCurrentUrl(url);
-        }
-        if (!isActive) {
+        } else {
             const store = useBrowserStore.getState();
             if (store.activeLabel === labelRef.current) {
                 setActiveLabel(null);
@@ -103,7 +81,6 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         }
     }, [isActive, url, setActiveLabel, setCurrentUrl]);
 
-    // Cleanup store on unmount
     useEffect(() => {
         const label = labelRef.current;
         return () => {
@@ -115,115 +92,134 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         };
     }, []);
 
-    // ─── Create / Show / Hide based on isActive ───
+    // ─── Core: attempt native webview, fall back to system browser ───
     useEffect(() => {
-        if (destroyedRef.current) return;
+        if (destroyedRef.current || !isActive) return;
 
-        if (isActive) {
-            if (!createdRef.current) {
-                const create = async () => {
-                    const el = containerRef.current;
-                    if (!el) return;
+        // Skip native if we already know it doesn't work
+        if (nativeWebviewSupport === 'no') {
+            setPhase('fallback');
+            return;
+        }
 
-                    setIsCreating(true);
-                    setCreateError(null);
-                    setNativeReady(false);
+        // Already created — just show it
+        if (createdRef.current) {
+            setPhase('native');
+            setActiveLabel(labelRef.current);
+            syncBounds();
+            return;
+        }
 
-                    // Wait one frame for layout, then measure
-                    await new Promise<void>(r => requestAnimationFrame(() => r()));
-                    if (destroyedRef.current) return;
+        let cancelled = false;
 
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width < 1 || rect.height < 1) {
-                        // Retry once after a short delay
-                        await new Promise<void>(r => setTimeout(r, 200));
-                        if (destroyedRef.current) return;
-                        const rect2 = el.getBoundingClientRect();
-                        if (rect2.width < 1 || rect2.height < 1) {
-                            setIsCreating(false);
-                            setCreateError('Page container failed to initialize. Try closing and re-opening this tab.');
-                            return;
-                        }
-                        Object.assign(rect, rect2);
-                    }
-
-                    try {
-                        // Single attempt with a 5-second timeout
-                        await invokeWithTimeout('browser_create', {
-                            label: labelRef.current,
-                            url,
-                            x: rect.x,
-                            y: rect.y,
-                            width: rect.width,
-                            height: rect.height,
-                        }, 5000);
-
-                        createdRef.current = true;
-                        setActiveLabel(labelRef.current);
-                        setCurrentUrl(url);
-
-                        // Try to show/focus the native webview
-                        try {
-                            const wv = await Webview.getByLabel(labelRef.current);
-                            if (wv) {
-                                await wv.show();
-                                await wv.setFocus();
-                            }
-                        } catch (focusErr) {
-                            console.warn('[WebView] show/focus failed (non-fatal):', focusErr);
-                        }
-
-                        // Wait up to 6s for the native webview to report a page-load event.
-                        // If it never fires, the webview is probably not rendering (known
-                        // Linux/WebKitGTK issue). In that case, show fallback UI.
-                        const loaded = await waitForPageLoad(labelRef.current, 6000);
-                        setIsCreating(false);
-                        if (loaded) {
-                            setNativeReady(true);
-                        } else {
-                            // Webview was "created" but never loaded — platform rendering bug.
-                            // Show fallback instead of an empty screen.
-                            setCreateError('native-invisible');
-                        }
-
-                        if (!isActiveRef.current) {
-                            invoke('browser_hide', { label: labelRef.current }).catch(() => {});
-                        }
-                    } catch (err) {
-                        console.error('[WebView] create error:', err);
-                        setIsCreating(false);
-                        setCreateError(`Failed to open page: ${err}`);
-                    }
-                };
-                create();
-            } else {
-                setActiveLabel(labelRef.current);
-                requestAnimationFrame(async () => {
-                    await syncBounds();
-                    try {
-                        const wv = await Webview.getByLabel(labelRef.current);
-                        if (wv) {
-                            await wv.show();
-                            await wv.setFocus();
-                        }
-                    } catch {
-                        // non-fatal
-                    }
-                });
+        // ── HARD safety timeout ──
+        // If ANYTHING hangs (invoke, GTK deadlock, IPC stall), force fallback.
+        // This runs as a plain setTimeout — independent of the async flow.
+        const safetyTimer = setTimeout(() => {
+            if (!cancelled) {
+                console.warn('[WebView] Safety timeout: forcing fallback after 4s');
+                nativeWebviewSupport = 'no';
+                setPhase('fallback');
             }
-        } else if (createdRef.current) {
+        }, 4000);
+
+        const tryCreate = async () => {
+            const el = containerRef.current;
+            if (!el || cancelled) return;
+
+            // Wait one frame for layout
+            await new Promise<void>(r => requestAnimationFrame(() => r()));
+            if (cancelled || destroyedRef.current) { setPhase('fallback'); return; }
+
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 1 || rect.height < 1) {
+                await new Promise<void>(r => setTimeout(r, 200));
+                if (cancelled || destroyedRef.current) return;
+            }
+
+            const r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) {
+                if (!cancelled) { nativeWebviewSupport = 'no'; setPhase('fallback'); }
+                return;
+            }
+
+            try {
+                // Short timeout — if browser_create doesn't return in 3s, bail
+                await Promise.race([
+                    invoke('browser_create', {
+                        label: labelRef.current,
+                        url,
+                        x: r.x,
+                        y: r.y,
+                        width: r.width,
+                        height: r.height,
+                    }),
+                    new Promise<never>((_, rej) =>
+                        setTimeout(() => rej(new Error('timeout')), 3000)
+                    ),
+                ]);
+
+                if (cancelled || destroyedRef.current) return;
+                createdRef.current = true;
+                setActiveLabel(labelRef.current);
+                setCurrentUrl(url);
+
+                // ── Check if the webview actually rendered ──
+                // Listen for a page-load event (emitted by on_page_load in Rust).
+                // Give it 2.5s — if nothing, native webview is invisible.
+                const loaded = await new Promise<boolean>((resolve) => {
+                    if (cancelled) { resolve(false); return; }
+                    const t = setTimeout(() => resolve(false), 2500);
+                    listen<string>(`browser-url-${labelRef.current}`, () => {
+                        clearTimeout(t);
+                        resolve(true);
+                    }).catch(() => { clearTimeout(t); resolve(false); });
+                });
+
+                if (cancelled || destroyedRef.current) return;
+
+                if (loaded) {
+                    nativeWebviewSupport = 'yes';
+                    setPhase('native');
+                } else {
+                    // Created but invisible — clean up and fall back
+                    console.warn('[WebView] Created but page never loaded — falling back');
+                    invoke('browser_close', { label: labelRef.current }).catch(() => {});
+                    createdRef.current = false;
+                    nativeWebviewSupport = 'no';
+                    setPhase('fallback');
+                }
+            } catch (err) {
+                if (cancelled || destroyedRef.current) return;
+                console.warn('[WebView] browser_create failed:', err);
+                nativeWebviewSupport = 'no';
+                setErrorMsg(String(err));
+                setPhase('fallback');
+            }
+        };
+
+        tryCreate();
+
+        return () => {
+            cancelled = true;
+            clearTimeout(safetyTimer);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isActive]);
+
+    // ─── Hide native webview when tab is inactive ───
+    useEffect(() => {
+        if (!isActive && createdRef.current) {
             invoke('browser_hide', { label: labelRef.current }).catch(() => {});
         }
-    }, [isActive, url, syncBounds, setActiveLabel, setCurrentUrl]);
+    }, [isActive]);
 
     // ─── Track container size changes ───
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
         const observer = new ResizeObserver(() => {
-            if (isActiveRef.current && createdRef.current) {
-                syncBounds();
-            }
+            if (isActiveRef.current && createdRef.current) syncBounds();
         });
         observer.observe(el);
         return () => observer.disconnect();
@@ -245,7 +241,7 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         return () => { unlisten?.(); };
     }, []);
 
-    // ─── Listen for title changes from the native webview ───
+    // ─── Listen for title changes ───
     useEffect(() => {
         const label = labelRef.current;
         let unlisten: (() => void) | null = null;
@@ -253,17 +249,13 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
             const newTitle = event.payload;
             if (!newTitle) return;
             const nav = useNavStore.getState();
-            const tab = nav.tabs.find(
-                t => t.screen === 'webview' && t.meta?.url === url
-            );
-            if (tab && nav.updateTabLabel) {
-                nav.updateTabLabel(tab.id, newTitle);
-            }
+            const tab = nav.tabs.find(t => t.screen === 'webview' && t.meta?.url === url);
+            if (tab && nav.updateTabLabel) nav.updateTabLabel(tab.id, newTitle);
         }).then(fn => { unlisten = fn; });
         return () => { unlisten?.(); };
     }, [url]);
 
-    // ─── Listen for "open in new tab" from links clicked in the webview ───
+    // ─── Listen for "open in new tab" ───
     useEffect(() => {
         let unlisten: (() => void) | null = null;
         listen<string>('browser-new-tab', (event) => {
@@ -283,64 +275,34 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         };
     }, []);
 
-    const handleRetry = () => {
-        // Destroy any existing native webview before retrying
+    // ─── Handlers ───
+    const handleOpenExternal = useCallback(() => {
+        openUrl(url).catch(() => {});
+        setOpenedExternal(true);
+    }, [url]);
+
+    const handleRetryNative = useCallback(() => {
         if (createdRef.current) {
             invoke('browser_close', { label: labelRef.current }).catch(() => {});
         }
-        setCreateError(null);
-        setNativeReady(false);
+        nativeWebviewSupport = 'unknown';
         createdRef.current = false;
         destroyedRef.current = false;
-        const el = containerRef.current;
-        if (!el) return;
-        setIsCreating(true);
+        labelRef.current = `browser-${++idCounter}`;
+        setPhase('loading');
+        setErrorMsg(null);
+        setOpenedExternal(false);
+    }, []);
 
-        const create = async () => {
-            await new Promise<void>(r => setTimeout(r, 100));
-            if (destroyedRef.current) return;
-            const rect = el.getBoundingClientRect();
-            if (rect.width < 1 || rect.height < 1) {
-                setIsCreating(false);
-                setCreateError('Page container failed to initialize. Try closing and re-opening this tab.');
-                return;
-            }
-            try {
-                await invokeWithTimeout('browser_create', {
-                    label: `browser-${++idCounter}`,
-                    url,
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                }, 5000);
-                labelRef.current = `browser-${idCounter}`;
-                createdRef.current = true;
-                setActiveLabel(labelRef.current);
-                setCurrentUrl(url);
-                const loaded = await waitForPageLoad(labelRef.current, 6000);
-                setIsCreating(false);
-                if (loaded) {
-                    setNativeReady(true);
-                } else {
-                    setCreateError('native-invisible');
-                }
-            } catch (err) {
-                setIsCreating(false);
-                setCreateError(`Failed to open page: ${err}`);
-            }
-        };
-        create();
-    };
+    const handleCopyUrl = useCallback(() => {
+        navigator.clipboard.writeText(url).catch(() => {});
+    }, [url]);
 
-    const handleOpenExternal = () => {
-        openUrl(url).catch(() => {});
-    };
+    const parsedHost = (() => {
+        try { return new URL(url).hostname; } catch { return url; }
+    })();
 
-    // Determine what to show in the overlay
-    const showOverlay = isCreating || (createError !== null && !nativeReady);
-    const isNativeInvisible = createError === 'native-invisible';
-
+    // ─── Render ───
     return (
         <div
             ref={containerRef}
@@ -352,113 +314,129 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 position: 'relative',
             } as React.CSSProperties}
         >
-            {showOverlay && (
+            {/* LOADING — max 4s then safety timeout kicks in */}
+            {phase === 'loading' && (
                 <div style={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '12px',
-                    color: 'var(--text-secondary, #aaa)',
-                    fontSize: '14px',
-                    zIndex: 1,
+                    position: 'absolute', inset: 0,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    gap: '12px', color: 'var(--text-secondary, #aaa)',
+                    fontSize: '14px', zIndex: 1,
                 } as React.CSSProperties}>
-                    {isCreating && !createError && (
-                        <>
-                            <div style={{
-                                width: 24, height: 24,
-                                border: '3px solid var(--border-color, #444)',
-                                borderTopColor: 'var(--accent-purple, #9b59b6)',
-                                borderRadius: '50%',
-                                animation: 'spin 0.8s linear infinite',
-                            } as React.CSSProperties} />
-                            <span>Loading page…</span>
-                        </>
-                    )}
-                    {isNativeInvisible && (
-                        <>
-                            <span style={{ fontSize: '24px' }}>🌐</span>
-                            <span style={{ textAlign: 'center', maxWidth: 360 } as React.CSSProperties}>
-                                The in-app browser couldn't render this page
-                                (known Linux/WebKitGTK limitation).
-                            </span>
-                            <div style={{ display: 'flex', gap: 10, marginTop: 4 } as React.CSSProperties}>
-                                <button
-                                    onClick={handleOpenExternal}
-                                    style={{
-                                        padding: '10px 20px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--accent-purple, #9b59b6)',
-                                        background: 'var(--accent-purple, #9b59b6)',
-                                        color: '#fff',
-                                        cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: 600,
-                                    } as React.CSSProperties}
-                                >
-                                    Open in System Browser
-                                </button>
-                                <button
-                                    onClick={handleRetry}
-                                    style={{
-                                        padding: '10px 20px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--border-color, #444)',
-                                        background: 'var(--bg-secondary, #222)',
-                                        color: 'var(--text-primary, #fff)',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    } as React.CSSProperties}
-                                >
-                                    Retry
-                                </button>
-                            </div>
-                            <span style={{ fontSize: '11px', color: 'var(--text-muted, #666)', marginTop: 4 } as React.CSSProperties}>
-                                URL: {url}
-                            </span>
-                        </>
-                    )}
-                    {createError && !isNativeInvisible && (
-                        <>
-                            <span style={{ color: 'var(--error-color, #e74c3c)' } as React.CSSProperties}>
-                                {createError}
-                            </span>
-                            <div style={{ display: 'flex', gap: 10 } as React.CSSProperties}>
-                                <button
-                                    onClick={handleOpenExternal}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--accent-purple, #9b59b6)',
-                                        background: 'var(--accent-purple, #9b59b6)',
-                                        color: '#fff',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    } as React.CSSProperties}
-                                >
-                                    Open in System Browser
-                                </button>
-                                <button
-                                    onClick={handleRetry}
-                                    style={{
-                                        padding: '8px 16px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--border-color, #444)',
-                                        background: 'var(--bg-secondary, #222)',
-                                        color: 'var(--text-primary, #fff)',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    } as React.CSSProperties}
-                                >
-                                    Retry
-                                </button>
-                            </div>
-                        </>
-                    )}
+                    <div style={{
+                        width: 24, height: 24,
+                        border: '3px solid var(--border-color, #444)',
+                        borderTopColor: 'var(--accent-purple, #9b59b6)',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite',
+                    } as React.CSSProperties} />
+                    <span>Loading page…</span>
                 </div>
             )}
+
+            {/* NATIVE — webview is rendering over this container */}
+            {phase === 'native' && (
+                <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                    height: '28px', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: 'var(--text-muted, #666)', fontSize: '11px',
+                    zIndex: 0, pointerEvents: 'none',
+                } as React.CSSProperties}>
+                    {parsedHost}
+                </div>
+            )}
+
+            {/* FALLBACK — system browser landing page */}
+            {phase === 'fallback' && (
+                <div style={{
+                    position: 'absolute', inset: 0,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    gap: '16px', color: 'var(--text-secondary, #aaa)',
+                    fontSize: '14px', zIndex: 1, padding: '20px',
+                } as React.CSSProperties}>
+                    <span style={{ fontSize: '36px' }}>🌐</span>
+                    <span style={{
+                        fontSize: '16px', fontWeight: 600,
+                        color: 'var(--text-primary, #fff)',
+                    } as React.CSSProperties}>
+                        External Page
+                    </span>
+                    <span style={{
+                        textAlign: 'center', maxWidth: 420, lineHeight: 1.5,
+                    } as React.CSSProperties}>
+                        The in-app browser isn't available on this platform.
+                        {errorMsg && (
+                            <span style={{ display: 'block', fontSize: '11px', marginTop: 4, color: 'var(--text-muted, #666)' } as React.CSSProperties}>
+                                ({errorMsg})
+                            </span>
+                        )}
+                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center', marginTop: 4 } as React.CSSProperties}>
+                        {!openedExternal ? (
+                            <button
+                                onClick={handleOpenExternal}
+                                style={{
+                                    padding: '12px 28px', borderRadius: '8px',
+                                    border: 'none',
+                                    background: 'var(--accent-purple, #9b59b6)',
+                                    color: '#fff', cursor: 'pointer',
+                                    fontSize: '15px', fontWeight: 600,
+                                } as React.CSSProperties}
+                            >
+                                Open in System Browser
+                            </button>
+                        ) : (
+                            <span style={{
+                                padding: '12px 28px', borderRadius: '8px',
+                                border: '1px solid var(--border-color, #444)',
+                                background: 'var(--bg-tertiary, #1a1a1a)',
+                                color: 'var(--text-secondary, #aaa)', fontSize: '14px',
+                            } as React.CSSProperties}>
+                                ✓ Opened in your browser
+                            </span>
+                        )}
+                        <div style={{ display: 'flex', gap: '10px' } as React.CSSProperties}>
+                            <button
+                                onClick={handleCopyUrl}
+                                style={{
+                                    padding: '8px 16px', borderRadius: '6px',
+                                    border: '1px solid var(--border-color, #444)',
+                                    background: 'var(--bg-secondary, #222)',
+                                    color: 'var(--text-primary, #fff)',
+                                    cursor: 'pointer', fontSize: '13px',
+                                } as React.CSSProperties}
+                            >
+                                Copy URL
+                            </button>
+                            <button
+                                onClick={handleRetryNative}
+                                style={{
+                                    padding: '8px 16px', borderRadius: '6px',
+                                    border: '1px solid var(--border-color, #444)',
+                                    background: 'var(--bg-secondary, #222)',
+                                    color: 'var(--text-muted, #888)',
+                                    cursor: 'pointer', fontSize: '13px',
+                                } as React.CSSProperties}
+                            >
+                                Retry In-App
+                            </button>
+                        </div>
+                    </div>
+                    <div style={{
+                        marginTop: 8, padding: '8px 16px',
+                        background: 'var(--bg-tertiary, #1a1a1a)',
+                        borderRadius: '6px', fontSize: '12px',
+                        color: 'var(--text-muted, #666)',
+                        wordBreak: 'break-all', maxWidth: 500, textAlign: 'center',
+                    } as React.CSSProperties}>
+                        {url}
+                    </div>
+                </div>
+            )}
+
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
     );
