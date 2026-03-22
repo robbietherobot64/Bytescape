@@ -21,14 +21,12 @@ let idCounter = 0;
  *
  * ## Threading model
  *
- * The Rust `browser_create` command is **synchronous**. It dispatches the
- * actual WebKitGTK widget creation to the GTK main thread via
- * `app.run_on_main_thread()`, waits for the result via a channel, and
- * returns `Ok(())` or `Err(...)` directly to this component.
+ * The Rust `browser_create` command is **async**. Tauri spawns it on Tokio,
+ * so the GTK main thread is free to process `window.add_child()` messages.
+ * `await invoke('browser_create', ...)` resolves when the native webview is
+ * fully created, shown, and focused.
  *
- * This means `await invoke('browser_create', ...)` blocks (in the JS
- * async sense) until the native webview is fully created, shown, and
- * focused. No event listeners needed for creation signaling.
+ * A 15-second safety timeout fires if the invoke never returns.
  */
 export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -99,22 +97,48 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         }
 
         let cancelled = false;
+        let invokeReturned = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const tryCreate = async () => {
+            console.log('[WebView] === CREATION START ===');
+            console.log('[WebView] label:', labelRef.current, 'url:', url);
+
             const el = containerRef.current;
-            if (!el || cancelled) return;
+            if (!el) {
+                console.error('[WebView] ABORT: no container ref');
+                return;
+            }
+            if (cancelled) {
+                console.log('[WebView] ABORT: cancelled before start');
+                return;
+            }
 
             // Wait one frame for the container to have layout dimensions
+            console.log('[WebView] waiting for animation frame...');
             await new Promise<void>(r => requestAnimationFrame(() => r()));
-            if (cancelled || destroyedRef.current) return;
+            if (cancelled || destroyedRef.current) {
+                console.log('[WebView] ABORT: cancelled after frame');
+                return;
+            }
 
             let rect = el.getBoundingClientRect();
+            console.log('[WebView] rect:', JSON.stringify({
+                x: rect.x, y: rect.y, w: rect.width, h: rect.height
+            }));
+
             if (rect.width < 1 || rect.height < 1) {
+                console.log('[WebView] rect too small, waiting 250ms...');
                 await new Promise<void>(r => setTimeout(r, 250));
                 if (cancelled || destroyedRef.current) return;
                 rect = el.getBoundingClientRect();
+                console.log('[WebView] rect after wait:', JSON.stringify({
+                    x: rect.x, y: rect.y, w: rect.width, h: rect.height
+                }));
             }
+
             if (rect.width < 1 || rect.height < 1) {
+                console.error('[WebView] ABORT: container has zero dimensions');
                 setPhase('error');
                 setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
                 return;
@@ -122,14 +146,13 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
             const label = labelRef.current;
 
+            console.log('[WebView] >>> calling invoke("browser_create")...');
+            console.log('[WebView] params:', JSON.stringify({
+                label, url, x: rect.x, y: rect.y, width: rect.width, height: rect.height
+            }));
+
             try {
-                // This blocks (in the JS async sense) until the native
-                // webview is fully created on the GTK main thread.
-                // The Rust command uses run_on_main_thread() + a channel
-                // to ensure the GTK widget is created on the correct thread.
-                // Returns Ok when the webview is shown and focused, or
-                // Err with the failure reason.
-                await invoke('browser_create', {
+                const result = await invoke('browser_create', {
                     label,
                     url,
                     x: rect.x,
@@ -137,22 +160,29 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                     width: rect.width,
                     height: rect.height,
                 });
+                invokeReturned = true;
+                console.log('[WebView] <<< invoke returned OK, result:', result);
 
-                if (cancelled || destroyedRef.current) return;
+                if (cancelled || destroyedRef.current) {
+                    console.log('[WebView] cancelled after invoke returned');
+                    return;
+                }
 
-                // browser_create returned Ok — the native webview is live.
                 createdRef.current = true;
                 setActiveLabel(label);
                 setCurrentUrl(url);
                 setPhase('ready');
+                console.log('[WebView] phase → ready');
 
                 // If user switched tabs during creation, hide the webview
                 if (!isActiveRef.current) {
+                    console.log('[WebView] tab inactive during creation, hiding');
                     invoke('browser_hide', { label }).catch(() => {});
                 }
             } catch (err) {
+                invokeReturned = true;
+                console.error('[WebView] <<< invoke REJECTED:', err);
                 if (cancelled || destroyedRef.current) return;
-                console.error('[WebView] browser_create failed:', err);
                 setErrorMsg(String(err));
                 setPhase('error');
             }
@@ -160,7 +190,31 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
         tryCreate();
 
-        return () => { cancelled = true; };
+        // Safety timeout: if invoke never returns, show an actionable error
+        timeoutId = setTimeout(() => {
+            if (!createdRef.current && !destroyedRef.current && !cancelled) {
+                if (!invokeReturned) {
+                    console.error('[WebView] TIMEOUT: invoke("browser_create") never returned after 15s');
+                    setErrorMsg(
+                        'The browser engine is not responding — invoke("browser_create") ' +
+                        'never returned. Check the terminal (where `pnpm tauri dev` runs) ' +
+                        'for [browser_create] log messages.'
+                    );
+                } else {
+                    console.error('[WebView] TIMEOUT: invoke returned but phase never reached ready');
+                    setErrorMsg(
+                        'Webview was created but did not display. ' +
+                        'Check the terminal for [browser_create] log messages.'
+                    );
+                }
+                setPhase('error');
+            }
+        }, 15000);
+
+        return () => {
+            cancelled = true;
+            if (timeoutId) clearTimeout(timeoutId);
+        };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
 
