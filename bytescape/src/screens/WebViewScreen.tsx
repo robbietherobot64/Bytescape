@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useNavStore, useBrowserStore } from '../store';
 import { openInApp } from '../utils/openInApp';
 
@@ -17,10 +17,13 @@ let idCounter = 0;
  * In-app browser tab backed by a native OS webview.
  *
  * Creates a real WebKitGTK/WebView2/WKWebView within the main window,
- * positioned over the React content area. The Rust side calls show() and
- * set_focus() on the webview directly (avoiding the Tauri JS API which
- * can hang on Linux). Once browser_create returns Ok, the overlay is
- * cleared immediately and the native webview renders on top.
+ * positioned over the React content area.
+ *
+ * The Rust `browser_create` command returns immediately to avoid a GTK
+ * main-thread deadlock. It spawns the actual webview creation async and
+ * emits `browser-ready-{label}` when the webview is visible, or
+ * `browser-error-{label}` if creation fails. This component listens for
+ * those events to transition out of the loading state.
  */
 export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -91,6 +94,7 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         }
 
         let cancelled = false;
+        const unlisteners: UnlistenFn[] = [];
 
         const tryCreate = async () => {
             const el = containerRef.current;
@@ -102,7 +106,6 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
             let rect = el.getBoundingClientRect();
             if (rect.width < 1 || rect.height < 1) {
-                // Layout not ready yet — wait a beat and retry
                 await new Promise<void>(r => setTimeout(r, 250));
                 if (cancelled || destroyedRef.current) return;
                 rect = el.getBoundingClientRect();
@@ -113,32 +116,57 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 return;
             }
 
+            const label = labelRef.current;
+
+            // Listen for the async ready/error events BEFORE calling invoke,
+            // so we don't miss them if the spawn completes very quickly.
             try {
+                const unReady = await listen<string>(`browser-ready-${label}`, () => {
+                    if (cancelled || destroyedRef.current) return;
+                    createdRef.current = true;
+                    setActiveLabel(label);
+                    setCurrentUrl(url);
+                    setPhase('ready');
+                    // If user switched tabs during creation, hide the webview
+                    if (!isActiveRef.current) {
+                        invoke('browser_hide', { label }).catch(() => {});
+                    }
+                });
+                unlisteners.push(unReady);
+
+                const unError = await listen<string>(`browser-error-${label}`, (event) => {
+                    if (cancelled || destroyedRef.current) return;
+                    console.error('[WebView] creation failed:', event.payload);
+                    setErrorMsg(String(event.payload));
+                    setPhase('error');
+                });
+                unlisteners.push(unError);
+            } catch (listenErr) {
+                console.error('[WebView] failed to set up event listeners:', listenErr);
+            }
+
+            if (cancelled || destroyedRef.current) return;
+
+            try {
+                // This returns immediately — the actual webview creation
+                // happens asynchronously on the Rust side to avoid a GTK
+                // main-thread deadlock. We'll get browser-ready or
+                // browser-error events when it completes.
                 await invoke('browser_create', {
-                    label: labelRef.current,
+                    label,
                     url,
                     x: rect.x,
                     y: rect.y,
                     width: rect.width,
                     height: rect.height,
                 });
-
-                if (cancelled || destroyedRef.current) return;
-
-                // browser_create succeeded — Rust already called show() + set_focus()
-                // on the native webview. Clear the overlay immediately.
-                createdRef.current = true;
-                setActiveLabel(labelRef.current);
-                setCurrentUrl(url);
-                setPhase('ready');
-
-                // If user switched away during creation, hide the webview
-                if (!isActiveRef.current) {
-                    invoke('browser_hide', { label: labelRef.current }).catch(() => {});
-                }
+                // invoke returned Ok — creation is in progress.
+                // Phase stays 'loading' until browser-ready event fires.
             } catch (err) {
+                // invoke itself rejected — URL validation failed or
+                // main window not found (synchronous errors).
                 if (cancelled || destroyedRef.current) return;
-                console.error('[WebView] browser_create failed:', err);
+                console.error('[WebView] browser_create rejected:', err);
                 setErrorMsg(String(err));
                 setPhase('error');
             }
@@ -146,7 +174,10 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
         tryCreate();
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+            unlisteners.forEach(fn => fn());
+        };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
 
