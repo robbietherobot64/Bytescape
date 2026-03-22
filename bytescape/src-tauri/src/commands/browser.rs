@@ -18,6 +18,19 @@
 //!   the React tab system via events instead of spawning OS popups.
 //! - Each browser webview uses an isolated data directory so cookies and
 //!   storage from external sites cannot access the main app's session data.
+//!
+//! ## Threading model
+//!
+//! On Linux, WebKitGTK widgets **must** be created on the GTK main thread.
+//! Tauri runs command handlers on a thread pool (async commands on Tokio,
+//! sync commands on `spawn_blocking`). Attempting to call `window.add_child()`
+//! from either type of worker thread will panic or deadlock.
+//!
+//! To solve this, `browser_create` is a **synchronous** command that uses
+//! `app.run_on_main_thread()` to dispatch the actual GTK work to the main
+//! thread, then receives the result via a `std::sync::mpsc` channel. The
+//! calling (blocking) thread waits for the result without blocking the GTK
+//! event loop.
 
 use tauri::{AppHandle, Manager, WebviewUrl, LogicalPosition, LogicalSize, Emitter};
 
@@ -73,20 +86,23 @@ fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
 
 /// Create a native browser webview within the main window.
 ///
-/// The webview is positioned at (x, y) with the given dimensions,
-/// overlaying the React content area for that tab.
+/// This is a **synchronous** command. Tauri dispatches it onto a blocking
+/// worker thread (via `spawn_blocking`), which is perfectly fine for our
+/// purposes — we're going to block it anyway waiting for the GTK main thread.
 ///
-/// ## Async design
+/// ## Flow
 ///
-/// On Linux, `window.add_child()` dispatches to the GTK main thread and
-/// blocks until it completes. If called directly inside a Tauri async command
-/// handler, this deadlocks — the GTK event loop can't process the request
-/// because it's still handling the IPC message from this very command.
+/// 1. **Validate URL** on the worker thread (fast, no GTK needed).
+/// 2. **Dispatch to GTK main thread** via `app.run_on_main_thread()`.
+///    Inside the closure we build the `WebviewBuilder`, call
+///    `window.add_child()`, `show()`, and `set_focus()`.
+/// 3. **Send result** through a `mpsc` channel back to the worker thread.
+/// 4. **Return** `Ok(())` or `Err(...)` to the frontend.
 ///
-/// To break the deadlock, this command **returns `Ok(())` immediately** after
-/// validating the URL. The actual webview creation is spawned in a separate
-/// async task. When the webview is ready, it emits `browser-ready-{label}`.
-/// If creation fails, it emits `browser-error-{label}` with the error message.
+/// This avoids every previous failure mode:
+/// - No `tauri::async_runtime::spawn` (panics on GTK ops were swallowed).
+/// - No direct `add_child` from a Tokio thread (deadlock or panic).
+/// - The GTK main thread is free because Tauri's IPC dispatch is non-blocking.
 ///
 /// ## Security
 /// - Navigation restricted to `http:`/`https:` only.
@@ -94,7 +110,7 @@ fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
 /// - Isolated data directory for cookies/storage.
 /// - `window.open()` intercepted → emits `browser-new-tab` event.
 #[tauri::command]
-pub async fn browser_create(
+pub fn browser_create(
     app: AppHandle,
     label: String,
     url: String,
@@ -103,99 +119,149 @@ pub async fn browser_create(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    // Validate URL synchronously — this can return an error to the caller.
+    // ── Step 1: Validate URL (runs on blocking worker thread) ──
     let parsed_url: url::Url = url.parse()
         .map_err(|e: url::ParseError| format!("Invalid URL: {}", e))?;
 
     if !is_allowed_navigation(&parsed_url) {
-        return Err(format!("Blocked: only http/https URLs are allowed, got {}", parsed_url.scheme()));
+        return Err(format!(
+            "Blocked: only http/https URLs are allowed, got {}",
+            parsed_url.scheme()
+        ));
     }
 
-    // Verify the main window exists before spawning.
+    // Quick sanity check that a window exists.
     let _ = get_main_window(&app)?;
 
-    eprintln!("browser_create: accepted url={}, spawning async creation for label={}", url, label);
+    eprintln!(
+        "browser_create: url={}, label={}, dispatching to main thread",
+        url, label
+    );
 
-    // Spawn the actual webview creation in a separate task.
-    // This returns Ok(()) to the frontend immediately, freeing the GTK
-    // event loop so window.add_child() can complete without deadlocking.
-    let app_handle = app.clone();
-    let label_clone = label.clone();
-    tauri::async_runtime::spawn(async move {
-        let label = label_clone;
-        let app = app_handle;
+    // ── Step 2: Channel for result from GTK main thread ──
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
-        let window = match get_main_window(&app) {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("browser_create [async]: window error: {}", e);
-                let _ = app.emit(&format!("browser-error-{}", label), e);
-                return;
+    // We need two AppHandle clones:
+    // - `app_dispatch` calls run_on_main_thread (consumed by the call)
+    // - `app_inner` is moved into the closure for GTK work + event callbacks
+    let app_dispatch = app.clone();
+    let app_inner = app.clone();
+
+    // ── Step 3: Dispatch to GTK main thread ──
+    app_dispatch.run_on_main_thread(move || {
+        // Everything in this closure runs on the GTK main thread.
+        // Wrap in catch_unwind so a panic doesn't kill the main thread.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            create_webview_on_main_thread(
+                &app_inner, &label, parsed_url, x, y, width, height,
+            )
+        }));
+
+        let send_result = match result {
+            Ok(inner) => inner,
+            Err(panic_info) => {
+                let msg = format!("Panic during webview creation: {:?}", panic_info);
+                eprintln!("browser_create [main thread]: {}", msg);
+                Err(msg)
             }
         };
 
-        // Clone app handles for the event callbacks
-        let app_for_title = app.clone();
-        let label_for_title = label.clone();
-        let app_for_nav = app.clone();
-        let label_for_nav = label.clone();
-        let app_for_new = app.clone();
-        let app_for_ready = app.clone();
-        let label_for_ready = label.clone();
+        // Send result to the waiting worker thread.
+        let _ = tx.send(send_result);
+    }).map_err(|e| format!("Failed to dispatch to main thread: {}", e))?;
 
-        let mut webview_builder = tauri::webview::WebviewBuilder::new(
-            &label,
-            WebviewUrl::External(parsed_url),
-        )
-        .on_navigation(|url| is_allowed_navigation(url))
-        .initialization_script(EXTERNAL_WEBVIEW_INIT_SCRIPT)
-        .on_document_title_changed(move |_webview, title| {
-            let _ = app_for_title.emit(
-                &format!("browser-title-{}", label_for_title),
-                title,
+    // ── Step 4: Wait for the result ──
+    // This blocks the worker thread (which is designed for blocking) until
+    // the GTK main thread finishes. The GTK main thread is free because
+    // Tauri's IPC dispatch is non-blocking — it already returned to the
+    // event loop after spawning this worker.
+    match rx.recv() {
+        Ok(result) => result,
+        Err(_) => Err("Main thread closure dropped without sending result".to_string()),
+    }
+}
+
+/// Actually build and attach the webview. Runs on the GTK main thread.
+fn create_webview_on_main_thread(
+    app: &AppHandle,
+    label: &str,
+    parsed_url: url::Url,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let window = get_main_window(app)?;
+
+    // Clone app handles for the event callbacks (called later from GTK thread
+    // during page load events — AppHandle is Send+Sync so this is safe).
+    let app_for_title = app.clone();
+    let label_for_title = label.to_string();
+    let app_for_nav = app.clone();
+    let label_for_nav = label.to_string();
+    let app_for_new = app.clone();
+
+    let mut webview_builder = tauri::webview::WebviewBuilder::new(
+        label,
+        WebviewUrl::External(parsed_url),
+    )
+    // Block non-http(s) navigations — prevents file:// / javascript:// exploits
+    .on_navigation(|url| is_allowed_navigation(url))
+    // Strip Tauri IPC so external pages cannot call invoke()
+    .initialization_script(EXTERNAL_WEBVIEW_INIT_SCRIPT)
+    // Emit title changes so the React tab bar can update
+    .on_document_title_changed(move |_webview, title| {
+        let _ = app_for_title.emit(
+            &format!("browser-title-{}", label_for_title),
+            title,
+        );
+    })
+    // Emit URL changes so the Omnibar can track navigation
+    .on_page_load(move |_webview, payload| {
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            let _ = app_for_nav.emit(
+                &format!("browser-url-{}", label_for_nav),
+                payload.url().to_string(),
             );
-        })
-        .on_page_load(move |_webview, payload| {
-            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                let _ = app_for_nav.emit(
-                    &format!("browser-url-{}", label_for_nav),
-                    payload.url().to_string(),
-                );
-            }
-        })
-        .on_new_window(move |url, _features| {
-            let _ = app_for_new.emit("browser-new-tab", url.to_string());
-            tauri::webview::NewWindowResponse::Deny
-        })
-        .zoom_hotkeys_enabled(true)
-        .enable_clipboard_access();
-
-        if let Some(data_dir) = browser_data_dir(&app) {
-            webview_builder = webview_builder.data_directory(data_dir);
         }
+    })
+    // Intercept window.open / target="_blank" links → emit event for React
+    // to open them as new in-app tabs instead of spawning OS windows
+    .on_new_window(move |url, _features| {
+        let _ = app_for_new.emit("browser-new-tab", url.to_string());
+        tauri::webview::NewWindowResponse::Deny
+    })
+    .zoom_hotkeys_enabled(true)
+    .enable_clipboard_access();
 
-        match window.add_child(
-            webview_builder,
-            LogicalPosition::new(x, y),
-            LogicalSize::new(width, height),
-        ) {
-            Ok(webview) => {
-                // show() and set_focus() are synchronous GTK calls — safe here
-                // because we're in a spawned task, not blocking the IPC handler.
-                let _ = webview.show();
-                let _ = webview.set_focus();
-                eprintln!("browser_create [async]: webview '{}' created, shown, focused", label);
-                let _ = app_for_ready.emit(&format!("browser-ready-{}", label_for_ready), "ok");
-            }
-            Err(e) => {
-                let msg = format!("Failed to create webview '{}': {}", label, e);
-                eprintln!("browser_create [async]: {}", msg);
-                let _ = app.emit(&format!("browser-error-{}", label), msg);
-            }
-        }
-    });
+    // Isolate browser cookies/storage from the main app webview
+    if let Some(data_dir) = browser_data_dir(app) {
+        webview_builder = webview_builder.data_directory(data_dir);
+    }
 
-    // Return immediately — the frontend will listen for the ready/error events.
+    let webview = window.add_child(
+        webview_builder,
+        LogicalPosition::new(x, y),
+        LogicalSize::new(width, height),
+    ).map_err(|e| {
+        let msg = format!("add_child failed for '{}': {}", label, e);
+        eprintln!("browser_create [main thread]: {}", msg);
+        msg
+    })?;
+
+    // show() and set_focus() are synchronous GTK calls — we're already on
+    // the main thread so they execute immediately.
+    if let Err(e) = webview.show() {
+        eprintln!("browser_create: show() failed (non-fatal): {}", e);
+    }
+    if let Err(e) = webview.set_focus() {
+        eprintln!("browser_create: set_focus() failed (non-fatal): {}", e);
+    }
+
+    eprintln!(
+        "browser_create [main thread]: webview '{}' created, shown, focused",
+        label
+    );
     Ok(())
 }
 
