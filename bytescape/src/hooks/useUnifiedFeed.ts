@@ -418,7 +418,12 @@ export function useUnifiedFeed({
     useEffect(() => {
         if (!auth || feedEntries.length === 0) return;
 
-        const isVaultId = (id: string) => !id.startsWith('at://');
+        // Vault IDs are internal identifiers (UUIDs, etc.) — not protocol URIs.
+        // Exclude AT Protocol and HTTP(S) URIs (Bluesky, ActivityPub, Mastodon, RSS).
+        const isVaultId = (id: string) =>
+            !id.startsWith('at://') &&
+            !id.startsWith('http://') &&
+            !id.startsWith('https://');
         const unverified = feedEntries.filter(entry =>
             isVaultId(entry.id) &&
             entry.share_history?.some(e => e.active) &&

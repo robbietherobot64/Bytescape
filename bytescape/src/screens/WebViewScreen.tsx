@@ -38,6 +38,10 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
     const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    // Attempt counter survives React StrictMode's mount/cleanup/remount cycle.
+    // Each effect run increments this; stale attempts bail out instead of using
+    // a closure-based `cancelled` flag that StrictMode's cleanup resets.
+    const attemptRef = useRef(0);
 
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
@@ -96,12 +100,16 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
             return;
         }
 
-        let cancelled = false;
+        // Increment attempt counter. If a newer attempt starts (e.g. from
+        // React StrictMode remount), stale attempts will bail out.
+        const myAttempt = ++attemptRef.current;
+        const isStale = () => attemptRef.current !== myAttempt || destroyedRef.current;
+
         let invokeReturned = false;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const tryCreate = async () => {
-            console.log('[WebView] === CREATION START ===');
+            console.log('[WebView] === CREATION START === attempt:', myAttempt);
             console.log('[WebView] label:', labelRef.current, 'url:', url);
 
             const el = containerRef.current;
@@ -109,28 +117,20 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 console.error('[WebView] ABORT: no container ref');
                 return;
             }
-            if (cancelled) {
-                console.log('[WebView] ABORT: cancelled before start');
-                return;
-            }
 
-            // Wait one frame for the container to have layout dimensions
-            console.log('[WebView] waiting for animation frame...');
-            await new Promise<void>(r => requestAnimationFrame(() => r()));
-            if (cancelled || destroyedRef.current) {
-                console.log('[WebView] ABORT: cancelled after frame');
-                return;
-            }
-
+            // Effects run after paint — layout is already computed.
+            // No requestAnimationFrame needed (and rAF creates a timing
+            // gap that React StrictMode exploits in dev mode).
             let rect = el.getBoundingClientRect();
             console.log('[WebView] rect:', JSON.stringify({
                 x: rect.x, y: rect.y, w: rect.width, h: rect.height
             }));
 
+            // Fallback: if container hasn't laid out yet, wait briefly
             if (rect.width < 1 || rect.height < 1) {
-                console.log('[WebView] rect too small, waiting 250ms...');
-                await new Promise<void>(r => setTimeout(r, 250));
-                if (cancelled || destroyedRef.current) return;
+                console.log('[WebView] rect too small, waiting 150ms...');
+                await new Promise<void>(r => setTimeout(r, 150));
+                if (isStale()) { console.log('[WebView] ABORT: stale after dim wait'); return; }
                 rect = el.getBoundingClientRect();
                 console.log('[WebView] rect after wait:', JSON.stringify({
                     x: rect.x, y: rect.y, w: rect.width, h: rect.height
@@ -139,8 +139,16 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
             if (rect.width < 1 || rect.height < 1) {
                 console.error('[WebView] ABORT: container has zero dimensions');
-                setPhase('error');
-                setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
+                if (!isStale()) {
+                    setPhase('error');
+                    setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
+                }
+                return;
+            }
+
+            // Skip if a more recent attempt already created the webview
+            if (createdRef.current) {
+                console.log('[WebView] another attempt already created webview, bailing out');
                 return;
             }
 
@@ -163,8 +171,8 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 invokeReturned = true;
                 console.log('[WebView] <<< invoke returned OK, result:', result);
 
-                if (cancelled || destroyedRef.current) {
-                    console.log('[WebView] cancelled after invoke returned');
+                if (destroyedRef.current) {
+                    console.log('[WebView] component unmounted after invoke returned');
                     return;
                 }
 
@@ -182,7 +190,7 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
             } catch (err) {
                 invokeReturned = true;
                 console.error('[WebView] <<< invoke REJECTED:', err);
-                if (cancelled || destroyedRef.current) return;
+                if (isStale()) return;
                 setErrorMsg(String(err));
                 setPhase('error');
             }
@@ -192,7 +200,7 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
         // Safety timeout: if invoke never returns, show an actionable error
         timeoutId = setTimeout(() => {
-            if (!createdRef.current && !destroyedRef.current && !cancelled) {
+            if (!createdRef.current && !destroyedRef.current && attemptRef.current === myAttempt) {
                 if (!invokeReturned) {
                     console.error('[WebView] TIMEOUT: invoke("browser_create") never returned after 15s');
                     setErrorMsg(
@@ -212,7 +220,6 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         }, 15000);
 
         return () => {
-            cancelled = true;
             if (timeoutId) clearTimeout(timeoutId);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
