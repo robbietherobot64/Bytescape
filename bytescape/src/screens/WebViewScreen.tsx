@@ -38,10 +38,6 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
     const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    // Attempt counter survives React StrictMode's mount/cleanup/remount cycle.
-    // Each effect run increments this; stale attempts bail out instead of using
-    // a closure-based `cancelled` flag that StrictMode's cleanup resets.
-    const attemptRef = useRef(0);
 
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
@@ -92,25 +88,36 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
     useEffect(() => {
         if (destroyedRef.current || !isActive) return;
 
-        // Already created — just re-sync bounds
+        // Already created — just re-sync bounds and show
         if (createdRef.current) {
             setPhase('ready');
             setActiveLabel(labelRef.current);
             syncBounds();
+            // Re-show in case it was hidden by a tab switch
+            invoke('browser_set_bounds', {
+                label: labelRef.current,
+                ...(containerRef.current ? (() => {
+                    const r = containerRef.current!.getBoundingClientRect();
+                    return { x: r.x, y: r.y, width: r.width, height: r.height };
+                })() : { x: 0, y: 0, width: 800, height: 600 }),
+            }).catch(() => {});
             return;
         }
 
-        // Increment attempt counter. If a newer attempt starts (e.g. from
-        // React StrictMode remount), stale attempts will bail out.
-        const myAttempt = ++attemptRef.current;
-        const isStale = () => attemptRef.current !== myAttempt || destroyedRef.current;
-
-        let invokeReturned = false;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const tryCreate = async () => {
-            console.log('[WebView] === CREATION START === attempt:', myAttempt);
+            console.log('[WebView] === CREATION START ===');
             console.log('[WebView] label:', labelRef.current, 'url:', url);
+
+            // If another concurrent call already created it, just adopt
+            if (createdRef.current) {
+                console.log('[WebView] already created by concurrent attempt, adopting');
+                setPhase('ready');
+                setActiveLabel(labelRef.current);
+                syncBounds();
+                return;
+            }
 
             const el = containerRef.current;
             if (!el) {
@@ -118,9 +125,6 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 return;
             }
 
-            // Effects run after paint — layout is already computed.
-            // No requestAnimationFrame needed (and rAF creates a timing
-            // gap that React StrictMode exploits in dev mode).
             let rect = el.getBoundingClientRect();
             console.log('[WebView] rect:', JSON.stringify({
                 x: rect.x, y: rect.y, w: rect.width, h: rect.height
@@ -130,37 +134,34 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
             if (rect.width < 1 || rect.height < 1) {
                 console.log('[WebView] rect too small, waiting 150ms...');
                 await new Promise<void>(r => setTimeout(r, 150));
-                if (isStale()) { console.log('[WebView] ABORT: stale after dim wait'); return; }
+                if (destroyedRef.current) return;
                 rect = el.getBoundingClientRect();
-                console.log('[WebView] rect after wait:', JSON.stringify({
-                    x: rect.x, y: rect.y, w: rect.width, h: rect.height
-                }));
             }
 
             if (rect.width < 1 || rect.height < 1) {
                 console.error('[WebView] ABORT: container has zero dimensions');
-                if (!isStale()) {
-                    setPhase('error');
-                    setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
-                }
+                setPhase('error');
+                setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
                 return;
             }
 
-            // Skip if a more recent attempt already created the webview
+            // Double-check — another attempt may have completed during await
             if (createdRef.current) {
-                console.log('[WebView] another attempt already created webview, bailing out');
+                console.log('[WebView] created during wait, adopting');
+                setPhase('ready');
+                syncBounds();
                 return;
             }
 
             const label = labelRef.current;
 
-            console.log('[WebView] >>> calling invoke("browser_create")...');
+            console.log('[WebView] >>> invoke("browser_create")');
             console.log('[WebView] params:', JSON.stringify({
                 label, url, x: rect.x, y: rect.y, width: rect.width, height: rect.height
             }));
 
             try {
-                const result = await invoke('browser_create', {
+                await invoke('browser_create', {
                     label,
                     url,
                     x: rect.x,
@@ -168,53 +169,53 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                     width: rect.width,
                     height: rect.height,
                 });
-                invokeReturned = true;
-                console.log('[WebView] <<< invoke returned OK, result:', result);
+                console.log('[WebView] <<< invoke OK');
+            } catch (err) {
+                const errStr = String(err);
+                console.warn('[WebView] <<< invoke error:', errStr);
 
-                if (destroyedRef.current) {
-                    console.log('[WebView] component unmounted after invoke returned');
+                // If the webview already exists (created by a concurrent StrictMode
+                // attempt), that's fine — just adopt it.
+                if (errStr.includes('already exists') || errStr.includes('already been created')) {
+                    console.log('[WebView] webview already exists, adopting');
+                } else if (destroyedRef.current) {
+                    return;
+                } else {
+                    setErrorMsg(errStr);
+                    setPhase('error');
                     return;
                 }
+            }
 
-                createdRef.current = true;
-                setActiveLabel(label);
-                setCurrentUrl(url);
-                setPhase('ready');
-                console.log('[WebView] phase → ready');
+            if (destroyedRef.current) return;
 
-                // If user switched tabs during creation, hide the webview
-                if (!isActiveRef.current) {
-                    console.log('[WebView] tab inactive during creation, hiding');
-                    invoke('browser_hide', { label }).catch(() => {});
-                }
-            } catch (err) {
-                invokeReturned = true;
-                console.error('[WebView] <<< invoke REJECTED:', err);
-                if (isStale()) return;
-                setErrorMsg(String(err));
-                setPhase('error');
+            // Mark as created — all concurrent attempts will see this
+            createdRef.current = true;
+            setActiveLabel(label);
+            setCurrentUrl(url);
+            setPhase('ready');
+            console.log('[WebView] phase → ready');
+
+            // Sync bounds immediately after creation to ensure full coverage
+            syncBounds();
+
+            // If user switched tabs during creation, hide the webview
+            if (!isActiveRef.current) {
+                console.log('[WebView] tab inactive during creation, hiding');
+                invoke('browser_hide', { label }).catch(() => {});
             }
         };
 
         tryCreate();
 
-        // Safety timeout: if invoke never returns, show an actionable error
+        // Safety timeout
         timeoutId = setTimeout(() => {
-            if (!createdRef.current && !destroyedRef.current && attemptRef.current === myAttempt) {
-                if (!invokeReturned) {
-                    console.error('[WebView] TIMEOUT: invoke("browser_create") never returned after 15s');
-                    setErrorMsg(
-                        'The browser engine is not responding — invoke("browser_create") ' +
-                        'never returned. Check the terminal (where `pnpm tauri dev` runs) ' +
-                        'for [browser_create] log messages.'
-                    );
-                } else {
-                    console.error('[WebView] TIMEOUT: invoke returned but phase never reached ready');
-                    setErrorMsg(
-                        'Webview was created but did not display. ' +
-                        'Check the terminal for [browser_create] log messages.'
-                    );
-                }
+            if (!createdRef.current && !destroyedRef.current) {
+                console.error('[WebView] TIMEOUT: browser_create did not complete in 15s');
+                setErrorMsg(
+                    'The browser engine is not responding. ' +
+                    'Check the terminal for [browser_create] log messages.'
+                );
                 setPhase('error');
             }
         }, 15000);
@@ -225,12 +226,18 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
 
-    // ─── Hide native webview when tab is inactive ───
+    // ─── Show/hide native webview when tab activation changes ───
     useEffect(() => {
-        if (!isActive && createdRef.current) {
-            invoke('browser_hide', { label: labelRef.current }).catch(() => {});
+        if (!createdRef.current) return;
+        const label = labelRef.current;
+        if (isActive) {
+            // Re-show and sync bounds when tab becomes active
+            syncBounds();
+        } else {
+            // Hide when tab becomes inactive
+            invoke('browser_hide', { label }).catch(() => {});
         }
-    }, [isActive]);
+    }, [isActive, syncBounds]);
 
     // ─── Track container size changes ───
     useEffect(() => {
