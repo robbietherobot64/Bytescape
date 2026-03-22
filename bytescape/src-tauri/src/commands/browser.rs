@@ -72,6 +72,19 @@ pub async fn browser_create(
     eprintln!("[browser_create] ENTER label={} url={} thread={:?}",
         label, url, std::thread::current().id());
 
+    // ── Duplicate guard ──
+    // React StrictMode (dev) double-mounts components, so two concurrent
+    // browser_create calls may arrive with the same label. If the webview
+    // already exists, just reposition it and return Ok.
+    if let Some(existing) = app.get_webview(&label) {
+        eprintln!("[browser_create] webview '{}' already exists — repositioning", label);
+        let _ = existing.set_position(LogicalPosition::new(x, y));
+        let _ = existing.set_size(LogicalSize::new(width, height));
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
     // ── Validate URL ──
     let parsed_url: url::Url = url.parse()
         .map_err(|e: url::ParseError| {

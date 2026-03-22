@@ -84,40 +84,18 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         };
     }, []);
 
-    // ─── Create / show / hide the native webview ───
+    // ─── Create the native webview ───
     useEffect(() => {
         if (destroyedRef.current || !isActive) return;
 
-        // Already created — just re-sync bounds and show
-        if (createdRef.current) {
-            setPhase('ready');
-            setActiveLabel(labelRef.current);
-            syncBounds();
-            // Re-show in case it was hidden by a tab switch
-            invoke('browser_set_bounds', {
-                label: labelRef.current,
-                ...(containerRef.current ? (() => {
-                    const r = containerRef.current!.getBoundingClientRect();
-                    return { x: r.x, y: r.y, width: r.width, height: r.height };
-                })() : { x: 0, y: 0, width: 800, height: 600 }),
-            }).catch(() => {});
-            return;
-        }
+        // Already created — nothing to do, the show/hide effect handles visibility
+        if (createdRef.current) return;
 
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const tryCreate = async () => {
             console.log('[WebView] === CREATION START ===');
             console.log('[WebView] label:', labelRef.current, 'url:', url);
-
-            // If another concurrent call already created it, just adopt
-            if (createdRef.current) {
-                console.log('[WebView] already created by concurrent attempt, adopting');
-                setPhase('ready');
-                setActiveLabel(labelRef.current);
-                syncBounds();
-                return;
-            }
 
             const el = containerRef.current;
             if (!el) {
@@ -132,8 +110,7 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
             // Fallback: if container hasn't laid out yet, wait briefly
             if (rect.width < 1 || rect.height < 1) {
-                console.log('[WebView] rect too small, waiting 150ms...');
-                await new Promise<void>(r => setTimeout(r, 150));
+                await new Promise<void>(r => setTimeout(r, 200));
                 if (destroyedRef.current) return;
                 rect = el.getBoundingClientRect();
             }
@@ -145,22 +122,13 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 return;
             }
 
-            // Double-check — another attempt may have completed during await
-            if (createdRef.current) {
-                console.log('[WebView] created during wait, adopting');
-                setPhase('ready');
-                syncBounds();
-                return;
-            }
-
             const label = labelRef.current;
-
-            console.log('[WebView] >>> invoke("browser_create")');
-            console.log('[WebView] params:', JSON.stringify({
-                label, url, x: rect.x, y: rect.y, width: rect.width, height: rect.height
-            }));
+            console.log('[WebView] >>> invoke("browser_create") label=' + label);
 
             try {
+                // Rust side has a duplicate guard: if this label already exists
+                // (e.g. from StrictMode double-mount), it just repositions and
+                // returns Ok. So both concurrent calls will succeed.
                 await invoke('browser_create', {
                     label,
                     url,
@@ -171,33 +139,40 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
                 });
                 console.log('[WebView] <<< invoke OK');
             } catch (err) {
-                const errStr = String(err);
-                console.warn('[WebView] <<< invoke error:', errStr);
-
-                // If the webview already exists (created by a concurrent StrictMode
-                // attempt), that's fine — just adopt it.
-                if (errStr.includes('already exists') || errStr.includes('already been created')) {
-                    console.log('[WebView] webview already exists, adopting');
-                } else if (destroyedRef.current) {
-                    return;
-                } else {
-                    setErrorMsg(errStr);
-                    setPhase('error');
-                    return;
-                }
+                console.error('[WebView] <<< invoke FAILED:', err);
+                if (destroyedRef.current) return;
+                setErrorMsg(String(err));
+                setPhase('error');
+                return;
             }
 
             if (destroyedRef.current) return;
 
-            // Mark as created — all concurrent attempts will see this
             createdRef.current = true;
             setActiveLabel(label);
             setCurrentUrl(url);
             setPhase('ready');
             console.log('[WebView] phase → ready');
 
-            // Sync bounds immediately after creation to ensure full coverage
-            syncBounds();
+            // Re-measure and sync after React has cleared the loading overlay.
+            // The loading overlay is position:absolute and doesn't affect layout,
+            // but we want to ensure the native webview covers the full container
+            // after React re-renders with phase='ready'.
+            requestAnimationFrame(() => {
+                if (!destroyedRef.current && containerRef.current) {
+                    const finalRect = containerRef.current.getBoundingClientRect();
+                    console.log('[WebView] post-render syncBounds:', JSON.stringify({
+                        x: finalRect.x, y: finalRect.y, w: finalRect.width, h: finalRect.height
+                    }));
+                    invoke('browser_set_bounds', {
+                        label,
+                        x: finalRect.x,
+                        y: finalRect.y,
+                        width: finalRect.width,
+                        height: finalRect.height,
+                    }).catch(() => {});
+                }
+            });
 
             // If user switched tabs during creation, hide the webview
             if (!isActiveRef.current) {
@@ -228,16 +203,25 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
 
     // ─── Show/hide native webview when tab activation changes ───
     useEffect(() => {
-        if (!createdRef.current) return;
         const label = labelRef.current;
-        if (isActive) {
+        if (isActive && createdRef.current) {
             // Re-show and sync bounds when tab becomes active
-            syncBounds();
-        } else {
+            const el = containerRef.current;
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                invoke('browser_set_bounds', {
+                    label,
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                }).catch(() => {});
+            }
+        } else if (!isActive && createdRef.current) {
             // Hide when tab becomes inactive
             invoke('browser_hide', { label }).catch(() => {});
         }
-    }, [isActive, syncBounds]);
+    }, [isActive]);
 
     // ─── Track container size changes ───
     useEffect(() => {
