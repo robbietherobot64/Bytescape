@@ -147,7 +147,7 @@ pub async fn browser_create(
         webview_builder = webview_builder.data_directory(data_dir);
     }
 
-    window.add_child(
+    let webview = window.add_child(
         webview_builder,
         LogicalPosition::new(x, y),
         LogicalSize::new(width, height),
@@ -157,6 +157,17 @@ pub async fn browser_create(
         msg
     })?;
 
+    // Explicitly show and focus the webview from the Rust side.
+    // We MUST do this here — calling Webview.getByLabel().show() from the
+    // TypeScript side hangs on Linux due to GTK main loop deadlocks.
+    if let Err(e) = webview.show() {
+        eprintln!("browser_create: show() failed (non-fatal): {}", e);
+    }
+    if let Err(e) = webview.set_focus() {
+        eprintln!("browser_create: set_focus() failed (non-fatal): {}", e);
+    }
+
+    eprintln!("browser_create: webview '{}' created, shown, and focused", label);
     Ok(())
 }
 
