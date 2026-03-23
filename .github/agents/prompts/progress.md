@@ -4,6 +4,55 @@
 
 ---
 
+## 📋 Sprint v9 — Backend Track A: WebView Lifecycle Fix
+
+**Commit**: `af76413` on `main`
+**Date**: 2026-03-22
+**Build**: cargo 0 errors 0 warnings, tsc clean, 264/264 frontend tests
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P1 | Add `browser_show` command | `show()` + `set_focus()` — restores hidden webview | ✅ Complete |
+| P2 | Fix `browser_hide` to use real `hide()` | Replaced position hack (`-10000, -10000`) with `webview.hide()` + fallback | ✅ Complete |
+| P3 | Add `browser_show_at` combined command | Position + size + show + focus in one IPC call (no flicker) | ✅ Complete |
+| P4 | Investigate positioning bug | Researched — no title bar offset issue. See findings below. | ✅ Documented |
+| P5 | Clean up diagnostic logging | Removed ~20 verbose `eprintln!` from `browser_create`, kept only essential WARN log | ✅ Complete |
+| P6 | Delete 7 patch scripts | All `.cjs` patch scripts removed from project root + bytescape/ | ✅ Complete |
+
+### P4 Investigation — WebView Positioning
+
+**User report**: "the lower half of the screen is where the webview opens"
+
+**Finding**: Tauri v2 `add_child()` positions webviews relative to the **window content area** — the same coordinate space as `getBoundingClientRect()`. On Linux/WebKitGTK, the child webview is added to the window's `gtk::Box` (vbox) which sits below the title bar. There is **no title bar offset bug** at the Rust level.
+
+**Root cause of "lower half" problem (frontend)**:  The `WebViewScreen.tsx` component (lines 205–240) uses `browser_set_bounds` to "show" the webview by repositioning it back on-screen, but never calls `browser_show`. Since `browser_hide` now uses `webview.hide()` (not position hack), the webview remains invisible even after `set_bounds` repositions it. **The frontend must be updated to call `browser_show` or `browser_show_at` instead of just `browser_set_bounds` when re-activating a tab.**
+
+**Action for Track B (Frontend agent)**:
+1. When tab becomes active: call `browser_show_at` (single IPC call, no flicker)
+2. When tab becomes inactive: call `browser_hide` (already correct)
+3. Stop using `browser_set_bounds` for show/hide toggling
+4. The "Loading page…" tab title is because `on_document_title_changed` fires the `browser-title-{label}` event — check that `updateTabLabel` in the nav store is actually wired up and receiving the event.
+
+### Files Modified (Track A)
+
+| File | Changes |
+|------|---------|
+| `commands/browser.rs` | Added `browser_show`, `browser_show_at`; fixed `browser_hide` to use `hide()` + fallback; removed ~20 verbose `eprintln!`; updated module docs with lifecycle diagram |
+| `lib.rs` | Registered `browser_show` + `browser_show_at` in invoke_handler (lines 553-554) |
+
+### Files Deleted (Cleanup)
+
+- `patch_browser.cjs`, `patch_chat.cjs`, `patch_feedscreen.cjs`, `patch_feedscreen_hook.cjs`, `patch_useunifiedfeed.cjs`, `patch_panels.cjs` (project root)
+- `bytescape/run_patch.cjs`
+
+### Note: Uncommitted Frontend Changes
+
+There are uncommitted frontend changes in the working tree (`App.css`, `App.tsx`, `BlobImage.tsx`, `WebViewScreen.tsx`, `openInApp.ts`). These are **not from the user** (per guardrails §1) and were not committed by me. They appear to be in-progress work from the Frontend agent.
+
+---
+
 ## 📋 Sprint v8 — Backend Track A: Identity Overhaul + Bug Fixes
 
 **Commits**: `50590d6`, `22cebcc` on `main`
