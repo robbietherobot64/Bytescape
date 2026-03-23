@@ -28,10 +28,6 @@ function measureContentArea(containerEl: HTMLElement): DOMRect | null {
     const target = mainContent || containerEl;
     const rect = target.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return null;
-    console.log('[WebView] measure:', target === mainContent ? '.main-content' : 'container', JSON.stringify({
-        x: Math.round(rect.x), y: Math.round(rect.y),
-        w: Math.round(rect.width), h: Math.round(rect.height),
-    }));
     return rect;
 }
 
@@ -39,7 +35,14 @@ function measureContentArea(containerEl: HTMLElement): DOMRect | null {
  * In-app browser tab backed by a native OS webview.
  *
  * Creates a real WebKitGTK/WebView2/WKWebView within the main window,
- * positioned over the React content area.
+ * positioned over the React content area. The native webview renders at
+ * the OS level ABOVE all React content, so this component only needs to:
+ *   1. Tell Rust to create the webview at the right coordinates
+ *   2. Tell Rust to hide/show it when the tab activates/deactivates
+ *   3. Show an error state if creation fails
+ *
+ * There is no "loading" overlay — the native webview handles its own
+ * loading state (blank page → content) and renders above any React DOM.
  */
 export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -49,7 +52,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
 
-    const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
@@ -97,6 +99,23 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
         };
     }, []);
 
+    // ─── Lifecycle: mount resets destroyed flag, unmount sets it ───
+    // This MUST be a separate effect that runs before creation so that
+    // React StrictMode's unmount→remount cycle works correctly.
+    // Without this, StrictMode cleanup sets destroyedRef=true and the
+    // creation effect on remount sees it and bails — webview never created.
+    useEffect(() => {
+        destroyedRef.current = false;
+        createdRef.current = false;
+        const label = labelRef.current;
+        return () => {
+            destroyedRef.current = true;
+            if (createdRef.current) {
+                invoke('browser_close', { label }).catch(() => {});
+            }
+        };
+    }, []);
+
     // ─── Create the native webview ───
     useEffect(() => {
         if (destroyedRef.current || !isActive) return;
@@ -130,7 +149,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
 
             if (!rect) {
                 console.error('[WebView] ABORT: content area has zero dimensions');
-                setPhase('error');
                 setErrorMsg('Content area has no dimensions — try closing and re-opening this tab.');
                 return;
             }
@@ -154,7 +172,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                 console.error('[WebView] <<< browser_create FAILED:', err);
                 if (destroyedRef.current) return;
                 setErrorMsg(String(err));
-                setPhase('error');
                 return;
             }
 
@@ -163,16 +180,14 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
             createdRef.current = true;
             setActiveLabel(label);
             setCurrentUrl(url);
-            setPhase('ready');
-            console.log('[WebView] phase → ready');
+            console.log('[WebView] created successfully');
 
             // Re-sync bounds after 300ms — catches layout shifts from React
-            // re-render (loading overlay removed) or late flex resolution.
+            // re-render or late flex resolution.
             resyncId = setTimeout(() => {
                 if (destroyedRef.current || !containerRef.current) return;
                 const freshRect = measureContentArea(containerRef.current);
                 if (!freshRect) return;
-                console.log('[WebView] delayed re-sync bounds');
                 invoke('browser_show_at', {
                     label,
                     x: freshRect.x,
@@ -199,7 +214,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                     'The browser engine is not responding. ' +
                     'Check the terminal for [browser_create] log messages.'
                 );
-                setPhase('error');
             }
         }, 15000);
 
@@ -214,8 +228,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     useEffect(() => {
         const label = labelRef.current;
         if (isActive && createdRef.current) {
-            // Re-show: use browser_show_at which calls show()+position+size+focus.
-            // Use double-rAF to ensure the tab pane has reflowed (was display:none).
             console.log('[WebView] tab ACTIVE — will re-show, label:', label);
             const el = containerRef.current;
             if (el) {
@@ -238,7 +250,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                 });
             }
         } else if (!isActive && createdRef.current) {
-            // Hide immediately — browser_hide calls hide() AND moves off-screen
             console.log('[WebView] tab INACTIVE — hiding, label:', label);
             invoke('browser_hide', { label }).catch((err) => console.error('[WebView] hide failed:', err));
         }
@@ -296,17 +307,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
         return () => { unlisten?.(); };
     }, []);
 
-    // ─── Cleanup: destroy native webview on unmount ───
-    useEffect(() => {
-        const label = labelRef.current;
-        return () => {
-            destroyedRef.current = true;
-            if (createdRef.current) {
-                invoke('browser_close', { label }).catch(() => {});
-            }
-        };
-    }, []);
-
     // ─── Retry handler ───
     const handleRetry = useCallback(() => {
         if (createdRef.current) {
@@ -315,46 +315,20 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
         createdRef.current = false;
         destroyedRef.current = false;
         labelRef.current = `browser-${++idCounter}`;
-        setPhase('loading');
         setErrorMsg(null);
     }, []);
 
     // ─── Render ───
+    // No loading overlay — the native webview renders at the OS level above
+    // all React DOM, so a React spinner would be invisible anyway once the
+    // webview appears. We only render an error state if creation fails.
     return (
         <div
             ref={containerRef}
             className="webview-container"
-            style={{
-                /* Let the CSS class (.webview-container) handle sizing via flex:1.
-                   Only set position: relative here for the loading/error overlays. */
-                position: 'relative',
-            } as React.CSSProperties}
+            style={{ position: 'relative' } as React.CSSProperties}
         >
-            {/* LOADING — spinner while browser_create is in flight */}
-            {phase === 'loading' && (
-                <div style={{
-                    position: 'absolute', inset: 0,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center',
-                    gap: '12px', color: 'var(--text-secondary, #aaa)',
-                    fontSize: '14px', zIndex: 1,
-                } as React.CSSProperties}>
-                    <div style={{
-                        width: 24, height: 24,
-                        border: '3px solid var(--border-color, #444)',
-                        borderTopColor: 'var(--accent-purple, #9b59b6)',
-                        borderRadius: '50%',
-                        animation: 'spin 0.8s linear infinite',
-                    } as React.CSSProperties} />
-                    <span>Loading page…</span>
-                </div>
-            )}
-
-            {/* READY — overlay is gone, native webview renders on top */}
-            {/* (nothing to render here — the native webview covers us) */}
-
-            {/* ERROR — creation failed, show retry */}
-            {phase === 'error' && (
+            {errorMsg && (
                 <div style={{
                     position: 'absolute', inset: 0,
                     display: 'flex', flexDirection: 'column',
@@ -365,14 +339,12 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                     <span style={{ color: 'var(--error-color, #e74c3c)', fontSize: '15px' } as React.CSSProperties}>
                         Failed to load page
                     </span>
-                    {errorMsg && (
-                        <span style={{
-                            fontSize: '12px', color: 'var(--text-muted, #666)',
-                            textAlign: 'center', maxWidth: 450, wordBreak: 'break-word',
-                        } as React.CSSProperties}>
-                            {errorMsg}
-                        </span>
-                    )}
+                    <span style={{
+                        fontSize: '12px', color: 'var(--text-muted, #666)',
+                        textAlign: 'center', maxWidth: 450, wordBreak: 'break-word',
+                    } as React.CSSProperties}>
+                        {errorMsg}
+                    </span>
                     <button
                         onClick={handleRetry}
                         style={{
@@ -393,8 +365,6 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                     </span>
                 </div>
             )}
-
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
     );
 }
