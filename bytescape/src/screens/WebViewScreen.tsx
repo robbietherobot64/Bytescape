@@ -16,19 +16,30 @@ interface WebViewScreenProps {
 let idCounter = 0;
 
 /**
+ * Measure the area where the native webview should render.
+ *
+ * We measure `.main-content` (the stable layout ancestor) rather than
+ * the container div itself, because the container is a flex child that
+ * may not have resolved its height by the time we need coordinates.
+ * `.main-content` is always visible and always has the correct size.
+ */
+function measureContentArea(containerEl: HTMLElement): DOMRect | null {
+    const mainContent = containerEl.closest('.main-content') as HTMLElement | null;
+    const target = mainContent || containerEl;
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    console.log('[WebView] measure:', target === mainContent ? '.main-content' : 'container', JSON.stringify({
+        x: Math.round(rect.x), y: Math.round(rect.y),
+        w: Math.round(rect.width), h: Math.round(rect.height),
+    }));
+    return rect;
+}
+
+/**
  * In-app browser tab backed by a native OS webview.
  *
  * Creates a real WebKitGTK/WebView2/WKWebView within the main window,
  * positioned over the React content area.
- *
- * ## Threading model
- *
- * The Rust `browser_create` command is **async**. Tauri spawns it on Tokio,
- * so the GTK main thread is free to process `window.add_child()` messages.
- * `await invoke('browser_create', ...)` resolves when the native webview is
- * fully created, shown, and focused.
- *
- * A 15-second safety timeout fires if the invoke never returns.
  */
 export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -43,11 +54,11 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
 
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
-    /** Measure the container and sync the native webview to match. */
+    /** Sync the native webview bounds to the content area. */
     const syncBounds = useCallback(async () => {
         if (!containerRef.current || destroyedRef.current || !createdRef.current) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        if (rect.width < 1 || rect.height < 1) return;
+        const rect = measureContentArea(containerRef.current);
+        if (!rect) return;
         try {
             await invoke('browser_set_bounds', {
                 label: labelRef.current,
@@ -89,11 +100,10 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     // ─── Create the native webview ───
     useEffect(() => {
         if (destroyedRef.current || !isActive) return;
-
-        // Already created — nothing to do, the show/hide effect handles visibility
         if (createdRef.current) return;
 
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let resyncId: ReturnType<typeof setTimeout> | null = null;
 
         const tryCreate = async () => {
             console.log('[WebView] === CREATION START ===');
@@ -105,32 +115,32 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                 return;
             }
 
-            let rect = el.getBoundingClientRect();
-            console.log('[WebView] rect:', JSON.stringify({
-                x: rect.x, y: rect.y, w: rect.width, h: rect.height
-            }));
+            // Wait a frame for the flex layout to resolve, then measure
+            await new Promise<void>(r => requestAnimationFrame(() => r()));
+            if (destroyedRef.current) return;
 
-            // Fallback: if container hasn't laid out yet, wait briefly
-            if (rect.width < 1 || rect.height < 1) {
-                await new Promise<void>(r => setTimeout(r, 200));
+            let rect = measureContentArea(el);
+
+            // Fallback: if content area hasn't laid out yet, wait briefly
+            if (!rect) {
+                await new Promise<void>(r => setTimeout(r, 300));
                 if (destroyedRef.current) return;
-                rect = el.getBoundingClientRect();
+                rect = measureContentArea(el);
             }
 
-            if (rect.width < 1 || rect.height < 1) {
-                console.error('[WebView] ABORT: container has zero dimensions');
+            if (!rect) {
+                console.error('[WebView] ABORT: content area has zero dimensions');
                 setPhase('error');
-                setErrorMsg('Container has no dimensions — try closing and re-opening this tab.');
+                setErrorMsg('Content area has no dimensions — try closing and re-opening this tab.');
                 return;
             }
 
             const label = labelRef.current;
-            console.log('[WebView] >>> invoke("browser_create") label=' + label);
+            console.log('[WebView] >>> browser_create label=' + label,
+                'at', Math.round(rect.x), Math.round(rect.y),
+                Math.round(rect.width) + 'x' + Math.round(rect.height));
 
             try {
-                // Rust side has a duplicate guard: if this label already exists
-                // (e.g. from StrictMode double-mount), it just repositions and
-                // returns Ok. So both concurrent calls will succeed.
                 await invoke('browser_create', {
                     label,
                     url,
@@ -139,9 +149,9 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                     width: rect.width,
                     height: rect.height,
                 });
-                console.log('[WebView] <<< invoke OK');
+                console.log('[WebView] <<< browser_create OK');
             } catch (err) {
-                console.error('[WebView] <<< invoke FAILED:', err);
+                console.error('[WebView] <<< browser_create FAILED:', err);
                 if (destroyedRef.current) return;
                 setErrorMsg(String(err));
                 setPhase('error');
@@ -156,27 +166,23 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
             setPhase('ready');
             console.log('[WebView] phase → ready');
 
-            // Re-measure and sync after React has cleared the loading overlay.
-            // The loading overlay is position:absolute and doesn't affect layout,
-            // but we want to ensure the native webview covers the full container
-            // after React re-renders with phase='ready'.
-            requestAnimationFrame(() => {
-                if (!destroyedRef.current && containerRef.current) {
-                    const finalRect = containerRef.current.getBoundingClientRect();
-                    console.log('[WebView] post-render syncBounds:', JSON.stringify({
-                        x: finalRect.x, y: finalRect.y, w: finalRect.width, h: finalRect.height
-                    }));
-                    invoke('browser_set_bounds', {
-                        label,
-                        x: finalRect.x,
-                        y: finalRect.y,
-                        width: finalRect.width,
-                        height: finalRect.height,
-                    }).catch(() => {});
-                }
-            });
+            // Re-sync bounds after 300ms — catches layout shifts from React
+            // re-render (loading overlay removed) or late flex resolution.
+            resyncId = setTimeout(() => {
+                if (destroyedRef.current || !containerRef.current) return;
+                const freshRect = measureContentArea(containerRef.current);
+                if (!freshRect) return;
+                console.log('[WebView] delayed re-sync bounds');
+                invoke('browser_show_at', {
+                    label,
+                    x: freshRect.x,
+                    y: freshRect.y,
+                    width: freshRect.width,
+                    height: freshRect.height,
+                }).catch(() => {});
+            }, 300);
 
-            // If user switched tabs during creation, hide the webview
+            // If user switched tabs during creation, hide immediately
             if (!isActiveRef.current) {
                 console.log('[WebView] tab inactive during creation, hiding');
                 invoke('browser_hide', { label }).catch(() => {});
@@ -199,6 +205,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
 
         return () => {
             if (timeoutId) clearTimeout(timeoutId);
+            if (resyncId) clearTimeout(resyncId);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
@@ -207,38 +214,32 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     useEffect(() => {
         const label = labelRef.current;
         if (isActive && createdRef.current) {
-            // Re-show and sync bounds when tab becomes active.
-            // browser_set_bounds calls set_position + set_size, which moves the
-            // webview back on-screen from -10000,-10000 where browser_hide put it.
-            console.log('[WebView] tab ACTIVE — moving webview back on-screen, label:', label);
+            // Re-show: use browser_show_at which calls show()+position+size+focus.
+            // Use double-rAF to ensure the tab pane has reflowed (was display:none).
+            console.log('[WebView] tab ACTIVE — will re-show, label:', label);
             const el = containerRef.current;
             if (el) {
-                // Use double-rAF to ensure the tab pane has been reflowed with display:flex
-                // (it was display:none when this tab was inactive)
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
                         if (destroyedRef.current || !isActiveRef.current) return;
-                        const rect = el.getBoundingClientRect();
-                        console.log('[WebView] re-show rect:', JSON.stringify({
-                            x: rect.x, y: rect.y, w: rect.width, h: rect.height
-                        }));
-                        if (rect.width < 1 || rect.height < 1) {
-                            console.warn('[WebView] re-show: container has zero dimensions, skipping');
+                        const rect = measureContentArea(el);
+                        if (!rect) {
+                            console.warn('[WebView] re-show: zero dimensions, skipping');
                             return;
                         }
-                        invoke('browser_set_bounds', {
+                        invoke('browser_show_at', {
                             label,
                             x: rect.x,
                             y: rect.y,
                             width: rect.width,
                             height: rect.height,
-                        }).catch((err) => console.error('[WebView] re-show set_bounds failed:', err));
+                        }).catch((err) => console.error('[WebView] browser_show_at failed:', err));
                     });
                 });
             }
         } else if (!isActive && createdRef.current) {
-            // Hide when tab becomes inactive — move native webview off-screen
-            console.log('[WebView] tab INACTIVE — hiding webview off-screen, label:', label);
+            // Hide immediately — browser_hide calls hide() AND moves off-screen
+            console.log('[WebView] tab INACTIVE — hiding, label:', label);
             invoke('browser_hide', { label }).catch((err) => console.error('[WebView] hide failed:', err));
         }
     }, [isActive]);
@@ -247,10 +248,12 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
+        const mainContent = el.closest('.main-content') as HTMLElement | null;
+        const target = mainContent || el;
         const observer = new ResizeObserver(() => {
             if (isActiveRef.current && createdRef.current) syncBounds();
         });
-        observer.observe(el);
+        observer.observe(target);
         return () => observer.disconnect();
     }, [syncBounds]);
 

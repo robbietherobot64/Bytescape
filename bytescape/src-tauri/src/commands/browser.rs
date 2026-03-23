@@ -171,16 +171,17 @@ pub async fn browser_set_bounds(
 
 /// Hide a browser webview.
 ///
-/// Uses the real `hide()` API so the webview is truly invisible and
-/// does not consume paint resources. Falls back to off-screen positioning
-/// if `hide()` fails on a given platform.
+/// Calls the real `hide()` API AND moves the webview off-screen as a
+/// belt-and-suspenders approach. On WebKitGTK, `hide()` can return Ok
+/// without actually hiding the native surface, so we always move
+/// off-screen as well to guarantee the webview is not visible.
 #[tauri::command]
 pub async fn browser_hide(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
-        if webview.hide().is_err() {
-            // Fallback: move off-screen if hide() not supported
-            let _ = webview.set_position(LogicalPosition::new(-10000.0_f64, -10000.0_f64));
-        }
+        let _ = webview.hide();
+        // Always move off-screen regardless of hide() result — WebKitGTK
+        // may report success without actually hiding the surface.
+        let _ = webview.set_position(LogicalPosition::new(-10000.0_f64, -10000.0_f64));
     }
     Ok(())
 }
