@@ -550,6 +550,8 @@ pub fn run() {
             commands::browser::browser_close,
             commands::browser::browser_set_bounds,
             commands::browser::browser_hide,
+            commands::browser::browser_show,
+            commands::browser::browser_show_at,
             commands::browser::browser_navigate,
             commands::browser::browser_eval,
             commands::browser::browser_get_url,

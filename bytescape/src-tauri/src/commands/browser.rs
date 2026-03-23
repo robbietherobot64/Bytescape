@@ -13,13 +13,15 @@
 //! - `window.open()` intercepted and routed back to the React tab system.
 //! - Each browser webview uses an isolated data directory.
 //!
-//! ## Threading model
+//! ## Lifecycle
 //!
-//! `browser_create` is an **async** command, so Tauri spawns it on Tokio.
-//! This means the GTK main thread is free to process messages. Internally,
-//! `window.add_child()` sends a message to the GTK event loop and blocks
-//! until the widget is created. Since we're on a Tokio worker (not the main
-//! thread), this should not deadlock.
+//! ```text
+//! browser_create  → webview appears at (x,y,w,h), show()+focus()
+//! browser_hide    → webview.hide() — invisible, preserves page state
+//! browser_show    → webview.show()+focus() — restore visibility
+//! browser_show_at → show()+position+size in one IPC round-trip
+//! browser_close   → webview destroyed permanently
+//! ```
 
 use tauri::{AppHandle, Manager, WebviewUrl, LogicalPosition, LogicalSize, Emitter};
 
@@ -46,7 +48,7 @@ fn browser_data_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
 fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
     app.get_window("main")
         .or_else(|| {
-            eprintln!("[browser] get_window(\"main\") returned None, trying fallback");
+            eprintln!("[browser] WARN: get_window(\"main\") returned None, trying fallback");
             app.windows().into_values().next()
         })
         .ok_or_else(|| {
@@ -57,8 +59,10 @@ fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
 
 /// Create a native browser webview within the main window.
 ///
-/// This is an **async** command — Tauri spawns it on Tokio, freeing the GTK
-/// main thread to process the `add_child` message internally.
+/// The webview is positioned at (x, y) with the given dimensions,
+/// overlaying the React content area for that tab. If a webview with the
+/// same label already exists (e.g. React StrictMode double-mount), it is
+/// repositioned and shown instead of creating a duplicate.
 #[tauri::command]
 pub async fn browser_create(
     app: AppHandle,
@@ -69,15 +73,10 @@ pub async fn browser_create(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    eprintln!("[browser_create] ENTER label={} url={} thread={:?}",
-        label, url, std::thread::current().id());
-
     // ── Duplicate guard ──
     // React StrictMode (dev) double-mounts components, so two concurrent
-    // browser_create calls may arrive with the same label. If the webview
-    // already exists, just reposition it and return Ok.
+    // browser_create calls may arrive with the same label.
     if let Some(existing) = app.get_webview(&label) {
-        eprintln!("[browser_create] webview '{}' already exists — repositioning", label);
         let _ = existing.set_position(LogicalPosition::new(x, y));
         let _ = existing.set_size(LogicalSize::new(width, height));
         let _ = existing.show();
@@ -85,26 +84,14 @@ pub async fn browser_create(
         return Ok(());
     }
 
-    // ── Validate URL ──
     let parsed_url: url::Url = url.parse()
-        .map_err(|e: url::ParseError| {
-            eprintln!("[browser_create] URL parse error: {}", e);
-            format!("Invalid URL: {}", e)
-        })?;
+        .map_err(|e: url::ParseError| format!("Invalid URL: {}", e))?;
 
     if !is_allowed_navigation(&parsed_url) {
-        let msg = format!("Blocked: only http/https allowed, got {}", parsed_url.scheme());
-        eprintln!("[browser_create] {}", msg);
-        return Err(msg);
+        return Err(format!("Blocked: only http/https allowed, got {}", parsed_url.scheme()));
     }
-    eprintln!("[browser_create] URL validated OK");
 
-    // ── Get main window ──
     let window = get_main_window(&app)?;
-    eprintln!("[browser_create] main window found: {:?}", window.label());
-
-    // ── Build the WebviewBuilder ──
-    eprintln!("[browser_create] building WebviewBuilder...");
 
     let app_for_title = app.clone();
     let label_for_title = label.clone();
@@ -140,35 +127,17 @@ pub async fn browser_create(
     .enable_clipboard_access();
 
     if let Some(data_dir) = browser_data_dir(&app) {
-        eprintln!("[browser_create] using data_dir: {:?}", data_dir);
         webview_builder = webview_builder.data_directory(data_dir);
     }
 
-    // ── Create the webview ──
-    eprintln!("[browser_create] >>> calling window.add_child()...");
     let webview = window.add_child(
         webview_builder,
         LogicalPosition::new(x, y),
         LogicalSize::new(width, height),
-    ).map_err(|e| {
-        let msg = format!("add_child failed: {}", e);
-        eprintln!("[browser_create] <<< {}", msg);
-        msg
-    })?;
-    eprintln!("[browser_create] <<< add_child returned OK");
+    ).map_err(|e| format!("add_child failed for '{}': {}", label, e))?;
 
-    // ── Show and focus ──
-    eprintln!("[browser_create] calling show()...");
-    if let Err(e) = webview.show() {
-        eprintln!("[browser_create] show() error (non-fatal): {}", e);
-    }
-
-    eprintln!("[browser_create] calling set_focus()...");
-    if let Err(e) = webview.set_focus() {
-        eprintln!("[browser_create] set_focus() error (non-fatal): {}", e);
-    }
-
-    eprintln!("[browser_create] DONE — webview '{}' created successfully", label);
+    let _ = webview.show();
+    let _ = webview.set_focus();
     Ok(())
 }
 
@@ -182,9 +151,6 @@ pub async fn browser_close(app: AppHandle, label: String) -> Result<(), String> 
 }
 
 /// Update the position and size of a browser webview.
-///
-/// Called when the tab becomes active or the window resizes,
-/// to keep the webview aligned with the React content area.
 #[tauri::command]
 pub async fn browser_set_bounds(
     app: AppHandle,
@@ -203,22 +169,62 @@ pub async fn browser_set_bounds(
     Ok(())
 }
 
-/// Hide a browser webview by moving it off-screen.
+/// Hide a browser webview.
 ///
-/// Called when the user switches away from a browser tab.
-/// The webview stays alive (preserving page state) but is invisible.
+/// Uses the real `hide()` API so the webview is truly invisible and
+/// does not consume paint resources. Falls back to off-screen positioning
+/// if `hide()` fails on a given platform.
 #[tauri::command]
 pub async fn browser_hide(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
-        let _ = webview.set_position(LogicalPosition::new(-10000.0_f64, -10000.0_f64));
+        if webview.hide().is_err() {
+            // Fallback: move off-screen if hide() not supported
+            let _ = webview.set_position(LogicalPosition::new(-10000.0_f64, -10000.0_f64));
+        }
     }
     Ok(())
 }
 
-/// Navigate an existing browser webview to a new URL.
+/// Show a hidden browser webview and give it focus.
 ///
-/// Used by the Omnibar when the user types a URL while a webview tab is
-/// active, or when following an in-page redirect.
+/// Restores a webview that was previously hidden via `browser_hide`.
+/// The frontend should follow up with `browser_set_bounds` or use
+/// `browser_show_at` to also set the position in one call.
+#[tauri::command]
+pub async fn browser_show(app: AppHandle, label: String) -> Result<(), String> {
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found", label))?;
+    webview.show().map_err(|e| format!("show: {}", e))?;
+    webview.set_focus().map_err(|e| format!("set_focus: {}", e))?;
+    Ok(())
+}
+
+/// Show a browser webview AND set its bounds in a single IPC call.
+///
+/// Combines `browser_set_bounds` + `browser_show` to avoid a visible
+/// flicker where the webview appears at its old position before being
+/// repositioned. The sequence is: position → size → show → focus.
+#[tauri::command]
+pub async fn browser_show_at(
+    app: AppHandle,
+    label: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found", label))?;
+    webview.set_position(LogicalPosition::new(x, y))
+        .map_err(|e| format!("set_position: {}", e))?;
+    webview.set_size(LogicalSize::new(width, height))
+        .map_err(|e| format!("set_size: {}", e))?;
+    webview.show().map_err(|e| format!("show: {}", e))?;
+    webview.set_focus().map_err(|e| format!("set_focus: {}", e))?;
+    Ok(())
+}
+
+/// Navigate an existing browser webview to a new URL.
 #[tauri::command]
 pub async fn browser_navigate(
     app: AppHandle,
@@ -240,13 +246,9 @@ pub async fn browser_navigate(
     Ok(())
 }
 
-/// Execute JavaScript in a browser webview and return the result.
+/// Execute JavaScript in a browser webview.
 ///
-/// Powers back/forward/reload actions from the Omnibar and
-/// any other frontend-initiated DOM queries.
-///
-/// **Safety:** This only runs JS in an already-sandboxed external webview
-/// (no Tauri IPC bridge), so the injected script cannot escalate privileges.
+/// Powers back/forward/reload actions from the Omnibar.
 #[tauri::command]
 pub async fn browser_eval(
     app: AppHandle,
@@ -262,9 +264,6 @@ pub async fn browser_eval(
 }
 
 /// Get the current URL of a browser webview.
-///
-/// Returns the live URL (which may differ from the originally-opened URL
-/// after in-page navigation).
 #[tauri::command]
 pub async fn browser_get_url(
     app: AppHandle,
@@ -279,16 +278,12 @@ pub async fn browser_get_url(
 }
 
 /// Clear all browser data (cookies, cache, storage).
-///
-/// Called on account disconnect or explicit user action to ensure no
-/// session data leaks between accounts.
 #[tauri::command]
 pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
     if let Some(data_dir) = browser_data_dir(&app) {
         if data_dir.exists() {
             std::fs::remove_dir_all(&data_dir)
                 .map_err(|e| format!("Failed to clear browser data: {}", e))?;
-            eprintln!("browser_clear_data: cleared {}", data_dir.display());
         }
     }
     Ok(())
