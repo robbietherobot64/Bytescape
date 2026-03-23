@@ -629,7 +629,7 @@ function App() {
       case 'vault':
         return <VaultScreen auth={auth} />;
       case 'webview':
-        return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} isActive={tab.id === activeTabId} />;
+        return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} isActive={tab.id === activeTabId} tabId={tab.id} />;
       case 'settings':
         return (
           <SettingsScreen

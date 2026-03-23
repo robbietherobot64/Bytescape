@@ -9,6 +9,8 @@ interface WebViewScreenProps {
     title?: string;
     /** Whether this tab is currently the active/visible tab */
     isActive: boolean;
+    /** Tab ID from the nav store — used for reliable title updates */
+    tabId: string;
 }
 
 let idCounter = 0;
@@ -28,7 +30,7 @@ let idCounter = 0;
  *
  * A 15-second safety timeout fires if the invoke never returns.
  */
-export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenProps) {
+export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const labelRef = useRef(`browser-${++idCounter}`);
     const createdRef = useRef(false);
@@ -205,21 +207,39 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
     useEffect(() => {
         const label = labelRef.current;
         if (isActive && createdRef.current) {
-            // Re-show and sync bounds when tab becomes active
+            // Re-show and sync bounds when tab becomes active.
+            // browser_set_bounds calls set_position + set_size, which moves the
+            // webview back on-screen from -10000,-10000 where browser_hide put it.
+            console.log('[WebView] tab ACTIVE — moving webview back on-screen, label:', label);
             const el = containerRef.current;
             if (el) {
-                const rect = el.getBoundingClientRect();
-                invoke('browser_set_bounds', {
-                    label,
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                }).catch(() => {});
+                // Use double-rAF to ensure the tab pane has been reflowed with display:flex
+                // (it was display:none when this tab was inactive)
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        if (destroyedRef.current || !isActiveRef.current) return;
+                        const rect = el.getBoundingClientRect();
+                        console.log('[WebView] re-show rect:', JSON.stringify({
+                            x: rect.x, y: rect.y, w: rect.width, h: rect.height
+                        }));
+                        if (rect.width < 1 || rect.height < 1) {
+                            console.warn('[WebView] re-show: container has zero dimensions, skipping');
+                            return;
+                        }
+                        invoke('browser_set_bounds', {
+                            label,
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        }).catch((err) => console.error('[WebView] re-show set_bounds failed:', err));
+                    });
+                });
             }
         } else if (!isActive && createdRef.current) {
-            // Hide when tab becomes inactive
-            invoke('browser_hide', { label }).catch(() => {});
+            // Hide when tab becomes inactive — move native webview off-screen
+            console.log('[WebView] tab INACTIVE — hiding webview off-screen, label:', label);
+            invoke('browser_hide', { label }).catch((err) => console.error('[WebView] hide failed:', err));
         }
     }, [isActive]);
 
@@ -257,12 +277,12 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
         listen<string>(`browser-title-${label}`, (event) => {
             const newTitle = event.payload;
             if (!newTitle) return;
+            console.log('[WebView] title update:', newTitle, 'tabId:', tabId);
             const nav = useNavStore.getState();
-            const tab = nav.tabs.find(t => t.screen === 'webview' && t.meta?.url === url);
-            if (tab && nav.updateTabLabel) nav.updateTabLabel(tab.id, newTitle);
+            if (nav.updateTabLabel) nav.updateTabLabel(tabId, newTitle);
         }).then(fn => { unlisten = fn; });
         return () => { unlisten?.(); };
-    }, [url]);
+    }, [tabId]);
 
     // ─── Listen for "open in new tab" ───
     useEffect(() => {
@@ -302,9 +322,8 @@ export function WebViewScreen({ url, title: _title, isActive }: WebViewScreenPro
             ref={containerRef}
             className="webview-container"
             style={{
-                width: '100%',
-                height: '100%',
-                background: 'var(--bg-primary)',
+                /* Let the CSS class (.webview-container) handle sizing via flex:1.
+                   Only set position: relative here for the loading/error overlays. */
                 position: 'relative',
             } as React.CSSProperties}
         >

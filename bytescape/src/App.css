@@ -191,9 +191,11 @@ a:hover {
    to preserve React component state for seamless tab switching. */
 .tab-pane {
     width: 100%;
+    min-height: 0;
 }
 .tab-pane--full-bleed {
     max-width: none;
+    flex: 1;
 }
 .tab-pane--standard {
     padding: 24px;
@@ -1002,13 +1004,11 @@ a:hover {
     overflow: hidden;
     box-shadow: 1px 1px 0 #666;
     transition: none;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 400px;
 }
 
 .feed-entry-card:hover {
     border-color: var(--link-blue);
-    box-shadow: 2px 2px 0 #444;
+    box-shadow: 1px 1px 0 #444;
 }
 
 .feed-entry-card.is-quote {
@@ -2952,7 +2952,7 @@ textarea::placeholder {
     50% { opacity: 1; color: var(--accent-orange); }
 }
 
-/* Rainbow divider animation on card headers */
+/* Rainbow divider on card headers — static by default, animates on hover */
 .feed-entry-header::after {
     content: '';
     position: absolute;
@@ -2964,8 +2964,10 @@ textarea::placeholder {
         #ff0000, #ff7700, #ffff00, #00ff00, #0000ff, #8b00ff, #ff0000
     );
     background-size: 200% 100%;
-    animation: rainbow-slide 4s linear infinite;
     opacity: 0.4;
+}
+.feed-entry-card:hover .feed-entry-header::after {
+    animation: rainbow-slide 4s linear infinite;
 }
 
 .feed-entry-header {
@@ -5004,7 +5006,8 @@ textarea::placeholder {
 .webview-container {
     width: 100%;
     height: 100%;
-    min-height: 100%;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     position: relative;

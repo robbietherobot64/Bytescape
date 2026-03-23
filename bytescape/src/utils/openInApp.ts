@@ -47,6 +47,8 @@ export function openInApp(url: string, title?: string): void {
             return url.slice(0, 40);
         }
     })();
+    // Generate a stable label for the webview so WebViewScreen can
+    // store it in meta and the title listener can find this tab.
     store.openTab('webview', displayTitle, { url });
 }
 

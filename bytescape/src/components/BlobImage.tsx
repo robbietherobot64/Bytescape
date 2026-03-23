@@ -105,7 +105,8 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
             alt={alt} 
             className={className} 
             style={style} 
-            loading={loading}
+            loading={loading || 'lazy'}
+            decoding="async"
             onError={() => {
                 console.error('Image failed to load:', src);
                 onError?.();
