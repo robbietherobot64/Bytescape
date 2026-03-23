@@ -6,13 +6,8 @@ Feedback:
 
 Critical priorities:
 
-- We need to be able to unlink and link accounts in the identity screen more effectively.  The disconnect button doesn't work, and connect only allows to connect bluesky, and uses app passwords still rather than oAuth.  This section needs a major refresh.
-- In a similar vein, it says "mastodon:instance_name:hashnumber".  What the hell is that?  Aren't we supposed to be using DIDs to identify users? 
-- Some Mastodon data not fully loading, namely friends list (which would pull following), and posts on the profile wall and most of the posts on the "you" feed.
-- Links and profiles don't load in new tabs, just open a new tab and it says "loading page" pretty much forever. We want this to be a browser-like experience, where links open and load seamlessly. Right now, they're not loading at all.
-- Chat button on friendslist contacts still does not work.  Works fine on the feed screen.  On the chat screen it just lags out like a mother, and only works once in a blue moon.  
+- Links and profiles now load in a new tab....but the tab breaks the whole UI.  I.e., the tab itself is still a "loading page..." tab, but the lower half of the screen is where the webview of the profile/link opens.  That lower half is also now permanently there, and doesn't go away when you change tabs back to feed or other sections.  It is just a broken lower half of the screen webview.  Which I guess is better than no webview, but it's defintiely not what I had in mind.
 
 Lower priorities:
 
-- Hashtags need work.  They don't seem to actually work at all or save properly, and the subscribed feed gives a "failed to load feed" error, due to "no access token available".  Also, we should add lists to the subscribed section, which are basically just custom feeds that let you add people to a single selectable feed.  Let's add that as a drop down list like the feeds selection.
-- Images somewhat jittery when scrolling.  This is due to a reaction when the mouse goes over them.  It doesn't happen on every image/link, just some.  It seems related to the frames around the images possibly.
+- Images and overall UI somewhat jittery when scrolling.  Not sure the cause, but it's not a very stable looking scrolling experience overall.
