@@ -33,12 +33,12 @@ function getStatusIndicator(status: 'online' | 'offline', lastSeen: number | nul
     return { color: '#666' };
 }
 
-/** Unified friend entry — can be a P2P peer or a Bluesky follow */
+/** Unified friend entry — can be a P2P peer, Bluesky follow, or Mastodon follow */
 interface UnifiedFriend {
     id: string;
     displayName: string;
-    source: 'p2p' | 'bluesky';
-    /** P2P: online/offline based on connectivity. Bluesky: always 'cloud'. */
+    source: 'p2p' | 'bluesky' | 'mastodon';
+    /** P2P: online/offline based on connectivity. Bluesky/Mastodon: always 'cloud'. */
     status: 'online' | 'offline' | 'cloud';
     avatar?: string;
     handle?: string;
@@ -52,8 +52,9 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
     const auth = useAuthStore(s => s.auth);
     const [peers, setPeers] = useState<PeerInfo[]>([]);
     const [blueskyFollows, setBlueskyFollows] = useState<ProfileView[]>([]);
+    const [mastodonFollows, setMastodonFollows] = useState<ProfileView[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeSection, setActiveSection] = useState<'all' | 'p2p' | 'bluesky'>('all');
+    const [activeSection, setActiveSection] = useState<'all' | 'p2p' | 'bluesky' | 'mastodon'>('all');
 
     // Load P2P peers
     const loadPeers = useCallback(async () => {
@@ -65,33 +66,39 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
         }
     }, []);
 
-    // Load Bluesky follows
+    // Load Bluesky follows (Bluesky API only — no fallback to mixed contacts)
     const loadBlueskyFollows = useCallback(async () => {
         if (!auth?.did) return;
         try {
             const follows = await invoke<ProfileView[]>('list_follows', { actor: auth.did });
             setBlueskyFollows(follows);
         } catch {
-            // Bluesky not connected or API error
-            try {
-                // Fallback: use cached contacts table
-                const contacts = await invoke<{ did: string; handle: string }[]>('list_contacts');
-                setBlueskyFollows(contacts.map(c => ({ did: c.did, handle: c.handle })));
-            } catch {
-                // No contacts either
-            }
+            // Bluesky not connected — leave empty
         }
     }, [auth?.did]);
 
+    // Load Mastodon follows
+    const loadMastodonFollows = useCallback(async () => {
+        try {
+            const follows = await invoke<ProfileView[]>('mastodon_get_following');
+            setMastodonFollows(follows);
+        } catch {
+            // Mastodon not connected — leave empty
+        }
+    }, []);
+
     useEffect(() => {
-        Promise.all([loadPeers(), loadBlueskyFollows()]).finally(() => setLoading(false));
+        Promise.all([loadPeers(), loadBlueskyFollows(), loadMastodonFollows()]).finally(() => setLoading(false));
         const interval = setInterval(() => {
             loadPeers();
-            // Refresh bluesky follows less frequently (every 5 min)
         }, 60_000);
-        const bskyInterval = setInterval(loadBlueskyFollows, 300_000);
-        return () => { clearInterval(interval); clearInterval(bskyInterval); };
-    }, [loadPeers, loadBlueskyFollows]);
+        // Refresh social follows less frequently (every 5 min)
+        const socialInterval = setInterval(() => {
+            loadBlueskyFollows();
+            loadMastodonFollows();
+        }, 300_000);
+        return () => { clearInterval(interval); clearInterval(socialInterval); };
+    }, [loadPeers, loadBlueskyFollows, loadMastodonFollows]);
 
     // Build unified friend list
     const p2pFriends: UnifiedFriend[] = peers.map(peer => ({
@@ -105,8 +112,11 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
 
     // Filter out Bluesky follows that are also P2P peers (by DID match)
     const p2pDids = new Set(peers.map(p => p.did).filter(Boolean));
+    // Also build a set of Mastodon DIDs so we can exclude them from Bluesky
+    const mastodonDids = new Set(mastodonFollows.map(f => f.did));
+
     const bskyFriends: UnifiedFriend[] = blueskyFollows
-        .filter(f => !p2pDids.has(f.did)) // Don't duplicate if already a P2P peer
+        .filter(f => !p2pDids.has(f.did) && !mastodonDids.has(f.did)) // Don't duplicate
         .map(f => ({
             id: `bsky:${f.did}`,
             displayName: f.displayName || f.handle,
@@ -117,9 +127,21 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
             did: f.did,
         }));
 
+    const mastoFriends: UnifiedFriend[] = mastodonFollows
+        .filter(f => !p2pDids.has(f.did)) // Don't duplicate P2P peers
+        .map(f => ({
+            id: `masto:${f.did}`,
+            displayName: f.displayName || f.handle,
+            source: 'mastodon' as const,
+            status: 'cloud' as const,
+            avatar: f.avatar,
+            handle: f.handle,
+            did: f.did,
+        }));
+
     const onlineP2p = p2pFriends.filter(f => f.status === 'online');
     const offlineP2p = p2pFriends.filter(f => f.status !== 'online');
-    const totalCount = p2pFriends.length + bskyFriends.length;
+    const totalCount = p2pFriends.length + bskyFriends.length + mastoFriends.length;
 
     return (
         <div className="friends-panel">
@@ -134,7 +156,7 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
             </div>
 
             {/* Source filter tabs */}
-            {(p2pFriends.length > 0 || bskyFriends.length > 0) && (
+            {(p2pFriends.length > 0 || bskyFriends.length > 0 || mastoFriends.length > 0) && (
                 <div className="friends-source-tabs">
                     <button
                         className={`friends-source-tab ${activeSection === 'all' ? 'active' : ''}`}
@@ -156,6 +178,14 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                             onClick={() => setActiveSection('bluesky')}
                         >
                             🦋 Bsky
+                        </button>
+                    )}
+                    {mastoFriends.length > 0 && (
+                        <button
+                            className={`friends-source-tab ${activeSection === 'mastodon' ? 'active' : ''}`}
+                            onClick={() => setActiveSection('mastodon')}
+                        >
+                            🐘 Masto
                         </button>
                     )}
                 </div>
@@ -229,6 +259,24 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                         ))}
                     </div>
                 )}
+
+                {/* Mastodon follows */}
+                {(activeSection === 'all' || activeSection === 'mastodon') && mastoFriends.length > 0 && (
+                    <div className="friends-panel-group">
+                        <div className="friends-panel-group-label">
+                            <span className="friends-group-source-icon">🐘</span>
+                            Mastodon ({mastoFriends.length})
+                        </div>
+                        {mastoFriends.map(friend => (
+                            <FriendItem
+                                key={friend.id}
+                                friend={friend}
+                                onChat={onOpenChat}
+                                onProfile={onViewProfile}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -244,6 +292,7 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
     const initial = friend.displayName[0]?.toUpperCase() || '?';
     const isP2p = friend.source === 'p2p';
     const isBsky = friend.source === 'bluesky';
+    const isMasto = friend.source === 'mastodon';
 
     // Status display
     let statusText: string;
@@ -255,9 +304,15 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
         statusClass = 'online';
         dotColor = '#50fa7b';
     } else if (friend.status === 'cloud') {
-        statusText = friend.handle ? `@${friend.handle}` : 'Bluesky';
-        statusClass = 'cloud';
-        dotColor = '#1185fe'; // Bluesky blue
+        if (isMasto) {
+            statusText = friend.handle ? `@${friend.handle}` : 'Mastodon';
+            statusClass = 'cloud';
+            dotColor = '#6364FF'; // Mastodon purple
+        } else {
+            statusText = friend.handle ? `@${friend.handle}` : 'Bluesky';
+            statusClass = 'cloud';
+            dotColor = '#1185fe'; // Bluesky blue
+        }
     } else {
         const indicator = getStatusIndicator('offline', friend.lastSeen ?? null);
         statusText = getAwayMessage(friend.lastSeen ?? null);
@@ -268,17 +323,16 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
     const handleClick = () => {
         if (isP2p && friend.nodeId && onProfile) {
             onProfile(friend.nodeId, friend.displayName);
-        } else if (isBsky && friend.handle) {
-            // Open Bluesky profile in-app
-            openProfile(friend.handle);
+        } else if ((isBsky || isMasto) && friend.handle) {
+            // Open profile in-app
+            openProfile(friend.handle, friend.source as any);
         }
     };
 
     const handleChat = () => {
         if (isP2p && friend.nodeId && onChat) {
             onChat(friend.nodeId, friend.displayName);
-        } else if (isBsky && friend.did && onChat) {
-            // Open Bluesky DM via the chat screen with DID identifier
+        } else if ((isBsky || isMasto) && friend.did && onChat) {
             onChat(friend.did, friend.displayName);
         }
     };
@@ -288,7 +342,7 @@ function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
             <button
                 className="friend-item-main"
                 onClick={handleClick}
-                title={isP2p ? `View ${friend.displayName}'s profile` : isBsky ? `View @${friend.handle || friend.displayName} on Bluesky` : friend.displayName}
+                title={isP2p ? `View ${friend.displayName}'s profile` : isBsky ? `View @${friend.handle || friend.displayName} on Bluesky` : isMasto ? `View @${friend.handle || friend.displayName} on Mastodon` : friend.displayName}
                 style={{ cursor: 'pointer' } as React.CSSProperties}
             >
                 <div className="friend-item-avatar">

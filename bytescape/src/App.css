@@ -1230,6 +1230,30 @@ a:hover {
 }
 
 /* ─── 9. LINK PREVIEW — Article / External Link Card ─── */
+
+/* Small source link button for bare URLs without rich preview data */
+.source-link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin-top: 6px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 3px;
+    background: var(--bg-tertiary, #1a1a2e);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    line-height: 1.5;
+    max-width: fit-content;
+}
+.source-link-btn:hover {
+    border-color: var(--link-blue, #3498db);
+    color: var(--link-blue, #3498db);
+}
+
 .link-preview-card {
     display: flex;
     flex-direction: column;

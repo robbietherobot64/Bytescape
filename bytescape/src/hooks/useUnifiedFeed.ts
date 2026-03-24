@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, ProfileView } from '../types';
+import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, LinkedAccount, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
 import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
@@ -116,6 +116,21 @@ export function useUnifiedFeed({
         }
         prevAuthDidRef.current = currentDid;
     }, [auth?.did, clearCache]);
+
+    // Load available platform sources for the filter dropdown (independent of active tab)
+    useEffect(() => {
+        if (!auth) return;
+        Promise.all([
+            invoke<string[]>('list_vault_sources').catch((): string[] => []),
+            invoke<LinkedAccount[]>('list_linked_accounts').catch((): LinkedAccount[] => []),
+        ]).then(([vaultSrcs, accounts]) => {
+            const platformSrcs = accounts
+                .filter(a => a.active)
+                .map(a => a.protocol);
+            const merged = [...new Set([...vaultSrcs, ...platformSrcs])].sort();
+            setVaultSources(merged);
+        });
+    }, [auth?.did]);
 
     const fetchFollowingList = async (actorDid: string) => {
         try {

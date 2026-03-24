@@ -391,8 +391,8 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     />
                 )}
 
-                {/* Link Preview — show for article/external links even with media */}
-                {entry.link_url && !isGif && (
+                {/* Link Preview — only show full card when there's actual rich link data */}
+                {entry.link_url && !isGif && entry.link_title && (
                     <a href={entry.link_url} target="_blank" rel="noopener noreferrer" className="link-preview-card">
                         {entry.link_thumbnail && !hasMedia && (
                             <div className="link-thumb">
@@ -401,9 +401,21 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                         )}
                         <div className="link-meta">
                             {externalHost && <div className="link-host">{externalHost}</div>}
-                            <div className="link-title">{entry.link_title || entry.link_url}</div>
+                            <div className="link-title">{entry.link_title}</div>
                             {entry.link_description && <div className="link-desc">{entry.link_description}</div>}
                         </div>
+                    </a>
+                )}
+
+                {/* Small source link button — for bare URLs without rich preview data */}
+                {entry.link_url && !isGif && !entry.link_title && (
+                    <a
+                        href={entry.link_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="source-link-btn"
+                    >
+                        🔗 {externalHost || 'Source'}
                     </a>
                 )}
 
