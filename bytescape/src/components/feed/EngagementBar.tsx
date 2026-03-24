@@ -4,7 +4,8 @@ import { ReactionPicker } from '../ReactionPicker';
 import { formatCount } from './helpers';
 
 interface EngagementBarProps {
-    isBluesky: boolean;
+    isInteractive: boolean;
+    source: string;
     likeCount: number;
     reactionEmoji: string | undefined;
     replyOpen: boolean;
@@ -23,7 +24,8 @@ interface EngagementBarProps {
 }
 
 export function EngagementBar({
-    isBluesky,
+    isInteractive,
+    source,
     likeCount,
     reactionEmoji,
     replyOpen,
@@ -45,7 +47,7 @@ export function EngagementBar({
             <ReactionPicker
                 currentReaction={reactionEmoji}
                 onReact={onReaction}
-                disabled={!isBluesky}
+                disabled={!isInteractive}
             />
             <span className="count">{formatCount(likeCount)}</span>
 
@@ -53,7 +55,7 @@ export function EngagementBar({
                 className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
                 title="Comment"
                 onClick={onReplyToggle}
-                disabled={!isBluesky}
+                disabled={!isInteractive}
             >
                 <ReplyIcon />
                 <span className="count">{formatCount(replyCount)}</span>
@@ -64,7 +66,7 @@ export function EngagementBar({
                     className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
                     title={reposted ? 'Undo repost' : 'Repost'}
                     onClick={onRepostClick}
-                    disabled={!isBluesky}
+                    disabled={!isInteractive}
                 >
                     <RepostIcon />
                     <span className="count">{formatCount(repostCount)}</span>
@@ -74,14 +76,16 @@ export function EngagementBar({
                         <button className="repost-menu-item" onClick={onDirectRepost}>
                             🔁 Repost
                         </button>
-                        <button className="repost-menu-item" onClick={onQuoteRepost}>
-                            💬 Quote Post
-                        </button>
+                        {source === 'bluesky' && (
+                            <button className="repost-menu-item" onClick={onQuoteRepost}>
+                                💬 Quote Post
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
 
-            {isBluesky && replyCount && replyCount > 0 ? (
+            {source === 'bluesky' && replyCount && replyCount > 0 ? (
                 <button
                     className={`engagement-btn btn-thread ${threadOpen ? 'active' : ''}`}
                     title={threadOpen ? 'Hide replies' : 'Show replies'}

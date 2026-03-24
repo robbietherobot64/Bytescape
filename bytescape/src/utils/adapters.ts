@@ -1,4 +1,4 @@
-import { BlueskyPost, BytescapeItem, FeedEntry } from '../types';
+import { BlueskyPost, BytescapeItem, FeedEntry, Audience } from '../types';
 import { inferContentKind, sanitizeVaultContent } from './content';
 
 // === Feed Deduplication ===
@@ -50,6 +50,13 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         ? ['video' as const]
         : (post.image_urls || []).map(() => 'image' as const);
 
+    // Detect Mastodon posts: URI contains /statuses/ or author uses acct: scheme
+    const isMastodonPost =
+        (post.uri?.includes('/statuses/') && post.uri?.startsWith('https://')) ||
+        post.author_did?.startsWith('acct:');
+    const source = isMastodonPost ? 'mastodon' : 'bluesky';
+    const audiences: Audience[] = isMastodonPost ? ['Local', 'Activitypub'] : ['Local', 'Bluesky'];
+
     return {
         id: post.uri || post.cid,
         cid: post.cid,
@@ -58,7 +65,7 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         author_did: post.author_did,
         author_handle: post.author_handle,
         author_avatar: post.author_avatar,
-        source: 'bluesky',
+        source,
 
         media_urls: mediaUrls,
         media_thumbnails: post.video_thumbnail ? [post.video_thumbnail] : [],
@@ -82,9 +89,9 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
         viewer_repost: post.viewer_repost,
 
         item_type: 'Status',
-        audiences: ['Local', 'Bluesky'],
+        audiences,
         share_history: post.uri ? [{
-            platform: 'bluesky',
+            platform: source,
             uri: post.uri,
             timestamp: post.created_at || 0,
             active: true,

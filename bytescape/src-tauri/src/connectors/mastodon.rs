@@ -548,6 +548,102 @@ pub async fn unfollow_account(
         .map_err(|e| format!("Invalid relationship response: {}", e))
 }
 
+// ──────────────────────────────────────────────────
+// Favourite / Unfavourite
+// ──────────────────────────────────────────────────
+
+/// Favourite (like) a status on Mastodon.
+pub async fn favourite_status(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    status_id: &str,
+) -> Result<MastodonStatus, String> {
+    let resp = rate_limit_request(
+        http_client
+            .post(format!("{}/api/v1/statuses/{}/favourite", session.instance, status_id))
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Favourite failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid favourite response: {}", e))
+}
+
+/// Unfavourite (unlike) a status on Mastodon.
+pub async fn unfavourite_status(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    status_id: &str,
+) -> Result<MastodonStatus, String> {
+    let resp = rate_limit_request(
+        http_client
+            .post(format!("{}/api/v1/statuses/{}/unfavourite", session.instance, status_id))
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Unfavourite failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid unfavourite response: {}", e))
+}
+
+// ──────────────────────────────────────────────────
+// Reblog / Unreblog
+// ──────────────────────────────────────────────────
+
+/// Reblog (repost) a status on Mastodon.
+pub async fn reblog_status(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    status_id: &str,
+) -> Result<MastodonStatus, String> {
+    let resp = rate_limit_request(
+        http_client
+            .post(format!("{}/api/v1/statuses/{}/reblog", session.instance, status_id))
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Reblog failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid reblog response: {}", e))
+}
+
+/// Unreblog (undo repost) a status on Mastodon.
+pub async fn unreblog_status(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+    status_id: &str,
+) -> Result<MastodonStatus, String> {
+    let resp = rate_limit_request(
+        http_client
+            .post(format!("{}/api/v1/statuses/{}/unreblog", session.instance, status_id))
+            .bearer_auth(&session.access_token),
+    ).await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Unreblog failed ({}): {}", status, body));
+    }
+
+    resp.json().await
+        .map_err(|e| format!("Invalid unreblog response: {}", e))
+}
+
 /// Follow a hashtag on Mastodon (POST /api/v1/tags/:hashtag/follow).
 pub async fn follow_hashtag(
     http_client: &reqwest::Client,

@@ -10,6 +10,8 @@ interface ReplyComposeProps {
     rootUri: string;
     rootCid: string;
     replyToHandle: string;
+    source?: string;
+    mastodonStatusId?: string;
     onReplySent: () => void;
     onCancel: () => void;
 }
@@ -23,7 +25,7 @@ interface ReplyAttachment {
 
 export function ReplyCompose({
     parentUri, parentCid, rootUri, rootCid,
-    replyToHandle, onReplySent, onCancel
+    replyToHandle, source, mastodonStatusId, onReplySent, onCancel
 }: ReplyComposeProps) {
     const [text, setText] = useState('');
     const [attachments, setAttachments] = useState<ReplyAttachment[]>([]);
@@ -72,21 +74,30 @@ export function ReplyCompose({
         setError(null);
 
         try {
-            const attachmentData = attachments
-                .filter(a => a.path)
-                .map(a => ({
-                    path: a.path!,
-                    mime_type: a.mime_type || 'image/jpeg'
-                }));
+            if (source === 'mastodon' && mastodonStatusId) {
+                // Mastodon reply: use mastodon_reply command
+                await invoke('mastodon_reply', {
+                    statusId: mastodonStatusId,
+                    content: text.trim(),
+                });
+            } else {
+                // Bluesky reply: use reply_to_post command
+                const attachmentData = attachments
+                    .filter(a => a.path)
+                    .map(a => ({
+                        path: a.path!,
+                        mime_type: a.mime_type || 'image/jpeg'
+                    }));
 
-            await invoke<ReplyResult>('reply_to_post', {
-                parentUri,
-                parentCid,
-                rootUri,
-                rootCid,
-                text: text.trim(),
-                attachments: attachmentData,
-            });
+                await invoke<ReplyResult>('reply_to_post', {
+                    parentUri,
+                    parentCid,
+                    rootUri,
+                    rootCid,
+                    text: text.trim(),
+                    attachments: attachmentData,
+                });
+            }
 
             setText('');
             setAttachments([]);

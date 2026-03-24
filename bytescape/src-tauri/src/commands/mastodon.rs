@@ -768,6 +768,72 @@ pub async fn mastodon_unfollow_hashtag(
 }
 
 // ═══════════════════════════════════════════════════
+// Mastodon Interactions (Favourite, Reblog, Reply)
+// ═══════════════════════════════════════════════════
+
+/// Favourite (like) a Mastodon status by its numeric ID.
+#[tauri::command]
+pub async fn mastodon_favourite(
+    state: State<'_, AppState>,
+    status_id: String,
+) -> Result<serde_json::Value, String> {
+    let session = get_active_session(&state).await?;
+    let _status = mastodon::favourite_status(&state.http_client, &session, &status_id).await?;
+    Ok(serde_json::json!({ "status_id": status_id }))
+}
+
+/// Unfavourite (unlike) a Mastodon status by its numeric ID.
+#[tauri::command]
+pub async fn mastodon_unfavourite(
+    state: State<'_, AppState>,
+    status_id: String,
+) -> Result<serde_json::Value, String> {
+    let session = get_active_session(&state).await?;
+    let _status = mastodon::unfavourite_status(&state.http_client, &session, &status_id).await?;
+    Ok(serde_json::json!({ "status_id": status_id }))
+}
+
+/// Reblog (repost) a Mastodon status by its numeric ID.
+#[tauri::command]
+pub async fn mastodon_reblog(
+    state: State<'_, AppState>,
+    status_id: String,
+) -> Result<serde_json::Value, String> {
+    let session = get_active_session(&state).await?;
+    let _status = mastodon::reblog_status(&state.http_client, &session, &status_id).await?;
+    Ok(serde_json::json!({ "status_id": status_id }))
+}
+
+/// Unreblog (undo repost) a Mastodon status by its numeric ID.
+#[tauri::command]
+pub async fn mastodon_unreblog(
+    state: State<'_, AppState>,
+    status_id: String,
+) -> Result<serde_json::Value, String> {
+    let session = get_active_session(&state).await?;
+    let _status = mastodon::unreblog_status(&state.http_client, &session, &status_id).await?;
+    Ok(serde_json::json!({ "status_id": status_id }))
+}
+
+/// Reply to a Mastodon status.
+#[tauri::command]
+pub async fn mastodon_reply(
+    state: State<'_, AppState>,
+    status_id: String,
+    content: String,
+) -> Result<serde_json::Value, String> {
+    let session = get_active_session(&state).await?;
+    let status = mastodon::post_status(
+        &state.http_client,
+        &session,
+        &content,
+        "public",
+        Some(&status_id),
+    ).await?;
+    Ok(serde_json::json!({ "id": status.id, "url": status.url }))
+}
+
+// ═══════════════════════════════════════════════════
 // P6: Unified Profile Resolver
 // ═══════════════════════════════════════════════════
 

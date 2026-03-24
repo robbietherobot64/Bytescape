@@ -82,6 +82,11 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const [repostMenuOpen, setRepostMenuOpen] = useState(false);
 
     const isBluesky = entry.source === 'bluesky';
+    const isMastodon = entry.source === 'mastodon';
+    const isInteractive = isBluesky || isMastodon;
+
+    /** Get the Mastodon numeric status ID from the entry's cid field */
+    const getMastodonId = (): string => entry.cid || '';
 
     const mediaSources = entry.media_urls.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
     const thumbnailSources = entry.media_thumbnails.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
@@ -121,15 +126,19 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
 
     // ─── React (Like/Unlike via emoji) ───
     const handleReaction = async (emoji: string | null) => {
-        if (!isBluesky) return;
+        if (!isInteractive) return;
 
-        if (emoji === null && liked && likeUri) {
+        if (emoji === null && liked) {
             // Remove reaction (unlike)
             setLiked(false);
             setReactionEmoji(undefined);
             setLikeCount(c => Math.max(0, c - 1));
             try {
-                await invoke<boolean>('unlike_post', { likeUri });
+                if (isMastodon) {
+                    await invoke('mastodon_unfavourite', { statusId: getMastodonId() });
+                } else if (likeUri) {
+                    await invoke<boolean>('unlike_post', { likeUri });
+                }
                 setLikeUri(undefined);
             } catch (err) {
                 console.error('Unlike failed:', err);
@@ -143,8 +152,14 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             setReactionEmoji(emoji);
             setLikeCount(c => c + 1);
             try {
-                const result = await invoke<LikeResult>('like_post', { uri: resolveAtUri(entry), cid: getCid() });
-                setLikeUri(result.uri);
+                if (isMastodon) {
+                    await invoke('mastodon_favourite', { statusId: getMastodonId() });
+                    // Mastodon doesn't return a like URI — just mark as liked
+                    setLikeUri('mastodon-liked');
+                } else {
+                    const result = await invoke<LikeResult>('like_post', { uri: resolveAtUri(entry), cid: getCid() });
+                    setLikeUri(result.uri);
+                }
             } catch (err) {
                 console.error('Like failed:', err);
                 setLiked(false);
@@ -157,9 +172,9 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     // ─── Repost / Quote Repost ───
     const handleRepostClick = (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!isBluesky) return;
+        if (!isInteractive) return;
 
-        if (reposted && repostUri) {
+        if (reposted && (repostUri || isMastodon)) {
             // Undo repost directly
             handleDirectRepost(e);
         } else {
@@ -170,14 +185,18 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
 
     const handleDirectRepost = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!isBluesky) return;
+        if (!isInteractive) return;
         setRepostMenuOpen(false);
 
-        if (reposted && repostUri) {
+        if (reposted) {
             setReposted(false);
             setRepostCount(c => Math.max(0, c - 1));
             try {
-                await invoke<boolean>('unrepost_post', { repostUri });
+                if (isMastodon) {
+                    await invoke('mastodon_unreblog', { statusId: getMastodonId() });
+                } else if (repostUri) {
+                    await invoke<boolean>('unrepost_post', { repostUri });
+                }
                 setRepostUri(undefined);
             } catch (err) {
                 console.error('Unrepost failed:', err);
@@ -188,8 +207,13 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             setReposted(true);
             setRepostCount(c => c + 1);
             try {
-                const result = await invoke<{ uri: string; cid: string }>('repost_post', { uri: resolveAtUri(entry), cid: getCid() });
-                setRepostUri(result.uri);
+                if (isMastodon) {
+                    await invoke('mastodon_reblog', { statusId: getMastodonId() });
+                    setRepostUri('mastodon-reblogged');
+                } else {
+                    const result = await invoke<{ uri: string; cid: string }>('repost_post', { uri: resolveAtUri(entry), cid: getCid() });
+                    setRepostUri(result.uri);
+                }
             } catch (err) {
                 console.error('Repost failed:', err);
                 setReposted(false);
@@ -428,7 +452,8 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             {/* Engagement Action Bar — React · Comment · Repost · Share */}
             {!isQuote && (
                 <EngagementBar
-                    isBluesky={isBluesky}
+                    isInteractive={isInteractive}
+                    source={entry.source}
                     likeCount={likeCount}
                     reactionEmoji={reactionEmoji}
                     replyOpen={replyOpen}
@@ -448,13 +473,15 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             )}
 
             {/* Inline Reply Compose */}
-            {replyOpen && isBluesky && !isQuote && (
+            {replyOpen && isInteractive && !isQuote && (
                 <ReplyCompose
                     parentUri={resolveAtUri(entry)}
                     parentCid={getCid()}
                     rootUri={resolveAtUri(entry)}
                     rootCid={getCid()}
                     replyToHandle={entry.author_handle || 'unknown'}
+                    source={entry.source}
+                    mastodonStatusId={isMastodon ? getMastodonId() : undefined}
                     onReplySent={handleReplySent}
                     onCancel={() => setReplyOpen(false)}
                 />
