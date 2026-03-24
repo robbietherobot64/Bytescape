@@ -7,328 +7,239 @@ import { openInApp } from '../utils/openInApp';
 interface WebViewScreenProps {
     url: string;
     title?: string;
-    /** Whether this tab is currently the active/visible tab */
     isActive: boolean;
-    /** Tab ID from the nav store — used for reliable title updates */
     tabId: string;
 }
 
-let idCounter = 0;
-
 /**
- * Measure the area where the native webview should render.
- *
- * We measure `.main-content` (the stable layout ancestor) rather than
- * the container div itself, because the container is a flex child that
- * may not have resolved its height by the time we need coordinates.
- * `.main-content` is always visible and always has the correct size.
+ * Get the bounds where the native webview should render.
+ * Measures `.main-content` — the stable ancestor that always has correct size.
+ * Returns null if the element is detached or has zero dimensions.
  */
-function measureContentArea(containerEl: HTMLElement): DOMRect | null {
-    const mainContent = containerEl.closest('.main-content') as HTMLElement | null;
-    const target = mainContent || containerEl;
-    const rect = target.getBoundingClientRect();
+function getWebviewBounds(el: HTMLElement | null): { x: number; y: number; width: number; height: number } | null {
+    if (!el || !el.isConnected) return null;
+    const mc = el.closest('.main-content') as HTMLElement | null;
+    const rect = (mc || el).getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return null;
-    return rect;
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
 /**
  * In-app browser tab backed by a native OS webview.
  *
- * Creates a real WebKitGTK/WebView2/WKWebView within the main window,
- * positioned over the React content area. The native webview renders at
- * the OS level ABOVE all React content, so this component only needs to:
+ * The native webview is an OS-level surface that renders ABOVE all React DOM.
+ * This component's only jobs:
  *   1. Tell Rust to create the webview at the right coordinates
- *   2. Tell Rust to hide/show it when the tab activates/deactivates
- *   3. Show an error state if creation fails
+ *   2. Tell Rust to show/hide when this tab activates/deactivates
+ *   3. Tell Rust to destroy it when the tab closes (component unmounts)
  *
- * There is no "loading" overlay — the native webview handles its own
- * loading state (blank page → content) and renders above any React DOM.
+ * ## StrictMode safety
+ *
+ * Every async effect uses a local `cancelled` flag (not a ref) so that
+ * stale callbacks from StrictMode's mount→unmount→remount cycle are no-ops.
+ * The webview label is derived from `tabId` so it's stable across remounts.
  */
 export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewScreenProps) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const labelRef = useRef(`browser-${++idCounter}`);
+    // Stable label derived from tabId — survives StrictMode remount
+    const label = `wv-${tabId}`;
     const createdRef = useRef(false);
-    const destroyedRef = useRef(false);
     const isActiveRef = useRef(isActive);
     isActiveRef.current = isActive;
 
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
+    const [error, setError] = useState<string | null>(null);
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
-    /** Sync the native webview bounds to the content area. */
-    const syncBounds = useCallback(async () => {
-        if (!containerRef.current || destroyedRef.current || !createdRef.current) return;
-        const rect = measureContentArea(containerRef.current);
-        if (!rect) return;
-        try {
-            await invoke('browser_set_bounds', {
-                label: labelRef.current,
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height,
-            });
-        } catch (err) {
-            console.error('[WebView] set_bounds:', err);
-        }
-    }, []);
-
-    // ─── Register/unregister with browser store ───
+    // ─── Create on mount, destroy on unmount ───
+    // Uses a local `cancelled` flag so stale StrictMode callbacks are no-ops.
     useEffect(() => {
-        if (isActive) {
-            if (createdRef.current) setActiveLabel(labelRef.current);
-            setCurrentUrl(url);
-        } else {
-            const store = useBrowserStore.getState();
-            if (store.activeLabel === labelRef.current) {
-                setActiveLabel(null);
-                setCurrentUrl(null);
-            }
-        }
-    }, [isActive, url, setActiveLabel, setCurrentUrl]);
-
-    useEffect(() => {
-        const label = labelRef.current;
-        return () => {
-            const store = useBrowserStore.getState();
-            if (store.activeLabel === label) {
-                store.setActiveLabel(null);
-                store.setCurrentUrl(null);
-            }
-        };
-    }, []);
-
-    // ─── Lifecycle: mount resets destroyed flag, unmount sets it ───
-    // This MUST be a separate effect that runs before creation so that
-    // React StrictMode's unmount→remount cycle works correctly.
-    // Without this, StrictMode cleanup sets destroyedRef=true and the
-    // creation effect on remount sees it and bails — webview never created.
-    useEffect(() => {
-        destroyedRef.current = false;
+        let cancelled = false;
         createdRef.current = false;
-        const label = labelRef.current;
-        return () => {
-            destroyedRef.current = true;
-            if (createdRef.current) {
-                invoke('browser_close', { label }).catch(() => {});
-            }
-        };
-    }, []);
+        setError(null);
 
-    // ─── Create the native webview ───
-    useEffect(() => {
-        if (destroyedRef.current || !isActive) return;
-        if (createdRef.current) return;
-
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        let resyncId: ReturnType<typeof setTimeout> | null = null;
-
-        const tryCreate = async () => {
-            console.log('[WebView] === CREATION START ===');
-            console.log('[WebView] label:', labelRef.current, 'url:', url);
-
-            const el = containerRef.current;
-            if (!el) {
-                console.error('[WebView] ABORT: no container ref');
-                return;
-            }
-
-            // Wait a frame for the flex layout to resolve, then measure
+        async function create() {
+            // Wait one frame for flex layout to resolve
             await new Promise<void>(r => requestAnimationFrame(() => r()));
-            if (destroyedRef.current) return;
+            if (cancelled) return;
 
-            let rect = measureContentArea(el);
-
-            // Fallback: if content area hasn't laid out yet, wait briefly
-            if (!rect) {
-                await new Promise<void>(r => setTimeout(r, 300));
-                if (destroyedRef.current) return;
-                rect = measureContentArea(el);
+            // Always re-read containerRef at each async step (never use a stale reference)
+            let bounds = getWebviewBounds(containerRef.current);
+            if (!bounds) {
+                // Layout might not be ready yet — wait and retry once
+                await new Promise<void>(r => setTimeout(r, 250));
+                if (cancelled) return;
+                bounds = getWebviewBounds(containerRef.current);
             }
-
-            if (!rect) {
-                console.error('[WebView] ABORT: content area has zero dimensions');
-                setErrorMsg('Content area has no dimensions — try closing and re-opening this tab.');
+            if (!bounds) {
+                // Still nothing — bail silently. When the tab becomes active
+                // and the show/hide effect fires, it will try again.
+                console.warn('[WebView] no valid bounds, deferring creation');
                 return;
             }
 
-            const label = labelRef.current;
-            console.log('[WebView] >>> browser_create label=' + label,
-                'at', Math.round(rect.x), Math.round(rect.y),
-                Math.round(rect.width) + 'x' + Math.round(rect.height));
+            console.log('[WebView] creating', label, 'at',
+                Math.round(bounds.x), Math.round(bounds.y),
+                Math.round(bounds.width) + 'x' + Math.round(bounds.height));
 
             try {
-                await invoke('browser_create', {
-                    label,
-                    url,
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                });
-                console.log('[WebView] <<< browser_create OK');
+                await invoke('browser_create', { label, url, ...bounds });
             } catch (err) {
-                console.error('[WebView] <<< browser_create FAILED:', err);
-                if (destroyedRef.current) return;
-                setErrorMsg(String(err));
+                if (cancelled) return;
+                console.error('[WebView] create failed:', err);
+                setError(String(err));
                 return;
             }
 
-            if (destroyedRef.current) return;
-
+            if (cancelled) return;
             createdRef.current = true;
             setActiveLabel(label);
             setCurrentUrl(url);
-            console.log('[WebView] created successfully');
 
-            // Re-sync bounds after 300ms — catches layout shifts from React
-            // re-render or late flex resolution.
-            resyncId = setTimeout(() => {
-                if (destroyedRef.current || !containerRef.current) return;
-                const freshRect = measureContentArea(containerRef.current);
-                if (!freshRect) return;
-                invoke('browser_show_at', {
-                    label,
-                    x: freshRect.x,
-                    y: freshRect.y,
-                    width: freshRect.width,
-                    height: freshRect.height,
-                }).catch(() => {});
+            // Delayed re-sync in case layout shifted during creation
+            setTimeout(() => {
+                if (cancelled || !createdRef.current) return;
+                const fresh = getWebviewBounds(containerRef.current);
+                if (fresh) {
+                    invoke('browser_show_at', { label, ...fresh }).catch(() => {});
+                }
             }, 300);
 
-            // If user switched tabs during creation, hide immediately
+            // If user switched away during creation, hide
             if (!isActiveRef.current) {
-                console.log('[WebView] tab inactive during creation, hiding');
                 invoke('browser_hide', { label }).catch(() => {});
             }
-        };
+        }
 
-        tryCreate();
-
-        // Safety timeout
-        timeoutId = setTimeout(() => {
-            if (!createdRef.current && !destroyedRef.current) {
-                console.error('[WebView] TIMEOUT: browser_create did not complete in 15s');
-                setErrorMsg(
-                    'The browser engine is not responding. ' +
-                    'Check the terminal for [browser_create] log messages.'
-                );
-            }
-        }, 15000);
+        if (isActiveRef.current) {
+            create();
+        }
 
         return () => {
-            if (timeoutId) clearTimeout(timeoutId);
-            if (resyncId) clearTimeout(resyncId);
+            cancelled = true;
+            if (createdRef.current) {
+                invoke('browser_close', { label }).catch(() => {});
+                createdRef.current = false;
+            }
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // ─── Show/hide when tab activation changes ───
+    useEffect(() => {
+        if (!createdRef.current) {
+            // Webview not created yet. If we just became active, try creating now.
+            // This handles the case where creation was deferred (tab opened in background).
+            if (isActive) {
+                let cancelled = false;
+                (async () => {
+                    await new Promise<void>(r => requestAnimationFrame(() => r()));
+                    if (cancelled || createdRef.current) return;
+                    const bounds = getWebviewBounds(containerRef.current);
+                    if (!bounds) return;
+
+                    try {
+                        await invoke('browser_create', { label, url, ...bounds });
+                    } catch { return; }
+
+                    if (cancelled) return;
+                    createdRef.current = true;
+                    setActiveLabel(label);
+                    setCurrentUrl(url);
+                })();
+                return () => { cancelled = true; };
+            }
+            return;
+        }
+
+        if (isActive) {
+            // Show: use double-rAF so the tab pane has reflowed from display:none
+            let cancelled = false;
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    if (cancelled) return;
+                    const bounds = getWebviewBounds(containerRef.current);
+                    if (!bounds) return;
+                    invoke('browser_show_at', { label, ...bounds }).catch(() => {});
+                });
+            });
+            return () => { cancelled = true; };
+        } else {
+            // Hide immediately
+            invoke('browser_hide', { label }).catch(() => {});
+        }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
 
-    // ─── Show/hide native webview when tab activation changes ───
-    useEffect(() => {
-        const label = labelRef.current;
-        if (isActive && createdRef.current) {
-            console.log('[WebView] tab ACTIVE — will re-show, label:', label);
-            const el = containerRef.current;
-            if (el) {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        if (destroyedRef.current || !isActiveRef.current) return;
-                        const rect = measureContentArea(el);
-                        if (!rect) {
-                            console.warn('[WebView] re-show: zero dimensions, skipping');
-                            return;
-                        }
-                        invoke('browser_show_at', {
-                            label,
-                            x: rect.x,
-                            y: rect.y,
-                            width: rect.width,
-                            height: rect.height,
-                        }).catch((err) => console.error('[WebView] browser_show_at failed:', err));
-                    });
-                });
-            }
-        } else if (!isActive && createdRef.current) {
-            console.log('[WebView] tab INACTIVE — hiding, label:', label);
-            invoke('browser_hide', { label }).catch((err) => console.error('[WebView] hide failed:', err));
-        }
-    }, [isActive]);
-
-    // ─── Track container size changes ───
+    // ─── Track resize ───
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
-        const mainContent = el.closest('.main-content') as HTMLElement | null;
-        const target = mainContent || el;
+        const target = (el.closest('.main-content') as HTMLElement) || el;
         const observer = new ResizeObserver(() => {
-            if (isActiveRef.current && createdRef.current) syncBounds();
+            if (!isActiveRef.current || !createdRef.current) return;
+            const bounds = getWebviewBounds(containerRef.current);
+            if (bounds) {
+                invoke('browser_set_bounds', { label, ...bounds }).catch(() => {});
+            }
         });
         observer.observe(target);
         return () => observer.disconnect();
-    }, [syncBounds]);
-
-    // ─── Listen for URL changes from in-page navigation ───
-    useEffect(() => {
-        const label = labelRef.current;
-        let unlisten: (() => void) | null = null;
-        listen<string>(`browser-url-${label}`, (event) => {
-            const newUrl = event.payload;
-            if (!newUrl) return;
-            const store = useBrowserStore.getState();
-            if (store.activeLabel === label) {
-                store.setCurrentUrl(newUrl);
-                store.setIsLoading(false);
-            }
-        }).then(fn => { unlisten = fn; });
-        return () => { unlisten?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ─── Listen for title changes ───
+    // ─── Browser store sync ───
     useEffect(() => {
-        const label = labelRef.current;
-        let unlisten: (() => void) | null = null;
-        listen<string>(`browser-title-${label}`, (event) => {
-            const newTitle = event.payload;
-            if (!newTitle) return;
-            console.log('[WebView] title update:', newTitle, 'tabId:', tabId);
+        if (isActive && createdRef.current) {
+            setActiveLabel(label);
+            setCurrentUrl(url);
+        } else if (!isActive) {
+            const s = useBrowserStore.getState();
+            if (s.activeLabel === label) { setActiveLabel(null); setCurrentUrl(null); }
+        }
+    }, [isActive, url, label, setActiveLabel, setCurrentUrl]);
+
+    // ─── Event listeners ───
+    useEffect(() => {
+        let dead = false;
+        const unsubs: (() => void)[] = [];
+
+        listen<string>(`browser-url-${label}`, (e) => {
+            if (dead || !e.payload) return;
+            const s = useBrowserStore.getState();
+            if (s.activeLabel === label) { s.setCurrentUrl(e.payload); s.setIsLoading(false); }
+        }).then(fn => { if (dead) fn(); else unsubs.push(fn); });
+
+        listen<string>(`browser-title-${label}`, (e) => {
+            if (dead || !e.payload) return;
             const nav = useNavStore.getState();
-            if (nav.updateTabLabel) nav.updateTabLabel(tabId, newTitle);
-        }).then(fn => { unlisten = fn; });
-        return () => { unlisten?.(); };
-    }, [tabId]);
+            nav.updateTabLabel?.(tabId, e.payload);
+        }).then(fn => { if (dead) fn(); else unsubs.push(fn); });
 
-    // ─── Listen for "open in new tab" ───
-    useEffect(() => {
-        let unlisten: (() => void) | null = null;
-        listen<string>('browser-new-tab', (event) => {
-            openInApp(event.payload);
-        }).then(fn => { unlisten = fn; });
-        return () => { unlisten?.(); };
-    }, []);
+        listen<string>('browser-new-tab', (e) => {
+            if (!dead && e.payload) openInApp(e.payload);
+        }).then(fn => { if (dead) fn(); else unsubs.push(fn); });
+
+        return () => { dead = true; unsubs.forEach(fn => fn()); };
+    }, [label, tabId]);
 
     // ─── Retry handler ───
     const handleRetry = useCallback(() => {
+        setError(null);
         if (createdRef.current) {
-            invoke('browser_close', { label: labelRef.current }).catch(() => {});
+            invoke('browser_close', { label }).catch(() => {});
+            createdRef.current = false;
         }
-        createdRef.current = false;
-        destroyedRef.current = false;
-        labelRef.current = `browser-${++idCounter}`;
-        setErrorMsg(null);
-    }, []);
+        const bounds = getWebviewBounds(containerRef.current);
+        if (!bounds) return;
+        invoke('browser_create', { label, url, ...bounds })
+            .then(() => { createdRef.current = true; })
+            .catch(err => setError(String(err)));
+    }, [label, url]);
 
     // ─── Render ───
-    // No loading overlay — the native webview renders at the OS level above
-    // all React DOM, so a React spinner would be invisible anyway once the
-    // webview appears. We only render an error state if creation fails.
     return (
-        <div
-            ref={containerRef}
-            className="webview-container"
-            style={{ position: 'relative' } as React.CSSProperties}
-        >
-            {errorMsg && (
+        <div ref={containerRef} className="webview-container" style={{ position: 'relative' } as React.CSSProperties}>
+            {error && (
                 <div style={{
                     position: 'absolute', inset: 0,
                     display: 'flex', flexDirection: 'column',
@@ -343,7 +254,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
                         fontSize: '12px', color: 'var(--text-muted, #666)',
                         textAlign: 'center', maxWidth: 450, wordBreak: 'break-word',
                     } as React.CSSProperties}>
-                        {errorMsg}
+                        {error}
                     </span>
                     <button
                         onClick={handleRetry}
