@@ -76,9 +76,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const [threadOpen, setThreadOpen] = useState(false);
     const [threadLoading, setThreadLoading] = useState(false);
     const [quoteModalOpen, setQuoteModalOpen] = useState(false);
-    const [reactionEmoji, setReactionEmoji] = useState<string | undefined>(
-        entry.viewer_like ? '❤️' : undefined
-    );
     const [repostMenuOpen, setRepostMenuOpen] = useState(false);
 
     const isBluesky = entry.source === 'bluesky';
@@ -124,14 +121,14 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
         if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
     };
 
-    // ─── React (Like/Unlike via emoji) ───
-    const handleReaction = async (emoji: string | null) => {
+    // ─── Like / Unlike ───
+    const handleLike = async (e: React.MouseEvent) => {
+        e.stopPropagation();
         if (!isInteractive) return;
 
-        if (emoji === null && liked) {
-            // Remove reaction (unlike)
+        if (liked) {
+            // Unlike
             setLiked(false);
-            setReactionEmoji(undefined);
             setLikeCount(c => Math.max(0, c - 1));
             try {
                 if (isMastodon) {
@@ -143,18 +140,15 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             } catch (err) {
                 console.error('Unlike failed:', err);
                 setLiked(true);
-                setReactionEmoji('❤️');
                 setLikeCount(c => c + 1);
             }
-        } else if (emoji) {
-            // Add reaction (like)
+        } else {
+            // Like
             setLiked(true);
-            setReactionEmoji(emoji);
             setLikeCount(c => c + 1);
             try {
                 if (isMastodon) {
                     await invoke('mastodon_favourite', { statusId: getMastodonId() });
-                    // Mastodon doesn't return a like URI — just mark as liked
                     setLikeUri('mastodon-liked');
                 } else {
                     const result = await invoke<LikeResult>('like_post', { uri: resolveAtUri(entry), cid: getCid() });
@@ -163,7 +157,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             } catch (err) {
                 console.error('Like failed:', err);
                 setLiked(false);
-                setReactionEmoji(undefined);
                 setLikeCount(c => Math.max(0, c - 1));
             }
         }
@@ -454,15 +447,15 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                 <EngagementBar
                     isInteractive={isInteractive}
                     source={entry.source}
+                    liked={liked}
                     likeCount={likeCount}
-                    reactionEmoji={reactionEmoji}
                     replyOpen={replyOpen}
                     replyCount={entry.reply_count}
                     reposted={reposted}
                     repostCount={repostCount}
                     repostMenuOpen={repostMenuOpen}
                     threadOpen={threadOpen}
-                    onReaction={handleReaction}
+                    onLike={handleLike}
                     onReplyToggle={handleReplyToggle}
                     onRepostClick={handleRepostClick}
                     onDirectRepost={handleDirectRepost}

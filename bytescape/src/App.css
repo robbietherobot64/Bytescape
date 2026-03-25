@@ -1355,7 +1355,7 @@ a:hover {
 
 .btn-like:hover, .btn-like.liked { color: var(--accent-red); }
 .btn-like.active { color: var(--accent-red); }
-.btn-like.active svg { filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.3)); }
+.btn-like.active svg { fill: var(--accent-red); filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.3)); }
 
 .btn-repost:hover { color: var(--accent-green); }
 .btn-repost.active { color: var(--accent-green); }

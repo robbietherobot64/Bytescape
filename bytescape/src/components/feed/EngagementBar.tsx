@@ -1,20 +1,19 @@
 import React from 'react';
-import { ReplyIcon, RepostIcon, ShareIcon } from './icons';
-import { ReactionPicker } from '../ReactionPicker';
+import { HeartIcon, ReplyIcon, RepostIcon, ShareIcon } from './icons';
 import { formatCount } from './helpers';
 
 interface EngagementBarProps {
     isInteractive: boolean;
     source: string;
+    liked: boolean;
     likeCount: number;
-    reactionEmoji: string | undefined;
     replyOpen: boolean;
     replyCount?: number;
     reposted: boolean;
     repostCount: number;
     repostMenuOpen: boolean;
     threadOpen: boolean;
-    onReaction: (emoji: string | null) => void;
+    onLike: (e: React.MouseEvent) => void;
     onReplyToggle: (e: React.MouseEvent) => void;
     onRepostClick: (e: React.MouseEvent) => void;
     onDirectRepost: (e: React.MouseEvent) => void;
@@ -26,15 +25,15 @@ interface EngagementBarProps {
 export function EngagementBar({
     isInteractive,
     source,
+    liked,
     likeCount,
-    reactionEmoji,
     replyOpen,
     replyCount,
     reposted,
     repostCount,
     repostMenuOpen,
     threadOpen,
-    onReaction,
+    onLike,
     onReplyToggle,
     onRepostClick,
     onDirectRepost,
@@ -44,12 +43,15 @@ export function EngagementBar({
 }: EngagementBarProps) {
     return (
         <div className="engagement-bar">
-            <ReactionPicker
-                currentReaction={reactionEmoji}
-                onReact={onReaction}
+            <button
+                className={`engagement-btn btn-like ${liked ? 'active' : ''}`}
+                title={liked ? 'Unlike' : 'Like'}
+                onClick={onLike}
                 disabled={!isInteractive}
-            />
-            <span className="count">{formatCount(likeCount)}</span>
+            >
+                <HeartIcon />
+                <span className="count">{formatCount(likeCount)}</span>
+            </button>
 
             <button
                 className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
