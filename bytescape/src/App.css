@@ -1069,15 +1069,15 @@ a:hover {
     align-items: center;
     gap: 8px;
     padding: 8px 10px 4px;
-    border-bottom: 1px dotted #ccc;
-    background: linear-gradient(180deg, #f5f0e6 0%, #ebe5d5 100%);
+    border-bottom: 1px dotted var(--border-color, #ccc);
+    background: var(--bg-card-hover, var(--bg-card));
 }
 
 .feed-entry-header .avatar {
     width: 32px;
     height: 32px;
     min-width: 32px;
-    border: 2px solid #888;
+    border: 2px solid var(--border-color, #888);
     box-shadow: var(--bevel-sunken);
     background: var(--bg-toolbar);
     color: var(--text-primary);
@@ -1322,8 +1322,8 @@ a:hover {
     display: flex;
     align-items: center;
     padding: 3px 6px;
-    border-top: 1px solid #ccc;
-    background: linear-gradient(180deg, #ece8dc 0%, #e0dace 100%);
+    border-top: 1px solid var(--border-color, #ccc);
+    background: var(--bg-card-hover, var(--bg-card));
 }
 
 .engagement-btn {
@@ -1417,7 +1417,7 @@ a:hover {
 /* ─── Reply Compose ─── */
 .reply-compose {
     padding: 8px 12px;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid var(--border-color, #ccc);
     background: rgba(0, 0, 0, 0.02);
 }
 
