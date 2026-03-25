@@ -145,7 +145,7 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 
 - [x] **A1.1 AP Actor & Inbox/Outbox**: Create Bytescape AP actor at `bytescape.social/@{username}`. Implement HTTP signature verification, inbox POST handler, outbox GET endpoint. Add `ActivityPub` variant to `Source` enum. *(8 files, 1,636 lines, 22 tests. Commits: `7c58c40`, `a4e4062`, `28a6b8c`)*
 - [x] **A1.2 Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via custom AP C2S/S2S client. Follow/Accept/Reject activities. *(Sprint v7 — `05d6d4b`)* ⚠️ *Sprint v8 Post-Mortem: Mastodon connector uses fake `mastodon:instance:id` identifiers in `did` fields (13 locations in `connectors/mastodon.rs`). Identity linking is implicit only. See A1.2b for remediation.*
-- [ ] **A1.2b Identity Architecture Remediation** 🔥: Fix 3 critical identity inconsistencies introduced in A1.2. See `.github/agents/prompts/identity-architecture-audit.md` for full audit. Key fixes: (1) Replace all `mastodon:instance:id` fake DIDs with proper `acct:` URIs for external identifiers and `master_did` for locally-owned content. (2) Fix AP actor DID derivation in `commands/ap.rs` to use canonical `did_key_from_ed25519_bytes()` (currently produces different DID from same keypair). (3) Add `LinkedAccount` data structure to keychain for formal identity linking. (4) Wire Settings screen disconnect/connect for all protocols. (5) Add Mastodon handles to P2P `also_known_as` exchange. *(Sprint v8 — backend-sprint-v8.md + frontend-sprint-v8.md)*
+- [ ] **A1.2b Identity Architecture Remediation** 🔥: *(Partially complete — Sprint v8)* Sprint v8 added `LinkedAccount` data structure, `master_did` root identity, formal identity linking in keychain, Settings screen identity UI with disconnect buttons + Mastodon connect. Sprint v10 added platform selector and Bytescape identity branding. **Remaining:** (1) Remove `generate_platform_plc()` — replace fabricated `mastodon:instance:id` DIDs with `acct:` URIs. (2) Fix AP actor DID derivation in `commands/ap.rs` to use canonical `did_key_from_ed25519_bytes()`. (3) Simplify `get_owner_did()` to 3-level hierarchy (`did:web` → `did:plc` → `did:key`). **→ Subsumed by Phase 4.5 task A-S1 (identity migration).**
 - [ ] **A1.3 Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate.
 - [ ] **A1.4 Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
 - [ ] **A1.5 Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
@@ -390,37 +390,163 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 ---
 
 ### Phase 4 Convergence — Identity & Hosting
-*These items require all three tracks to be substantially complete. They sit at the end of Phase 4.*
+*These items require all three tracks to be substantially complete. They sit at the end of Phase 4. Server hosting is now fully scoped in Phase 4.5.*
 
 #### Identity Consolidation & Recovery
 *Identity linking is the critical foundation. Must be solid before building recovery flows on top.*
 
 - [x] **Umbrella DID Model** *(Sprint v8)*: `master_did` (did:key:z6Mk... from Iroh Ed25519 keypair) is the universal root identity. Platform accounts (Bluesky `did:plc:`, Mastodon `acct:`, AP actor URLs) are formally linked children stored as `Vec<LinkedAccount>` in the encrypted keychain. Content ownership uses `master_did` for local content, platform-native identifiers for external content. See `identity-architecture-audit.md`.
-- [ ] **2FA / Email Recovery**: Replace the paste-a-JSON-bundle flow with a user-friendly recovery method — email-based one-time code, TOTP authenticator app, or SMS fallback. The escrow bundle is stored server-side keyed by email; user proves ownership to retrieve it.
-- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code).
+- [ ] **2FA / Email Recovery**: Replace the paste-a-JSON-bundle flow with a user-friendly recovery method — email-based one-time code, TOTP authenticator app, or SMS fallback. The escrow bundle is stored server-side keyed by email; user proves ownership to retrieve it. *(Requires Phase 4.5 server infrastructure.)*
+- [ ] **Multi-Device Identity Sync**: Same identity across phone + desktop via Iroh doc replication of the identity keychain. Requires secure key exchange protocol (QR pairing or one-time code). *(Requires Phase 4.5 Iroh relay.)*
 
-> **🖥️ Hosting Milestone — `bytescape.social`**
+> **🖥️ Hosting → Phase 4.5 (Server Foundation)**
 >
-> This is the first point in the project that requires server infrastructure. The 2FA/email recovery flow needs a lightweight relay service to hold encrypted escrow bundles and send verification emails. The AP connector (Track A) also needs a publicly-reachable inbox endpoint.
->
-> **Options:**
-> - **Under-desk NAS**: Sufficient for AP inbox + escrow relay. Run behind Cloudflare Tunnel or Tailscale Funnel pointed at `bytescape.social`.
-> - **Cloud VPS**: Small Hetzner/Fly.io instance for higher availability. Caddy reverse proxy + the relay service.
->
-> Either way, `bytescape.social` goes live here — initially serving the escrow relay API and the AP actor endpoint. Once live, content types unsupported on external networks (polls, long-form articles, events) can be syndicated as simple HTTP links back to the user's Bytescape profile.
+> Server hosting has been expanded from the original "lightweight relay" concept into a full unified server deployment at `bytescape.social`. See **Phase 4.5** below for the complete server foundation scope: AT Protocol PDS, ActivityPub instance, Iroh relay, Sync Bridge, identity resolver, and Docker Compose packaging. The full architecture is documented in `.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`.
 
 ---
 
-## Phase 5: The Sovereign Cloud ☁️
-**Goal:** Scale the `bytescape.social` infrastructure from the Phase 4 relay into a full P2P mesh. Research existing Iroh public relays first.
+## Phase 4.5: Server Foundation 🖥️🌐 (NEW)
+**Goal:** Deploy `bytescape.social` as a unified server hosting AT Protocol PDS + ActivityPub instance + Iroh relay. Single Docker Compose stack. Serves identity resolution endpoints. Enough for the developer to migrate their own accounts as proof-of-concept.
 
-- [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward (extends the escrow relay from Phase 4).
+**Duration:** 4-6 weeks with 2 agents parallel. **Invite-only launch.**
+
+> **Architecture:** One server, dual protocol stacks. AT Proto PDS (Tranquil PDS — Rust, Postgres) and a custom `axum` AP server (extending existing 8-file, 1,636-line AP module) share identity resolution, storage, and the Sync Bridge to Iroh. Self-hosted initially on developer hardware behind Cloudflare Tunnel or Tailscale Funnel, with the same Docker Compose stack scaling to a commercial VPS when needed. Full architecture doc: `.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`.
+
+> **Key Decisions:**
+> - **PDS:** Tranquil PDS (Rust, Postgres, native `did:web` support, single binary). Official PDS (Node.js, SQLite) is the documented fallback.
+> - **AP Instance:** Custom `axum` server extending the existing AP module. GoToSocial is the documented fallback if custom route proves too slow.
+> - **Initial deployment:** Self-hosted on developer hardware. Docker Compose only — no managed cloud dependencies.
+> - **Launch policy:** Invite-only (`PDS_INVITE_REQUIRED=true`).
+
+### Identity Architecture
+
+Every Bytescape user gets a `did:web:bytescape.social:{username}` as their universal umbrella identity. The DID Document links all protocol-specific identities:
+
+| Protocol | Native Identifier | Resolution |
+|----------|-------------------|------------|
+| **Umbrella** | `did:web:bytescape.social:{username}` | `/.well-known/did.json` — ties everything together |
+| **AT Protocol** | `did:plc:abc...` | Real PLC registered at `plc.directory`, service endpoint → `pds.bytescape.social` |
+| **ActivityPub** | `https://bytescape.social/@username` | Standard AP actor. WebFinger: `acct:username@bytescape.social`. No DID fabrication. |
+| **P2P / Iroh** | `did:key:z6Mk...` | Self-certifying from Ed25519 keypair. Used for P2P sync, device pairing, vault signing. |
+
+**DID Hierarchy (replaces current 5-level `get_owner_did()` fallback):**
+```
+1. did:web:bytescape.social:{username}     ← Set when username is chosen. Permanent.
+2. did:plc:...                              ← ONLY real Bluesky DID (from PLC directory)
+3. did:key:z6Mk...                          ← P2P/offline only (from Iroh Ed25519 keypair)
+```
+
+**Custom Domain Handles:** Users can bring their own domain as both an AT Protocol handle (`@alice.com` via `/.well-known/atproto-did`) and a fediverse handle (`@alice@alice.com` via WebFinger delegation). This makes personal websites the user's fediverse identity — a core differentiator.
+
+### Infrastructure Tasks (Track I — new)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **I-1** | Docker Compose scaffold | `caddy` + `postgres` + empty slots for PDS/AP/relay services. Caddy config with wildcard TLS for `*.bytescape.social`. | 2-3 days |
+| **I-2** | Deploy Tranquil PDS | Configure and deploy Tranquil PDS pointed at Postgres. Verify XRPC health endpoint, account creation via `goat` CLI, WebSocket firehose. | 3-5 days |
+| **I-3** | Deploy custom AP server | Build `axum` server binary extending existing AP module. Multi-user actor registry, persistent follower/following storage (Postgres), inbox POST handler, outbox GET, WebFinger resolution. Verify basic federation with external Mastodon instance. | 2-3 weeks |
+| **I-4** | Identity resolver | Serve `/.well-known/did.json` generating `did:web` documents dynamically from user records. Serve `/.well-known/webfinger` routing to PDS (AT handle resolution) or AP server (acct resolution). | 3-5 days |
+| **I-5** | Iroh relay daemon | Rust binary using `iroh` crate. Accepts encrypted blob uploads from edge clients, stores in content-addressed filesystem, serves on request. No decryption — blind relay only. | 1-2 weeks |
+| **I-6** | Sync Bridge MVP | Internal daemon: (a) watches PDS firehose → packages as Iroh blobs for edge sync; (b) accepts Iroh blobs from edge clients → creates PDS repo records; (c) translates AP inbox messages → Iroh blobs for offline edge users. | 2-3 weeks |
+| **I-7** | DNS + domain setup | Configure `bytescape.social` A records, wildcard subdomain, MX (for future email), Caddy auto-TLS. | 1 day |
+
+### Backend Tasks (Track A)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **A-S1** | Identity migration (keychain) | Remove `generate_platform_plc()`. Migrate `LinkedAccount.identifier` to platform-native IDs (`acct:user@instance` for Mastodon, actor URL for AP). Simplify `get_owner_did()` to 3-level hierarchy. Startup migration function + tests. *(Subsumes Open Issue: "Identity Architecture — 3 Critical Inconsistencies")* | 3-5 days |
+| **A-S2** | Tauri ↔ Relay sync commands | New commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status`. Edge client pushes/pulls encrypted blobs to/from relay via existing `bytescape/1.0` ALPN. | 1-2 weeks |
+| **A-S3** | PDS account provisioning | Tauri command `provision_pds_account` — creates account on Bytescape PDS via XRPC, stores credentials in keychain, updates `did:plc` if needed. | 3-5 days |
+| **A-S4** | AP actor provisioning | Tauri command `provision_ap_actor` — creates account on custom AP server via API, links to `did:web`, stores credentials. | 3-5 days |
+
+### Frontend Tasks (Track B)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **B-S1** | DataProvider interface | Define `DataProvider` TypeScript interface (`getFeed()`, `getProfile()`, `sendPost()`, etc.). Implement `TauriDataProvider` wrapping existing `invoke()` calls. Backwards-compatible refactor — no behavior changes. | 1 week |
+| **B-S2** | Server account setup UI | Settings screen section: "Bytescape Social" — provision PDS + AP accounts, show migration status, link/unlink, custom domain setup wizard. | 3-5 days |
+| **B-S3** | Relay status indicator | UI indicator showing relay connection status (connected/syncing/offline). Unread count from relay for items received while app was closed. | 2-3 days |
+
+### Client Architecture: Adapter Pattern
+
+The React frontend compiles into three targets from the same component tree via the `DataProvider` interface:
+
+| Provider | Target | Data Source | Auth |
+|----------|--------|-------------|------|
+| `TauriDataProvider` | Desktop + Mobile (Tauri) | Local Rust backend via `invoke()` | Keychain (local) |
+| `RestDataProvider` | Web app (bytescape.social) | Server REST API via `fetch()` | JWT/OAuth (server) |
+| `WasmProvider` | Visitor portal (read-only) | Iroh WASM node fetching public blobs | None (public only) |
+
+```bash
+pnpm build:tauri      → TauriDataProvider injected, outputs Tauri bundle
+pnpm build:web        → RestDataProvider injected, outputs static SPA
+pnpm build:portal     → WasmProvider injected, outputs visitor portal
+```
+
+### Account Migration Flows
+
+**Bluesky → Bytescape PDS:**
+1. Deploy PDS at `pds.bytescape.social` → registers with Bluesky Relay (`bsky.network`)
+2. User initiates migration via `com.atproto.server.requestAccountMove` on source PDS
+3. Bytescape PDS imports full repo via `com.atproto.server.importRepo`
+4. User signs PLC rotation operation → `plc.directory` updates service endpoint
+5. Bluesky network routes all traffic through `pds.bytescape.social`
+
+**Mastodon → Bytescape AP:**
+1. User creates account on `bytescape.social` AP instance
+2. AP actor document gets `alsoKnownAs: ["acct:user@old-instance"]`
+3. User triggers `Move` from old instance → followers auto-transferred
+4. (Optional) Export old archive → import into vault via existing pipeline
+
+---
+
+## Phase 5: Scale, Mobile & Web Portal 📱🌐 (MODIFIED)
+**Goal:** Mobile native clients, account migration wizards, web portal, self-host packaging. Station Protocol for P2P mesh relay.
+
+**Duration:** 8-12 weeks
+
+### Mobile (Track M — new)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **M-1** | Tauri Mobile lifecycle hooks | iOS `applicationWillResignActive` / Android `onTrimMemory` — trigger pre-suspend sync flush to relay within 25-second window. | 1 week |
+| **M-2** | Push notification integration | APNs (iOS) + FCM (Android) registration with relay. Silent push to wake app for background sync. | 2 weeks |
+| **M-3** | Responsive touch UI | CSS breakpoints, swipe gestures, pull-to-refresh, long-press context menus. Same React components. | 2-3 weeks |
+| **M-4** | Mobile-optimized sync | Incremental sync with bandwidth awareness. WiFi: full sync. Cellular: headers-only, fetch bodies on demand. | 1 week |
+
+### Account Migration (Track A)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **A-M1** | Bluesky migration wizard | UI flow: connect existing account → export repo from source PDS → import to Bytescape PDS → sign PLC rotation → verify on network. | 2-3 weeks |
+| **A-M2** | Mastodon migration wizard | UI flow: create alias on Bytescape AP instance → trigger Move from source → verify follower transfer. | 1-2 weeks |
+| **A-M3** | Import existing archive | After migration, run existing archive import pipeline to pull full history into local vault. | 3-5 days |
+
+### Web Portal (Track B)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **B-W1** | `RestDataProvider` | HTTP `fetch()` implementation of DataProvider interface, talking to server REST API. | 1-2 weeks |
+| **B-W2** | Server REST API | `axum` HTTP API serving same data as Tauri commands, for web clients. Auth via JWT. | 2-3 weeks |
+| **B-W3** | Web SPA build | `pnpm build:web` — same React app with `RestDataProvider`, deployed as static assets behind Caddy. | 3-5 days |
+| **B-W4** | WASM visitor portal | Read-only public profile viewer using Iroh WASM client to fetch public blobs. Blurred preview for non-authenticated visitors. | 2-3 weeks |
+
+### Self-Host Packaging (Track I)
+
+| ID | Task | Description | Effort |
+|----|------|-------------|--------|
+| **I-SH1** | One-command installer | `curl \| bash` installer — sets up Docker Compose, configures DNS prompts, generates secrets, starts stack. | 1 week |
+| **I-SH2** | Admin CLI | `bytescape-admin` CLI for account management, invite codes, relay status, backup/restore. | 1-2 weeks |
+| **I-SH3** | Backup/restore | Automated backup of Postgres, Iroh blob store, and config to local path or S3. Restore from backup. | 1 week |
+
+### P2P Mesh & Station Protocol (retained from original Phase 5)
+
+- [ ] **Station Protocol**: "Blind Relay" logic for encrypted store-and-forward. Extends the Iroh relay from Phase 4.5.
 - [ ] **Collab Relay Extension**: Extend Station Protocol with Yjs document awareness relay and update buffering (enables C6.5 — always-on collaborative editing without simultaneous peer presence).
 - [ ] **Auto-Docking**: Geohash-based discovery of nearest Community Station on account creation.
 - [ ] **Erasure Coding**: Shard data across home station and adjacent regional nodes for redundancy.
-- [ ] **Gossip Presence**: Real-time online status via `iroh-gossip`.
+- [ ] **Gossip Presence**: Real-time online status via `iroh-gossip` (implemented via Iroh relay).
 - [ ] **Stealth Mode**: Toggle to sever all Station connections for pure device-to-device Iroh operation.
-- [ ] **Paired Streams/Forte Server**: Optionally pair Bytescape with a self-hosted [Streams](https://codeberg.org/streams/streams) instance as an always-on ActivityPub relay. Bridges P2P identity with fediverse presence.
 
 ---
 
@@ -556,14 +682,14 @@ EmailAttachment {
 ---
 
 ## 🐛 Open Issues
-- [ ] **Identity Architecture — 3 Critical Inconsistencies (Sprint v8)** 🔥: (1) Mastodon connector uses fake `mastodon:instance:id` format in `did` fields — 13 locations in `connectors/mastodon.rs` + `commands/mastodon.rs` line 267. Not real DIDs. (2) AP actor DID derivation (`commands/ap.rs` line 23) uses raw bs58 encoding without multicodec prefix — produces different DID from same keypair vs keychain's `did_key_from_ed25519_bytes()`. (3) No formal identity linking — `AuthData` has no `linked_accounts` field, linkage is implicit via shared keychain file. Full audit: `.github/agents/prompts/identity-architecture-audit.md`. Fix planned in `backend-sprint-v8.md` + `frontend-sprint-v8.md`.
-- [ ] **Settings Screen Identity Section Broken**: Disconnect button is `alert()` placeholder. Connect only shows Bluesky app passwords (no OAuth, no Mastodon). Source label doesn't handle Mastodon. Linked Accounts only renders for Bluesky. Raw fake DIDs shown to user. Backend commands exist (`mastodon_disconnect`, `logout_bluesky`) but frontend doesn't wire them. Fix in `frontend-sprint-v8.md` P4.
-- [ ] **`USE_SYSTEM_BROWSER` Flipped Back to `false`** ⚠️: PM fixed at `a1e5be7`, frontend agent reset to `false` at `80bdadc`. Re-introduces "loading page forever" bug. Must be set back to `true`. Fix in `frontend-sprint-v8.md` P1.
+- [x] ~~**Identity Architecture — 3 Critical Inconsistencies (Sprint v8)**~~ 🔥: Sprint v8 added `LinkedAccount` data structure, `master_did` root identity, and formal identity linking in keychain. Remaining fabricated `did:plc` cleanup (Mastodon `acct:` migration, removal of `generate_platform_plc()`) is **subsumed by Phase 4.5 task A-S1** (identity migration). Full audit: `.github/agents/prompts/identity-architecture-audit.md`. Architecture remediation: `.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md` §2.
+- [ ] **Settings Screen Identity Section — Partially Fixed**: *(Sprint v8)* Disconnect buttons wired, Mastodon connect added, all `LinkedAccount`s rendered from keychain, DIDs truncated. *(Sprint v10)* Platform selector dropdown, Bytescape identity branding, Mastodon handle display fix. **Remaining:** "Bytescape Social" section for PDS/AP account provisioning and migration status — scoped in Phase 4.5 B-S2.
+- [x] ~~**`USE_SYSTEM_BROWSER` Flipped Back to `false`**~~ ⚠️: Resolved in Sprint v9. WebView lifecycle properly managed via `browser_show`/`browser_hide`/`browser_show_at` Tauri commands. `USE_SYSTEM_BROWSER` constant removed — WebView tabs now render correctly via GtkOverlay reparenting.
 - [ ] **Type Duplication**: `BlueskyPost` vs `BytescapeItem` in frontend—normalize into shared `FeedEntry` adapter (currently handled per-tab in `FeedScreen`).
 - [x] ~~**Feed Refresh Performance** *(UF.16)*~~: Multi-layer caching (FeedCache + SHARED_CLIENT + header_cache) *(Commit: `822223d`)*. Root cause of 29s load identified and fixed: (1) `OAuthManager.session` was `Mutex` held across entire network call — globally serialized ALL OAuth XRPC requests. Changed to `RwLock<Option<Arc<>>>`, clone Arc + drop lock before network. (2) `get_unified_feed_oauth` fetched N custom feeds in serial loop (10 × 2.5s = 25s) — replaced with `futures::future::join_all` for parallel fetches. *(Commit: `fd3ebd1`)*
 - [ ] **Facebook Import Quality** *(UF.13)*: Backend filtering verified against workspace archive (`facebook-rabiezaater-2025-01-12-TwiR2QHB`). HTML format correctly detected, CSS selectors match perfectly, path matching covers all post files, noise filter handles lifecycle events/friend requests/empty posts. Parser quality is GOOD. Only operational issue: archive on disk is pre-extracted (not ZIP) — user must re-compress before import. Instagram connector (507 lines) still needs testing against workspace archive.
 - [x] ~~**Content-Type Classification** *(UF.7)*~~: `classify_feed_entry` restored in `feed_aggregation.rs`. Items now classified as Status/Gallery/Article/Link/Video. *(Commit: `77702d9`)*
-- [ ] **In-App Browser Tabs — Runtime Failure**: `commands/browser.rs` (4 Rust commands) + `WebViewScreen.tsx` compile clean and 264 tests pass, but URLs don't load at runtime. ⚠️ *Sprint v6: Window label mismatch confirmed fixed (Track A: `7b3acf8` added explicit `"label": "main"` + diagnostic logging). Frontend flipped `USE_SYSTEM_BROWSER=false` to re-enable in-app tabs (`748d181`). Added `Webview.getByLabel().show()` + `.setFocus()` via Tauri JS API after `browser_create` succeeds (`c10a41a`). Tabs now open instead of going to system browser, but content still does not render. User confirms: "profiles now open in an in app tab, which is good, but they are still not loading." Root cause is deeper than window label or z-order — likely a WebKitGTK `add_child` rendering issue on Linux. **Needs dedicated backend debugging session** with runtime `eprintln!` output from `browser_create` to determine if `add_child` silently fails or if the child webview is created but not composited correctly. Consider alternative: skip `add_child` and use a full `WebviewWindow` (separate OS window managed as a tab).*
+- [x] ~~**In-App Browser Tabs — Runtime Failure**~~: Resolved in Sprint v9 (backend) + Sprint v9.5 (frontend). Root cause: WebView lifecycle — child webviews created but not composited into the GtkOverlay correctly. Fix: `browser_show_at` command for precise positioning, `browser_show`/`browser_hide` for tab switching, GtkOverlay reparenting in Rust. Frontend: `WebViewScreen` refactored with show/hide/position synchronization, StrictMode double-mount guard. WebView tabs now render and load URLs correctly.
 - [ ] **App.css Bloat**: ~~6,477 lines~~ Reduced by ~250 lines in Sprint v5: theme CSS extracted to `src/themes/{geocities,win98,midnight,hacker}.css` (`573ec8e`), FeedEntryCard decomposed into `src/components/feed/` sub-components with React.memo (`106c2dc`). Still large — further component CSS module extraction needed.
 - [x] ~~**Export Button Not Wired**~~: Backend `export_vault_data` command wired to frontend via save dialog. *(Backend: `77702d9`, Frontend: `aab39db`)*
 - [x] ~~**Video Playback Jitter**~~: 5 root causes identified and fixed: (1) `-fps_mode cfr` incompatible with `-c:v copy` — removed from stream-copy strategies, (2) `+discardcorrupt` dropped valid frames at HLS segment boundaries — replaced with `+igndts`, (3) `-bsf:a aac_adtstoasc` wrong for re-encoded audio — removed from audio re-encode path, (4) `validate_mp4_with_ffprobe` too permissive — now rejects if ANY stderr at `-v error` + validates video stream presence + duration > 0.5s, (5) missing `-analyzeduration 10M -probesize 10M` — added to all strategies. Also fixed video filter bug: `save_posts()` now stores `video_url` in `media_paths` + adds `video/mp4` MIME. Cache invalidation: old broken MP4s auto-reconverted on access. *(Commits: `b017091`, `6be698b`)*

@@ -1,6 +1,6 @@
 # Bytescape Technical Specification
 
-**NEEDS MAJOR REVISIONS**
+**Last major revision:** 2026-03-25 — Server architecture (Phase 4.5) integrated. See §1.3, §4.2, §5, §7.
 
 This document aggregates the core technical specifications for Bytescape: Architecture, System Design, Storage Boundaries, and Security.
 
@@ -34,6 +34,34 @@ Lightweight UI clients that plug into the Bridge.
 - **Role:** Query the local database and render data through specific "Lenses".
 - **Lenses:** Specialized views for different content types (e.g., a "Chat Lens" for DMs, a "Gallery Lens" for photos, a "Reader Lens" for articles), unified under a multifunctional application shell initially, with single function spinoff apps down the line.
 - **Tech Stack:** Tauri v2 (Desktop/Mobile), React, TypeScript.
+
+### 1.3 Bytescape Server (The Cloud Extension)
+A unified server deployment at `bytescape.social` extending the local-first app into a hybrid platform. The server is always a blind relay for sovereign data — the desktop/mobile client remains the data authority.
+
+- **Components:**
+    - **AT Protocol PDS** (Tranquil PDS — Rust, Postgres): Hosts user repositories, serves XRPC, firehoses to Bluesky Relay.
+    - **ActivityPub Instance** (custom `axum` server extending `src-tauri/src/activitypub/`): Federates with Mastodon/Lemmy/Threads, handles inbox/outbox/WebFinger.
+    - **Iroh Relay**: Encrypted store-and-forward for edge clients, mobile push wakeup, P2P relay. No decryption — blind relay only.
+    - **Sync Bridge**: Internal daemon translating between Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects.
+    - **Identity Resolver**: Serves `/.well-known/did.json`, `/.well-known/webfinger`, `/.well-known/atproto-did`.
+    - **Web Portal** (optional): Read-only public profiles via WASM Iroh client + React SPA.
+    - **Caddy**: Reverse proxy with auto-TLS and wildcard `*.bytescape.social` subdomains.
+
+- **Deployment:** Docker Compose stack (`caddy` + `postgres` + `pds` + `ap-server` + `iroh-relay` + `sync-bridge`). Self-hostable on any x86_64/arm64 with 2GB RAM. Initial deployment on developer hardware behind Cloudflare Tunnel.
+
+- **Privacy Model:** No two-class privacy. Every user (web, desktop, mobile) gets client-side key generation and encrypted storage. Web users who opt into server-managed convenience get clearly disclosed trade-offs.
+
+### 1.4 Client Adapter Pattern
+
+The React frontend compiles into three targets from the same component tree:
+
+| Provider | Target | Data Source | Auth |
+|----------|--------|-------------|------|
+| `TauriDataProvider` | Desktop + Mobile (Tauri) | Local Rust backend via `invoke()` | Keychain (local) |
+| `RestDataProvider` | Web app (`bytescape.social`) | Server REST API via `fetch()` | JWT/OAuth (server) |
+| `WasmProvider` | Visitor portal (read-only) | Iroh WASM node fetching public blobs | None (public only) |
+
+All three share the same component tree, styles, and themes. Build-time flag selects the provider.
 
 ## 2. Data Architecture: The Willow Vault
 
@@ -154,14 +182,30 @@ The Bytescape client acts as a **specialized browser** for traversing the P2P pr
 
 ## 4. Networking: "The People's Cloud"
 
-Bytescape replaces centralized servers with a location-aware P2P mesh.
+Bytescape replaces centralized servers with a location-aware P2P mesh, supplemented by an always-on relay at `bytescape.social`.
 
 ### 4.1 Topology
 - **Sovereign Nodes (Users):** The primary source of truth. Data lives on your device.
-- **Community Stations:** Encrypted "dumb stores" and Iroh relays.
+- **`bytescape.social` Relay (Phase 4.5):** Unified server providing:
+    - **Iroh Relay:** Encrypted blob store-and-forward for offline devices. Mobile clients flush pending writes on app suspend; relay buffers incoming blobs and sends push notifications (APNs/FCM) to wake suspended apps.
+    - **PDS Hosting:** AT Protocol Personal Data Server for Bluesky federation.
+    - **AP Instance:** ActivityPub server for Mastodon/fediverse federation.
+    - **Sync Bridge:** Bidirectional translation between Iroh, PDS, and AP.
+- **Community Stations (Phase 5):** Encrypted "dumb stores" and Iroh relays.
     - **Role:** Provide 24/7 presence and bandwidth.
     - **Privacy:** Stations store *encrypted* shards; they cannot read user data.
     - **Auto-Docking:** Geohash-based discovery of nearest high-uptime Station.
+
+### 4.2 Server Deployment
+The entire server ships as a single `docker-compose.yaml`:
+- `caddy` — Reverse proxy, auto-TLS, wildcard `*.bytescape.social` subdomains
+- `postgres` — Shared database (Tranquil PDS + AP server + bridge)
+- `pds` — AT Protocol PDS (Tranquil PDS — Rust, Postgres)
+- `ap-server` — ActivityPub instance (custom axum)
+- `iroh-relay` — Encrypted Iroh blob relay + push notifications
+- `sync-bridge` — Internal daemon: Iroh ↔ SQL ↔ PDS ↔ AP translation
+
+**Hardware:** Self-hosted testing (1-20 users): any machine with 2GB RAM, 50GB SSD. Small community (20-500): 4GB RAM, 2 CPU, 100GB SSD. Commercial scale (500+): 8GB+ RAM, 4+ CPU, S3 for blob offload.
 
 ### 4.2 Stealth Mode
 Users can toggle "Stealth Mode" to sever all Station connections, relying purely on direct device-to-device Iroh connections or pairing with a self-hosted `bytescape-station` binary.
@@ -171,7 +215,22 @@ Users can toggle "Stealth Mode" to sever all Station connections, relying purely
 
 ## 5. Identity & Access
 
-### 5.1 The "Two Doors" Flow
+### 5.1 Identity Hierarchy (Phase 4.5)
+
+Every Bytescape user has a layered identity:
+
+| Level | Identifier | Purpose |
+|-------|-----------|---------|
+| **1. Umbrella** | `did:web:bytescape.social:{username}` | Universal root. DID Document links all protocol identities via `alsoKnownAs`. Set when username is chosen. Permanent. |
+| **2. AT Protocol** | `did:plc:abc...` | Real PLC registered at `plc.directory`. PDS service endpoint → `pds.bytescape.social`. Only for Bluesky-connected users. |
+| **3. ActivityPub** | `https://bytescape.social/@username` | Standard AP actor. Discovery via WebFinger `acct:username@bytescape.social`. No DID fabrication — AP does not use DIDs. |
+| **4. P2P / Iroh** | `did:key:z6Mk...` | Self-certifying from Ed25519 keypair. Offline-capable. Used for P2P sync, device pairing, vault signing. |
+
+`get_owner_did()` resolves via 3-level fallback: `did:web` → `did:plc` → `did:key`.
+
+**Custom Domain Handles:** Users can bring their own domain (`alice.com`) as both an AT Protocol handle and a fediverse handle, making their personal website their identity root.
+
+### 5.2 The "Two Doors" Flow
 1.  **Door 1 (Verified Sovereign):**
     - Create a local DID.
     - "Blind Escrow" recovery: Encrypted key shard stored on a server, unlockable only with Master Password + 2FA.
@@ -229,16 +288,30 @@ User profiles are **customizable** in the spirit of MySpace/iGoogle:
 
 ## 7. Federation & Interoperability
 
-### 7.1 Protocol Adapters
-- **AT Protocol:** `bsky-sdk` / `atrium` for Bluesky identity and data (client-side); Tranquil PDS for server-side hosting
-- **ActivityPub:** Custom `axum` server extending `src-tauri/src/activitypub/` module (server-side); direct `reqwest` HTTP client for Mastodon API interactions (client-side). Note: `megalodon-rs` is a Mastodon REST API *client* library — useful if a unified client SDK is needed, but the current Mastodon connector uses raw `reqwest`.
+### 7.1 Dual Protocol Stack
+
+Bytescape federates via both AT Protocol and ActivityPub simultaneously from a single server:
+
+**Client-Side (Tauri app):**
+- **AT Protocol:** `atrium` / `bsky-sdk` for Bluesky identity and data operations via XRPC.
+- **ActivityPub:** Direct `reqwest` HTTP client for Mastodon API interactions (timelines, posting, DMs). Note: `megalodon-rs` is a Mastodon REST API *client* library — useful as a unified SDK for talking to Mastodon-API-compatible servers, but distinct from the server-side AP implementation.
+
+**Server-Side (`bytescape.social`):**
+- **AT Protocol PDS:** Tranquil PDS (Rust, Postgres) — hosts user repositories, serves XRPC endpoints, firehoses to Bluesky Relay. Native `did:web` support, passkeys, 2FA (TOTP/FIDO2), SSO.
+- **AP Instance:** Custom `axum` server extending `src-tauri/src/activitypub/` module — multi-user actor registry, persistent follower/following storage (Postgres), inbox/outbox, HTTP signatures, WebFinger, `Move` activity for account migration. GoToSocial is the documented fallback.
+- **Sync Bridge:** Internal daemon bridging Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects. Maps `did:web` ↔ `did:plc` ↔ AP actor URLs.
+- **Identity Resolver:** Serves `/.well-known/did.json`, `/.well-known/webfinger`, `/.well-known/atproto-did` from a single endpoint.
+
+### 7.2 Protocol Adapters (Client-Side)
+- **AT Protocol:** `bsky-sdk` / `atrium` for Bluesky identity and data
+- **ActivityPub:** `reqwest` HTTP client for Mastodon API interactions
 - **RSS/Atom:** `feed-rs` + `readability` for blogs and newsletters
 - **Email (IMAP/SMTP):** `async-imap` + `lettre` + `mail-parser` for linked email accounts
 
-### 7.2 WASM Web Portal
+### 7.3 WASM Web Portal
 Public HTTP profiles serve static, blurred previews. Full-fidelity content requires loading a WebAssembly Iroh node in the browser to decrypt the P2P stream.
 
-### 7.3 Webrings & Decentralized Forums
+### 7.4 Webrings & Decentralized Forums
 Groups and affiliations operate as cryptographic records rather than hosted spaces.
 
 - **User-Initiated Membership:** A user publishes a `com.platform.webring.member` Lexicon record to their local PDS, pointing to a shared AT-URI that represents the webring or forum.
