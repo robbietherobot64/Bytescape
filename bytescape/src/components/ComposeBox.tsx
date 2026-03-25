@@ -552,9 +552,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                             {platformDropdownOpen && (
                                 <div style={{
                                     position: 'absolute',
-                                    bottom: '100%',
+                                    top: '100%',
                                     left: 0,
-                                    marginBottom: 4,
+                                    marginTop: 4,
                                     background: 'var(--bg-secondary, #1a1a2e)',
                                     border: '1px solid var(--border-color, #333)',
                                     borderRadius: 6,
