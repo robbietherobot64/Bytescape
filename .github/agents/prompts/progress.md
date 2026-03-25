@@ -47,9 +47,9 @@
 - `patch_browser.cjs`, `patch_chat.cjs`, `patch_feedscreen.cjs`, `patch_feedscreen_hook.cjs`, `patch_useunifiedfeed.cjs`, `patch_panels.cjs` (project root)
 - `bytescape/run_patch.cjs`
 
-### Note: Uncommitted Frontend Changes
+### Post-Sprint: Frontend Agent Follow-Up
 
-There are uncommitted frontend changes in the working tree (`App.css`, `App.tsx`, `BlobImage.tsx`, `WebViewScreen.tsx`, `openInApp.ts`). These are **not from the user** (per guardrails §1) and were not committed by me. They appear to be in-progress work from the Frontend agent.
+The uncommitted frontend changes noted during sprint v9 were subsequently committed by the Frontend agent across multiple commits (`89b08a1` through `9f631b0`). These addressed the frontend side of the webview lifecycle — adopting `browser_show_at`/`browser_hide`, GtkOverlay reparenting for Linux, interaction buttons for Bluesky + Mastodon, platform selector UI, and cross-platform post deduplication.
 
 ---
 
