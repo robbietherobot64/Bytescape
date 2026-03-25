@@ -27,9 +27,9 @@ This is **not a rewrite**. The existing Tauri app (23,000+ lines Rust, 12,000+ l
 │                                                                      │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │
 │  │  AT Proto PDS    │  │  AP Instance     │  │  Iroh Relay        │  │
-│  │  (Tranquil PDS   │  │  (GoToSocial or  │  │  (blind encrypted  │  │
-│  │   or official)   │  │   custom axum)   │  │   store+forward)   │  │
-│  │                  │  │                  │  │                    │  │
+│  │  (Tranquil PDS)  │  │  (custom axum    │  │  (blind encrypted  │  │
+│  │                  │  │   from existing   │  │   store+forward)   │  │
+│  │                  │  │   AP module)     │  │                    │  │
 │  │  • XRPC server   │  │  • Inbox/Outbox  │  │  • Iroh blob cache │  │
 │  │  • Repo storage   │  │  • WebFinger     │  │  • Push notify     │  │
 │  │  • DID hosting    │  │  • Followers DB   │  │  • Mobile wakeup   │  │
@@ -79,8 +79,8 @@ This is **not a rewrite**. The existing Tauri app (23,000+ lines Rust, 12,000+ l
 
 | Component | Role | Technology |
 |-----------|------|-----------|
-| **AT Proto PDS** | Hosts user repositories, serves XRPC, firehoses to Bluesky Relay | Tranquil PDS (Rust, Postgres) — preferred; or official PDS (Node.js, SQLite) |
-| **AP Instance** | Federates with Mastodon/Lemmy/Threads, handles inbox/outbox/WebFinger | GoToSocial (Go, SQLite) — preferred for maturity; or custom axum server extending existing AP module |
+| **AT Proto PDS** | Hosts user repositories, serves XRPC, firehoses to Bluesky Relay | Tranquil PDS (Rust, Postgres) |
+| **AP Instance** | Federates with Mastodon/Lemmy/Threads, handles inbox/outbox/WebFinger | Custom `axum` server extending existing AP module (`src-tauri/src/activitypub/`) |
 | **Iroh Relay** | Encrypted store-and-forward for edge clients, mobile push wakeup, P2P relay | Custom Rust binary using `iroh` crate — extends existing `sync.rs` code |
 | **Sync Bridge** | Bidirectional translation: Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects | Custom Rust daemon, internal-only (not exposed to internet) |
 | **Identity Resolver** | Serves DID documents, WebFinger, handle resolution | Thin HTTP handler (can be part of Caddy config or a small axum service) |
@@ -153,6 +153,23 @@ The current `get_owner_did()` has a 5-level fallback chain including fabricated 
 - Mastodon: `acct:user@instance` 
 - Generic AP: actor URL
 - The `generate_platform_plc()` function is removed.
+
+### Custom Domain Handles (Indieweb Identity)
+
+Users can bring their own domain as their fediverse identity, making their personal website their handle:
+
+```
+User owns: alice.com
+AT Protocol:   @alice.com  → alice.com/.well-known/atproto-did → did:plc:abc...
+ActivityPub:   @alice@alice.com → alice.com/.well-known/webfinger → delegates to bytescape.social
+DID:           did:web:alice.com → alice.com/.well-known/did.json → links all identities
+```
+
+**Implementation:**
+- AT Proto handle: User adds DNS TXT record `_atproto.alice.com → did=did:plc:abc...` OR serves `/.well-known/atproto-did` returning their DID. Tranquil PDS verifies this during handle claim.
+- AP handle: User's domain `/.well-known/webfinger?resource=acct:alice@alice.com` returns a response pointing to the `bytescape.social` AP actor. This can be a static JSON file on their web server, a redirect, or a reverse proxy rule.
+- DID Document: User can optionally serve `did:web:alice.com` at `alice.com/.well-known/did.json`, linking to their AT Proto DID, AP actor, and Iroh node. This makes their personal domain the ultimate root of trust.
+- **UI wizard:** Settings screen walks the user through DNS verification with copy-paste instructions for each step. Shows green checkmarks as each verification passes.
 
 ---
 
@@ -362,21 +379,20 @@ The entire server ships as a single `docker-compose.yaml`:
 ```yaml
 services:
   caddy:           # Reverse proxy, auto-TLS, wildcard subdomains
-  pds:             # AT Protocol PDS (Tranquil PDS or official)
-  gotosocial:      # ActivityPub instance (or custom axum AP server)
+  pds:             # AT Protocol PDS (Tranquil PDS — Rust, Postgres)
+  ap-server:       # ActivityPub instance (custom axum — extends existing AP module)
   iroh-relay:      # Encrypted Iroh blob relay + push notifications
   sync-bridge:     # Internal daemon: Iroh ↔ SQL ↔ PDS ↔ AP translation
-  postgres:        # Shared database (Tranquil PDS + GoToSocial + bridge)
-  # OR sqlite volumes if using official PDS + GoToSocial SQLite mode
+  postgres:        # Shared database (Tranquil PDS + AP server + bridge)
 ```
 
 ### Hardware Requirements
 
 | Scale | Hardware | Notes |
 |-------|----------|-------|
-| **Self-hosted (1-20 users)** | Any x86_64/arm64 with 2GB RAM, 50GB SSD | Raspberry Pi 5, NAS, old laptop. Behind Cloudflare Tunnel or Tailscale Funnel. |
-| **Small community (20-500)** | 4GB RAM, 2 CPU, 100GB SSD | Hetzner CX22 (~€4/mo) or equivalent |
-| **Commercial launch (500+)** | 8GB+ RAM, 4+ CPU, 250GB+ SSD, S3 for blobs | Hetzner CAX21+ or dedicated. Blob storage offloaded to S3-compatible (Cloudflare R2, Wasabi). |
+| **Self-hosted testing (1-20 users)** | Any x86_64/arm64 with 2GB RAM, 50GB SSD | Developer's own hardware. Behind Cloudflare Tunnel or Tailscale Funnel for `bytescape.social`. **This is the initial deployment.** |
+| **Small community (20-500)** | 4GB RAM, 2 CPU, 100GB SSD | Same Docker Compose stack, moved to commercial VPS (provider TBD based on testing). |
+| **Commercial scale (500+)** | 8GB+ RAM, 4+ CPU, 250GB+ SSD, S3 for blobs | Dedicated server or cloud VPS. Blob storage offloaded to S3-compatible (Cloudflare R2, Wasabi). |
 
 ### DNS Configuration
 
@@ -409,7 +425,7 @@ Both are viable. Here's the trade-off:
 | **Scaling** | Postgres scales well | SQLite has ceiling (~500-1000 users) |
 | **Maintenance** | Community-maintained (AGPL-3.0) | Bluesky-maintained (MIT/Apache-2.0) |
 
-**Recommendation:** Start with **Tranquil PDS** for alignment with the Rust stack, native `did:web` support, and Postgres scalability. Fall back to the official PDS if Tranquil proves too immature during testing. Both can be swapped without changing the Sync Bridge — they expose the same XRPC API surface.
+**Decision:** Use **Tranquil PDS** for alignment with the Rust stack, native `did:web` support, Postgres scalability, and advanced auth features (passkeys, 2FA, SSO). Fall back to the official PDS only if Tranquil proves too immature during self-hosted testing. Both expose the same XRPC API surface, so the Sync Bridge is unaffected by a swap.
 
 ---
 
@@ -425,7 +441,9 @@ Both are viable. Here's the trade-off:
 | **Integration depth** | External process, communicate via AP S2S or internal API | Could be compiled into the same binary as the Sync Bridge |
 | **License** | AGPL-3.0 | N/A (internal) |
 
-**Recommendation:** Start with **GoToSocial** for fastest path to working AP federation with migration support. The existing Bytescape AP module (8 files, 1,636 lines) can be preserved as the **client-side** AP code (used by the Tauri app for direct AP interactions), while GoToSocial handles the server-side federation workload. Long-term, if deeper integration is needed, the GoToSocial dependency can be replaced with a custom axum server built from the existing AP module — but that's a Phase 5+ optimization, not a launch blocker.
+**Decision:** Build a **custom axum AP server** extending the existing AP module (8 files, 1,636 lines in `src-tauri/src/activitypub/`). This maximizes flexibility, keeps the entire stack in Rust, and avoids an external Go dependency. The existing module already has actor management, inbox/outbox, HTTP signatures, and WebFinger — the gaps are persistent follower storage, reliable delivery queue, `Move` activity support, and multi-user actor registry. GoToSocial remains a documented fallback if the custom route proves too slow for the initial self-hosted deployment.
+
+**Note on `megalodon-rs`:** The TECHNICAL_SPEC (§7.1) references `megalodon-rs` as an AP protocol adapter. This is a **Mastodon REST API client library** (like an SDK for talking to Mastodon instances), not an AP server framework. It's useful for the Tauri desktop app's client-side Mastodon interactions (fetching timelines, posting, DMs from within the app), but it has no role in the server-side AP instance. The custom axum server handles AP S2S federation directly via HTTP signatures and ActivityStreams JSON.
 
 ---
 
@@ -461,7 +479,7 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 |----|------|-------------|--------|
 | **I-1** | Docker Compose scaffold | `caddy` + `postgres` + empty slots for PDS/AP/relay services. Caddy config with wildcard TLS for `*.bytescape.social`. | 2-3 days |
 | **I-2** | Deploy Tranquil PDS | Configure and deploy Tranquil PDS pointed at Postgres. Verify XRPC health endpoint, account creation via `goat` CLI, WebSocket firehose. | 3-5 days |
-| **I-3** | Deploy GoToSocial | Configure GoToSocial instance. Verify WebFinger resolution, AP actor serving, follower accept/reject, basic post federation with external Mastodon instance. | 3-5 days |
+| **I-3** | Deploy custom AP server | Build `axum` server binary extending existing AP module. Multi-user actor registry, persistent follower/following storage (Postgres), inbox POST handler, outbox GET, WebFinger resolution. Verify basic federation with external Mastodon instance. | 2-3 weeks |
 | **I-4** | Identity resolver | Serve `/.well-known/did.json` generating `did:web` documents dynamically from user records. Serve `/.well-known/webfinger` routing to either PDS (AT handle resolution) or GoToSocial (AP acct resolution). | 3-5 days |
 | **I-5** | Iroh relay daemon | Rust binary using `iroh` crate. Accepts encrypted blob uploads from edge clients, stores in content-addressed filesystem, serves on request. No decryption — blind relay only. | 1-2 weeks |
 | **I-6** | Sync Bridge MVP | Internal daemon that: (a) watches PDS firehose for new records, packages as Iroh blobs for edge sync; (b) accepts Iroh blobs from edge clients, creates PDS repo records; (c) translates AP inbox messages into Iroh blobs for offline edge users. | 2-3 weeks |
@@ -569,9 +587,9 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 ### For Infrastructure Agent (NEW)
 
 **Phase 4.5 scope:**
-1. **I-1 through I-7:** Deploy the Docker Compose stack on a commercial server. Start with Hetzner CAX21 (arm64, 8GB RAM) or equivalent. Configure DNS, TLS, Postgres, Tranquil PDS, GoToSocial, Iroh relay, Sync Bridge, identity resolver.
-2. **Test with developer account first** — migrate your (the user's) Bluesky and Mastodon accounts to `bytescape.social` before opening to others.
-3. **Document the deployment** in a `server/README.md` with setup instructions for self-hosters.
+1. **I-1 through I-7:** Deploy the Docker Compose stack on the developer's self-hosted hardware. Configure DNS for `bytescape.social`, Cloudflare Tunnel or Tailscale Funnel for ingress, TLS via Caddy, Postgres, Tranquil PDS, custom axum AP server, Iroh relay, Sync Bridge, identity resolver.
+2. **Test with developer account first** — migrate the developer's Bluesky and Mastodon accounts to `bytescape.social` before inviting others.
+3. **Document the deployment** in a `server/README.md` with setup instructions that work identically for self-hosters and cloud VPS.
 
 **Important constraints:**
 - The server stack must be fully reproducible via `docker compose up`. No manual configuration steps that aren't scripted.
@@ -580,13 +598,17 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 
 ---
 
-## 12. Open Questions for User
+## 12. Design Decisions (Finalized)
 
-1. **PDS choice:** Tranquil PDS (Rust, Postgres, `did:web` native, newer) vs Official PDS (Node.js, SQLite, battle-tested)? Recommendation is Tranquil, but the official PDS is safer if stability is priority.
-2. **AP instance choice:** GoToSocial (mature, Go, full migration support) vs building on existing AP module (Rust, tighter integration, more work)? Recommendation is GoToSocial for launch, custom later.
-3. **Initial server provider:** Hetzner, Fly.io, DigitalOcean, or self-hosted from day one? Recommendation is commercial VPS for launch, self-host option documented from the start.
-4. **Invite-only launch?** AT Proto PDS supports invite codes natively. GoToSocial supports approval-based registration. Recommend invite-only initially to control growth and test infrastructure.
-5. **Custom domain handles:** Should users be able to bring their own domain as an AT Proto handle (e.g., `@alice.com` on your PDS)? This is supported by both PDS implementations but adds DNS verification complexity.
+1. **PDS choice: Tranquil PDS.** Rust-native, Postgres-backed, `did:web` support built in, single binary with no Node.js runtime. Aligns with the Rust stack. Falls back to official PDS only if Tranquil proves too immature during testing.
+2. **AP instance choice: Custom (extend existing AP module).** The existing AP module (8 files, 1,636 lines) will be extended into a full server-side AP instance using `axum`. This provides maximum flexibility and keeps the entire stack in Rust. GoToSocial remains a documented fallback if the custom route proves too slow. Note: `megalodon-rs` (referenced in TECHNICAL_SPEC §7.1) is a **client library** for talking to Mastodon-API-compatible servers — it is useful for the Tauri app's client-side Mastodon interactions, but is not an AP server implementation and is not relevant to the server-side AP instance.
+3. **Initial deployment: Self-hosted.** `bytescape.social` will be hosted on the developer's own hardware for initial testing with a small number of users. It federates identically to how the final self-hosted relay/instance will work. Once proven out, the same Docker Compose stack scales to a commercial cloud provider (TBD based on observed load). The architecture must be cloud-agnostic — no managed-service dependencies.
+4. **Invite-only launch.** Both Tranquil PDS (`PDS_INVITE_REQUIRED=true`) and the custom AP instance will require invite codes for account creation. This allows controlled growth and infrastructure capacity planning before opening registration.
+5. **Custom domain handles: Yes.** Users can bring their own domain as both an AT Protocol handle (`@alice.com` resolved via `/.well-known/atproto-did`) and a fediverse handle (`@alice@alice.com` via WebFinger delegation). **This is a core differentiator** — users' indieweb home pages become their fediverse identity. Implementation requires:
+   - AT Proto: DNS TXT record or `/.well-known/atproto-did` on user's domain → PDS handle verification
+   - ActivityPub: WebFinger delegation — user's domain `/.well-known/webfinger` redirects or proxies to `bytescape.social`'s WebFinger endpoint
+   - DID Document: `did:web:{user-domain}` can be user-controlled, with `alsoKnownAs` linking to their `bytescape.social` identities
+   - UI: Settings screen section for custom domain setup with DNS verification wizard
 
 ---
 

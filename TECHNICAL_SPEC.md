@@ -230,8 +230,8 @@ User profiles are **customizable** in the spirit of MySpace/iGoogle:
 ## 7. Federation & Interoperability
 
 ### 7.1 Protocol Adapters
-- **AT Protocol:** `bsky-sdk` for Bluesky identity and data
-- **ActivityPub:** `megalodon-rs` for Mastodon/Lemmy
+- **AT Protocol:** `bsky-sdk` / `atrium` for Bluesky identity and data (client-side); Tranquil PDS for server-side hosting
+- **ActivityPub:** Custom `axum` server extending `src-tauri/src/activitypub/` module (server-side); direct `reqwest` HTTP client for Mastodon API interactions (client-side). Note: `megalodon-rs` is a Mastodon REST API *client* library — useful if a unified client SDK is needed, but the current Mastodon connector uses raw `reqwest`.
 - **RSS/Atom:** `feed-rs` + `readability` for blogs and newsletters
 - **Email (IMAP/SMTP):** `async-imap` + `lettre` + `mail-parser` for linked email accounts
 
