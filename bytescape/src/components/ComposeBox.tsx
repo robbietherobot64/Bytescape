@@ -539,12 +539,12 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                         </button>
                         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
                         {/* Platform Selector Dropdown */}
-                        <div ref={platformDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+                        <div ref={platformDropdownRef} style={{ position: 'relative' }}>
                             <button
                                 className="btn btn-ghost btn-sm"
                                 onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
                                 title="Select posting platforms"
-                                style={{ padding: '2px 8px', fontSize: '0.75rem' } as React.CSSProperties}
+                                style={{ padding: '2px 8px', fontSize: '0.75rem', whiteSpace: 'nowrap' } as React.CSSProperties}
                                 type="button"
                             >
                                 Platform: {platformSummary} ▾
@@ -553,20 +553,21 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                                 <div style={{
                                     position: 'absolute',
                                     top: '100%',
-                                    left: 0,
+                                    right: 0,
                                     marginTop: 4,
                                     background: 'var(--bg-secondary, #1a1a2e)',
                                     border: '1px solid var(--border-color, #333)',
                                     borderRadius: 6,
-                                    padding: 6,
+                                    padding: '8px 10px',
                                     zIndex: 100,
-                                    minWidth: 180,
+                                    minWidth: 190,
+                                    whiteSpace: 'nowrap',
                                     boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
                                 }}>
                                     {linkedPlatforms.length > 1 && (
                                         <label style={{
                                             display: 'flex', alignItems: 'center', gap: 8,
-                                            padding: '5px 6px', cursor: 'pointer',
+                                            padding: '4px 0', cursor: 'pointer',
                                             fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
                                             borderBottom: '1px solid var(--border-color, #333)',
                                             marginBottom: 4, paddingBottom: 8,
@@ -575,24 +576,24 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                                                 type="checkbox"
                                                 checked={allLinkedSelected}
                                                 onChange={toggleAll}
-                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)', flexShrink: 0 }}
                                             />
-                                            ✨ All Platforms
+                                            <span>✨ All Platforms</span>
                                         </label>
                                     )}
                                     {linkedPlatforms.map(p => (
                                         <label key={p} style={{
                                             display: 'flex', alignItems: 'center', gap: 8,
-                                            padding: '5px 6px', cursor: 'pointer',
+                                            padding: '4px 0', cursor: 'pointer',
                                             fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
                                         }}>
                                             <input
                                                 type="checkbox"
                                                 checked={selectedPlatforms.has(p)}
                                                 onChange={() => togglePlatform(p)}
-                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)', flexShrink: 0 }}
                                             />
-                                            {PLATFORM_INFO[p]?.icon} {PLATFORM_INFO[p]?.label}
+                                            <span>{PLATFORM_INFO[p]?.icon} {PLATFORM_INFO[p]?.label}</span>
                                         </label>
                                     ))}
                                 </div>
