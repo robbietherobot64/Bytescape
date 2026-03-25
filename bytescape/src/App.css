@@ -999,22 +999,22 @@ a:hover {
 /* ─── 7. FEED ENTRY CARD — Forum Post Style ─── */
 .feed-entry-card {
     background: var(--bg-card);
-    border: 2px solid #999;
+    border: 2px solid var(--border-color, #999);
     margin-bottom: 8px;
     overflow: hidden;
-    box-shadow: 1px 1px 0 #666;
+    box-shadow: 1px 1px 0 var(--border-color, #666);
     transition: none;
 }
 
 .feed-entry-card:hover {
     border-color: var(--link-blue);
-    box-shadow: 1px 1px 0 #444;
+    box-shadow: 1px 1px 0 var(--text-muted, #444);
 }
 
 .feed-entry-card.is-quote {
-    border: 1px solid #aaa;
+    border: 1px solid var(--border-color, #aaa);
     margin: 6px 12px 4px;
-    background: #f8f4ea;
+    background: var(--bg-secondary, #f8f4ea);
     box-shadow: none;
 }
 
