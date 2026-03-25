@@ -5,7 +5,16 @@ import { INPUT_LIMITS } from '../utils/sanitize';
 
 // Mock Tauri APIs
 vi.mock('@tauri-apps/api/core', () => ({
-    invoke: vi.fn().mockResolvedValue(0),
+    invoke: vi.fn().mockImplementation((cmd: string) => {
+        if (cmd === 'list_linked_accounts') {
+            return Promise.resolve([
+                { protocol: 'bluesky', identifier: 'did:plc:test', display_handle: '@test.bsky.social', connected_at: 0, active: true },
+                { protocol: 'mastodon', identifier: 'acct:test@mastodon.social', display_handle: '@test@mastodon.social', connected_at: 0, active: true },
+            ]);
+        }
+        if (cmd === 'mastodon_get_session') return Promise.resolve(null);
+        return Promise.resolve(0);
+    }),
     convertFileSrc: vi.fn((path: string) => `asset://${path}`),
 }));
 
@@ -97,11 +106,9 @@ describe('ComposeBox', () => {
         expect(textarea.value).toBe('Pre-filled text');
     });
 
-    it('shows target selector buttons', () => {
+    it('shows platform dropdown button', () => {
         render(<ComposeBox {...defaultProps} />);
-        expect(screen.getByText('🔒 Local Only')).toBeTruthy();
-        expect(screen.getByText('🦋 Bluesky')).toBeTruthy();
-        expect(screen.getByText('🌐 All Networks')).toBeTruthy();
+        expect(screen.getByText(/Platform:/)).toBeTruthy();
     });
 
     it('has a Media button', () => {
@@ -110,33 +117,55 @@ describe('ComposeBox', () => {
     });
 
     // C1.4 — Multi-target character counting
-    it('shows bluesky counter when Bluesky target selected', () => {
+    it('shows bluesky counter when Bluesky target selected', async () => {
         render(<ComposeBox {...defaultProps} />);
-        // Click Bluesky target
-        const bskyBtn = screen.getByText('🦋 Bluesky');
-        fireEvent.click(bskyBtn);
+        // Wait for linked platforms to load
+        await waitFor(() => {
+            expect(screen.getByText(/Platform:/)).toBeTruthy();
+        });
+        // Open the dropdown and check Bluesky
+        const platformBtn = screen.getByText(/Platform:/);
+        fireEvent.click(platformBtn);
+        await waitFor(() => {
+            expect(screen.getByText('🦋 Bluesky')).toBeTruthy();
+        });
+        const bskyCheckbox = screen.getByText('🦋 Bluesky').closest('label')!.querySelector('input')!;
+        fireEvent.click(bskyCheckbox);
+        // Close dropdown
+        fireEvent.click(platformBtn);
         const textarea = screen.getByPlaceholderText(/Share something/);
         fireEvent.change(textarea, { target: { value: 'Hello world' } });
-        // Should show both bluesky and local counters
+        // Should show bluesky and local counters
         expect(screen.getByText('🦋 11/300')).toBeTruthy();
         expect(screen.getByText('💾 11/10000')).toBeTruthy();
     });
 
-    it('shows all network counters when All target selected', () => {
+    it('shows all network counters when All platforms selected', async () => {
         render(<ComposeBox {...defaultProps} />);
-        const allBtn = screen.getByText('🌐 All Networks');
-        fireEvent.click(allBtn);
+        // Wait for linked platforms to load then open dropdown
+        await waitFor(() => expect(screen.getByText(/Platform:/)).toBeTruthy());
+        const platformBtn = screen.getByText(/Platform:/);
+        fireEvent.click(platformBtn);
+        await waitFor(() => expect(screen.getByText('✨ All Platforms')).toBeTruthy());
+        const allCheckbox = screen.getByText('✨ All Platforms').closest('label')!.querySelector('input')!;
+        fireEvent.click(allCheckbox);
+        fireEvent.click(platformBtn); // close
         const textarea = screen.getByPlaceholderText(/Share something/);
         fireEvent.change(textarea, { target: { value: 'Test' } });
         expect(screen.getByText('🦋 4/300')).toBeTruthy();
-        expect(screen.getByText('🌐 4/500')).toBeTruthy();
+        expect(screen.getByText('🐘 4/500')).toBeTruthy();
         expect(screen.getByText('💾 4/10000')).toBeTruthy();
     });
 
-    it('shows truncation warning when Bluesky limit exceeded but local OK', () => {
+    it('shows truncation warning when Bluesky limit exceeded but local OK', async () => {
         render(<ComposeBox {...defaultProps} />);
-        const bskyBtn = screen.getByText('🦋 Bluesky');
-        fireEvent.click(bskyBtn);
+        await waitFor(() => expect(screen.getByText(/Platform:/)).toBeTruthy());
+        const platformBtn = screen.getByText(/Platform:/);
+        fireEvent.click(platformBtn);
+        await waitFor(() => expect(screen.getByText('🦋 Bluesky')).toBeTruthy());
+        const bskyCheckbox = screen.getByText('🦋 Bluesky').closest('label')!.querySelector('input')!;
+        fireEvent.click(bskyCheckbox);
+        fireEvent.click(platformBtn); // close
         const textarea = screen.getByPlaceholderText(/Share something/);
         const longText = 'a'.repeat(310); // Over 300 for Bluesky, under 10K for local
         fireEvent.change(textarea, { target: { value: longText } });

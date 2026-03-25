@@ -46,6 +46,7 @@ pub struct ParseResult {
 pub struct PublishResult {
     pub local: bool,
     pub bluesky: bool,
+    pub mastodon: bool,
     pub activitypub: bool,
     pub bluesky_uri: Option<String>,
     pub errors: Vec<String>,
@@ -2747,6 +2748,7 @@ pub async fn publish_post(
     let mut result = PublishResult {
         local: false,
         bluesky: false,
+        mastodon: false,
         activitypub: false,
         bluesky_uri: None,
         errors: Vec::new(),

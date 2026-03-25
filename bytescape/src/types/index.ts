@@ -336,6 +336,7 @@ export interface VaultMessage {
 export interface PublishResult {
     local: boolean;
     bluesky: boolean;
+    mastodon: boolean;
     activitypub: boolean;
     bluesky_uri?: string | null;
     errors: string[];

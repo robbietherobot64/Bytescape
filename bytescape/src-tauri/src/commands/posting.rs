@@ -43,12 +43,15 @@ pub async fn publish_post_v2(
     }
 
     let dest = destination.to_lowercase();
-    let publish_local = dest == "local" || dest == "all";
-    let publish_bluesky = dest == "bluesky" || dest == "all";
+    let parts: Vec<&str> = dest.split(',').map(|s| s.trim()).collect();
+    let publish_local = parts.contains(&"local") || parts.contains(&"all");
+    let publish_bluesky = parts.contains(&"bluesky") || parts.contains(&"all");
+    let publish_mastodon = parts.contains(&"mastodon") || parts.contains(&"all");
     
     let mut result = PublishResult {
         local: false,
         bluesky: false,
+        mastodon: false,
         activitypub: false,
         bluesky_uri: None,
         errors: Vec::new(),
@@ -163,11 +166,12 @@ pub async fn publish_post_v2(
                 media_blobs: media_blobs.clone(),
                 thumbnail_blobs: vec![],
                 media_mimes: media_mimes.clone(),
-                syndication_status: if publish_bluesky { SyndicationStatus::PendingSyndication } else { SyndicationStatus::LocalOnly },
+                syndication_status: if publish_bluesky || publish_mastodon { SyndicationStatus::PendingSyndication } else { SyndicationStatus::LocalOnly },
                 syndicated_uri: None,
                 audiences: {
                     let mut a = vec![Audience::Local];
                     if publish_bluesky { a.push(Audience::Bluesky); }
+                    if publish_mastodon { a.push(Audience::P2p); } // Mastodon mapped to P2p audience for now
                     a
                 },
                 share_history: Vec::new(),
@@ -319,6 +323,32 @@ pub async fn publish_post_v2(
             }
             Err(e) => {
                 result.errors.push(format!("Bluesky publish failed: {}", e));
+            }
+        }
+    }
+
+    // 4. Mastodon publish
+    if publish_mastodon {
+        match crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+            Ok(session) => {
+                match crate::connectors::mastodon::post_status(
+                    &state.http_client,
+                    &session,
+                    content,
+                    "public",
+                    None,
+                ).await {
+                    Ok(status) => {
+                        result.mastodon = true;
+                        println!("posting: mastodon status published: id={}", status.id);
+                    }
+                    Err(e) => {
+                        result.errors.push(format!("Mastodon publish failed: {}", e));
+                    }
+                }
+            }
+            Err(_) => {
+                result.errors.push("Mastodon not connected".to_string());
             }
         }
     }

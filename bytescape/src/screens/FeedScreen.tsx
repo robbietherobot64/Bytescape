@@ -168,6 +168,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
             const okTargets = [
                 result.local ? 'Local' : null,
                 result.bluesky ? 'Bluesky' : null,
+                result.mastodon ? 'Mastodon' : null,
                 result.activitypub ? 'ActivityPub' : null,
             ].filter(Boolean).join(', ');
 

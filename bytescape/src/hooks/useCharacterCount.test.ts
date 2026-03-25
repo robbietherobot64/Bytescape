@@ -56,16 +56,28 @@ describe('resolveTargets', () => {
         expect(resolveTargets('local')).toEqual(['local']);
     });
 
-    it('returns bluesky + local for "bluesky"', () => {
-        expect(resolveTargets('bluesky')).toEqual(['bluesky', 'local']);
+    it('returns bluesky only for "bluesky"', () => {
+        expect(resolveTargets('bluesky')).toEqual(['bluesky']);
     });
 
-    it('returns activitypub + local for "activitypub"', () => {
-        expect(resolveTargets('activitypub')).toEqual(['activitypub', 'local']);
+    it('returns activitypub only for "activitypub"', () => {
+        expect(resolveTargets('activitypub')).toEqual(['activitypub']);
+    });
+
+    it('returns mastodon only for "mastodon"', () => {
+        expect(resolveTargets('mastodon')).toEqual(['mastodon']);
     });
 
     it('returns all targets for "all"', () => {
-        expect(resolveTargets('all')).toEqual(['bluesky', 'activitypub', 'local']);
+        expect(resolveTargets('all')).toEqual(['bluesky', 'mastodon', 'activitypub', 'local']);
+    });
+
+    it('parses comma-separated targets', () => {
+        expect(resolveTargets('local,bluesky')).toEqual(['local', 'bluesky']);
+    });
+
+    it('parses comma-separated with mastodon', () => {
+        expect(resolveTargets('local,bluesky,mastodon')).toEqual(['local', 'bluesky', 'mastodon']);
     });
 
     it('defaults to local for unknown target', () => {

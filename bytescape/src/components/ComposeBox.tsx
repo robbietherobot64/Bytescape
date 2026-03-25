@@ -9,7 +9,7 @@ import { ArticleEditor } from './ArticleEditor';
 import type { ArticleEditorData } from './ArticleEditor';
 import { AutocompleteDropdown, mentionToItem, hashtagToItem } from './AutocompleteDropdown';
 import { LinkPreviewCard } from './LinkPreviewCard';
-import type { LinkCard } from '../types';
+import type { LinkCard, LinkedAccount } from '../types';
 import type { AutocompleteItem } from './AutocompleteDropdown';
 import type { MentionSuggestion } from '../types';
 
@@ -21,7 +21,7 @@ export interface Attachment {
     file_size?: number;
 }
 
-export type PostTarget = 'local' | 'bluesky' | 'activitypub' | 'all';
+export type PostTarget = string; // Comma-separated platforms: "local", "local,bluesky", etc.
 
 export interface PublishOptions {
     itemType?: 'Status' | 'Article';
@@ -40,12 +40,18 @@ interface ComposeBoxProps {
 
 export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '', initialAttachments = [] }: ComposeBoxProps) {
     const [composeText, setComposeText] = useState(initialText);
-    const [postTarget, setPostTarget] = useState<PostTarget>('local');
+    const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(['local']));
+    const [linkedPlatforms, setLinkedPlatforms] = useState<string[]>(['local']);
+    const [platformDropdownOpen, setPlatformDropdownOpen] = useState(false);
+    const platformDropdownRef = useRef<HTMLDivElement>(null);
     const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
     const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
     const [articleMode, setArticleMode] = useState(false);
     const articleDataRef = useRef<ArticleEditorData | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Compute postTarget from selected platforms (comma-separated)
+    const postTarget = Array.from(selectedPlatforms).join(',') || 'local';
 
     // ─── Autocomplete State (C1.2b / C1.3b) ───
     const [acContext, setAcContext] = useState<AutocompleteContext | null>(null);
@@ -203,6 +209,78 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
             if (linkDebounceRef.current) clearTimeout(linkDebounceRef.current);
         };
     }, [composeText, articleMode, linkDismissed, linkCard?.url]);
+
+    // ─── Detect Linked Platforms ───
+    useEffect(() => {
+        async function detectPlatforms() {
+            const platforms: string[] = ['local'];
+            try {
+                const accounts = await invoke<LinkedAccount[]>('list_linked_accounts');
+                for (const acc of accounts) {
+                    if (acc.active) {
+                        const proto = acc.protocol?.toLowerCase();
+                        if (proto === 'bluesky' && !platforms.includes('bluesky')) platforms.push('bluesky');
+                        if (proto === 'mastodon' && !platforms.includes('mastodon')) platforms.push('mastodon');
+                    }
+                }
+            } catch { /* list_linked_accounts may not be available */ }
+            // Fallback: check mastodon session directly
+            if (!platforms.includes('mastodon')) {
+                try {
+                    const session = await invoke('mastodon_get_session');
+                    if (session) platforms.push('mastodon');
+                } catch { /* no mastodon session */ }
+            }
+            setLinkedPlatforms(platforms);
+        }
+        detectPlatforms();
+    }, []);
+
+    // ─── Close Platform Dropdown on Outside Click ───
+    useEffect(() => {
+        if (!platformDropdownOpen) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (platformDropdownRef.current && !platformDropdownRef.current.contains(e.target as Node)) {
+                setPlatformDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [platformDropdownOpen]);
+
+    // ─── Platform Toggle Handlers ───
+    const PLATFORM_INFO: Record<string, { icon: string; label: string }> = {
+        local: { icon: '🔒', label: 'Local Vault' },
+        bluesky: { icon: '🦋', label: 'Bluesky' },
+        mastodon: { icon: '🐘', label: 'Mastodon' },
+    };
+
+    const togglePlatform = useCallback((platform: string) => {
+        setSelectedPlatforms(prev => {
+            const next = new Set(prev);
+            if (next.has(platform)) {
+                next.delete(platform);
+                if (next.size === 0) next.add('local');
+            } else {
+                next.add(platform);
+            }
+            return next;
+        });
+    }, []);
+
+    const allLinkedSelected = linkedPlatforms.every(p => selectedPlatforms.has(p));
+
+    const toggleAll = useCallback(() => {
+        if (allLinkedSelected) {
+            setSelectedPlatforms(new Set(['local']));
+        } else {
+            setSelectedPlatforms(new Set(linkedPlatforms));
+        }
+    }, [allLinkedSelected, linkedPlatforms]);
+
+    const platformSummary = allLinkedSelected && linkedPlatforms.length > 1
+        ? 'All'
+        : Array.from(selectedPlatforms).map(p => PLATFORM_INFO[p]?.icon || p).join(' ');
 
     const handlePublish = async () => {
         if (!canPost) return;
@@ -460,21 +538,66 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                             🖼️ Media
                         </button>
                         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
-                        {[
-                            { id: 'local', label: '🔒 Local Only', title: 'Stored in your vault, not shared' },
-                            { id: 'bluesky', label: '🦋 Bluesky', title: 'Posts to your Bluesky account' },
-                            { id: 'all', label: '🌐 All Networks', title: 'Posts to all linked networks + P2P' },
-                        ].map(opt => (
+                        {/* Platform Selector Dropdown */}
+                        <div ref={platformDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
                             <button
-                                key={opt.id}
-                                className={`btn btn-ghost btn-sm ${postTarget === opt.id ? 'active' : ''}`}
-                                onClick={() => setPostTarget(opt.id as typeof postTarget)}
-                                title={opt.title}
-                                style={{ padding: '2px 6px', fontSize: '0.75rem' }}
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
+                                title="Select posting platforms"
+                                style={{ padding: '2px 8px', fontSize: '0.75rem' } as React.CSSProperties}
+                                type="button"
                             >
-                                {opt.label}
+                                Platform: {platformSummary} ▾
                             </button>
-                        ))}
+                            {platformDropdownOpen && (
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: 0,
+                                    marginBottom: 4,
+                                    background: 'var(--bg-secondary, #1a1a2e)',
+                                    border: '1px solid var(--border-color, #333)',
+                                    borderRadius: 6,
+                                    padding: 6,
+                                    zIndex: 100,
+                                    minWidth: 180,
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                }}>
+                                    {linkedPlatforms.length > 1 && (
+                                        <label style={{
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '5px 6px', cursor: 'pointer',
+                                            fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
+                                            borderBottom: '1px solid var(--border-color, #333)',
+                                            marginBottom: 4, paddingBottom: 8,
+                                        }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={allLinkedSelected}
+                                                onChange={toggleAll}
+                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                            />
+                                            ✨ All Platforms
+                                        </label>
+                                    )}
+                                    {linkedPlatforms.map(p => (
+                                        <label key={p} style={{
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '5px 6px', cursor: 'pointer',
+                                            fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
+                                        }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedPlatforms.has(p)}
+                                                onChange={() => togglePlatform(p)}
+                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                            />
+                                            {PLATFORM_INFO[p]?.icon} {PLATFORM_INFO[p]?.label}
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <button
                         className="btn btn-primary"

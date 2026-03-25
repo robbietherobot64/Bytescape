@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 /** Per-target character limits */
 export const TARGET_LIMITS = {
     bluesky: 300,     // 300 graphemes
+    mastodon: 500,    // 500 characters (configurable per-instance, default 500)
     activitypub: 500, // 500 characters (configurable per-server, default 500)
     local: 10_000,    // 10K characters (MED-4 limit)
 } as const;
@@ -55,15 +56,36 @@ function getStatus(current: number, limit: number): TargetCount['status'] {
     return 'ok';
 }
 
-/** Map a PostTarget selection to the set of CountTargets that apply */
+/** Map a PostTarget selection (comma-separated platforms) to the set of CountTargets that apply */
 export function resolveTargets(postTarget: string): CountTarget[] {
-    switch (postTarget) {
-        case 'local': return ['local'];
-        case 'bluesky': return ['bluesky', 'local'];
-        case 'activitypub': return ['activitypub', 'local'];
-        case 'all': return ['bluesky', 'activitypub', 'local'];
-        default: return ['local'];
+    const parts = postTarget.split(',').map(s => s.trim().toLowerCase());
+    const targets = new Set<CountTarget>();
+
+    for (const part of parts) {
+        switch (part) {
+            case 'all':
+                targets.add('bluesky');
+                targets.add('mastodon');
+                targets.add('activitypub');
+                targets.add('local');
+                break;
+            case 'bluesky':
+                targets.add('bluesky');
+                break;
+            case 'mastodon':
+                targets.add('mastodon');
+                break;
+            case 'activitypub':
+                targets.add('activitypub');
+                break;
+            case 'local':
+                targets.add('local');
+                break;
+        }
     }
+
+    if (targets.size === 0) targets.add('local');
+    return Array.from(targets);
 }
 
 /**
@@ -97,6 +119,7 @@ export function computeCharacterCounts(text: string, targets: CountTarget[]): Ch
 /** Target display icons */
 export const TARGET_ICONS: Record<CountTarget, string> = {
     bluesky: '🦋',
+    mastodon: '🐘',
     activitypub: '🌐',
     local: '💾',
 };
