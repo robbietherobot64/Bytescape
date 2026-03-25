@@ -6,7 +6,7 @@ Feedback:
 
 Critical priorities:
 
-- Links and profiles now load in a new tab....but the tab breaks the whole UI.  I.e., the tab itself is still a "loading page..." tab, but the lower half of the screen is where the webview of the profile/link opens.  That lower half is also now permanently there, and doesn't go away when you change tabs back to feed or other sections.  It is just a broken lower half of the screen webview.  Which I guess is better than no webview, but it's defintiely not what I had in mind.
+- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.
 
 Lower priorities:
 

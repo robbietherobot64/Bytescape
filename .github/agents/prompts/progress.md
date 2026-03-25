@@ -4,6 +4,125 @@
 
 ---
 
+## 📋 Sprint v10 — Frontend Track B: Platform Selector, Cross-Platform Dedup, Identity & Polish
+
+**Commits**: `fa33753`, `b75ff87`, `c5d1a33`, `c0b57e3`, `1c0096f`, `b94826d`, `6f7e3da`, `697db60`, `9206583`, `3da6967`, `2634b26`, `9f631b0` on `main`
+**Date**: 2026-03-23 → 2026-03-25
+**Build**: cargo 0 errors 0 warnings, tsc clean, 267/267 frontend tests
+**Files changed**: 22 files, +742 / −335 lines
+
+### Deliverables
+
+| # | Commit | Description | Status |
+|---|--------|-------------|--------|
+| 1 | `fa33753` | Platform categorization: feed source badges, Mastodon friends tab, smart link previews | ✅ Complete |
+| 2 | `b75ff87` | Enable interaction buttons (like/repost/reply) for all platforms (Bluesky + Mastodon) | ✅ Complete |
+| 3 | `c5d1a33` | Post card borders use theme CSS variables instead of hardcoded colors | ✅ Complete |
+| 4 | `c0b57e3` | Post header and engagement bar respect active theme colors | ✅ Complete |
+| 5 | `1c0096f` | Replace emoji reaction picker with simple heart like button | ✅ Complete |
+| 6 | `b94826d` | Rewrite all 6 interaction commands (like/unlike/repost/unrepost) to use unified OAuth/legacy auth helpers | ✅ Complete |
+| 7 | `6f7e3da` | Platform selector dropdown: per-platform checkboxes, Mastodon publishing, character counting | ✅ Complete |
+| 8 | `697db60` | Fix dropdown direction (was opening upward) | ✅ Complete |
+| 9 | `9206583` | Fix dropdown alignment and text overflow | ✅ Complete |
+| 10 | `3da6967` | Replace floating dropdown with inline platform checkboxes (no clipping) | ✅ Complete |
+| 11 | `2634b26` | Fix checkbox click collapsing panel (click-outside handler ref bug) | ✅ Complete |
+| 12 | `9f631b0` | Cross-platform post dedup, Bytescape identity, Mastodon handle fix | ✅ Complete |
+
+### Feature Details
+
+#### Platform Selector (commits 7–11)
+- Replaced old 3-button target selector ("Local Only" / "Bluesky" / "All Networks") with a checkbox dropdown
+- Dynamically detects linked accounts via `list_linked_accounts` + `mastodon_get_session`
+- "All" toggle selects/deselects every platform at once
+- Backend `publish_post_v2` parses comma-separated destinations (`"local,bluesky,mastodon"`)
+- Added Mastodon publishing path via `mastodon::post_status` in posting.rs
+- `useCharacterCount` hook gained Mastodon target (500 char limit, 🐘 icon)
+- Went through 4 UI iterations: floating dropdown → position fix → alignment fix → inline panel → ref fix
+
+#### Cross-Platform Deduplication (commit 12)
+- Posts published to multiple platforms now appear **once** in the feed with platform badges
+- After Mastodon publish, vault item is updated with Mastodon URI + `share_history` (matching existing Bluesky behavior)
+- Frontend `deduplicateFeedEntries` now registers `syndicated_uri` and all active `share_history` URIs in the seen-set
+- "You" tab merge order changed: vault entries come first so the richer version (with share_history) wins during dedup
+
+#### Bytescape Identity (commit 12)
+- `Source::Manual` renamed from `"manual"` to `"bytescape"` (backwards compat via `from_str` fallback + frontend normalization)
+- Local posts now show `username@bytescape.social` handle derived from `keychain.get_display_name()` (prioritizes local_username > Bluesky handle) instead of raw Bluesky handle
+- AudiencePills + SourceBadge updated with Bytescape branding (✨ emoji, purple theme)
+
+#### Mastodon Handle Fix (commit 12)
+- Fixed double-domain bug in `status_to_bsky_post` and BytescapeItem conversion: remote accounts whose `acct` already contains `@` (e.g. `user@mastodon.social`) no longer get the instance host appended again (was producing `@user@mastodon.social@climatejustice.social`)
+- Mastodon audience corrected from `Audience::P2p` to `Audience::Activitypub`
+
+#### Interaction System Overhaul (commits 2, 5, 6)
+- All 6 interaction commands (like/unlike/repost/unrepost) rewritten to use `xrpc_post_json`/`xrpc_get`/`get_user_did` unified auth helpers
+- Works with both OAuth (DPoP) and legacy (JWT Bearer) auth flows
+- Removed broken emoji reaction picker, replaced with clean heart button
+- Mastodon interactions routed to `mastodon_favourite`/`mastodon_reblog` etc.
+
+#### Theme & Visual Polish (commits 3, 4)
+- Post card borders, header text, engagement bar icons all now use CSS custom properties from the active theme
+- Removed all hardcoded color values from post rendering pipeline
+
+### Files Modified (Track B — Frontend)
+
+| File | Changes |
+|------|---------|
+| `src/components/ComposeBox.tsx` | Platform selector UI, checkbox panel, inline layout, dual ref click-outside handler |
+| `src/components/ComposeBox.test.tsx` | Tests for platform dropdown, All toggle, Bluesky counter, truncation warning |
+| `src/components/FeedEntryCard.tsx` | Mastodon interaction routing, theme-aware header/engagement |
+| `src/components/ReplyCompose.tsx` | Updated for Mastodon reply support |
+| `src/components/feed/EngagementBar.tsx` | Theme CSS variables, Mastodon like/repost/reply |
+| `src/components/feed/icons.tsx` | New Mastodon icon |
+| `src/components/AudiencePills.tsx` | Bytescape branding, manual→bytescape normalization |
+| `src/components/SourceBadge.tsx` | Added bytescape entry |
+| `src/hooks/useCharacterCount.ts` | Mastodon target (500 char, 🐘), comma-separated resolveTargets |
+| `src/hooks/useCharacterCount.test.ts` | Tests for Mastodon character counting |
+| `src/hooks/useUnifiedFeed.ts` | Vault-first merge order for dedup correctness |
+| `src/utils/adapters.ts` | Enhanced dedup (share_history + syndicated_uri), manual→bytescape normalization |
+| `src/screens/FeedScreen.tsx` | PublishResult display for Mastodon |
+| `src/types/index.ts` | `PublishResult.mastodon` field |
+| `src/App.css` | Theme-aware post styling |
+
+### Files Modified (Track A — Backend, targeted changes)
+
+| File | Changes |
+|------|---------|
+| `src-tauri/src/commands/posting.rs` | Comma-separated destinations, Mastodon publish path, vault update after Mastodon publish, Bytescape handle |
+| `src-tauri/src/commands/interactions.rs` | Rewritten to unified OAuth/legacy auth |
+| `src-tauri/src/commands/mastodon.rs` | Mastodon interaction commands (favourite, reblog, etc.) |
+| `src-tauri/src/commands/import.rs` | `PublishResult.mastodon` field |
+| `src-tauri/src/connectors/mastodon.rs` | Fixed double-domain handle bug in both adapters |
+| `src-tauri/src/connectors/mod.rs` | `Source::Manual` → "bytescape", label + emoji update |
+| `src-tauri/src/lib.rs` | Registered new Mastodon interaction commands |
+
+---
+
+## 📋 Sprint v9.5 — Frontend Track B: WebView Fixes
+
+**Commits**: `2f70add`, `89b08a1`, `829d3cd`, `8de11f9`, `be0d0e1` on `main`
+**Date**: 2026-03-23
+**Build**: cargo 0 errors 0 warnings, tsc clean
+**Files changed**: 2 files (WebViewScreen.tsx + browser.rs), +401 / −303 lines
+
+### Deliverables
+
+| # | Commit | Description | Status |
+|---|--------|-------------|--------|
+| 1 | `2f70add` | WebView tab visibility, title updates, scroll performance | ✅ Complete |
+| 2 | `89b08a1` | WebView positioning, hide/show, and measurement overhaul | ✅ Complete |
+| 3 | `829d3cd` | Fix StrictMode webview creation bug, remove loading overlay | ✅ Complete |
+| 4 | `8de11f9` | Complete WebViewScreen rewrite — fix StrictMode stale DOM bug | ✅ Complete |
+| 5 | `be0d0e1` | Fix split-screen webview on Linux via GtkOverlay reparenting | ✅ Complete |
+
+### Details
+- Full rewrite of `WebViewScreen.tsx` to handle React StrictMode double-mount
+- Fixed GtkOverlay reparenting issue on Linux/WebKitGTK that caused split-screen rendering
+- WebView positioning now uses `browser_show_at` single IPC call (no flicker)
+- Tab visibility correctly uses `browser_show`/`browser_hide` instead of position hacks
+
+---
+
 ## 📋 Sprint v9 — Backend Track A: WebView Lifecycle Fix
 
 **Commit**: `af76413` on `main`
