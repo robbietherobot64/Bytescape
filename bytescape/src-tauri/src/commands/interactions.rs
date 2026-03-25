@@ -2,7 +2,6 @@ use tauri::State;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use crate::AppState;
-use crate::connectors::bluesky::{BlueskyClient, authenticated_xrpc_candidates};
 
 // ─── Types ───
 
@@ -55,13 +54,6 @@ fn rkey_from_uri(uri: &str) -> Option<String> {
     uri.split('/').last().map(|s| s.to_string())
 }
 
-/// Extract DID from an AT URI (at://did/collection/rkey)
-#[allow(dead_code)]
-fn did_from_uri(uri: &str) -> Option<String> {
-    let stripped = uri.strip_prefix("at://")?;
-    stripped.split('/').next().map(|s| s.to_string())
-}
-
 // ─── Like / Unlike ───
 
 #[tauri::command]
@@ -70,37 +62,20 @@ pub async fn like_post(
     cid: String,
     state: State<'_, AppState>,
 ) -> Result<LikeResult, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    let (user_did, _) = state.keychain.load_session()
-        .ok().flatten()
-        .ok_or("Not authenticated")?;
+    let user_did = state.get_user_did()?;
 
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
-
-    let create_url = format!("{}/com.atproto.repo.createRecord", pds_base);
-    let resp = client.create_record(&create_url, json!({
-        "repo": user_did,
-        "collection": "app.bsky.feed.like",
-        "record": {
-            "$type": "app.bsky.feed.like",
-            "subject": {
-                "uri": uri,
-                "cid": cid
-            },
-            "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        }
-    })).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Like failed ({}): {}", status, body));
-    }
-
-    let res: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Parse like response: {}", e))?;
+    let res = state.xrpc_post_json(
+        "com.atproto.repo.createRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.like",
+            "record": {
+                "$type": "app.bsky.feed.like",
+                "subject": { "uri": uri, "cid": cid },
+                "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            }
+        }),
+    ).await?;
 
     Ok(LikeResult {
         uri: res["uri"].as_str().unwrap_or_default().to_string(),
@@ -113,30 +88,17 @@ pub async fn unlike_post(
     like_uri: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    let (user_did, _) = state.keychain.load_session()
-        .ok().flatten()
-        .ok_or("Not authenticated")?;
+    let user_did = state.get_user_did()?;
+    let rkey = rkey_from_uri(&like_uri).ok_or("Invalid like URI")?;
 
-    let rkey = rkey_from_uri(&like_uri)
-        .ok_or("Invalid like URI")?;
-
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
-
-    let delete_url = format!("{}/com.atproto.repo.deleteRecord", pds_base);
-    let resp = client.delete_record(&delete_url, json!({
-        "repo": user_did,
-        "collection": "app.bsky.feed.like",
-        "rkey": rkey
-    })).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Unlike failed ({}): {}", status, body));
-    }
+    state.xrpc_post_json(
+        "com.atproto.repo.deleteRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.like",
+            "rkey": rkey
+        }),
+    ).await?;
 
     Ok(true)
 }
@@ -149,37 +111,20 @@ pub async fn repost_post(
     cid: String,
     state: State<'_, AppState>,
 ) -> Result<RepostResult, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    let (user_did, _) = state.keychain.load_session()
-        .ok().flatten()
-        .ok_or("Not authenticated")?;
+    let user_did = state.get_user_did()?;
 
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
-
-    let create_url = format!("{}/com.atproto.repo.createRecord", pds_base);
-    let resp = client.create_record(&create_url, json!({
-        "repo": user_did,
-        "collection": "app.bsky.feed.repost",
-        "record": {
-            "$type": "app.bsky.feed.repost",
-            "subject": {
-                "uri": uri,
-                "cid": cid
-            },
-            "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        }
-    })).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Repost failed ({}): {}", status, body));
-    }
-
-    let res: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Parse repost response: {}", e))?;
+    let res = state.xrpc_post_json(
+        "com.atproto.repo.createRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.repost",
+            "record": {
+                "$type": "app.bsky.feed.repost",
+                "subject": { "uri": uri, "cid": cid },
+                "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            }
+        }),
+    ).await?;
 
     Ok(RepostResult {
         uri: res["uri"].as_str().unwrap_or_default().to_string(),
@@ -192,30 +137,17 @@ pub async fn unrepost_post(
     repost_uri: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    let (user_did, _) = state.keychain.load_session()
-        .ok().flatten()
-        .ok_or("Not authenticated")?;
+    let user_did = state.get_user_did()?;
+    let rkey = rkey_from_uri(&repost_uri).ok_or("Invalid repost URI")?;
 
-    let rkey = rkey_from_uri(&repost_uri)
-        .ok_or("Invalid repost URI")?;
-
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
-
-    let delete_url = format!("{}/com.atproto.repo.deleteRecord", pds_base);
-    let resp = client.delete_record(&delete_url, json!({
-        "repo": user_did,
-        "collection": "app.bsky.feed.repost",
-        "rkey": rkey
-    })).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Unrepost failed ({}): {}", status, body));
-    }
+    state.xrpc_post_json(
+        "com.atproto.repo.deleteRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.repost",
+            "rkey": rkey
+        }),
+    ).await?;
 
     Ok(true)
 }
@@ -237,14 +169,7 @@ pub async fn reply_to_post(
         return Err("Reply cannot be empty".to_string());
     }
 
-    let access_jwt = state.get_fresh_access_jwt().await?;
-    let (user_did, _) = state.keychain.load_session()
-        .ok().flatten()
-        .ok_or("Not authenticated")?;
-
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
+    let user_did = state.get_user_did()?;
 
     // Upload attachments as blobs
     let mut images_embed = Vec::new();
@@ -258,7 +183,6 @@ pub async fn reply_to_post(
             let mime = attachment.mime_type.clone().unwrap_or_else(|| "image/jpeg".to_string());
 
             let data = if let Some(blob_hash_str) = &attachment.blob_hash {
-                // Read from Iroh blob store
                 let mut normalized = blob_hash_str.trim().to_string();
                 while let Some(rest) = normalized.strip_prefix("blob:") {
                     normalized = rest.trim().to_string();
@@ -287,26 +211,20 @@ pub async fn reply_to_post(
                 continue;
             };
 
-            let upload_url = format!("{}/com.atproto.repo.uploadBlob", pds_base);
-            if let Ok(resp) = client.post_blob(&upload_url, &mime, data).await {
-                if resp.status().is_success() {
-                    if let Ok(upload_res) = resp.json::<serde_json::Value>().await {
-                        if let Some(blob_ref) = upload_res.get("blob") {
-                            if mime.starts_with("video/") {
-                                video_embed = Some(json!({
-                                    "$type": "app.bsky.embed.video",
-                                    "video": blob_ref
-                                }));
-                                break;
-                            } else {
-                                images_embed.push(json!({
-                                    "alt": "",
-                                    "image": blob_ref
-                                }));
-                                if images_embed.len() >= 4 { break; }
-                            }
-                        }
-                    }
+            let upload_res = state.xrpc_upload_blob(data, &mime).await?;
+            if let Some(blob_ref) = upload_res.get("blob") {
+                if mime.starts_with("video/") {
+                    video_embed = Some(json!({
+                        "$type": "app.bsky.embed.video",
+                        "video": blob_ref
+                    }));
+                    break;
+                } else {
+                    images_embed.push(json!({
+                        "alt": "",
+                        "image": blob_ref
+                    }));
+                    if images_embed.len() >= 4 { break; }
                 }
             }
         }
@@ -318,14 +236,8 @@ pub async fn reply_to_post(
         "text": content,
         "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "reply": {
-            "root": {
-                "uri": root_uri,
-                "cid": root_cid
-            },
-            "parent": {
-                "uri": parent_uri,
-                "cid": parent_cid
-            }
+            "root": { "uri": root_uri, "cid": root_cid },
+            "parent": { "uri": parent_uri, "cid": parent_cid }
         }
     });
 
@@ -338,21 +250,14 @@ pub async fn reply_to_post(
         });
     }
 
-    let create_url = format!("{}/com.atproto.repo.createRecord", pds_base);
-    let resp = client.create_record(&create_url, json!({
-        "repo": user_did,
-        "collection": "app.bsky.feed.post",
-        "record": record
-    })).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Reply failed ({}): {}", status, body));
-    }
-
-    let res: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Parse reply response: {}", e))?;
+    let res = state.xrpc_post_json(
+        "com.atproto.repo.createRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.post",
+            "record": record
+        }),
+    ).await?;
 
     Ok(ReplyResult {
         uri: res["uri"].as_str().unwrap_or_default().to_string(),
@@ -368,34 +273,16 @@ pub async fn get_post_thread(
     depth: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ThreadReply>, String> {
-    let access_jwt = state.get_fresh_access_jwt().await?;
-
-    let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-    let pds_base = candidates.first().ok_or("Could not resolve PDS")?;
-    let client = BlueskyClient::with_jwt(&access_jwt);
-
     let depth_val = depth.unwrap_or(6);
-    let url = format!(
-        "{}/app.bsky.feed.getPostThread?uri={}&depth={}",
-        pds_base,
+    let endpoint = format!(
+        "app.bsky.feed.getPostThread?uri={}&depth={}",
         urlencoding::encode(&uri),
         depth_val
     );
 
-    let resp = client.get_resource(&url).await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Get thread failed ({}): {}", status, body));
-    }
-
-    let body: serde_json::Value = resp.json().await
-        .map_err(|e| format!("Parse thread response: {}", e))?;
+    let body = state.xrpc_get(&endpoint).await?;
 
     let mut replies = Vec::new();
-    
-    // Extract replies from the thread response
     if let Some(thread) = body.get("thread") {
         extract_replies_recursive(thread, &mut replies);
     }
