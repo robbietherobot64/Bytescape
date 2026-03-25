@@ -146,8 +146,8 @@ describe('ComposeBox', () => {
         await waitFor(() => expect(screen.getByText(/Platform:/)).toBeTruthy());
         const platformBtn = screen.getByText(/Platform:/);
         fireEvent.click(platformBtn);
-        await waitFor(() => expect(screen.getByText('✨ All Platforms')).toBeTruthy());
-        const allCheckbox = screen.getByText('✨ All Platforms').closest('label')!.querySelector('input')!;
+        await waitFor(() => expect(screen.getByText('✨ All')).toBeTruthy());
+        const allCheckbox = screen.getByText('✨ All').closest('label')!.querySelector('input')!;
         fireEvent.click(allCheckbox);
         fireEvent.click(platformBtn); // close
         const textarea = screen.getByPlaceholderText(/Share something/);

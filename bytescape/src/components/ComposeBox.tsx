@@ -43,7 +43,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(['local']));
     const [linkedPlatforms, setLinkedPlatforms] = useState<string[]>(['local']);
     const [platformDropdownOpen, setPlatformDropdownOpen] = useState(false);
-    const platformDropdownRef = useRef<HTMLDivElement>(null);
+    const platformDropdownRef = useRef<HTMLElement>(null);
     const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
     const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
     const [articleMode, setArticleMode] = useState(false);
@@ -538,67 +538,17 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                             🖼️ Media
                         </button>
                         <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
-                        {/* Platform Selector Dropdown */}
-                        <div ref={platformDropdownRef} style={{ position: 'relative' }}>
-                            <button
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
-                                title="Select posting platforms"
-                                style={{ padding: '2px 8px', fontSize: '0.75rem', whiteSpace: 'nowrap' } as React.CSSProperties}
-                                type="button"
-                            >
-                                Platform: {platformSummary} ▾
-                            </button>
-                            {platformDropdownOpen && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '100%',
-                                    right: 0,
-                                    marginTop: 4,
-                                    background: 'var(--bg-secondary, #1a1a2e)',
-                                    border: '1px solid var(--border-color, #333)',
-                                    borderRadius: 6,
-                                    padding: '8px 10px',
-                                    zIndex: 100,
-                                    minWidth: 190,
-                                    whiteSpace: 'nowrap',
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                                }}>
-                                    {linkedPlatforms.length > 1 && (
-                                        <label style={{
-                                            display: 'flex', alignItems: 'center', gap: 8,
-                                            padding: '4px 0', cursor: 'pointer',
-                                            fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
-                                            borderBottom: '1px solid var(--border-color, #333)',
-                                            marginBottom: 4, paddingBottom: 8,
-                                        }}>
-                                            <input
-                                                type="checkbox"
-                                                checked={allLinkedSelected}
-                                                onChange={toggleAll}
-                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)', flexShrink: 0 }}
-                                            />
-                                            <span>✨ All Platforms</span>
-                                        </label>
-                                    )}
-                                    {linkedPlatforms.map(p => (
-                                        <label key={p} style={{
-                                            display: 'flex', alignItems: 'center', gap: 8,
-                                            padding: '4px 0', cursor: 'pointer',
-                                            fontSize: '0.8rem', color: 'var(--text-primary, #eee)',
-                                        }}>
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedPlatforms.has(p)}
-                                                onChange={() => togglePlatform(p)}
-                                                style={{ accentColor: 'var(--accent-purple, #9b59b6)', flexShrink: 0 }}
-                                            />
-                                            <span>{PLATFORM_INFO[p]?.icon} {PLATFORM_INFO[p]?.label}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                        {/* Platform Selector Toggle */}
+                        <button
+                            ref={platformDropdownRef as React.RefObject<HTMLButtonElement | null>}
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
+                            title="Select posting platforms"
+                            style={{ padding: '2px 8px', fontSize: '0.75rem' } as React.CSSProperties}
+                            type="button"
+                        >
+                            Platform: {platformSummary} {platformDropdownOpen ? '▴' : '▾'}
+                        </button>
                     </div>
                     <button
                         className="btn btn-primary"
@@ -610,6 +560,53 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
                         {isPosting ? 'Posting...' : 'Post'}
                     </button>
                 </div>
+
+                {/* Platform checkboxes — renders inline below the toolbar when open */}
+                {platformDropdownOpen && (
+                    <div style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '4px 16px',
+                        alignItems: 'center',
+                        marginTop: 8,
+                        padding: '8px 10px',
+                        background: 'var(--bg-secondary, #1a1a2e)',
+                        border: '1px solid var(--border-color, #333)',
+                        borderRadius: 6,
+                    }}>
+                        {linkedPlatforms.length > 1 && (
+                            <label style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                cursor: 'pointer', fontSize: '0.8rem',
+                                color: 'var(--text-primary, #eee)',
+                                marginRight: 8,
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={allLinkedSelected}
+                                    onChange={toggleAll}
+                                    style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                />
+                                ✨ All
+                            </label>
+                        )}
+                        {linkedPlatforms.map(p => (
+                            <label key={p} style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                cursor: 'pointer', fontSize: '0.8rem',
+                                color: 'var(--text-primary, #eee)',
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedPlatforms.has(p)}
+                                    onChange={() => togglePlatform(p)}
+                                    style={{ accentColor: 'var(--accent-purple, #9b59b6)' }}
+                                />
+                                {PLATFORM_INFO[p]?.icon} {PLATFORM_INFO[p]?.label}
+                            </label>
+                        ))}
+                    </div>
+                )}
                 {postStatus && (
                     <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: 4 }}>
                         {postStatus}
