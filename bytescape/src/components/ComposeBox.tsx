@@ -44,6 +44,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const [linkedPlatforms, setLinkedPlatforms] = useState<string[]>(['local']);
     const [platformDropdownOpen, setPlatformDropdownOpen] = useState(false);
     const platformDropdownRef = useRef<HTMLElement>(null);
+    const platformPanelRef = useRef<HTMLDivElement>(null);
     const [attachments, setAttachments] = useState<Attachment[]>(initialAttachments);
     const [fileSizeWarnings, setFileSizeWarnings] = useState<string[]>([]);
     const [articleMode, setArticleMode] = useState(false);
@@ -240,7 +241,10 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     useEffect(() => {
         if (!platformDropdownOpen) return;
         const handleClickOutside = (e: MouseEvent) => {
-            if (platformDropdownRef.current && !platformDropdownRef.current.contains(e.target as Node)) {
+            const target = e.target as Node;
+            const inButton = platformDropdownRef.current?.contains(target);
+            const inPanel = platformPanelRef.current?.contains(target);
+            if (!inButton && !inPanel) {
                 setPlatformDropdownOpen(false);
             }
         };
@@ -563,7 +567,7 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
 
                 {/* Platform checkboxes — renders inline below the toolbar when open */}
                 {platformDropdownOpen && (
-                    <div style={{
+                    <div ref={platformPanelRef} style={{
                         display: 'flex',
                         flexWrap: 'wrap',
                         gap: '4px 16px',
