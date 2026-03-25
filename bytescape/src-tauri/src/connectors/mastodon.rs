@@ -858,10 +858,19 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
         .as_secs();
 
     let instance_host = instance.replace("https://", "").replace("http://", "");
+    // Build display handle — include instance domain for local accounts
     let author_handle = if effective.account.display_name.is_empty() {
-        effective.account.acct.clone()
+        if effective.account.acct.contains('@') {
+            effective.account.acct.clone()
+        } else {
+            format!("{}@{}", effective.account.acct, instance_host)
+        }
     } else {
-        format!("{} (@{})", effective.account.display_name, effective.account.acct)
+        if effective.account.acct.contains('@') {
+            format!("{} (@{})", effective.account.display_name, effective.account.acct)
+        } else {
+            format!("{} (@{}@{})", effective.account.display_name, effective.account.acct, instance_host)
+        }
     };
 
     // Build proper acct: URI for the author (handles both local and remote accounts)
@@ -995,10 +1004,20 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
         .map(|dt| dt.timestamp())
         .unwrap_or(0);
 
+    // Build display handle — avoid double-appending instance_host when acct
+    // already contains an @ (remote accounts, e.g. user@mastodon.social)
     let author_handle = if effective.account.display_name.is_empty() {
-        format!("{}@{}", effective.account.acct, instance_host)
+        if effective.account.acct.contains('@') {
+            effective.account.acct.clone()
+        } else {
+            format!("{}@{}", effective.account.acct, instance_host)
+        }
     } else {
-        format!("{} (@{}@{})", effective.account.display_name, effective.account.acct, instance_host)
+        if effective.account.acct.contains('@') {
+            format!("{} (@{})", effective.account.display_name, effective.account.acct)
+        } else {
+            format!("{} (@{}@{})", effective.account.display_name, effective.account.acct, instance_host)
+        }
     };
 
     let author_acct = if effective.account.acct.contains('@') {

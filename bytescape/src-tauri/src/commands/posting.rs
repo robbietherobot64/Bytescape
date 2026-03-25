@@ -149,7 +149,17 @@ pub async fn publish_post_v2(
                 syndicated_uris: std::collections::HashMap::new(),
                 syndicated_at: std::collections::HashMap::new(),
                 author_did: state.keychain.get_did().ok().flatten(),
-                author_handle: state.keychain.load_session().ok().flatten().map(|(_, handle)| handle),
+                author_handle: {
+                    // Use Bytescape handle (username@bytescape.social) rather than
+                    // the Bluesky handle.  Falls back to Bluesky handle if no
+                    // local username has been set yet.
+                    let display = state.keychain.get_display_name();
+                    if display == "Anonymous" {
+                        state.keychain.load_session().ok().flatten().map(|(_, handle)| handle)
+                    } else {
+                        Some(format!("{}@bytescape.social", display))
+                    }
+                },
                 author_avatar: None,
                 tagged_people: vec![],
                 location: None,
@@ -171,7 +181,7 @@ pub async fn publish_post_v2(
                 audiences: {
                     let mut a = vec![Audience::Local];
                     if publish_bluesky { a.push(Audience::Bluesky); }
-                    if publish_mastodon { a.push(Audience::P2p); } // Mastodon mapped to P2p audience for now
+                    if publish_mastodon { a.push(Audience::Activitypub); }
                     a
                 },
                 share_history: Vec::new(),
@@ -296,7 +306,7 @@ pub async fn publish_post_v2(
                     result.bluesky_uri = Some(uri.to_string());
 
                     // Update local item if created
-                    if let Some(id) = local_item_id {
+                    if let Some(ref id) = local_item_id {
                          let db_guard = state.db_manager.read().await;
                          if let Some(db) = db_guard.as_ref() {
                              if let Ok(Some(mut item)) = db.get_item_by_id(&id).await {
@@ -341,6 +351,33 @@ pub async fn publish_post_v2(
                     Ok(status) => {
                         result.mastodon = true;
                         println!("posting: mastodon status published: id={}", status.id);
+
+                        // Update local vault item with Mastodon URI + share_history
+                        // so the unified feed dedup can remove the Mastodon timeline copy.
+                        if let Some(ref id) = local_item_id {
+                            let mastodon_url = status.url.clone()
+                                .unwrap_or_else(|| status.uri.clone());
+                            let db_guard = state.db_manager.read().await;
+                            if let Some(db) = db_guard.as_ref() {
+                                if let Ok(Some(mut item)) = db.get_item_by_id(id).await {
+                                    if !item.audiences.contains(&Audience::Activitypub) {
+                                        item.audiences.push(Audience::Activitypub);
+                                    }
+                                    item.share_history.push(crate::models::SyndicationEvent {
+                                        platform: "mastodon".to_string(),
+                                        uri: mastodon_url.clone(),
+                                        timestamp: now,
+                                        active: true,
+                                    });
+                                    // If no Bluesky syndication happened, use Mastodon as the syndicated URI
+                                    if item.syndicated_uri.is_none() {
+                                        item.syndicated_uri = Some(mastodon_url);
+                                    }
+                                    item.syndication_status = SyndicationStatus::Syndicated;
+                                    let _ = db.upsert_item(&item).await;
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         result.errors.push(format!("Mastodon publish failed: {}", e));

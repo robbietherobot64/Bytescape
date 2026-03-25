@@ -222,8 +222,10 @@ export function useUnifiedFeed({
                 const bskyEntries = bskyPosts.map(adaptBlueskyPost);
                 const vaultEntries = nestOwnerReplies(vaultResult.items.map(adaptBytescapeItem));
 
-                // Merge both sources, newest first, then deduplicate
-                const merged = [...bskyEntries, ...vaultEntries].sort(
+                // Merge both sources, newest first, then deduplicate.
+                // Vault entries go first so that cross-platform posts keep the
+                // richer vault version (with share_history) during dedup.
+                const merged = [...vaultEntries, ...bskyEntries].sort(
                     (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
                 );
                 // Apply client-side source filter to merged results

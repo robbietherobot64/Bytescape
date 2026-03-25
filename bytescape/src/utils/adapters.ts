@@ -27,6 +27,21 @@ export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
 
         if (seen.has(key)) return false;
         seen.add(key);
+
+        // Also register syndicated URIs and share_history URIs so that
+        // later timeline entries that duplicate a vault item are removed.
+        // E.g. a Bytescape post syndicated to Mastodon will have the
+        // Mastodon URL in share_history — when the Mastodon timeline copy
+        // appears later, its id will match and be collapsed.
+        if (!entry.reposted_by) {
+            if (entry.syndicated_uri) seen.add(entry.syndicated_uri);
+            if (entry.share_history) {
+                for (const event of entry.share_history) {
+                    if (event.active && event.uri) seen.add(event.uri);
+                }
+            }
+        }
+
         return true;
     });
 }
@@ -153,6 +168,9 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         return 'unknown';
     });
 
+    // Normalize legacy "manual" source → "bytescape"
+    const source = item.source === 'manual' ? 'bytescape' : item.source;
+
     return {
         id: item.id,
         timestamp: item.original_timestamp,
@@ -160,7 +178,7 @@ export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
         author_did: item.author_did,
         author_handle: item.author_handle,
         author_avatar: item.author_avatar,
-        source: item.source,
+        source,
 
         media_urls,
         media_thumbnails,

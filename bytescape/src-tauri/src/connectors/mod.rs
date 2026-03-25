@@ -31,7 +31,7 @@ impl Source {
             Source::Google => "google",
             Source::Twitter => "twitter",
             Source::ActivityPub => "activitypub",
-            Source::Manual => "manual",
+            Source::Manual => "bytescape",
         }
     }
 
@@ -44,6 +44,7 @@ impl Source {
             "google" => Source::Google,
             "twitter" => Source::Twitter,
             "activitypub" => Source::ActivityPub,
+            "bytescape" => Source::Manual,
             _ => Source::Manual,
         }
     }
@@ -57,7 +58,7 @@ impl Source {
             Source::Google => "Google",
             Source::Twitter => "Twitter/X",
             Source::ActivityPub => "ActivityPub",
-            Source::Manual => "Manual",
+            Source::Manual => "Bytescape",
         }
     }
 
@@ -70,7 +71,7 @@ impl Source {
             Source::Google => "🔍",
             Source::Twitter => "🐦",
             Source::ActivityPub => "🌐",
-            Source::Manual => "📝",
+            Source::Manual => "✨",
         }
     }
 }

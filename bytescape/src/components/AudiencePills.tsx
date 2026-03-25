@@ -20,7 +20,7 @@ const PLATFORM_CONFIG: Record<string, { emoji: string; label: string; bg: string
     mastodon: { emoji: '🐘', label: 'Mastodon', bg: 'rgba(99,100,255,0.12)', color: '#858afa', border: 'rgba(99,100,255,0.25)' },
     dtp: { emoji: '📦', label: 'Archive', bg: 'rgba(136,136,168,0.12)', color: 'var(--text-muted)', border: 'rgba(136,136,168,0.2)' },
     rss: { emoji: '📡', label: 'RSS', bg: 'rgba(251,146,60,0.12)', color: '#fb923c', border: 'rgba(251,146,60,0.25)' },
-    bytescape: { emoji: '📝', label: 'Bytescape', bg: 'rgba(168,85,247,0.12)', color: '#a855f7', border: 'rgba(168,85,247,0.25)' },
+    bytescape: { emoji: '✨', label: 'Bytescape', bg: 'rgba(168,85,247,0.12)', color: '#a855f7', border: 'rgba(168,85,247,0.25)' },
 
     // Syndication targets
     bluesky: { emoji: '🦋', label: 'Bluesky', bg: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: 'rgba(59,130,246,0.25)' },
@@ -46,8 +46,8 @@ export function AudiencePills({ source, originalTimestamp, shareHistory, compact
     // Build ordered chain: origin first, then active syndicated platforms in chronological order
     const chain: { key: string; config: typeof FALLBACK; timestamp: number }[] = [];
 
-    // 1. Origin platform
-    const srcKey = source.toLowerCase();
+    // 1. Origin platform (normalize legacy "manual" → "bytescape")
+    const srcKey = (source === 'manual' ? 'bytescape' : source).toLowerCase();
     chain.push({
         key: srcKey,
         config: PLATFORM_CONFIG[srcKey] || { ...FALLBACK, label: source },
