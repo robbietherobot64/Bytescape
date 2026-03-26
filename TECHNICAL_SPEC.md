@@ -39,7 +39,7 @@ Lightweight UI clients that plug into the Bridge.
 A unified server deployment at `bytescape.social` extending the local-first app into a hybrid platform. The server is always a blind relay for sovereign data — the desktop/mobile client remains the data authority.
 
 - **Components:**
-    - **AT Protocol PDS** (Tranquil PDS — Rust, Postgres): Hosts user repositories, serves XRPC, firehoses to Bluesky Relay.
+    - **AT Protocol PDS** (Official PDS — Node.js, SQLite): Hosts user repositories, serves XRPC, firehoses to Bluesky Relay. Upgrade path: `rsky-pds` (Rust, Postgres).
     - **ActivityPub Instance** (custom `axum` server extending `src-tauri/src/activitypub/`): Federates with Mastodon/Lemmy/Threads, handles inbox/outbox/WebFinger.
     - **Iroh Relay**: Encrypted store-and-forward for edge clients, mobile push wakeup, P2P relay. No decryption — blind relay only.
     - **Sync Bridge**: Internal daemon translating between Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects.
@@ -199,8 +199,8 @@ Bytescape replaces centralized servers with a location-aware P2P mesh, supplemen
 ### 4.2 Server Deployment
 The entire server ships as a single `docker-compose.yaml`:
 - `caddy` — Reverse proxy, auto-TLS, wildcard `*.bytescape.social` subdomains
-- `postgres` — Shared database (Tranquil PDS + AP server + bridge)
-- `pds` — AT Protocol PDS (Tranquil PDS — Rust, Postgres)
+- `postgres` — Shared database (AP server + bridge; PDS uses SQLite internally)
+- `pds` — AT Protocol PDS (Official PDS — Node.js, SQLite)
 - `ap-server` — ActivityPub instance (custom axum)
 - `iroh-relay` — Encrypted Iroh blob relay + push notifications
 - `sync-bridge` — Internal daemon: Iroh ↔ SQL ↔ PDS ↔ AP translation
@@ -297,7 +297,7 @@ Bytescape federates via both AT Protocol and ActivityPub simultaneously from a s
 - **ActivityPub:** Direct `reqwest` HTTP client for Mastodon API interactions (timelines, posting, DMs). Note: `megalodon-rs` is a Mastodon REST API *client* library — useful as a unified SDK for talking to Mastodon-API-compatible servers, but distinct from the server-side AP implementation.
 
 **Server-Side (`bytescape.social`):**
-- **AT Protocol PDS:** Tranquil PDS (Rust, Postgres) — hosts user repositories, serves XRPC endpoints, firehoses to Bluesky Relay. Native `did:web` support, passkeys, 2FA (TOTP/FIDO2), SSO.
+- **AT Protocol PDS:** Official PDS (Node.js, SQLite) — hosts user repositories, serves XRPC endpoints, firehoses to Bluesky Relay. Battle-tested, one-line installer. Upgrade path: `rsky-pds` (Rust, Postgres) when mature.
 - **AP Instance:** Custom `axum` server extending `src-tauri/src/activitypub/` module — multi-user actor registry, persistent follower/following storage (Postgres), inbox/outbox, HTTP signatures, WebFinger, `Move` activity for account migration. GoToSocial is the documented fallback.
 - **Sync Bridge:** Internal daemon bridging Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects. Maps `did:web` ↔ `did:plc` ↔ AP actor URLs.
 - **Identity Resolver:** Serves `/.well-known/did.json`, `/.well-known/webfinger`, `/.well-known/atproto-did` from a single endpoint.
