@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { SidebarItem } from '../types';
 import { BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill, BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill } from 'react-icons/bs';
+import { RelayStatusBadge } from './RelayStatusBadge';
 
 interface SidebarProps {
     activeSidebar: SidebarItem;
@@ -44,6 +45,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
             </div>
             <div className="sidebar-bottom">
                 <SidebarIcon id="settings" icon={<BsGearFill />} label="Settings" active={activeSidebar} onClick={onNavigate} />
+                <RelayStatusBadge />
             </div>
 
             {/* Mobile top bar: hamburger + feed tabs (hidden on desktop via CSS) */}
