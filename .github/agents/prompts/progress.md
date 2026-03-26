@@ -4,6 +4,65 @@
 
 ---
 
+## 📋 Sprint v11 — Backend Track A: Phase 4.5 Identity Migration + Server Stubs
+
+**Commit**: `baf72a4` on `main`
+**Date**: 2026-03-25
+**Build**: cargo 0 errors, 207 Rust tests pass, tsc clean, 267/267 frontend tests
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P1 | Remove `generate_platform_plc()` | Deleted fabricated DID generator, migrated 3 call sites to use `acct:` URIs, added startup migration + 8 Rust tests | ✅ Complete |
+| P2 | Simplify `get_owner_did()` | Reduced from 5-level to 3-level fallback: `did:web` → `did:plc` (real Bluesky only) → `did:key` | ✅ Complete |
+| P3 | Fix AP actor DID derivation | Already fixed in sprint v8 — verified `did_key_from_ed25519_bytes()` used consistently | ✅ Already done |
+| P4 | Relay sync command stubs | 5 commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status` | ✅ Complete |
+| P5 | PDS account provisioning stub | `provision_pds_account` — returns descriptive error until Tranquil PDS is deployed | ✅ Complete |
+| P6 | AP actor provisioning stub | `provision_ap_actor` — returns descriptive error until axum AP server is deployed | ✅ Complete |
+
+### Identity Migration Details
+
+**Problem**: `generate_platform_plc()` fabricated fake `did:plc:` identifiers for non-Bluesky platforms using BLAKE3 hashes. These aren't real PLC DIDs resolvable at `plc.directory`.
+
+**Fix**: 
+- Removed `generate_platform_plc()` and `base32_lower_encode()` from `keychain_encrypted.rs`
+- Mastodon linked accounts now use `acct:user@instance` as their canonical `identifier` (same as `platform_identifier`)
+- `migrate_fabricated_plc_identifiers()` runs on app startup, scans linked accounts, replaces fabricated `did:plc:` with `platform_identifier` value
+- `get_owner_did()` no longer scans linked accounts for `did:plc:` — it only returns real DIDs (web/plc/key)
+- Updated `LinkedAccount` struct doc comment to reflect new identifier scheme
+
+### New DID Hierarchy
+
+```
+1. did:web:bytescape.social:{username}   ← Bytescape master identity
+2. did:plc:...                            ← Real Bluesky DID only (from plc.directory)
+3. did:key:z6Mk...                        ← P2P/offline (Iroh Ed25519 keypair)
+```
+
+### Files Modified (Track A)
+
+| File | Changes |
+|------|---------|
+| `keychain_encrypted.rs` | Removed `generate_platform_plc()` + `base32_lower_encode()`, added `migrate_fabricated_plc_identifiers()`, simplified `get_owner_did()`, updated `LinkedAccount` docs, added 8 tests |
+| `commands/mastodon.rs` | 2 call sites: replaced `generate_platform_plc` → `acct_uri` as identifier, removed `mastodon_plc` from auth_status JSON |
+| `commands/auth.rs` | 1 call site: same pattern as mastodon.rs |
+| `commands/relay.rs` | **NEW** — 7 stub commands for relay sync + server provisioning |
+| `commands/mod.rs` | Added `relay` module + re-export |
+| `lib.rs` | Registered 7 new commands, added startup migration call after keychain init |
+
+### New Rust Tests (8)
+
+- `test_migration_mastodon_fabricated_plc_to_acct` — fabricated did:plc → acct:
+- `test_migration_bluesky_real_plc_unchanged` — Bluesky not touched
+- `test_migration_already_correct_acct_unchanged` — idempotent skip
+- `test_migration_idempotent` — double-run returns 0
+- `test_migration_mixed_accounts` — Bluesky + Mastodon together
+- `test_get_owner_did_hierarchy` — 3-level fallback order
+- `test_get_owner_did_ignores_non_plc_session_did` — non-plc data.did skipped
+
+---
+
 ## 📋 Sprint v10 — Frontend Track B: Platform Selector, Cross-Platform Dedup, Identity & Polish
 
 **Commits**: `fa33753`, `b75ff87`, `c5d1a33`, `c0b57e3`, `1c0096f`, `b94826d`, `6f7e3da`, `697db60`, `9206583`, `3da6967`, `2634b26`, `9f631b0` on `main`
