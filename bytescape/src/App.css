@@ -2987,9 +2987,7 @@ textarea::placeholder {
     background-size: 200% 100%;
     opacity: 0.4;
 }
-.feed-entry-card:hover .feed-entry-header::after {
-    animation: rainbow-slide 4s linear infinite;
-}
+/* hover animation removed — user feedback: images must not react to mouseover */
 
 .feed-entry-header {
     position: relative;
@@ -3954,7 +3952,6 @@ textarea::placeholder {
     overflow: hidden;
     background: var(--bg-card);
     box-shadow: var(--bevel-raised);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* gallery hover transform removed — user feedback: images must not react to mouseover */

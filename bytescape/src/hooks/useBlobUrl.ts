@@ -19,8 +19,49 @@ export const resolvedUrlCache = new Map<string, string>();
  * then uses convertFileSrc() to get an asset:// URL. Zero bytes cross IPC.
  * For other paths, returns them directly.
  */
+/**
+ * Extract the blob hash from a "blob:..." path, handling nested prefixes.
+ * Returns null if the path is a browser Object URL (blob:http://...) or invalid.
+ */
+function extractBlobHash(path: string): string | null {
+    const afterPrefix = path.slice(5);
+    if (afterPrefix.startsWith('http://') || afterPrefix.startsWith('https://') || afterPrefix.startsWith('tauri://')) {
+        return null; // browser Object URL — not a hash
+    }
+    let hash = afterPrefix.trim();
+    while (hash.startsWith('blob:')) {
+        hash = hash.slice(5).trim();
+    }
+    return hash || null;
+}
+
+/**
+ * Resolve a non-blob path synchronously (HTTP, data:, asset:, filesystem).
+ */
+function resolveNonBlobSync(path: string): string {
+    const lower = path.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:') || lower.startsWith('asset:') || lower.startsWith('tauri:')) {
+        return path;
+    }
+    try {
+        return convertFileSrc(path);
+    } catch {
+        return path;
+    }
+}
+
 export function useBlobUrl(path: string | undefined): [string | null, boolean, string | null] {
-    const [url, setUrl] = useState<string | null>(null);
+    // Synchronous cache initialization — prevents the "null → effect → URL" render gap
+    // that causes images to flash a dark placeholder for 1-2 frames on mount.
+    const [url, setUrl] = useState<string | null>(() => {
+        if (!path) return null;
+        if (path.startsWith('blob:')) {
+            const hash = extractBlobHash(path);
+            if (hash === null) return path; // browser Object URL — pass through
+            return resolvedUrlCache.get(hash) ?? null;
+        }
+        return resolveNonBlobSync(path);
+    });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -32,19 +73,14 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
 
         // Check if it's a blob reference
         if (path.startsWith('blob:')) {
-            // Browser Object URLs look like blob:http://... or blob:tauri://...
-            // These are already resolved — pass them through directly.
-            const afterPrefix = path.slice(5);
-            if (afterPrefix.startsWith('http://') || afterPrefix.startsWith('https://') || afterPrefix.startsWith('tauri://')) {
+            const hash = extractBlobHash(path);
+
+            // Browser Object URLs pass through directly
+            if (hash === null) {
                 setUrl(path);
                 setIsLoading(false);
                 setError(null);
                 return;
-            }
-
-            let hash = afterPrefix.trim(); // Remove "blob:" prefix
-            while (hash.startsWith('blob:')) {
-                hash = hash.slice(5).trim();
             }
 
             if (!hash) {
@@ -91,14 +127,9 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
                 cancelled = true;
             };
         } else {
-            // Not a blob. Convert local filesystem paths so media can load in Tauri WebView.
-            const lower = path.toLowerCase();
-            const isWebUrl = lower.startsWith('http://') || lower.startsWith('https://');
-            const isDataUrl = lower.startsWith('data:');
-            const isAssetUrl = lower.startsWith('asset:') || lower.startsWith('tauri:');
-
+            // Not a blob — resolve synchronously
             try {
-                setUrl(isWebUrl || isDataUrl || isAssetUrl ? path : convertFileSrc(path));
+                setUrl(resolveNonBlobSync(path));
                 setError(null);
             } catch (e) {
                 setUrl(path);
@@ -160,8 +191,17 @@ export function useLazyBlobUrl(path: string | undefined): [
         };
     }, []);
 
-    // Only fetch blob when visible
-    const activePath = isVisible ? path : undefined;
+    // Bypass visibility gate for already-cached blob URLs.
+    // This prevents the dark placeholder flash: if prefetchBlobUrls() has already
+    // resolved this blob, we can return the URL synchronously without waiting for
+    // the IntersectionObserver to fire.
+    const isCached = path ? (() => {
+        if (!path.startsWith('blob:')) return false;
+        const hash = extractBlobHash(path);
+        return hash !== null && resolvedUrlCache.has(hash);
+    })() : false;
+
+    const activePath = (isVisible || isCached) ? path : undefined;
     const [url, isLoading, error] = useBlobUrl(activePath);
 
     return [setRef, url, isLoading, error];
