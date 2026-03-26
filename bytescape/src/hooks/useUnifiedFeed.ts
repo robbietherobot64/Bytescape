@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BlueskyPost, BytescapeItem, FeedEntry, GeneratorView, LinkedAccount, ProfileView } from '../types';
+import { AuthStatus, BlueskyPost, FeedEntry, GeneratorView, LinkedAccount, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
 import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
+import { useDataProvider } from '../providers';
 
 /**
  * Nest owner replies under their parent posts.
@@ -78,6 +78,9 @@ export function useUnifiedFeed({
     archiveSourceFilter,
     autoRefreshFeeds
 }: UseUnifiedFeedOptions) {
+    // === DataProvider ===
+    const provider = useDataProvider();
+
     // === Data State ===
     const [feedEntries, setFeedEntries] = useState<FeedEntry[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -121,12 +124,12 @@ export function useUnifiedFeed({
     useEffect(() => {
         if (!auth) return;
         Promise.all([
-            invoke<string[]>('list_vault_sources').catch((): string[] => []),
-            invoke<LinkedAccount[]>('list_linked_accounts').catch((): LinkedAccount[] => []),
+            provider.listVaultSources().catch((): string[] => []),
+            provider.listLinkedAccounts().catch((): LinkedAccount[] => []),
         ]).then(([vaultSrcs, accounts]) => {
             const platformSrcs = accounts
-                .filter(a => a.active)
-                .map(a => a.protocol);
+                .filter((a: LinkedAccount) => a.active)
+                .map((a: LinkedAccount) => a.protocol);
             const merged = [...new Set([...vaultSrcs, ...platformSrcs])].sort();
             setVaultSources(merged);
         });
@@ -134,14 +137,14 @@ export function useUnifiedFeed({
 
     const fetchFollowingList = async (actorDid: string) => {
         try {
-            const follows = await invoke<ProfileView[]>('list_follows', { actor: actorDid });
+            const follows = await provider.listFollows({ actor: actorDid });
             setFollowingList(follows);
             setCachedFollowingList(follows);
         } catch (e) {
             console.error('Failed to fetch follows:', e);
             try {
-                const contacts = await invoke<any[]>('list_contacts');
-                setFollowingList(contacts.map(c => ({ did: c.did, handle: c.handle })));
+                const contacts = await provider.listContacts();
+                setFollowingList(contacts.map((c: ProfileView) => ({ did: c.did, handle: c.handle })));
             } catch {
                 setFollowingList([]);
             }
@@ -184,7 +187,7 @@ export function useUnifiedFeed({
         try {
             if (tab === 'following') {
                 // ── Following tab: Bluesky home timeline ──
-                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 50 });
+                const [posts, nextCursor] = await provider.getTimeline({ limit: 50 });
                 if (isStale()) return;
 
                 const adapted = posts.map(adaptBlueskyPost);
@@ -204,14 +207,14 @@ export function useUnifiedFeed({
             } else if (tab === 'you') {
                 // ── You tab: user's own posts (Bluesky author feed + local vault) ──
                 const [bskyResult, vaultResult, sources] = await Promise.all([
-                    invoke<[BlueskyPost[], string | null]>('get_author_feed', { limit: 50 })
+                    provider.getAuthorFeed({ limit: 50 })
                         .catch((): [BlueskyPost[], string | null] => [[], null]),
-                    invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
+                    provider.listVaultPostsPaged({
                         limit: ARCHIVE_PAGE_SIZE,
                         offset: 0,
                         source: archiveSourceFilter || null,
                     }),
-                    invoke<string[]>('list_vault_sources').catch((): string[] => []),
+                    provider.listVaultSources().catch((): string[] => []),
                 ]);
                 if (isStale()) return;
                 setArchiveOffset(ARCHIVE_PAGE_SIZE);
@@ -243,11 +246,11 @@ export function useUnifiedFeed({
                 // ── Subscribed tab: show content from user's saved/subscribed feeds ──
                 // Parallelize independent IPC calls (P7 — saves 200-500ms)
                 const [feedsData, tags] = await Promise.all([
-                    invoke<GeneratorView[]>('list_saved_feeds').catch((e): GeneratorView[] => {
+                    provider.listSavedFeeds().catch((e: unknown): GeneratorView[] => {
                         console.error('list_saved_feeds failed:', e);
                         return [];
                     }),
-                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
+                    provider.listFollowedHashtags().catch((): string[] => []),
                 ]);
                 // Use ALL saved feed URIs (including following) for subscribed tab
                 const allFeedUris = feedsData.map(f => f.uri);
@@ -287,7 +290,7 @@ export function useUnifiedFeed({
 
                 if (activeFeedUris.length > 0 || activeTags.length > 0) {
                     try {
-                        const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                        const [posts, nextCur] = await provider.getUnifiedFeed({
                             tags: activeTags,
                             feedUris: activeFeedUris,
                             limit: 200,
@@ -332,9 +335,9 @@ export function useUnifiedFeed({
                 // get_timeline_unified internally calls list_saved_feeds for its own logic,
                 // but we still need the GeneratorView[] data for the UI feed selector.
                 const [feedsData, tags, response] = await Promise.all([
-                    invoke<GeneratorView[]>('list_saved_feeds').catch((): GeneratorView[] => []),
-                    invoke<string[]>('list_followed_hashtags').catch((): string[] => []),
-                    invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                    provider.listSavedFeeds().catch((): GeneratorView[] => []),
+                    provider.listFollowedHashtags().catch((): string[] => []),
+                    provider.getTimelineUnified({
                         tags: [],
                         feedUris: [],
                         limit: 50,
@@ -452,7 +455,7 @@ export function useUnifiedFeed({
         unverified.forEach(async (entry) => {
             verifiedIdsRef.current.add(entry.id);
             try {
-                const changed = await invoke<boolean>('verify_syndications', { itemId: entry.id });
+                const changed = await provider.verifySyndications({ itemId: entry.id });
                 if (changed) {
                     fetchFeed(activeTab, true);
                 }
@@ -470,7 +473,7 @@ export function useUnifiedFeed({
 
         try {
             if (activeTab === 'following' && cursor) {
-                const [posts, nextCursor] = await invoke<[BlueskyPost[], string | null]>('get_timeline', { limit: 30, cursor });
+                const [posts, nextCursor] = await provider.getTimeline({ limit: 30, cursor });
                 let newEntries = posts.map(adaptBlueskyPost);
                 if (archiveSourceFilter) {
                     newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
@@ -482,10 +485,10 @@ export function useUnifiedFeed({
                 // Load more from both Bluesky author feed and vault
                 const [bskyResult, vaultResult] = await Promise.all([
                     cursor
-                        ? invoke<[BlueskyPost[], string | null]>('get_author_feed', { limit: 30, cursor })
+                        ? provider.getAuthorFeed({ limit: 30, cursor })
                             .catch((): [BlueskyPost[], string | null] => [[], null])
                         : Promise.resolve([[], null] as [BlueskyPost[], string | null]),
-                    invoke<{ items: BytescapeItem[]; total: number }>('list_vault_posts_paged', {
+                    provider.listVaultPostsPaged({
                         limit: ARCHIVE_PAGE_SIZE,
                         offset: archiveOffset,
                         source: archiveSourceFilter || null,
@@ -525,7 +528,7 @@ export function useUnifiedFeed({
                 else if (feedSoloed) moreTags = [];
                 else moreTags = followedHashtags || [];
 
-                const [posts, nextCur] = await invoke<[BlueskyPost[], string | null]>('get_unified_feed', {
+                const [posts, nextCur] = await provider.getUnifiedFeed({
                     tags: moreTags,
                     feedUris: moreFeedUris,
                     limit: 200,
@@ -542,7 +545,7 @@ export function useUnifiedFeed({
                 }
 
             } else if (activeTab === 'all') {
-                const response = await invoke<{ items: FeedEntry[]; next_cursor: string | null }>('get_timeline_unified', {
+                const response = await provider.getTimelineUnified({
                     tags: [],
                     feedUris: customFeedUris(savedFeeds),
                     limit: 50,
