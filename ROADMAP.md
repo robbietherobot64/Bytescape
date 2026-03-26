@@ -158,7 +158,7 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 - [ ] **A2.4 Expiring Content (`expires`)**: Add `expires_at` field to `BytescapeItem`. Background task auto-deletes expired items and emits federated `Delete`.
 - [ ] **A2.5 Quote Posts (FEP-e232)**: Structured quote-post support via `tag` with `type: Link`. Add `quote_uri` field to `BytescapeItem`.
 - [ ] **A2.6 Federated Search (`canSearch`)**: Discover `searchContent`/`searchTags` endpoints from AP actor records.
-- [ ] **A2.7 Groups (AP `Group` Actor)**: Public/private groups via `Group` actor type with `Follow/Join/Leave` support.
+- [ ] **A2.7 Groups (AP `Group` Actor)**: Federate local groups as AP `Group` actors (FEP-1b12 / Lemmy-compatible). Three visibility modes: Public (auto-join), Closed (mod approval), Private (invite-only). `Follow` → `Accept` for joining; posts sent as `Create/Page` to Group inbox; Group wraps in `Announce` and distributes to followers. Bidirectional federation with Lemmy/PieFed communities. See B4 for the full data model and topic hierarchy.
 - [ ] **A2.8 Private Media (Bearcaps/OCAP)**: Generate capability URIs for private media syndication.
 
 #### A3. AP Identity & Auth
@@ -255,19 +255,37 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 - [ ] **B3.3 Swarm Caching**: Temporarily cache visited profile data locally (Iroh blobs, signed by owner's key) to distribute load from high-traffic profiles.
 - [ ] **B3.4 Pub Node Support**: Allow users to configure a dedicated Pub pinning node for 24/7 profile availability without full self-hosting.
 
-#### B4. Location, Maps & Groups
-Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal social posts linked to map coordinates. Requires `leaflet` or `maplibre-gl` npm package.
+#### B4. Groups, Topics & Location
 
-- [ ] **B4.1 Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema.
-- [ ] **B4.2 Location Picker UI**: Map-based coordinate picker in the compose flow. Privacy-first: coarsen to ~1 km geohash by default.
-- [ ] **B4.3 "Pin to Map" Action**: Existing vault items can be retroactively geotagged via a context-menu action.
-- [ ] **B4.4 Group Data Model**: `LocalGroup` record in redb — `group_id`, `name`, `description`, `geohash_prefix`, `category`, `owner_did`, `created_at`. Backed by an Iroh doc namespace for P2P replication.
-- [ ] **B4.5 Group Creation Flow**: "Create Local Group" UI with name, description, category selector, and map-drawn boundary.
-- [ ] **B4.6 Group Feed**: Dedicated feed view showing `BytescapeItem` entries tagged to a group, ordered chronologically.
-- [ ] **B4.7 Group Discovery (Nearby)**: Automatically surface groups whose geohash prefix overlaps the user's current approximate location.
-- [ ] **B4.8 Group Membership**: Join/leave groups. Members' posts replicate via Iroh doc sync. Non-members see a read-only preview.
-- [ ] **B4.9 Group Categories**: Admins define per-group categories (Landmarks, Events, Buy/Sell, Discussion, etc.).
-- [ ] **B4.10 Group Moderation**: Group owner can pin posts, remove content, and delegate moderator roles to other DIDs.
+Three-layer community system: **Topics** (hierarchical categories, like PieFed/old-style forums) → **Groups** (communities nested under topics) → **Posts** (BytescapeItems tagged to groups). Designed for bidirectional federation with Lemmy/PieFed communities via AP `Group` actor (see A2.7). Topic hierarchy is local-only (PieFed model — not federated); groups federate as AP `Group` actors.
+
+##### B4a. Topic Hierarchy (local-only organizational tree)
+- [ ] **B4.1 Topic Data Model**: `Topic` record in redb — `id`, `name`, `slug`, `parent_id` (nullable → root), `description`, `icon`, `sort_order`, `created_by`, `created_at`. Adjacency-list tree structure.
+- [ ] **B4.2 Topic Tree Commands**: `create_topic`, `update_topic`, `delete_topic` (only if no groups assigned), `get_topic_tree` (returns full `Vec<TopicNode>` with nested children + group summaries + subscription state).
+- [ ] **B4.3 Topic Subscriptions**: `subscribe_topic` / `unsubscribe_topic`. Subscribing to a topic includes all its sub-topics and groups in the Groups feed. `TopicSubscription` table in redb.
+- [ ] **B4.4 Default Seed Topics**: On first run, seed the topic tree with: Fediverse > {Bytescape > {Announcements, Feature Requests, Bug Reports, Groups (meta-topic for suggesting new topics)}, Lemmy, Mastodon, PieFed}, Technology > {Programming, Linux & FOSS, Security}, Health & Wellness, Art & Creative, Gaming, Science, News & Politics.
+
+##### B4b. Groups (communities under topics)
+- [ ] **B4.5 Group Data Model**: `LocalGroup` record in redb — `group_id`, `name`, `slug`, `description`, `visibility` (Public/Closed/Private), `topic_id` (FK to Topic), `owner_did`, `icon_blob`, `banner_blob`, `rules` (markdown), `posting_restricted_to_mods`, `member_count`, `created_at`, `updated_at`. Three visibility modes:
+  - 🔓 **Public** — searchable globally, auto-join on request
+  - 🔒 **Closed** — searchable globally, join requires moderator approval
+  - 🔐 **Private** — invite-only, not listed in search results
+- [ ] **B4.6 Group CRUD Commands**: `create_group`, `update_group`, `delete_group`, `get_group`, `list_groups_by_topic`, `search_groups` (full-text on name/description, excludes Private groups from non-members).
+- [ ] **B4.7 Group Membership**: `GroupMember` table — `group_id`, `member_did`, `role` (Owner/Moderator/Member), `status` (Active/Pending/Invited/Banned), `joined_at`. Commands: `join_group` (auto-Active for Public, Pending for Closed), `leave_group`, `approve_member`, `reject_member`, `invite_member`, `ban_member`, `set_member_role`, `get_group_members`.
+- [ ] **B4.8 Group Feed**: `GroupPost` table links `BytescapeItem` entries to groups — `group_id`, `item_id`, `pinned`, `shared_by` (nullable DID for cross-posts), `posted_at`. Commands: `post_to_group`, `get_group_feed`, `get_groups_feed` (aggregated feed from all subscribed topics + joined groups), `pin_group_post`.
+- [ ] **B4.9 Cross-Posting / Sharing**: `share_to_group` command — share any `BytescapeItem` to another group (creates a `GroupPost` with `shared_by` set). Share to timeline or DM handled by existing syndication/chat mechanisms.
+- [ ] **B4.10 Group Moderation**: Group owner can pin posts, remove content, and delegate moderator roles. Closed groups have a pending-member approval queue. Ban list prevents re-joining.
+
+##### B4c. Forum UI
+- [ ] **B4.11 ForumScreen**: Old-style forum landing page with collapsible topic hierarchy. Each topic row shows expand/collapse toggle, icon, name, [Subscribe] button. Groups listed under their parent topic with member count and visibility badge. [+ Create Group] button at bottom.
+- [ ] **B4.12 GroupScreen**: Individual group view with banner, visibility badge, member count, Join/Leave button, three tabs (Posts, About, Members). Posts tab reuses FeedEntryCard components. "New Post" button for members.
+- [ ] **B4.13 Group Creation Modal**: Form with name, slug (auto-generated), description, visibility radio, topic picker, rules, icon/banner upload. Markdown preview for description and rules.
+- [ ] **B4.14 Groups Feed Tab**: "Groups" tab on FeedScreen aggregating posts from subscribed topics + joined groups. Group badge on each card links to GroupScreen.
+
+##### B4d. Location Features (geo-tagging, separate from group hierarchy)
+- [ ] **B4.15 Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema. Inspired by [Habitat](https://github.com/carlnewton/habitat).
+- [ ] **B4.16 Location Picker UI**: Map-based coordinate picker in the compose flow. Privacy-first: coarsen to ~1 km geohash by default. Requires `leaflet` or `maplibre-gl` npm package.
+- [ ] **B4.17 "Pin to Map" Action**: Existing vault items can be retroactively geotagged via a context-menu action.
 
 #### B5. Spatial Map View
 - [ ] **B5.1 MapScreen**: New top-level screen rendering a Leaflet/Maplibre map with clustered `BytescapeItem` markers.
@@ -282,9 +300,10 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 - [ ] **B6.4 Sold/Expired State**: Seller marks listing as sold; item grays out in feed but remains in vault history.
 
 #### B7. P2P Group Sync
-- [ ] **B7.1 Gossip-Based Group Discovery**: Leverage `iroh-gossip` to propagate group metadata across nearby peers.
-- [ ] **B7.2 Geohash Routing**: Community Stations (Phase 5) index groups by geohash prefix for spatial queries without a central server.
-- [ ] **B7.3 Cross-Group "Nearby" Feed**: Aggregate recent posts from all groups within a geohash radius into a single "Nearby" feed tab.
+- [ ] **B7.1 Gossip-Based Group Discovery**: Leverage `iroh-gossip` to propagate group metadata across peers in the same topic/group namespace.
+- [ ] **B7.2 Iroh Doc Per Group**: Each group backed by an Iroh doc namespace for CRDT-based P2P replication of group posts among members.
+- [ ] **B7.3 Federated Group Relay**: When AP federation is active (A2.7), bridge local Iroh group sync with federated `Announce` distribution to remote Lemmy/PieFed instances.
+- [ ] **B7.4 Geohash Routing** *(optional, depends on B4d)*: Community Stations (Phase 5) index geo-tagged groups by geohash prefix for spatial queries.
 
 #### B8. Events & Calendar
 - [ ] **B8.1 `Event` BytescapeType**: Add `Event` as a fourth variant to `BytescapeType` in `db.rs` with structured fields: `start_time`, `end_time`, `timezone`, `location`, `rsvp_status`, `rsvp_collection`.
