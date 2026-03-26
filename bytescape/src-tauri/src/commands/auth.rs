@@ -137,14 +137,13 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
                 }
                 let _ = state.keychain.ensure_master_did();
 
-                // Ensure linked account with did:plc exists so get_owner_did finds it
+                // Ensure linked account exists — use acct: URI as canonical identifier
                 let acct_uri = format!("acct:{}@{}", acct, instance_host);
-                let mastodon_plc = crate::keychain_encrypted::EncryptedKeychain::generate_platform_plc("mastodon", &acct_uri);
                 // Upsert — idempotent, won't duplicate if already there
                 let linked = crate::keychain_encrypted::LinkedAccount {
                     protocol: "mastodon".to_string(),
-                    identifier: mastodon_plc.clone(),
-                    platform_identifier: Some(acct_uri),
+                    identifier: acct_uri.clone(),
+                    platform_identifier: Some(acct_uri.clone()),
                     display_handle: format!("@{}@{}", acct, instance_host),
                     display_name: None,
                     avatar_url: None,
@@ -156,10 +155,10 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
                 };
                 let _ = state.keychain.add_linked_account(linked);
 
-                // Now get_owner_did will find the did:plc from linked accounts
+                // get_owner_did returns web_did > bluesky did:plc > did:key
                 let owner_did = state.keychain.get_owner_did()
                     .unwrap_or(None)
-                    .unwrap_or_else(|| mastodon_plc);
+                    .unwrap_or_else(|| acct_uri);
                 let local_username = state.keychain.get_local_username().unwrap_or(None);
                 let identity_ready = local_username.is_some();
                 let web_did = state.keychain.get_web_did().unwrap_or(None)

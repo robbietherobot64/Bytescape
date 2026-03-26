@@ -196,13 +196,12 @@ async fn handle_mastodon_callback(
 
             let instance_host = session.instance.replace("https://", "").replace("http://", "");
 
-            // Generate a did:plc for this Mastodon account
+            // Use the acct: URI as the canonical identifier (no fabricated did:plc)
             let acct_uri = format!("acct:{}@{}", session.acct, instance_host);
-            let mastodon_plc = crate::keychain_encrypted::EncryptedKeychain::generate_platform_plc("mastodon", &acct_uri);
 
             let linked = crate::keychain_encrypted::LinkedAccount {
                 protocol: "mastodon".to_string(),
-                identifier: mastodon_plc.clone(),
+                identifier: acct_uri.clone(),
                 platform_identifier: Some(acct_uri.clone()),
                 display_handle: format!("@{}@{}", session.acct, instance_host),
                 display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
@@ -216,11 +215,10 @@ async fn handle_mastodon_callback(
             app_state.keychain.add_linked_account(linked)
                 .unwrap_or_else(|e| eprintln!("Failed to store linked account: {}", e));
 
-            // Get owner DID AFTER linked account is stored so did:plc is findable
-            // Priority: web_did > bluesky did > linked account did:plc > did:key
+            // Get owner DID — priority: web_did > bluesky did:plc > did:key
             let owner_did = app_state.keychain.get_owner_did()
                 .ok().flatten()
-                .unwrap_or_else(|| mastodon_plc.clone());
+                .unwrap_or_else(|| acct_uri.clone());
 
             let local_username = app_state.keychain.get_local_username().unwrap_or(None);
             let identity_ready = local_username.is_some();
@@ -232,7 +230,6 @@ async fn handle_mastodon_callback(
                 "handle": format!("{}@{}", session.acct, instance_host),
                 "did": owner_did,
                 "mastodon_acct": acct_uri,
-                "mastodon_plc": mastodon_plc,
                 "source": "mastodon",
                 "local_username": local_username,
                 "identity_ready": identity_ready,
@@ -319,14 +316,13 @@ pub async fn mastodon_complete_auth(
 
     let _ = state.keychain.ensure_master_did();
 
-    // Generate a did:plc for this Mastodon account
+    // Use the acct: URI as the canonical identifier (no fabricated did:plc)
     let instance_host = session.instance.replace("https://", "").replace("http://", "");
     let acct_uri = format!("acct:{}@{}", session.acct, instance_host);
-    let mastodon_plc = crate::keychain_encrypted::EncryptedKeychain::generate_platform_plc("mastodon", &acct_uri);
 
     let linked = crate::keychain_encrypted::LinkedAccount {
         protocol: "mastodon".to_string(),
-        identifier: mastodon_plc.clone(),
+        identifier: acct_uri.clone(),
         platform_identifier: Some(acct_uri.clone()),
         display_handle: format!("@{}@{}", session.acct, instance_host),
         display_name: if session.display_name.is_empty() { None } else { Some(session.display_name.clone()) },
@@ -340,11 +336,10 @@ pub async fn mastodon_complete_auth(
     state.keychain.add_linked_account(linked)
         .map_err(|e| format!("Failed to store linked account: {}", e))?;
 
-    // Get owner DID AFTER linked account is stored so did:plc is findable
-    // Priority: web_did > bluesky did > linked account did:plc > did:key
+    // Get owner DID — priority: web_did > bluesky did:plc > did:key
     let owner_did = state.keychain.get_owner_did()
         .map_err(|e| format!("Owner DID error: {}", e))?
-        .unwrap_or_else(|| mastodon_plc.clone());
+        .unwrap_or_else(|| acct_uri.clone());
 
     let local_username = state.keychain.get_local_username().unwrap_or(None);
     let identity_ready = local_username.is_some();
@@ -356,7 +351,6 @@ pub async fn mastodon_complete_auth(
         "handle": format!("{}@{}", session.acct, instance_host),
         "did": owner_did,
         "mastodon_acct": acct_uri,
-        "mastodon_plc": mastodon_plc,
         "source": "mastodon",
         "local_username": local_username,
         "identity_ready": identity_ready,

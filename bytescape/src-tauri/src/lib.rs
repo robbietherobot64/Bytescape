@@ -587,6 +587,15 @@ pub fn run() {
             commands::mastodon::send_ap_follow,
             commands::mastodon::send_ap_unfollow,
             commands::mastodon::resolve_profile,
+
+            // Relay & server provisioning stubs (Phase 4.5)
+            commands::relay::relay_connect,
+            commands::relay::relay_push_blob,
+            commands::relay::relay_pull_pending,
+            commands::relay::relay_register_push_token,
+            commands::relay::relay_sync_status,
+            commands::relay::provision_pds_account,
+            commands::relay::provision_ap_actor,
         ])
         .setup(|app| {
             // Initialize application state
@@ -647,6 +656,13 @@ pub fn run() {
                 keychain_path,
                 master_password.clone(),
             );
+
+            // Run identity migrations before any identity operations
+            match keychain.migrate_fabricated_plc_identifiers() {
+                Ok(0) => {},
+                Ok(n) => println!("Startup: migrated {} linked account(s) from fabricated did:plc to native identifiers", n),
+                Err(e) => eprintln!("Startup: identity migration failed (non-fatal): {}", e),
+            }
 
             // Initialize database
             let db_path = app_data_dir.join("bytescape.redb");

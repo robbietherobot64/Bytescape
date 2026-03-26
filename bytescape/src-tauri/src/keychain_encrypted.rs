@@ -77,8 +77,10 @@ pub struct AuthData {
 pub struct LinkedAccount {
     /// Protocol name: "bluesky", "mastodon", "activitypub"
     pub protocol: String,
-    /// Canonical DID for this linked account: did:plc:... for ALL platforms.
-    /// Bluesky uses its existing did:plc; other platforms get a generated did:plc.
+    /// Canonical identifier for this linked account:
+    /// - Bluesky: `did:plc:...` (real PLC DID from plc.directory)
+    /// - Mastodon: `acct:user@instance`
+    /// - Generic AP: actor URL (`https://instance/@username`)
     pub identifier: String,
     /// Platform-native identifier (acct:user@instance for Mastodon, same as identifier for Bluesky)
     #[serde(default)]
@@ -418,40 +420,6 @@ impl EncryptedKeychain {
             return Ok(data.web_did.clone());
         }
         Ok(None)
-    }
-
-    /// Generate a deterministic `did:plc:{...}` for a platform account.
-    ///
-    /// Uses BLAKE3 hash of "bytescape:plc:{protocol}:{identifier}" truncated
-    /// to 15 bytes, then base32-encoded to produce a 24-char PLC identifier
-    /// matching the standard did:plc format.
-    ///
-    /// For Bluesky accounts, use their existing did:plc directly instead of this.
-    pub fn generate_platform_plc(protocol: &str, identifier: &str) -> String {
-        let seed = format!("bytescape:plc:{}:{}", protocol, identifier);
-        let hash = blake3::hash(seed.as_bytes());
-        let encoded = Self::base32_lower_encode(&hash.as_bytes()[..15]);
-        format!("did:plc:{}", encoded)
-    }
-
-    /// Base32 encode bytes using lowercase RFC 4648 alphabet (a-z, 2-7).
-    fn base32_lower_encode(bytes: &[u8]) -> String {
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
-        let mut result = String::new();
-        let mut bits: u32 = 0;
-        let mut count: u32 = 0;
-        for &byte in bytes {
-            bits = (bits << 8) | byte as u32;
-            count += 8;
-            while count >= 5 {
-                count -= 5;
-                result.push(ALPHABET[((bits >> count) & 0x1f) as usize] as char);
-            }
-        }
-        if count > 0 {
-            result.push(ALPHABET[((bits << (5 - count)) & 0x1f) as usize] as char);
-        }
-        result
     }
 
     /// Legacy helper: generate a local DID from a public key string.
@@ -959,34 +927,101 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the owner DID — priority: web_did > Bluesky DID > linked account did:plc > master_did > local_identity_did.
+    /// Migrate fabricated `did:plc:` identifiers in `LinkedAccount` entries
+    /// to platform-native identifiers.
     ///
-    /// DID hierarchy:
-    ///   1. did:web:bytescape.social:{username} — master identity (set when username is chosen)
-    ///   2. did:plc:... — Bluesky native DID (for vault items keyed before web_did existed)
-    ///   3. did:plc:... — any linked account's generated did:plc (e.g. Mastodon)
-    ///   4. did:key:z6Mk... — P2P/offline identity (LAST RESORT, never shown as primary)
-    ///   5. local_identity_did — legacy fallback
+    /// Before Phase 4.5, `generate_platform_plc()` created fake `did:plc:`
+    /// strings for non-Bluesky platforms. These are not real PLC DIDs and
+    /// cannot be resolved at `plc.directory`. This migration replaces them:
     ///
-    /// Use this for operations that need *any* valid DID (vault writes, archive imports).
+    /// - **Mastodon**: `did:plc:{hash}` → `acct:user@instance` (from `platform_identifier`)
+    /// - **Bluesky**: Left unchanged (real PLC DIDs)
+    /// - **Other AP**: Uses `platform_identifier` if available
+    ///
+    /// Returns the number of accounts migrated. Safe to call multiple times
+    /// (idempotent — already-correct entries are skipped).
+    pub fn migrate_fabricated_plc_identifiers(&self) -> Result<usize, BytescapeError> {
+        let mut cache = self.cache.lock()
+            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+
+        let mut data = match cache.clone() {
+            Some(d) => d,
+            None => {
+                drop(cache);
+                match self.load_encrypted()? {
+                    Some(d) => {
+                        cache = self.cache.lock()
+                            .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
+                        d
+                    }
+                    None => return Ok(0),
+                }
+            }
+        };
+
+        let mut migrated = 0;
+        for account in &mut data.linked_accounts {
+            // Skip Bluesky accounts — their did:plc is real
+            if account.protocol == "bluesky" {
+                continue;
+            }
+
+            // Skip accounts that don't have fabricated did:plc identifiers
+            if !account.identifier.starts_with("did:plc:") {
+                continue;
+            }
+
+            // Migrate to platform-native identifier
+            if let Some(ref native_id) = account.platform_identifier {
+                eprintln!(
+                    "[identity-migration] {} account: {} → {}",
+                    account.protocol, account.identifier, native_id
+                );
+                account.identifier = native_id.clone();
+                migrated += 1;
+            } else {
+                // No platform_identifier available — cannot auto-migrate
+                eprintln!(
+                    "[identity-migration] WARNING: {} account has fabricated did:plc '{}' \
+                     but no platform_identifier — manual fix needed",
+                    account.protocol, account.identifier
+                );
+            }
+        }
+
+        if migrated > 0 {
+            self.save_encrypted(&data)?;
+            *cache = Some(data);
+            eprintln!("[identity-migration] migrated {} linked account(s)", migrated);
+        }
+
+        Ok(migrated)
+    }
+
+    /// Get the owner DID — 3-level fallback hierarchy:
+    ///
+    ///   1. `did:web:bytescape.social:{username}` — master identity (set when username is chosen)
+    ///   2. `did:plc:...` — real Bluesky DID from PLC directory (NOT fabricated)
+    ///   3. `did:key:z6Mk...` — P2P/offline identity (from Iroh Ed25519 keypair)
+    ///
+    /// Non-DID identifiers (acct: URIs, actor URLs) are stored in `LinkedAccount`
+    /// but are NOT returned by this function — they are not DIDs.
     pub fn get_owner_did(&self) -> Result<Option<String>, BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
 
         if let Some(ref data) = *cache {
+            // Level 1: did:web (Bytescape username identity)
             if let Some(ref did) = data.web_did {
                 return Ok(Some(did.clone()));
             }
+            // Level 2: did:plc (real Bluesky DID only — from OAuth session)
             if let Some(ref did) = data.did {
-                return Ok(Some(did.clone()));
+                if did.starts_with("did:plc:") {
+                    return Ok(Some(did.clone()));
+                }
             }
-            // Check linked accounts for a did:plc before falling back to did:key
-            if let Some(plc) = data.linked_accounts.iter()
-                .find(|a| a.identifier.starts_with("did:plc:"))
-                .map(|a| a.identifier.clone())
-            {
-                return Ok(Some(plc));
-            }
+            // Level 3: did:key (P2P / offline)
             if let Some(ref did) = data.master_did {
                 return Ok(Some(did.clone()));
             }
@@ -999,10 +1034,9 @@ impl EncryptedKeychain {
         // Load from disk
         if let Some(data) = self.load_encrypted()? {
             let result = data.web_did.clone()
-                .or_else(|| data.did.clone())
-                .or_else(|| data.linked_accounts.iter()
-                    .find(|a| a.identifier.starts_with("did:plc:"))
-                    .map(|a| a.identifier.clone()))
+                .or_else(|| data.did.as_ref()
+                    .filter(|d| d.starts_with("did:plc:"))
+                    .cloned())
                 .or_else(|| data.master_did.clone())
                 .or_else(|| data.local_identity_did.clone());
             *cache = Some(data);
@@ -1267,5 +1301,181 @@ mod tests {
         
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Decryption failed"));
+    }
+
+    fn make_linked(protocol: &str, identifier: &str, platform_id: Option<&str>) -> LinkedAccount {
+        LinkedAccount {
+            protocol: protocol.to_string(),
+            identifier: identifier.to_string(),
+            platform_identifier: platform_id.map(|s| s.to_string()),
+            display_handle: format!("@test_{}", protocol),
+            display_name: None,
+            avatar_url: None,
+            connected_at: 0,
+            active: true,
+        }
+    }
+
+    #[test]
+    fn test_migration_mastodon_fabricated_plc_to_acct() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        // Simulate a keychain with a fabricated did:plc for Mastodon
+        let mut data = AuthData::default();
+        data.linked_accounts.push(make_linked(
+            "mastodon",
+            "did:plc:abc123fabricated",
+            Some("acct:alice@mastodon.social"),
+        ));
+        keychain.save_encrypted(&data).unwrap();
+
+        // Run migration
+        let migrated = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated, 1);
+
+        // Verify the identifier was updated
+        let accounts = keychain.list_linked_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].identifier, "acct:alice@mastodon.social");
+        assert_eq!(accounts[0].platform_identifier.as_deref(), Some("acct:alice@mastodon.social"));
+    }
+
+    #[test]
+    fn test_migration_bluesky_real_plc_unchanged() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        // Simulate a keychain with a real Bluesky did:plc
+        let mut data = AuthData::default();
+        data.linked_accounts.push(make_linked(
+            "bluesky",
+            "did:plc:realblueskyplc",
+            None,
+        ));
+        keychain.save_encrypted(&data).unwrap();
+
+        // Run migration — should not touch Bluesky entries
+        let migrated = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated, 0);
+
+        let accounts = keychain.list_linked_accounts().unwrap();
+        assert_eq!(accounts[0].identifier, "did:plc:realblueskyplc");
+    }
+
+    #[test]
+    fn test_migration_already_correct_acct_unchanged() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        // Simulate a keychain with an already-migrated Mastodon account
+        let mut data = AuthData::default();
+        data.linked_accounts.push(make_linked(
+            "mastodon",
+            "acct:bob@fosstodon.org",
+            Some("acct:bob@fosstodon.org"),
+        ));
+        keychain.save_encrypted(&data).unwrap();
+
+        // Run migration — already correct, should skip
+        let migrated = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated, 0);
+
+        let accounts = keychain.list_linked_accounts().unwrap();
+        assert_eq!(accounts[0].identifier, "acct:bob@fosstodon.org");
+    }
+
+    #[test]
+    fn test_migration_idempotent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        let mut data = AuthData::default();
+        data.linked_accounts.push(make_linked(
+            "mastodon",
+            "did:plc:xyz789fabricated",
+            Some("acct:carol@hachyderm.io"),
+        ));
+        keychain.save_encrypted(&data).unwrap();
+
+        // Run migration twice
+        let migrated1 = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated1, 1);
+        let migrated2 = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated2, 0); // second run is a no-op
+    }
+
+    #[test]
+    fn test_migration_mixed_accounts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        let mut data = AuthData::default();
+        // Bluesky with real did:plc — should NOT be migrated
+        data.linked_accounts.push(make_linked(
+            "bluesky",
+            "did:plc:realbluesky123",
+            None,
+        ));
+        // Mastodon with fabricated did:plc — should be migrated
+        data.linked_accounts.push(make_linked(
+            "mastodon",
+            "did:plc:fakemasto456",
+            Some("acct:dave@infosec.exchange"),
+        ));
+        keychain.save_encrypted(&data).unwrap();
+
+        let migrated = keychain.migrate_fabricated_plc_identifiers().unwrap();
+        assert_eq!(migrated, 1);
+
+        let accounts = keychain.list_linked_accounts().unwrap();
+        assert_eq!(accounts[0].identifier, "did:plc:realbluesky123"); // unchanged
+        assert_eq!(accounts[1].identifier, "acct:dave@infosec.exchange"); // migrated
+    }
+
+    #[test]
+    fn test_get_owner_did_hierarchy() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        // Level 3: did:key only
+        let mut data = AuthData::default();
+        data.master_did = Some("did:key:z6MkTest".to_string());
+        keychain.save_encrypted(&data).unwrap();
+        assert_eq!(keychain.get_owner_did().unwrap(), Some("did:key:z6MkTest".to_string()));
+
+        // Level 2: real Bluesky did:plc takes priority over did:key
+        data.did = Some("did:plc:realbluesky".to_string());
+        keychain.save_encrypted(&data).unwrap();
+        // Clear cache so it reloads
+        *keychain.cache.lock().unwrap() = None;
+        assert_eq!(keychain.get_owner_did().unwrap(), Some("did:plc:realbluesky".to_string()));
+
+        // Level 1: did:web takes top priority
+        data.web_did = Some("did:web:bytescape.social:alice".to_string());
+        keychain.save_encrypted(&data).unwrap();
+        *keychain.cache.lock().unwrap() = None;
+        assert_eq!(keychain.get_owner_did().unwrap(), Some("did:web:bytescape.social:alice".to_string()));
+    }
+
+    #[test]
+    fn test_get_owner_did_ignores_non_plc_session_did() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("keychain.json");
+        let keychain = EncryptedKeychain::new(path, "password".to_string());
+
+        // If data.did is NOT a did:plc, it should be skipped
+        let mut data = AuthData::default();
+        data.did = Some("did:web:someone.example".to_string()); // not a plc
+        data.master_did = Some("did:key:z6MkFallback".to_string());
+        keychain.save_encrypted(&data).unwrap();
+
+        assert_eq!(keychain.get_owner_did().unwrap(), Some("did:key:z6MkFallback".to_string()));
     }
 }
