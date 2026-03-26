@@ -4,6 +4,58 @@
 
 ---
 
+## 📋 Sprint v11 — Frontend Track B: DataProvider, Settings, Relay Badge & Bug Fixes
+
+**Commits**: `3b83ae8`, `6cd04dc`, `ba05daa`, `88b2d38`, `f3da093`, `96808fb`, `2fbcb7a` on `main`
+**Date**: 2026-03-25
+**Build**: tsc clean (0 errors), 272/272 frontend tests pass, 14 test files
+
+### Deliverables
+
+| # | Priority | Commit | Description | Status |
+|---|----------|--------|-------------|--------|
+| P1+P2 | DataProvider interface + TauriDataProvider + Context | `3b83ae8` | 114-method `DataProvider` TypeScript interface across 15 domains (feed, auth, chat, vault, profile, etc.). `TauriDataProvider` wrapping all existing `invoke()` calls. React Context + `useDataProvider()` hook. Backwards-compatible — no behavior changes. *(Phase 4.5 B-S1)* | ✅ Complete |
+| P3 | useUnifiedFeed migration | `6cd04dc` | Migrated `useUnifiedFeed` to use `DataProvider` instead of direct `invoke()` calls. All 590 lines updated. | ✅ Complete |
+| P4 | Bytescape Social settings UI | `ba05daa` | New "Bytescape Social" section in SettingsScreen — PDS account provisioning, AP actor provisioning, custom domain setup wizard, relay connection status, migration status display. *(Phase 4.5 B-S2)* | ✅ Complete (user confirmed: "looks good") |
+| P5 | RelayStatusBadge | `88b2d38` | Sidebar badge showing relay connection status (connected/syncing/offline) with unread count indicator. 5 tests. *(Phase 4.5 B-S3)* | ✅ Complete |
+| P6 | Image black flash fix (v2) | `96808fb` | Root cause: `BlobImage` used `useState(null)` + `useEffect` → 1-2 frames of dark placeholder on mount. Fix: synchronous cache init in `useBlobUrl`, `useLazyBlobUrl` bypasses observer for cached blobs, `BlobImage` uses `useMemo`, removed dark placeholder. Also removed rainbow hover animation + masonry transition. | ✅ Complete (user confirmed: "better") |
+| P6b | CSS hover removal (initial) | `f3da093` | Removed hover border/shadow/transform effects on feed cards and media items. Partial fix — user follow-up led to P6 v2 above. | ✅ Superseded by P6 v2 |
+| — | Mastodon profile URL fix | `2fbcb7a` | Mastodon `author_handle` is display-formatted (`"Name (@user@domain)"`). Naive `split('@')` parser put username in domain slot → DNS error. Fix: regex extraction `/@?([\w.-]+)@([\w.-]+\.\w+)/`. | ✅ Complete (user confirmed: "largely works", edge cases remain) |
+
+### Architecture: DataProvider Pattern
+
+The DataProvider interface (P1) enables the React frontend to compile into three targets from the same component tree:
+
+| Provider | Target | Data Source |
+|----------|--------|-------------|
+| `TauriDataProvider` | Desktop + Mobile (Tauri) | Local Rust backend via `invoke()` |
+| `RestDataProvider` | Web app (bytescape.social) | Server REST API via `fetch()` — future |
+| `WasmProvider` | Visitor portal (read-only) | Iroh WASM node — future |
+
+### Files Modified (Track B — Frontend)
+
+| File | Changes |
+|------|---------|
+| `src/providers/DataProvider.ts` | **NEW** — 114-method interface, 15 domains |
+| `src/providers/TauriDataProvider.ts` | **NEW** — invoke()-based implementation |
+| `src/providers/DataProviderContext.tsx` | **NEW** — React Context + useDataProvider() hook |
+| `src/providers/index.ts` | **NEW** — barrel export |
+| `src/hooks/useUnifiedFeed.ts` | Migrated from direct invoke() to DataProvider |
+| `src/hooks/useBlobUrl.ts` | Sync cache init in useState, extractBlobHash/resolveNonBlobSync helpers, useLazyBlobUrl cache bypass |
+| `src/components/BlobImage.tsx` | useMemo for URL resolution, removed dark placeholder, decoding=auto |
+| `src/components/RelayStatusBadge.tsx` | **NEW** — relay status indicator with 5 tests |
+| `src/screens/SettingsScreen.tsx` | Added "Bytescape Social" section |
+| `src/utils/openInApp.ts` | Regex-based Mastodon handle parsing in openProfile() |
+| `src/App.css` | Removed hover effects, rainbow animation, masonry transition |
+| `src/App.tsx` | Wrapped in DataProviderContext, added RelayStatusBadge |
+
+### Known Edge Cases (from user feedback)
+
+- Mastodon profile URL parsing works for standard formats but user noted "some edge cases" — likely non-standard handle formats. Monitor for follow-up.
+- P6 image flash confirmed "better" — may still be observable in edge cases (e.g., cold cache, first load before prefetch runs).
+
+---
+
 ## 📋 Sprint v11 — Backend Track A: Phase 4.5 Identity Migration + Server Stubs
 
 **Commit**: `baf72a4` on `main`
@@ -18,7 +70,7 @@
 | P2 | Simplify `get_owner_did()` | Reduced from 5-level to 3-level fallback: `did:web` → `did:plc` (real Bluesky only) → `did:key` | ✅ Complete |
 | P3 | Fix AP actor DID derivation | Already fixed in sprint v8 — verified `did_key_from_ed25519_bytes()` used consistently | ✅ Already done |
 | P4 | Relay sync command stubs | 5 commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status` | ✅ Complete |
-| P5 | PDS account provisioning stub | `provision_pds_account` — returns descriptive error until Tranquil PDS is deployed | ✅ Complete |
+| P5 | PDS account provisioning stub | `provision_pds_account` — returns descriptive error until Official PDS is deployed | ✅ Complete |
 | P6 | AP actor provisioning stub | `provision_ap_actor` — returns descriptive error until axum AP server is deployed | ✅ Complete |
 
 ### Identity Migration Details

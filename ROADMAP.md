@@ -145,7 +145,7 @@ Federation with the wider fediverse. Protocol implementation informed by [Stream
 
 - [x] **A1.1 AP Actor & Inbox/Outbox**: Create Bytescape AP actor at `bytescape.social/@{username}`. Implement HTTP signature verification, inbox POST handler, outbox GET endpoint. Add `ActivityPub` variant to `Source` enum. *(8 files, 1,636 lines, 22 tests. Commits: `7c58c40`, `a4e4062`, `28a6b8c`)*
 - [x] **A1.2 Basic Mastodon/Lemmy Support**: Feed reading, posting, DMs via custom AP C2S/S2S client. Follow/Accept/Reject activities. *(Sprint v7 — `05d6d4b`)* ⚠️ *Sprint v8 Post-Mortem: Mastodon connector uses fake `mastodon:instance:id` identifiers in `did` fields (13 locations in `connectors/mastodon.rs`). Identity linking is implicit only. See A1.2b for remediation.*
-- [ ] **A1.2b Identity Architecture Remediation** 🔥: *(Partially complete — Sprint v8)* Sprint v8 added `LinkedAccount` data structure, `master_did` root identity, formal identity linking in keychain, Settings screen identity UI with disconnect buttons + Mastodon connect. Sprint v10 added platform selector and Bytescape identity branding. **Remaining:** (1) Remove `generate_platform_plc()` — replace fabricated `mastodon:instance:id` DIDs with `acct:` URIs. (2) Fix AP actor DID derivation in `commands/ap.rs` to use canonical `did_key_from_ed25519_bytes()`. (3) Simplify `get_owner_did()` to 3-level hierarchy (`did:web` → `did:plc` → `did:key`). **→ Subsumed by Phase 4.5 task A-S1 (identity migration).**
+- [x] **A1.2b Identity Architecture Remediation** 🔥: *(Partially complete — Sprint v8, completed Sprint v11)* Sprint v8 added `LinkedAccount` data structure, `master_did` root identity, formal identity linking in keychain, Settings screen identity UI with disconnect buttons + Mastodon connect. Sprint v10 added platform selector and Bytescape identity branding. **Sprint v11 (commit `baf72a4`):** (1) ✅ Removed `generate_platform_plc()` + `base32_lower_encode()` — Mastodon accounts now use `acct:user@instance` as canonical identifier. Startup migration converts existing fabricated `did:plc` entries. 8 new Rust tests. (2) ✅ AP actor DID derivation already fixed in Sprint v8 — verified `did_key_from_ed25519_bytes()` used consistently. (3) ✅ Simplified `get_owner_did()` from 5-level to 3-level hierarchy (`did:web` → `did:plc` real Bluesky only → `did:key`).
 - [ ] **A1.3 Data Integrity Proofs (FEP-8b32)**: Sign all outbound AP activities with ed25519 (`eddsa-jcs-2022`) using Iroh node keys + `json-canonicalization` crate.
 - [ ] **A1.4 Actor Metadata (FEP-fb2a)**: Map Bytescape profile fields to/from `attachment` array on AP actor records.
 - [ ] **A1.5 Site Actor Discovery (FEP-d556)**: Fetch domain root as ActivityStreams `Service` actor for server-level metadata.
@@ -429,7 +429,7 @@ Every Bytescape user gets a `did:web:bytescape.social:{username}` as their unive
 | **ActivityPub** | `https://bytescape.social/@username` | Standard AP actor. WebFinger: `acct:username@bytescape.social`. No DID fabrication. |
 | **P2P / Iroh** | `did:key:z6Mk...` | Self-certifying from Ed25519 keypair. Used for P2P sync, device pairing, vault signing. |
 
-**DID Hierarchy (replaces current 5-level `get_owner_did()` fallback):**
+**DID Hierarchy (replaces current 5-level `get_owner_did()` fallback):** ✅ *Implemented — Sprint v11 (`baf72a4`). `get_owner_did()` simplified to 3-level fallback. Fabricated `did:plc` removed. Startup migration converts existing keychains.*
 ```
 1. did:web:bytescape.social:{username}     ← Set when username is chosen. Permanent.
 2. did:plc:...                              ← ONLY real Bluesky DID (from PLC directory)
@@ -454,18 +454,18 @@ Every Bytescape user gets a `did:web:bytescape.social:{username}` as their unive
 
 | ID | Task | Description | Effort |
 |----|------|-------------|--------|
-| **A-S1** | Identity migration (keychain) | Remove `generate_platform_plc()`. Migrate `LinkedAccount.identifier` to platform-native IDs (`acct:user@instance` for Mastodon, actor URL for AP). Simplify `get_owner_did()` to 3-level hierarchy. Startup migration function + tests. *(Subsumes Open Issue: "Identity Architecture — 3 Critical Inconsistencies")* | 3-5 days |
-| **A-S2** | Tauri ↔ Relay sync commands | New commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status`. Edge client pushes/pulls encrypted blobs to/from relay via existing `bytescape/1.0` ALPN. | 1-2 weeks |
-| **A-S3** | PDS account provisioning | Tauri command `provision_pds_account` — creates account on Bytescape PDS via XRPC, stores credentials in keychain, updates `did:plc` if needed. | 3-5 days |
-| **A-S4** | AP actor provisioning | Tauri command `provision_ap_actor` — creates account on custom AP server via API, links to `did:web`, stores credentials. | 3-5 days |
+| **A-S1** | Identity migration (keychain) | Remove `generate_platform_plc()`. Migrate `LinkedAccount.identifier` to platform-native IDs (`acct:user@instance` for Mastodon, actor URL for AP). Simplify `get_owner_did()` to 3-level hierarchy. Startup migration function + tests. *(Subsumes Open Issue: "Identity Architecture — 3 Critical Inconsistencies")* | 3-5 days | ✅ *(Sprint v11 — `baf72a4`)* |
+| **A-S2** | Tauri ↔ Relay sync commands | New commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status`. Edge client pushes/pulls encrypted blobs to/from relay via existing `bytescape/1.0` ALPN. | 1-2 weeks | 🔶 Stubs registered (`baf72a4`), impl pending relay deployment |
+| **A-S3** | PDS account provisioning | Tauri command `provision_pds_account` — creates account on Bytescape PDS via XRPC, stores credentials in keychain, updates `did:plc` if needed. | 3-5 days | 🔶 Stub registered (`baf72a4`), impl pending PDS deployment |
+| **A-S4** | AP actor provisioning | Tauri command `provision_ap_actor` — creates account on custom AP server via API, links to `did:web`, stores credentials. | 3-5 days | 🔶 Stub registered (`baf72a4`), impl pending AP server deployment |
 
 ### Frontend Tasks (Track B)
 
 | ID | Task | Description | Effort |
 |----|------|-------------|--------|
-| **B-S1** | DataProvider interface | Define `DataProvider` TypeScript interface (`getFeed()`, `getProfile()`, `sendPost()`, etc.). Implement `TauriDataProvider` wrapping existing `invoke()` calls. Backwards-compatible refactor — no behavior changes. | 1 week |
-| **B-S2** | Server account setup UI | Settings screen section: "Bytescape Social" — provision PDS + AP accounts, show migration status, link/unlink, custom domain setup wizard. | 3-5 days |
-| **B-S3** | Relay status indicator | UI indicator showing relay connection status (connected/syncing/offline). Unread count from relay for items received while app was closed. | 2-3 days |
+| **B-S1** | DataProvider interface | Define `DataProvider` TypeScript interface (`getFeed()`, `getProfile()`, `sendPost()`, etc.). Implement `TauriDataProvider` wrapping existing `invoke()` calls. Backwards-compatible refactor — no behavior changes. | 1 week | ✅ *(Sprint v11 — `3b83ae8`)* |
+| **B-S2** | Server account setup UI | Settings screen section: "Bytescape Social" — provision PDS + AP accounts, show migration status, link/unlink, custom domain setup wizard. | 3-5 days | ✅ *(Sprint v11 — `ba05daa`)* |
+| **B-S3** | Relay status indicator | UI indicator showing relay connection status (connected/syncing/offline). Unread count from relay for items received while app was closed. | 2-3 days | ✅ *(Sprint v11 — `88b2d38`)* |
 
 ### Client Architecture: Adapter Pattern
 
@@ -702,7 +702,8 @@ EmailAttachment {
 - [x] ~~**Bluesky getFollowers 401**~~: `PUBLIC_XRPC` pointed to `bsky.social/xrpc` (now requires auth). Changed to `public.api.bsky.app/xrpc`. Affects `getFollowers`, `getFollows`, `resolveHandle`. *(Commit: `e9a36ca`)*
 - [x] ~~**Blob Consistency Check**~~: Background task on startup (10s delay) scans all items with `media_blobs`, verifies each hash in Iroh. Auto-heals broken references. *(Commit: `d1d1855`)*
 - [x] ~~**Source Filter Bug (Sprint v5)**~~: Fixed in Sprint v6. Backend: `source_filter` param added to `get_timeline_unified` with composite cache keys, vault query passthrough, skip-Bluesky optimization (Track A: `7bc515b`). Frontend: client-side filter applied to all 4 tabs not just "all" tab; cache invalidation clears all tab keys on filter change (Track B: `eddb52b`, `0906559`). User confirmed filter works correctly on all tabs.
-- [ ] **Image Hover Shift (Sprint v5)**: User clarified: "the 'jitter' I was seeing was what happens when you mouse over an image." 1px shift on hover, not scroll jitter. CSS fix attempt (`32cf033`) addressed scroll placeholders but not the hover issue. **Needs**: find the `:hover` rule on image/media elements that applies `transform`, `border`, `box-shadow`, or `outline` causing the layout shift, and remove it. User wants images unresponsive to mouseover but fully functional otherwise.
+- [x] ~~**Image Hover Shift / Black Flash (Sprint v5 → v11)**~~: Original report: 1px shift on mouse hover. CSS hover effects (border/shadow/transform) removed in `f3da093`. User follow-up: "still jittering — more of a blink where every image goes black for a split second." Root cause: `BlobImage` used `useState(null)` + `useEffect` for URL resolution, causing 1-2 render frames of dark `#1a1a1a` placeholder before cached URL resolved. Fix: synchronous cache initialization in `useBlobUrl` (`useState` initializer reads `resolvedUrlCache`), `useLazyBlobUrl` bypasses IntersectionObserver for cached blobs, `BlobImage` uses `useMemo` instead of `useEffect`, removed dark placeholder background. Also removed rainbow hover animation and leftover masonry transition. *(Commits: `f3da093`, `96808fb`)*
+- [x] ~~**Mastodon Profile URL Parsing**~~: Clicking Mastodon author names caused DNS error "Error resolving 'username': Temporary failure in name resolution." Root cause: Mastodon connector formats `author_handle` as `"Display Name (@user@domain)"` but `openProfile()` naively split on `@`, putting the username in the domain slot. Fix: regex-based extraction `/@?([\w.-]+)@([\w.-]+\.\w+)/` handles all handle formats. *(Commit: `2fbcb7a`)*
 
 ### A0 OAuth — Known Gaps (post-merge follow-ups)
 *Identified by PM audit of Track A delivery. These are not bugs — they are documented scope gaps in the initial OAuth implementation that need follow-up work.*
