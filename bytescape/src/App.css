@@ -1006,10 +1006,7 @@ a:hover {
     transition: none;
 }
 
-.feed-entry-card:hover {
-    border-color: var(--link-blue);
-    box-shadow: 1px 1px 0 var(--text-muted, #444);
-}
+/* hover effects removed — user feedback: images must not react to mouseover */
 
 .feed-entry-card.is-quote {
     border: 1px solid var(--border-color, #aaa);
@@ -3960,10 +3957,7 @@ textarea::placeholder {
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.gallery-masonry-item:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--bevel-raised), 0 4px 12px rgba(0, 0, 0, 0.15);
-}
+/* gallery hover transform removed — user feedback: images must not react to mouseover */
 
 .gallery-masonry-img {
     display: block;
