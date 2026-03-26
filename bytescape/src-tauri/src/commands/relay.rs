@@ -3,7 +3,7 @@
 //! These commands are forward-looking stubs for Phase 4.5 server infrastructure.
 //! The `bytescape.social` server will host:
 //! - An Iroh relay (encrypted store-and-forward for offline clients)
-//! - An AT Protocol PDS (Official PDS — Bluesky federation)
+//! - An AT Protocol PDS (Tranquil PDS — Bluesky federation)
 //! - An ActivityPub instance (custom axum — Mastodon/fediverse federation)
 //!
 //! Until the server is deployed, all commands return descriptive errors
@@ -108,7 +108,7 @@ pub async fn relay_sync_status(
 /// Provision an account on the Bytescape AT Protocol PDS.
 ///
 /// When deployed, this will:
-/// 1. Call the PDS XRPC endpoint to create a new account
+/// 1. Call the Tranquil PDS XRPC endpoint to create a new account
 /// 2. Optionally use an invite code for gated access
 /// 3. Store the returned `did:plc` and PDS credentials in the keychain
 /// 4. Update the user's `did:web` document to include the PDS service endpoint
@@ -122,7 +122,7 @@ pub async fn provision_pds_account(
     _invite_code: Option<String>,
 ) -> Result<String, String> {
     Err("PDS not deployed — Phase 4.5 infrastructure required. \
-         Account provisioning requires the PDS at pds.bytescape.social. \
+         Account provisioning requires the Tranquil PDS at pds.bytescape.social. \
          Once deployed, this will create your AT Protocol identity and enable \
          Bluesky federation from your Bytescape account.".to_string())
 }

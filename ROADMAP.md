@@ -410,10 +410,10 @@ Inspired by [Habitat](https://github.com/carlnewton/habitat) — hyperlocal soci
 
 **Duration:** 4-6 weeks with 2 agents parallel. **Invite-only launch.**
 
-> **Architecture:** One server, dual protocol stacks. AT Proto PDS (Official PDS — Node.js, SQLite) and a custom `axum` AP server (extending existing 8-file, 1,636-line AP module) share identity resolution, storage, and the Sync Bridge to Iroh. Self-hosted initially on developer hardware behind Cloudflare Tunnel, with the same Docker Compose stack scaling to a commercial VPS when needed. Full architecture doc: `.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`. Setup guide: `docs/SELF-HOSTING-GUIDE.md`.
+> **Architecture:** One server, dual protocol stacks. AT Proto PDS (Tranquil PDS — Rust, Postgres) and a custom `axum` AP server (extending existing 8-file, 1,636-line AP module) share identity resolution, storage, and the Sync Bridge to Iroh. Self-hosted initially on developer hardware behind Cloudflare Tunnel or Tailscale Funnel, with the same Docker Compose stack scaling to a commercial VPS when needed. Full architecture doc: `.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`. Setup guide: `docs/SELF-HOSTING-GUIDE.md`.
 
 > **Key Decisions:**
-> - **PDS:** Official PDS (Node.js, SQLite, battle-tested, one-line installer). Upgrade path: `rsky-pds` (Rust, Postgres) when mature.
+> - **PDS:** Tranquil PDS (Rust, Postgres, native `did:web` support, single binary). Official PDS (Node.js, SQLite) is the documented fallback. Repo: `tangled.org/tranquil.farm/tranquil-pds`.
 > - **AP Instance:** Custom `axum` server extending the existing AP module. GoToSocial is the documented fallback if custom route proves too slow.
 > - **Initial deployment:** Self-hosted on developer hardware. Docker Compose only — no managed cloud dependencies.
 > - **Launch policy:** Invite-only (`PDS_INVITE_REQUIRED=true`).
@@ -443,7 +443,7 @@ Every Bytescape user gets a `did:web:bytescape.social:{username}` as their unive
 | ID | Task | Description | Effort |
 |----|------|-------------|--------|
 | **I-1** | Docker Compose scaffold | `caddy` + `postgres` + empty slots for PDS/AP/relay services. Caddy config with wildcard TLS for `*.bytescape.social`. | 2-3 days |
-| **I-2** | Deploy Official PDS | Deploy the official Bluesky PDS (`ghcr.io/bluesky-social/pds`) using its Docker Compose setup. Verify XRPC health endpoint (`/xrpc/_health`), account creation via `goat` CLI, WebSocket firehose (`subscribeRepos`). | 1-2 days |
+| **I-2** | Deploy Tranquil PDS | Configure and deploy Tranquil PDS pointed at Postgres. Verify XRPC health endpoint, account creation via `goat` CLI, WebSocket firehose. | 3-5 days |
 | **I-3** | Deploy custom AP server | Build `axum` server binary extending existing AP module. Multi-user actor registry, persistent follower/following storage (Postgres), inbox POST handler, outbox GET, WebFinger resolution. Verify basic federation with external Mastodon instance. | 2-3 weeks |
 | **I-4** | Identity resolver | Serve `/.well-known/did.json` generating `did:web` documents dynamically from user records. Serve `/.well-known/webfinger` routing to PDS (AT handle resolution) or AP server (acct resolution). | 3-5 days |
 | **I-5** | Iroh relay daemon | Rust binary using `iroh` crate. Accepts encrypted blob uploads from edge clients, stores in content-addressed filesystem, serves on request. No decryption — blind relay only. | 1-2 weeks |

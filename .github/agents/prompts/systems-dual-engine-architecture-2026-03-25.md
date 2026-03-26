@@ -27,7 +27,7 @@ This is **not a rewrite**. The existing Tauri app (23,000+ lines Rust, 12,000+ l
 │                                                                      │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │
 │  │  AT Proto PDS    │  │  AP Instance     │  │  Iroh Relay        │  │
-│  │  (Official PDS)  │  │  (custom axum    │  │  (blind encrypted  │  │
+│  │  (Tranquil PDS)  │  │  (custom axum    │  │  (blind encrypted  │  │
 │  │                  │  │   from existing   │  │   store+forward)   │  │
 │  │                  │  │   AP module)     │  │                    │  │
 │  │  • XRPC server   │  │  • Inbox/Outbox  │  │  • Iroh blob cache │  │
@@ -79,7 +79,7 @@ This is **not a rewrite**. The existing Tauri app (23,000+ lines Rust, 12,000+ l
 
 | Component | Role | Technology |
 |-----------|------|-----------|
-| **AT Proto PDS** | Hosts user repositories, serves XRPC, firehoses to Bluesky Relay | Official PDS (Node.js, SQLite) — proven, one-line installer. Rust alternative: `rsky-pds` (Postgres) when mature. |
+| **AT Proto PDS** | Hosts user repositories, serves XRPC, firehoses to Bluesky Relay | Tranquil PDS (Rust, Postgres) — single binary, native `did:web`, passkeys/2FA/SSO. Repo: `tangled.org/tranquil.farm/tranquil-pds`. Official PDS (Node.js, SQLite) is the documented fallback. |
 | **AP Instance** | Federates with Mastodon/Lemmy/Threads, handles inbox/outbox/WebFinger | Custom `axum` server extending existing AP module (`src-tauri/src/activitypub/`) |
 | **Iroh Relay** | Encrypted store-and-forward for edge clients, mobile push wakeup, P2P relay | Custom Rust binary using `iroh` crate — extends existing `sync.rs` code |
 | **Sync Bridge** | Bidirectional translation: Iroh blobs ↔ SQL ↔ PDS repos ↔ AP objects | Custom Rust daemon, internal-only (not exposed to internet) |
@@ -166,7 +166,7 @@ DID:           did:web:alice.com → alice.com/.well-known/did.json → links al
 ```
 
 **Implementation:**
-- AT Proto handle: User adds DNS TXT record `_atproto.alice.com → did=did:plc:abc...` OR serves `/.well-known/atproto-did` returning their DID. The PDS verifies this during handle claim.
+- AT Proto handle: User adds DNS TXT record `_atproto.alice.com → did=did:plc:abc...` OR serves `/.well-known/atproto-did` returning their DID. Tranquil PDS verifies this during handle claim.
 - AP handle: User's domain `/.well-known/webfinger?resource=acct:alice@alice.com` returns a response pointing to the `bytescape.social` AP actor. This can be a static JSON file on their web server, a redirect, or a reverse proxy rule.
 - DID Document: User can optionally serve `did:web:alice.com` at `alice.com/.well-known/did.json`, linking to their AT Proto DID, AP actor, and Iroh node. This makes their personal domain the ultimate root of trust.
 - **UI wizard:** Settings screen walks the user through DNS verification with copy-paste instructions for each step. Shows green checkmarks as each verification passes.
@@ -236,7 +236,7 @@ Step 6: Bluesky network now routes all reads/writes for this did:plc
 - Firehose to the Bluesky Relay so content appears in the AppView
 - Handle blob storage and serving via `com.atproto.sync.getBlob`
 
-**This is why using an existing PDS implementation is critical** — implementing the AT Proto server spec from scratch is 3-6 months of work. The official PDS (Node.js, SQLite, battle-tested) provides this out of the box. `rsky-pds` (Rust, Postgres) is an alternative when it matures.
+**This is why using an existing PDS implementation is critical** — implementing the AT Proto server spec from scratch is 3-6 months of work. Tranquil PDS (Rust, Postgres, `did:web` support, single binary) or the official PDS (Node.js, SQLite, battle-tested) provide this out of the box.
 
 ### 3c. New User (Native Bytescape Account)
 
@@ -379,11 +379,11 @@ The entire server ships as a single `docker-compose.yaml`:
 ```yaml
 services:
   caddy:           # Reverse proxy, auto-TLS, wildcard subdomains
-  pds:             # AT Protocol PDS (Official PDS — Node.js, SQLite)
+  pds:             # AT Protocol PDS (Tranquil PDS — Rust, Postgres)
   ap-server:       # ActivityPub instance (custom axum — extends existing AP module)
   iroh-relay:      # Encrypted Iroh blob relay + push notifications
   sync-bridge:     # Internal daemon: Iroh ↔ SQL ↔ PDS ↔ AP translation
-  postgres:        # Shared database (AP server + bridge; PDS uses SQLite internally)
+  postgres:        # Shared database (Tranquil PDS + AP server + bridge)
 ```
 
 ### Hardware Requirements
@@ -410,24 +410,23 @@ The wildcard allows:
 
 ---
 
-## 7. PDS Selection: Official PDS vs rsky-pds
+## 7. PDS Selection: Tranquil PDS vs Official PDS
 
-> ⚠️ **Correction (March 25, 2026):** "Tranquil PDS" was previously referenced in this document but does not exist. It was a hallucination. The actual options are below.
+Both are viable. Here's the trade-off:
 
-| Factor | Official PDS (bluesky-social/pds) | rsky-pds (blacksky-algorithms/rsky) |
-|--------|----------------------------------|------------------------------------|
-| **Language** | Node.js/TypeScript | Rust — same as Bytescape backend |
-| **Database** | SQLite | PostgreSQL |
-| **Maturity** | Battle-tested, 2.4k stars, active Bluesky team maintenance | WIP ("things will break" warning), 630 stars, community-maintained |
-| **Installer** | One-line `curl \| bash` installer, Docker Compose included | No installer — manual Docker/build setup |
-| **`did:web`** | ❌ `did:plc` only (identity resolver handles `did:web` externally) | ❌ `did:plc` only (same limitation) |
-| **License** | MIT/Apache-2.0 | Apache-2.0 |
-| **Scaling** | SQLite ceiling ~500-1000 users | Postgres scales well |
-| **Documentation** | Excellent — official README covers VPS, DNS, SMTP, migration | Minimal — README + code |
+| Factor | Tranquil PDS (Rust) | Official PDS (Node.js) |
+|--------|--------------------|-----------------------|
+| **Language** | Rust — same as Bytescape backend | TypeScript/Node.js — different stack |
+| **Database** | PostgreSQL | SQLite |
+| **`did:web`** | ✅ Native support (PDS-hosted subdomains or BYOD) | ❌ `did:plc` only |
+| **Auth features** | Passkeys, 2FA (TOTP/FIDO2), SSO, app passwords with scopes | Basic password + app passwords |
+| **Maturity** | Newer, actively developed (172 stars, commits daily) | Battle-tested by Bluesky team for 2+ years |
+| **Binary** | Single binary, no runtime | Requires Node.js 18+ |
+| **Scaling** | Postgres scales well | SQLite has ceiling (~500-1000 users) |
+| **Maintenance** | Community-maintained (AGPL-3.0) | Bluesky-maintained (MIT/Apache-2.0) |
+| **Repo** | `tangled.org/tranquil.farm/tranquil-pds` | `github.com/bluesky-social/pds` |
 
-**Decision:** Use the **Official PDS** for initial deployment. It's proven, well-documented, has a one-line installer, and the Bluesky team actively maintains it. The SQLite limitation is irrelevant for invite-only use (1-20 users). **rsky-pds** is the documented upgrade path if/when we need Postgres scalability or want to collapse the stack into pure Rust. Both expose the same XRPC API surface, so the Sync Bridge is unaffected by a swap.
-
-**`did:web` gap:** Neither PDS natively supports `did:web`. The Identity Resolver (I-4) handles this externally — serving `/.well-known/did.json` and mapping between `did:web` and `did:plc`. This is a thin HTTP handler, not a PDS concern.
+**Decision:** Use **Tranquil PDS** for alignment with the Rust stack, native `did:web` support, Postgres scalability, and advanced auth features (passkeys, 2FA, SSO). Fall back to the official PDS only if Tranquil proves too immature during self-hosted testing. Both expose the same XRPC API surface, so the Sync Bridge is unaffected by a swap.
 
 ---
 
@@ -589,7 +588,7 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 ### For Infrastructure Agent (NEW)
 
 **Phase 4.5 scope:**
-1. **I-1 through I-7:** Deploy the Docker Compose stack on the developer's self-hosted hardware. Configure DNS for `bytescape.social`, Cloudflare Tunnel for ingress, TLS via Caddy, Postgres, Official PDS, custom axum AP server, Iroh relay, Sync Bridge, identity resolver. Refer to `docs/SELF-HOSTING-GUIDE.md` for the step-by-step hardware and OS setup.
+1. **I-1 through I-7:** Deploy the Docker Compose stack on the developer's self-hosted hardware. Configure DNS for `bytescape.social`, Cloudflare Tunnel or Tailscale Funnel for ingress, TLS via Caddy, Postgres, Tranquil PDS, custom axum AP server, Iroh relay, Sync Bridge, identity resolver.
 2. **Test with developer account first** — migrate the developer's Bluesky and Mastodon accounts to `bytescape.social` before inviting others.
 3. **Document the deployment** in a `server/README.md` with setup instructions that work identically for self-hosters and cloud VPS.
 
@@ -602,10 +601,10 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 
 ## 12. Design Decisions (Finalized)
 
-1. **PDS choice: Official PDS** (bluesky-social/pds). Battle-tested, one-line installer, Docker Compose included, well-documented, MIT/Apache-2.0. SQLite-backed (sufficient for invite-only scale). Upgrade path to **rsky-pds** (Rust, Postgres) when it stabilizes. ~~Tranquil PDS was previously listed here but does not exist — it was a hallucination.~~
+1. **PDS choice: Tranquil PDS.** Rust-native, Postgres-backed, `did:web` support built in, single binary with no Node.js runtime. Aligns with the Rust stack. Falls back to official PDS only if Tranquil proves too immature during testing. Repo: `tangled.org/tranquil.farm/tranquil-pds`.
 2. **AP instance choice: Custom (extend existing AP module).** The existing AP module (8 files, 1,636 lines) will be extended into a full server-side AP instance using `axum`. This provides maximum flexibility and keeps the entire stack in Rust. GoToSocial remains a documented fallback if the custom route proves too slow. Note: `megalodon-rs` (referenced in TECHNICAL_SPEC §7.1) is a **client library** for talking to Mastodon-API-compatible servers — it is useful for the Tauri app's client-side Mastodon interactions, but is not an AP server implementation and is not relevant to the server-side AP instance.
 3. **Initial deployment: Self-hosted.** `bytescape.social` will be hosted on the developer's own hardware for initial testing with a small number of users. It federates identically to how the final self-hosted relay/instance will work. Once proven out, the same Docker Compose stack scales to a commercial cloud provider (TBD based on observed load). The architecture must be cloud-agnostic — no managed-service dependencies.
-4. **Invite-only launch.** Both the Official PDS (`PDS_INVITE_REQUIRED=true`) and the custom AP instance will require invite codes for account creation. This allows controlled growth and infrastructure capacity planning before opening registration.
+4. **Invite-only launch.** Both Tranquil PDS (`PDS_INVITE_REQUIRED=true`) and the custom AP instance will require invite codes for account creation. This allows controlled growth and infrastructure capacity planning before opening registration.
 5. **Custom domain handles: Yes.** Users can bring their own domain as both an AT Protocol handle (`@alice.com` resolved via `/.well-known/atproto-did`) and a fediverse handle (`@alice@alice.com` via WebFinger delegation). **This is a core differentiator** — users' indieweb home pages become their fediverse identity. Implementation requires:
    - AT Proto: DNS TXT record or `/.well-known/atproto-did` on user's domain → PDS handle verification
    - ActivityPub: WebFinger delegation — user's domain `/.well-known/webfinger` redirects or proxies to `bytescape.social`'s WebFinger endpoint

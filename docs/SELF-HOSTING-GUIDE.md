@@ -510,7 +510,7 @@ You should see `active (running)`. The tunnel is now live and will auto-start on
 
 ## 9. Deploy the Bytescape Stack
 
-> ⚠️ **This section is a preview.** The Docker Compose file and custom services (AP server, Sync Bridge, Iroh Relay) are still being built by the development team. The structure below shows what the final deployment will look like, with the **Official PDS** as the AT Protocol component that can be deployed today.
+> ⚠️ **This section is a preview.** The Docker Compose file and custom services (AP server, Sync Bridge, Iroh Relay) are still being built by the development team. The structure below shows what the final deployment will look like, with **Tranquil PDS** as the AT Protocol component that can be deployed today.
 
 ### 9.1 Create the Project Directory
 
@@ -545,14 +545,17 @@ services:
       - pds
       - postgres
 
-  # ─── AT Protocol PDS ───────────────────────────────────
+  # ─── AT Protocol PDS (Tranquil PDS) ─────────────────────
   pds:
-    image: ghcr.io/bluesky-social/pds:latest
+    # Tranquil PDS — Rust, single binary, Postgres-backed
+    # See: https://tangled.org/tranquil.farm/tranquil-pds
+    # Fallback: ghcr.io/bluesky-social/pds:latest (Official PDS — Node.js, SQLite)
+    build:
+      context: ./tranquil-pds
     restart: unless-stopped
     volumes:
       - pds_data:/pds
-    env_file:
-      - ./pds.env
+      - ./config.toml:/etc/tranquil-pds/config.toml
     depends_on:
       - postgres
 
@@ -635,7 +638,18 @@ echo "  PDS admin password: ${PDS_ADMIN_PASSWORD}"
 
 ### 9.4 Deploy What's Available Now
 
-For now, you can deploy the **Official PDS** standalone using Bluesky's own installer, which sets up its own Caddy + PDS + Docker Compose:
+For now, you can deploy **Tranquil PDS** standalone. See the Tranquil PDS documentation for Docker/Podman deployment:
+
+```bash
+# Clone Tranquil PDS
+git clone https://tangled.org/tranquil.farm/tranquil-pds.git
+cd tranquil-pds
+cp example.toml config.toml
+# Edit config.toml with your domain, secrets, etc.
+podman-compose -f docker-compose.prod.yaml up -d
+```
+
+Alternatively, the **Official Bluesky PDS** (Node.js, SQLite) can be used as a fallback:
 
 ```bash
 curl https://raw.githubusercontent.com/bluesky-social/pds/main/installer.sh > installer.sh

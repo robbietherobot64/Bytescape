@@ -2,7 +2,7 @@
 
 **Sprint Goal:** Stand up the `bytescape.social` server infrastructure: Docker Compose scaffold, Official PDS deployment, identity resolution. This is the **#1 user priority** — hosting data on a self-owned PDS and federating with the fediverse.
 
-**Context:** Sprint v11 completed the client-side identity migration (A-S1 ✅), relay/server command stubs (A-S2/A-S3/A-S4 🔶 stubs). The stubs in `commands/relay.rs` now need real infrastructure behind them. The self-hosting guide (`docs/SELF-HOSTING-GUIDE.md`) and systems architecture doc (`.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`) document the target deployment. **IMPORTANT: "Tranquil PDS" does not exist — it was a hallucination.** Use the **Official Bluesky PDS** (`ghcr.io/bluesky-social/pds`, Node.js, SQLite).
+**Context:** Sprint v11 completed the client-side identity migration (A-S1 ✅), relay/server command stubs (A-S2/A-S3/A-S4 🟡 stubs). The stubs in `commands/relay.rs` now need real infrastructure behind them. The self-hosting guide (`docs/SELF-HOSTING-GUIDE.md`) and systems architecture doc (`.github/agents/prompts/systems-dual-engine-architecture-2026-03-25.md`) document the target deployment. **IMPORTANT CORRECTION: Tranquil PDS IS REAL.** Your sprint v11 commit `3017721` incorrectly stated it was a hallucination — it is not. Tranquil PDS is an actively developed Rust AT Protocol PDS at `https://tangled.org/tranquil.farm/tranquil-pds`. It is the **primary PDS choice** for Bytescape. The Official Bluesky PDS (`ghcr.io/bluesky-social/pds`, Node.js, SQLite) is the **fallback** only.
 
 **HEAD:** `06cf97a` on `main` (clean tree). **Build:** 0 tsc errors, 272/272 frontend tests, 207 Rust tests pass.
 
@@ -25,42 +25,44 @@
 2. **`docker-compose.yml`** with these services:
    - **`caddy`** — Reverse proxy with automatic TLS. Mount `Caddyfile`. Ports 80, 443. Wildcard cert for `*.bytescape.social` via Cloudflare DNS challenge (or HTTP challenge for initial setup).
    - **`postgres`** — PostgreSQL 16. Used by AP server and sync bridge (NOT the PDS — PDS uses SQLite). Volume for data persistence.
-   - **`pds`** — `ghcr.io/bluesky-social/pds:latest`. Environment variables: `PDS_HOSTNAME`, `PDS_DATA_DIRECTORY`, `PDS_BLOBSTORE_DISK_LOCATION`, `PDS_DID_PLC_URL`, `PDS_BSKY_APP_VIEW_URL`, `PDS_BSKY_APP_VIEW_DID`, `PDS_REPORT_SERVICE_URL`, `PDS_REPORT_SERVICE_DID`, `PDS_CRAWLERS`, `PDS_INVITE_REQUIRED=true`, `PDS_JWT_SECRET`, `PDS_ADMIN_PASSWORD`. Internal port 3000.
+   - **`pds`** — Tranquil PDS (Rust, Postgres). Clone from `https://tangled.org/tranquil.farm/tranquil-pds`. Build from source or use their Docker setup. Configuration via `config.toml` (see `example.toml` in repo). Key config: `hostname`, `db.url` (point to postgres), `blobstore.path`, `pds.invite_required = true`, `jwt.secret`, `admin.password`. Internal port TBD (check their docs).
    - Empty service slots (commented out) for: `ap-server`, `iroh-relay`, `sync-bridge`.
-3. **`Caddyfile`** — Route `*.bytescape.social` → PDS (port 3000). Route `bytescape.social/.well-known/did.json` and `bytescape.social/.well-known/webfinger` → identity resolver (placeholder for I-4). Reserve `/ap/` path prefix for AP server.
+3. **`Caddyfile`** — Route `*.bytescape.social` → PDS. Route `bytescape.social/.well-known/did.json` and `bytescape.social/.well-known/webfinger` → identity resolver (placeholder for I-4). Reserve `/ap/` path prefix for AP server.
 4. **`.env.example`** — All configurable values with sensible defaults and comments.
 5. **`README.md`** — Quick start instructions. Reference `docs/SELF-HOSTING-GUIDE.md` for full guide.
 
 **Key decisions:**
-- PDS runs on SQLite (its default). No Postgres dependency for PDS.
+- Tranquil PDS uses Postgres (shared with AP server and bridge).
 - Caddy handles TLS automatically. For local dev, use `--internal-tls` or HTTP only.
-- `PDS_INVITE_REQUIRED=true` for launch — invite-only access.
-- Generate `PDS_JWT_SECRET` and `PDS_ADMIN_PASSWORD` in the `.env.example` with placeholder instructions.
+- Invite-only access for launch.
+- Generate secrets per Tranquil PDS docs (`openssl rand -base64 48`).
 
-**Reference:** Read `docs/SELF-HOSTING-GUIDE.md` for the full architecture. The Official PDS Docker setup guide: https://github.com/bluesky-social/pds (check their `README.md` for canonical environment variables).
+**Reference:** Read `docs/SELF-HOSTING-GUIDE.md` for the full architecture. Tranquil PDS repo: `https://tangled.org/tranquil.farm/tranquil-pds` — check their `README.md`, `example.toml`, and `docs/install-containers.md` for canonical deployment patterns.
 
 **Verification:** `docker compose config` validates the YAML without errors.
 
 ---
 
-## P2: PDS Configuration & Health Verification (I-2)
+## P2: Tranquil PDS Configuration & Health Verification (I-2)
 
 **Priority:** 🔥 Critical — proves the PDS actually works.
 
-**Task:** Configure and validate the Official PDS deployment.
+**Task:** Configure and validate the Tranquil PDS deployment.
 
-1. **PDS environment tuning:**
-   - Set `PDS_HOSTNAME=pds.bytescape.social` (or `PDS_HOSTNAME=bytescape.social` if using subdomain routing — check PDS docs for the correct pattern)
-   - Ensure PDS data volume persists across restarts
-   - Configure `PDS_CRAWLERS=https://bsky.network` to register with the Bluesky Relay
+1. **Tranquil PDS configuration:**
+   - Clone `https://tangled.org/tranquil.farm/tranquil-pds`
+   - Copy `example.toml` to `config.toml` and configure: hostname (`pds.bytescape.social` or `bytescape.social`), Postgres connection URL, blob storage path, `invite_required = true`, crawlers (`https://bsky.network`)
+   - Tranquil PDS has native `did:web` support — configure PDS-hosted subdomains for `*.bytescape.social`
+   - Ensure Postgres data volume and blob storage persist across restarts
 2. **Create a health check script** (`server/scripts/verify-pds.sh`):
    - Test XRPC health endpoint: `curl https://pds.bytescape.social/xrpc/_health`
    - Test account creation (using admin credentials): `curl -X POST .../xrpc/com.atproto.server.createAccount` with invite code
    - Test WebSocket firehose: `websocat wss://pds.bytescape.social/xrpc/com.atproto.sync.subscribeRepos` (verify stream starts)
    - Test `describeServer`: `curl .../xrpc/com.atproto.server.describeServer` — verify `availableUserDomains` includes `bytescape.social`
+   - Test `did:web` resolution (Tranquil PDS feature): verify `/.well-known/did.json` is served for users
 3. **Document the verification results** in `server/README.md`.
 
-**Note:** This may require actual DNS and network setup that can't be fully automated in code. Focus on creating the configuration files and verification scripts that are ready to run once DNS is pointed. If you can test locally with `localhost` substitutions, do so.
+**Note:** Tranquil PDS quick start: `cp example.toml config.toml && podman compose up db -d && just run`. For production: `podman-compose -f docker-compose.prod.yaml up -d`. See their install guides for Debian, containers, and Kubernetes.
 
 ---
 
@@ -151,5 +153,5 @@
 - **Build verification:** Run `cargo check` + `pnpm test -- --run` before EVERY commit. Zero errors, zero test regressions.
 - **Shared files:** Before editing `lib.rs`, `db.rs`, or `keychain_encrypted.rs`, run `git log --oneline -5 -- <filepath>` to check for recent cross-agent modifications.
 - **Commit format:** `feat(track-a): description` or `infra(track-a): description`. One logical change per commit.
-- **PDS choice:** Official Bluesky PDS (`ghcr.io/bluesky-social/pds`), Node.js, SQLite. NOT "Tranquil PDS" (doesn't exist). Upgrade path: `rsky-pds` when mature.
+- **PDS choice:** Tranquil PDS (Rust, Postgres, `did:web` support, single binary). Repo: `https://tangled.org/tranquil.farm/tranquil-pds`. Official PDS (Node.js, SQLite) is the documented fallback only. Do NOT reference "Tranquil PDS doesn't exist" or call it a hallucination — that was an error in sprint v11 that has been corrected.
 - **Update `progress.md`** with your deliverables when done.
