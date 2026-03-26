@@ -91,15 +91,21 @@ export function openProfile(handle: string, protocol?: 'bluesky' | 'activitypub'
         const url = `https://bsky.app/profile/${handle}`;
         openInApp(url, `@${handle}`);
     } else if (derivedProtocol === 'activitypub' || derivedProtocol === 'mastodon') {
-        // basic parser: @username@instance.social -> https://instance.social/@username
-        let url = `https://${handle}`;
-        if (handle.includes('@')) {
-            const parts = handle.split('@').filter(Boolean); // remove leading @
-            if (parts.length >= 2) {
-                const domain = parts[1];
-                const username = parts[0];
-                url = `https://${domain}/@${username}`;
-            }
+        // Mastodon author_handle comes in multiple formats:
+        //   "user@instance.tld"                    — no display name
+        //   "Display Name (@user@instance.tld)"    — with display name
+        //   "@user@instance.tld"                   — with leading @
+        // Extract user@domain with a regex that handles all variants.
+        const acctMatch = handle.match(/@?([\w.-]+)@([\w.-]+\.\w+)/);
+        let url: string;
+        if (acctMatch) {
+            const username = acctMatch[1];
+            const domain = acctMatch[2];
+            url = `https://${domain}/@${username}`;
+        } else {
+            // Fallback: if handle looks like a plain username, we can't build a valid URL.
+            // Try treating the whole handle as a domain path (unlikely to work, but safe).
+            url = `https://${handle.replace(/[^a-zA-Z0-9.@/_-]/g, '')}`;
         }
         openInApp(url, `@${handle}`);
     } else {
