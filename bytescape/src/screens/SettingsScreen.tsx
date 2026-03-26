@@ -516,6 +516,44 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                 <ThemePicker />
             </div>
 
+            {/* Bytescape Social — Phase 4.5 server integration */}
+            <div className="card" style={{ marginTop: 16 }}>
+                <h3>☁️ Bytescape Social</h3>
+                <p className="text-muted text-sm" style={{ marginBottom: 12 }}>
+                    Host your data on bytescape.social for full data sovereignty.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 } as React.CSSProperties}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', opacity: 0.6 } as React.CSSProperties}>
+                        <span style={{ fontSize: '1.1rem' }}>🔑</span>
+                        <div style={{ flex: 1 }}>
+                            <strong style={{ fontSize: '0.9rem' }}>PDS Account</strong>
+                            <p className="text-xs text-muted" style={{ margin: 0 }}>AT Protocol Personal Data Server</p>
+                        </div>
+                        <span style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--bg-tertiary)', color: 'var(--text-muted)', border: 'var(--border-default)' } as React.CSSProperties}>Coming soon</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', opacity: 0.6 } as React.CSSProperties}>
+                        <span style={{ fontSize: '1.1rem' }}>🐘</span>
+                        <div style={{ flex: 1 }}>
+                            <strong style={{ fontSize: '0.9rem' }}>AP Actor</strong>
+                            <p className="text-xs text-muted" style={{ margin: 0 }}>ActivityPub federation endpoint</p>
+                        </div>
+                        <span style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--bg-tertiary)', color: 'var(--text-muted)', border: 'var(--border-default)' } as React.CSSProperties}>Coming soon</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-panel)', border: 'var(--border-default)', opacity: 0.6 } as React.CSSProperties}>
+                        <span style={{ fontSize: '1.1rem' }}>📡</span>
+                        <div style={{ flex: 1 }}>
+                            <strong style={{ fontSize: '0.9rem' }}>Relay</strong>
+                            <p className="text-xs text-muted" style={{ margin: 0 }}>Iroh relay for P2P persistence</p>
+                        </div>
+                        <span style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--bg-tertiary)', color: 'var(--text-muted)', border: 'var(--border-default)' } as React.CSSProperties}>Coming soon</span>
+                    </div>
+                </div>
+                <p className="text-xs text-muted" style={{ marginTop: 10, lineHeight: 1.5 }}>
+                    Server hosting is being deployed. Once live, you'll be able to migrate your
+                    Bluesky and Mastodon accounts to bytescape.social for full data sovereignty.
+                </p>
+            </div>
+
             {/* P2P Sync — simplified */}
             <div className="card" style={{ marginTop: 16 }}>
                 <h3>🔗 Device Sync</h3>
