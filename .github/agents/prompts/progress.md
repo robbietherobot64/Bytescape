@@ -4,6 +4,14 @@
 
 ---
 
+## 📋 PM Post-Sprint v12 — User Observation (2026-03-27 evening)
+
+**User feedback**: Forums tab is visible and navigable, but entirely non-functional — displays only hardcoded mock data. No live content populates the forums. Root cause: `useGroupsData.ts` has `USE_MOCK = true` and makes zero `invoke()` calls to the Rust backend. The 21 groups Tauri commands are unreachable from the UI.
+
+**Action**: Updated ROADMAP B4.11 and B4.14 with user-observed notes. Sprint v13 frontend P1 (wire groups feed tab) and P5 (kill mock flag, connect real data) are the top priorities — the backend is complete, it just needs to be connected.
+
+---
+
 ## 📋 PM Sprint v12 Review — Audit & Sprint v13 Initialization
 
 **Date**: 2026-03-27
