@@ -457,7 +457,7 @@ export interface DocTicketInfo {
     namespace_id: string;
 }
 
-export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "import" | "vault" | "settings";
+export type SidebarItem = "feed" | "search" | "profile" | "chat" | "social" | "forums" | "import" | "vault" | "settings";
 
 // ─── Theme ───
 export type ThemeId = 'geocities' | 'win98' | 'midnight' | 'hacker';
@@ -582,4 +582,76 @@ export interface LinkCard {
     image_url?: string | null;
     site_name?: string | null;
     favicon_url?: string | null;
+}
+
+// ─── Groups & Topics (B4 / Sprint v12) ───
+
+export type GroupVisibility = 'Public' | 'Closed' | 'Private';
+export type MemberRole = 'Owner' | 'Moderator' | 'Member';
+export type MemberStatus = 'Active' | 'Pending' | 'Invited' | 'Banned';
+
+export interface Topic {
+    id: string;
+    name: string;
+    slug: string;
+    parent_id: string | null;
+    description: string;
+    icon: string | null;
+    sort_order: number;
+    created_by: string;
+    created_at: number;
+}
+
+export interface TopicNode extends Topic {
+    children: TopicNode[];
+    groups: GroupSummary[];
+    subscribed: boolean;
+}
+
+export interface LocalGroup {
+    group_id: string;
+    name: string;
+    slug: string;
+    description: string;
+    visibility: GroupVisibility;
+    topic_id: string;
+    owner_did: string;
+    icon_blob: string | null;
+    banner_blob: string | null;
+    rules: string | null;
+    posting_restricted_to_mods: boolean;
+    member_count: number;
+    created_at: number;
+    updated_at: number;
+}
+
+export interface GroupSummary {
+    group_id: string;
+    name: string;
+    slug: string;
+    visibility: GroupVisibility;
+    member_count: number;
+    icon_blob: string | null;
+}
+
+export interface GroupMember {
+    group_id: string;
+    member_did: string;
+    role: MemberRole;
+    status: MemberStatus;
+    joined_at: number;
+}
+
+export interface GroupPost {
+    group_id: string;
+    item_id: string;
+    pinned: boolean;
+    shared_by: string | null;
+    posted_at: number;
+}
+
+export interface TopicSubscription {
+    topic_id: string;
+    user_did: string;
+    subscribed_at: number;
 }

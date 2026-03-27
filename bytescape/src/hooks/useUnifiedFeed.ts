@@ -42,15 +42,16 @@ function nestOwnerReplies(entries: FeedEntry[]): FeedEntry[] {
     return entries.filter((_, i) => !replyIndices.has(i));
 }
 
-export type FeedTab = 'all' | 'following' | 'subscribed' | 'you';
+export type FeedTab = 'all' | 'following' | 'subscribed' | 'you' | 'groups';
 
-export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed'];
+export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed', 'groups'];
 
 export const FEED_TAB_LABELS: Record<FeedTab, string> = {
     all: 'All',
     following: 'Following',
     subscribed: 'Subscribed',
     you: 'You',
+    groups: 'Groups',
 };
 export const FEED_FILTER_ALL = '__all__';
 const ARCHIVE_PAGE_SIZE = 200;
