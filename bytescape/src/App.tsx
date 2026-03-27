@@ -1,3 +1,6 @@
+/** This is the app file for Bytescape. It initializes the app, manages global state, and renders the main layout and screens. */
+
+/** Import global styles and themes */
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";

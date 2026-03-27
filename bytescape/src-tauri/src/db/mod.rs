@@ -18,12 +18,20 @@ pub(crate) const AP_ACTORS_TABLE: TableDefinition<&str, &str> = TableDefinition:
 pub(crate) const PROFILE_LAYOUT_TABLE: TableDefinition<&str, &str> = TableDefinition::new("profile_layout");
 pub(crate) const GUESTBOOK_TABLE: TableDefinition<&str, &str> = TableDefinition::new("guestbook");
 
+// ─── Groups & Topics (Sprint v12) ─────────────────────────────────
+pub(crate) const TOPICS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("topics");
+pub(crate) const TOPIC_SUBSCRIPTIONS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("topic_subscriptions");
+pub(crate) const GROUPS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("groups");
+pub(crate) const GROUP_MEMBERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("group_members");
+pub(crate) const GROUP_POSTS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("group_posts");
+
 pub use crate::models::*;
 
 pub mod contacts;
 pub mod chat;
 pub mod vault;
 pub mod peers;
+pub mod groups;
 
 #[derive(Clone)]
 pub struct DbManager {
@@ -53,6 +61,11 @@ impl DbManager {
             let _ = write_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(GUESTBOOK_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(TOPICS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(TOPIC_SUBSCRIPTIONS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(GROUPS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(GROUP_MEMBERS_TABLE).map_err(|e| e.to_string())?;
+            let _ = write_txn.open_table(GROUP_POSTS_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 

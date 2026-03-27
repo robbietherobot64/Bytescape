@@ -24,12 +24,13 @@ export interface AuthStatus {
 
 // ─── P2P Peer Types ───
 
+/** Information about the current user's peer in the network */
 export interface MyPeerInfo {
     node_id: string;
     username: string | null;
     did: string | null;
 }
-
+/** Information about a peer in the network */
 export interface PeerInfo {
     node_id: string;
     display_name: string | null;
@@ -286,7 +287,7 @@ export interface VaultStats {
 // === Vault File Manager ===
 
 export type VaultFileKind = 'Image' | 'Video' | 'Audio' | 'Document' | 'Archive' | 'Other';
-
+/** Information about a file stored in the vault */
 export interface VaultFile {
     id: string;
     name: string;
@@ -332,7 +333,7 @@ export interface VaultMessage {
     protocol?: string;
     recipient_did?: string;
 }
-
+/** Result of a publish operation across multiple platforms */
 export interface PublishResult {
     local: boolean;
     bluesky: boolean;
@@ -401,7 +402,7 @@ export const PROTOCOLS: ProtocolOption[] = [
 /** @deprecated - use Screen from store/index.ts */
 export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile";
 
-
+/** Information about a Bluesky post */
 export interface BlueskyPost {
     uri: string;
     cid: string;

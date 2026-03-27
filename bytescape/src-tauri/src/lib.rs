@@ -596,6 +596,29 @@ pub fn run() {
             commands::relay::relay_sync_status,
             commands::relay::provision_pds_account,
             commands::relay::provision_ap_actor,
+
+            // Groups & Topics commands (Sprint v12)
+            commands::groups::create_topic,
+            commands::groups::update_topic,
+            commands::groups::delete_topic_cmd,
+            commands::groups::get_topic_tree,
+            commands::groups::subscribe_topic,
+            commands::groups::unsubscribe_topic,
+            commands::groups::get_subscribed_topics,
+            commands::groups::create_group,
+            commands::groups::update_group,
+            commands::groups::delete_group_cmd,
+            commands::groups::get_group_cmd,
+            commands::groups::list_groups_by_topic,
+            commands::groups::search_groups_cmd,
+            commands::groups::join_group,
+            commands::groups::leave_group,
+            commands::groups::get_group_members_cmd,
+            commands::groups::get_user_group_memberships,
+            commands::groups::post_to_group,
+            commands::groups::share_to_group,
+            commands::groups::get_group_feed,
+            commands::groups::get_groups_feed,
         ])
         .setup(|app| {
             // Initialize application state
@@ -670,6 +693,16 @@ pub fn run() {
                 Some(db::DbManager::new(db_path)
                     .map_err(|e| format!("Failed to initialize database: {}", e))?)
             ));
+
+            // Seed default topic tree on first launch
+            {
+                let db_guard = tauri::async_runtime::block_on(db_manager.read());
+                if let Some(ref db) = *db_guard {
+                    if let Err(e) = tauri::async_runtime::block_on(commands::groups::seed_default_topics(db)) {
+                        eprintln!("Startup: topic seeding failed (non-fatal): {}", e);
+                    }
+                }
+            }
 
             // Initialize auth manager
             let auth_manager = AuthManager::new();

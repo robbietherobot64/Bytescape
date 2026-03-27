@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub mod groups;
+pub use groups::*;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum ConversationMode {
     Private,
