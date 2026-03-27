@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { SidebarItem } from '../types';
-import { BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill, BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill } from 'react-icons/bs';
+import { BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill, BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill, BsListUl } from 'react-icons/bs';
 import { RelayStatusBadge } from './RelayStatusBadge';
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ interface SidebarProps {
 /* All nav items — shown in hamburger menu on mobile */
 const ALL_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'forums', icon: <BsListUl />, label: 'Forums' },
     { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
     { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
     { id: 'search', icon: <BsSearch />, label: 'Search' },
@@ -36,6 +37,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
             <div className="sidebar-top">
                 <div className="sidebar-logo">BYTESCAPE</div>
                 <SidebarIcon id="feed" icon={<BsHouseFill />} label="Feed" active={activeSidebar} onClick={onNavigate} />
+                <SidebarIcon id="forums" icon={<BsListUl />} label="Forums" active={activeSidebar} onClick={onNavigate} />
                 <SidebarIcon id="search" icon={<BsSearch />} label="Search" active={activeSidebar} onClick={onNavigate} />
                 <SidebarIcon id="profile" icon={<BsPersonFill />} label="Profile" active={activeSidebar} onClick={onNavigate} />
                 <SidebarIcon id="chat" icon={<BsChatDotsFill />} label="Chat" active={activeSidebar} onClick={onNavigate} />

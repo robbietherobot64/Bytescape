@@ -1,0 +1,217 @@
+/* CreateGroupModal — group creation form */
+
+.cgm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.cgm-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    width: 100%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.cgm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.cgm-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.cgm-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+}
+
+.cgm-close-btn:hover {
+    color: var(--text-primary);
+}
+
+.cgm-form {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.cgm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cgm-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.cgm-input,
+.cgm-textarea,
+.cgm-select {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    color: var(--text-primary);
+    font-size: 14px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    font-family: inherit;
+}
+
+.cgm-input:focus,
+.cgm-textarea:focus,
+.cgm-select:focus {
+    border-color: var(--accent-purple);
+}
+
+.cgm-textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.cgm-slug-input {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.cgm-select {
+    cursor: pointer;
+}
+
+/* Visibility radio options */
+.cgm-visibility-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cgm-vis-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.cgm-vis-option:hover {
+    border-color: var(--accent-purple);
+}
+
+.cgm-vis-option.selected {
+    border-color: var(--accent-purple);
+    background: rgba(147, 51, 234, 0.08);
+}
+
+.cgm-vis-radio {
+    margin-top: 2px;
+    accent-color: var(--accent-purple);
+}
+
+.cgm-vis-icon {
+    font-size: 16px;
+    color: var(--text-secondary);
+    margin-top: 1px;
+}
+
+.cgm-vis-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cgm-vis-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cgm-vis-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Error */
+.cgm-error {
+    color: #ff6b6b;
+    font-size: 13px;
+    background: rgba(255, 107, 107, 0.1);
+    padding: 8px 12px;
+    border-radius: var(--border-radius);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+/* Actions */
+.cgm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 4px;
+}
+
+.cgm-cancel-btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+}
+
+.cgm-cancel-btn:hover {
+    color: var(--text-primary);
+}
+
+.cgm-submit-btn {
+    background: var(--accent-purple);
+    border: none;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 20px;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.cgm-submit-btn:hover {
+    opacity: 0.9;
+}
+
+.cgm-submit-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}

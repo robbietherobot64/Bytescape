@@ -1,0 +1,291 @@
+/* GroupScreen — individual group view */
+
+.group-screen {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    color: var(--text-primary);
+}
+
+.group-back-bar {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.group-back-btn {
+    background: none;
+    border: none;
+    color: var(--accent-blue);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.group-back-btn:hover {
+    color: var(--accent-purple);
+}
+
+/* Header */
+.group-header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.group-banner {
+    width: 100%;
+    height: 120px;
+    background-size: cover;
+    background-position: center;
+    background-color: var(--bg-tertiary);
+}
+
+.group-header-info {
+    padding: 16px;
+}
+
+.group-name {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 6px 0;
+    color: var(--text-primary);
+}
+
+.group-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.group-vis-icon {
+    font-size: 14px;
+}
+
+.group-meta-sep {
+    color: var(--text-muted);
+}
+
+.group-header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.group-action-btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 16px;
+    border-radius: 16px;
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.group-join-btn {
+    background: var(--accent-purple);
+    border-color: var(--accent-purple);
+    color: #fff;
+}
+
+.group-join-btn:hover {
+    opacity: 0.9;
+}
+
+.group-leave-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.group-leave-btn:hover {
+    border-color: #ff6b6b;
+    color: #ff6b6b;
+}
+
+.group-pending-btn {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    font-style: italic;
+    cursor: default;
+}
+
+/* Tabs */
+.group-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.group-tab {
+    flex: 1;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.group-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.group-tab.active {
+    color: var(--accent-purple);
+    border-bottom-color: var(--accent-purple);
+}
+
+/* Tab content */
+.group-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+/* Posts tab */
+.group-new-post-bar {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.group-new-post-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    width: 100%;
+    justify-content: center;
+    transition: border-color 0.15s;
+}
+
+.group-new-post-btn:hover {
+    border-color: var(--accent-purple);
+}
+
+.group-posts-list {
+    padding: 8px 0;
+}
+
+.group-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* About tab */
+.group-about-tab {
+    padding: 16px;
+}
+
+.group-about-section {
+    margin-bottom: 20px;
+}
+
+.group-about-heading {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    color: var(--text-primary);
+}
+
+.group-about-text {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+}
+
+.group-rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.group-rule {
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 6px 10px;
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius);
+    border-left: 3px solid var(--accent-purple);
+}
+
+/* Members tab */
+.group-members-list {
+    padding: 8px 0;
+}
+
+.group-member-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.group-member-row:last-child {
+    border-bottom: none;
+}
+
+.member-role-icon {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.member-role-icon.owner {
+    color: #ffd700;
+}
+
+.member-role-icon.mod {
+    color: var(--accent-blue);
+}
+
+.member-did {
+    flex: 1;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.member-role-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.group-loading {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+}
+
+.group-visibility-label {
+    text-transform: capitalize;
+}
+
+.group-member-count {
+    font-variant-numeric: tabular-nums;
+}

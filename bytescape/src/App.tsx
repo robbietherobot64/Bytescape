@@ -61,6 +61,9 @@ import { VaultScreen } from "./screens/VaultScreen";
 import { PeerProfileScreen } from "./screens/PeerProfileScreen";
 import { ProfileBrowserScreen } from "./screens/ProfileBrowserScreen";
 import { WebViewScreen } from "./screens/WebViewScreen";
+import { ForumScreen } from "./screens/ForumScreen";
+import { GroupScreen } from "./screens/GroupScreen";
+import { CreateGroupModal } from "./components/CreateGroupModal";
 import { IdentitySetupModal } from "./components/IdentitySetupModal";
 import { RecoverySetupModal } from "./components/RecoverySetupModal";
 import { useTheme } from "./hooks/useTheme";
@@ -106,6 +109,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showIdentitySetup, setShowIdentitySetup] = useState(false);
   const [showRecoverySetup, setShowRecoverySetup] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
 
   // Import / Audit
   const [progress, setProgress] = useState<ParseProgress | null>(null);
@@ -452,6 +456,7 @@ function App() {
     const screenMap: Record<string, { screen: Parameters<typeof openTab>[0]; label?: string }> = {
       feed: { screen: 'feed', label: 'Feed' },
       search: { screen: 'feed', label: 'Feed' },
+      forums: { screen: 'forum', label: 'Forums' },
       import: { screen: 'import', label: 'Import' },
       profile: { screen: 'profile', label: 'Profile' },
       chat: { screen: 'chat', label: 'Chat' },
@@ -465,11 +470,21 @@ function App() {
     }
   }
 
+  function handleOpenGroup(groupId: string) {
+    openTab('group', 'Group', { groupId });
+    setActiveSidebar('forums');
+  }
+
+  function handleGroupCreated(groupId: string) {
+    setShowCreateGroup(false);
+    handleOpenGroup(groupId);
+  }
+
   // === Render Helpers ===
 
   /** Screens that need full-bleed layout (no padding, flex column, overflow hidden) */
   const FULL_BLEED_SCREENS: Set<Screen> = new Set([
-    'chat', 'feed', 'vault', 'friends', 'peer-profile', 'profile-builder', 'profile-browser', 'webview',
+    'chat', 'feed', 'vault', 'friends', 'peer-profile', 'profile-builder', 'profile-browser', 'webview', 'forum', 'group',
   ]);
 
   const fullBleedStyle: React.CSSProperties = {
@@ -630,6 +645,23 @@ function App() {
         return <VaultScreen auth={auth} />;
       case 'webview':
         return <WebViewScreen url={tab.meta?.url || 'about:blank'} title={tab.label} isActive={tab.id === activeTabId} tabId={tab.id} />;
+      case 'forum':
+        return (
+          <ForumScreen
+            onOpenGroup={handleOpenGroup}
+            onCreateGroup={() => setShowCreateGroup(true)}
+          />
+        );
+      case 'group':
+        return (
+          <GroupScreen
+            groupId={tab.meta?.groupId || ''}
+            onBack={() => {
+              openTab('forum', 'Forums');
+              setActiveSidebar('forums');
+            }}
+          />
+        );
       case 'settings':
         return (
           <SettingsScreen
@@ -708,6 +740,14 @@ function App() {
       {showRecoverySetup && !showIdentitySetup && (
         <RecoverySetupModal
           onComplete={handleRecoverySetupComplete}
+        />
+      )}
+
+      {/* Group creation modal */}
+      {showCreateGroup && (
+        <CreateGroupModal
+          onClose={() => setShowCreateGroup(false)}
+          onCreated={handleGroupCreated}
         />
       )}
     </AppLayout>

@@ -18,6 +18,7 @@ const CONTEXT_LABELS: Record<string, string> = {
     following: 'My Contacts',
     subscribed: 'Subscriptions',
     you: 'Your Posts',
+    groups: 'Group Subscriptions',
 };
 
 interface FeedScreenProps {
@@ -447,11 +448,21 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             <div className="empty-state">Loading latest posts...</div>
                         )}
 
-                        {!isLoading && feedEntries.length === 0 && !feedError && (
+                        {!isLoading && feedEntries.length === 0 && !feedError && activeTab !== 'groups' && (
                             <div className="empty-state">
                                 <div className="empty-icon">🕸️</div>
                                 <div className="empty-title">Nothing here yet</div>
                                 <div className="empty-hint">Try switching tags or following more channels.</div>
+                            </div>
+                        )}
+
+                        {activeTab === 'groups' && (
+                            <div className="empty-state">
+                                <div className="empty-icon">📋</div>
+                                <div className="empty-title">No group subscriptions yet</div>
+                                <div className="empty-hint">
+                                    Join groups and subscribe to topics in the Forums screen to see posts here.
+                                </div>
                             </div>
                         )}
 
