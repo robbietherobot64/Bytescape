@@ -1,11 +1,11 @@
 import "./FeedScreen.css";
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
 import { ComposeBox, Attachment, PublishOptions, PostTarget } from '../components/ComposeBox';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { FriendsPanel } from '../components/FriendsPanel';
-import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
+import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
 import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
@@ -201,6 +201,26 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         }
         return src;
     };
+
+    // === Filtered + Deduped entries (memoized for virtualizer stability) ===
+    const filteredEntries = useMemo(() => {
+        const deduped = filterFacebookDuplicateImagePosts(feedEntries);
+        if (mediaFilter === 'all') return deduped;
+        return deduped.filter(entry => {
+            const hasImages = entry.media_urls.length > 0 && (!entry.media_kinds || entry.media_kinds.some(k => k === 'image'));
+            const hasVideo = entry.media_kinds?.some(k => k === 'video') || entry.media_urls.some(u => /\.(mp4|webm|mov|m3u8)/i.test(u));
+            const textLen = (entry.content || '').length;
+            const isArticle = entry.item_type === 'Article' || entry.item_type === 'Link' || (entry.link_url && entry.link_title);
+            switch (mediaFilter) {
+                case 'images': return hasImages && !hasVideo;
+                case 'video': return hasVideo;
+                case 'short': return textLen > 0 && textLen <= 300 && !hasImages && !hasVideo && !isArticle;
+                case 'long': return textLen > 300 && !isArticle;
+                case 'articles': return !!isArticle;
+                default: return true;
+            }
+        });
+    }, [feedEntries, mediaFilter]);
 
     // === Pull-to-Refresh via Scroll Wheel Overscroll ===
     const overscrollAccum = useRef(0);
@@ -435,31 +455,14 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             </div>
                         )}
 
-                        {(() => {
-                            const deduped = filterFacebookDuplicateImagePosts(feedEntries);
-                            const filtered = mediaFilter === 'all' ? deduped : deduped.filter(entry => {
-                                const hasImages = entry.media_urls.length > 0 && (!entry.media_kinds || entry.media_kinds.some(k => k === 'image'));
-                                const hasVideo = entry.media_kinds?.some(k => k === 'video') || entry.media_urls.some(u => /\.(mp4|webm|mov|m3u8)/i.test(u));
-                                const textLen = (entry.content || '').length;
-                                const isArticle = entry.item_type === 'Article' || entry.item_type === 'Link' || (entry.link_url && entry.link_title);
-                                switch (mediaFilter) {
-                                    case 'images': return hasImages && !hasVideo;
-                                    case 'video': return hasVideo;
-                                    case 'short': return textLen > 0 && textLen <= 300 && !hasImages && !hasVideo && !isArticle;
-                                    case 'long': return textLen > 300 && !isArticle;
-                                    case 'articles': return !!isArticle;
-                                    default: return true;
-                                }
-                            });
-                            return filtered.map(entry => (
-                                <FeedItemRenderer
-                                    key={entry.reposted_by ? `repost:${entry.reposted_by}:${entry.id}` : entry.id}
-                                    entry={entry}
-                                    resolveMediaPath={resolveMediaPath}
-                                    mediaDir={mediaDir}
-                                />
-                            ));
-                        })()}
+                        {filteredEntries.length > 0 && (
+                            <VirtualizedFeedList
+                                entries={filteredEntries}
+                                resolveMediaPath={resolveMediaPath}
+                                mediaDir={mediaDir}
+                                scrollContainerRef={scrollContainerRef}
+                            />
+                        )}
 
                         {isFetchingMore && (
                             <div style={{ textAlign: 'center', padding: 20, opacity: 0.6 }}>Loading more archives...</div>
