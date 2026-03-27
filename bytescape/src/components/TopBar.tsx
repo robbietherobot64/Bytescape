@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { SidebarItem } from '../types';
 import {
     BsHouseFill, BsPersonFill, BsChatDotsFill,
-    BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill
+    BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill, BsListUl
 } from 'react-icons/bs';
 import { Omnibar } from './Omnibar';
 
@@ -19,6 +19,7 @@ interface TopBarProps {
 
 const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'forums', icon: <BsListUl />, label: 'Forums' },
     { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
     { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
     { id: 'social', icon: <BsPeopleFill />, label: 'Social' },

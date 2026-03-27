@@ -5,7 +5,7 @@ import { SidebarItem } from '../types';
 import { useNavStore } from '../store';
 import {
     BsHouseFill, BsChatDotsFill, BsPeopleFill,
-    BsFolderFill, BsGearFill, BsBoxArrowInDown
+    BsFolderFill, BsGearFill, BsBoxArrowInDown, BsListUl
 } from 'react-icons/bs';
 
 interface AppLayoutProps {
@@ -26,6 +26,7 @@ interface AppLayoutProps {
 /** Bottom navigation items for mobile. */
 const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'forums', icon: <BsListUl />, label: 'Forums' },
     { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
     { id: 'social', icon: <BsPeopleFill />, label: 'Social' },
     { id: 'import', icon: <BsBoxArrowInDown />, label: 'Import' },
