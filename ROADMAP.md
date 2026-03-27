@@ -277,10 +277,10 @@ Three-layer community system: **Topics** (hierarchical categories, like PieFed/o
 - [ ] **B4.10 Group Moderation**: Group owner can pin posts, remove content, and delegate moderator roles. Closed groups have a pending-member approval queue. Ban list prevents re-joining.
 
 ##### B4c. Forum UI
-- [ ] **B4.11 ForumScreen**: Old-style forum landing page with collapsible topic hierarchy. Each topic row shows expand/collapse toggle, icon, name, [Subscribe] button. Groups listed under their parent topic with member count and visibility badge. [+ Create Group] button at bottom.
-- [ ] **B4.12 GroupScreen**: Individual group view with banner, visibility badge, member count, Join/Leave button, three tabs (Posts, About, Members). Posts tab reuses FeedEntryCard components. "New Post" button for members.
-- [ ] **B4.13 Group Creation Modal**: Form with name, slug (auto-generated), description, visibility radio, topic picker, rules, icon/banner upload. Markdown preview for description and rules.
-- [ ] **B4.14 Groups Feed Tab**: "Groups" tab on FeedScreen aggregating posts from subscribed topics + joined groups. Group badge on each card links to GroupScreen.
+- [x] **B4.11 ForumScreen**: Old-style forum landing page with collapsible topic hierarchy. Each topic row shows expand/collapse toggle, icon, name, [Subscribe] button. Groups listed under their parent topic with member count and visibility badge. [+ Create Group] button at bottom. ✅ *Sprint v12 — `ForumScreen.tsx` (217 lines) + `ForumScreen.css` (293 lines) + `useGroupsData.ts` (417 lines), commit `c431990`.*
+- [x] **B4.12 GroupScreen**: Individual group view with banner, visibility badge, member count, Join/Leave button, three tabs (Posts, About, Members). Posts tab reuses FeedEntryCard components. "New Post" button for members. ✅ *Sprint v12 — `GroupScreen.tsx` (173 lines) + `GroupScreen.css` (291 lines), commit `c431990`.*
+- [x] **B4.13 Group Creation Modal**: Form with name, slug (auto-generated), description, visibility radio, topic picker, rules, icon/banner upload. Markdown preview for description and rules. ✅ *Sprint v12 — `CreateGroupModal.tsx` (183 lines) + `CreateGroupModal.css` (217 lines), commit `c431990`.*
+- [ ] **B4.14 Groups Feed Tab**: "Groups" tab on FeedScreen aggregating posts from subscribed topics + joined groups. Group badge on each card links to GroupScreen. ⚠️ *Sprint v12 — type/label/empty-state scaffolded but tab button not rendered in FeedScreen tab bar; `get_groups_feed` not wired; share-to-group UI and group badges on cards not built.*
 
 ##### B4d. Location Features (geo-tagging, separate from group hierarchy)
 - [ ] **B4.15 Geolocation Field on `BytescapeItem`**: Add optional `geo: Option<GeoPoint>` (lat/lng + approximate geohash) to the universal item schema. Inspired by [Habitat](https://github.com/carlnewton/habitat).

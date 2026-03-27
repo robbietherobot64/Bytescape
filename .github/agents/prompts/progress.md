@@ -4,6 +4,48 @@
 
 ---
 
+## 📋 PM Sprint v12 Review — Audit & Sprint v13 Initialization
+
+**Date**: 2026-03-27
+**HEAD**: `52b3d41` on `main` (5 commits unpushed from sprint v12)
+**Build**: cargo check clean, 216 Rust tests pass (+9 new), tsc clean (0 errors), 272/272 frontend tests pass
+
+### Sprint v12 Delivery Summary
+
+| Track | Agent | Commits | Key Deliverables | Status |
+|-------|-------|---------|-----------------|--------|
+| **Backend (A)** | Track A | `c431990` | 10 types, 5 redb tables, 21 Tauri commands, 9 db tests, 18 seed topics, `models/groups.rs` + `db/groups.rs` + `commands/groups.rs` (1,719 lines) | ✅ Complete |
+| **Frontend (B)** | Track B | `219e0eb`, `05a5b6c`, `52b3d41` | Feed virtualization (`VirtualizedFeedList`), GroupVisibility/MemberRole/etc. TS types, Forum nav in TopBar/BottomNav | ✅ Complete (P1-P2) |
+| **Frontend (B)** | ⚠️ Track A | `c431990` | ForumScreen, GroupScreen, CreateGroupModal, useGroupsData hook, 3 CSS files (1,885 lines of frontend code) | ⚠️ Track violation |
+
+### Track Boundary Violation
+
+Backend agent commit `c431990` modified **10 frontend files** (1,885 insertions in `src/`). Per agent-guardrails §3, Track A should only modify `src-tauri/src/`. The UI code is functional but has quality issues:
+- `useGroupsData.ts` uses `USE_MOCK = true` with non-reactive module-level state
+- `GroupScreen.tsx` uses `any[]` type for posts
+- `CreateGroupModal.tsx` lacks aria attributes on overlay
+- Frontend sprint v13 includes a P5 cleanup task to address these
+
+### Incomplete Items (Carried to Sprint v13)
+
+| ROADMAP | Item | Status | Notes |
+|---------|------|--------|-------|
+| B4.7 | approve/reject/invite/ban/set_role | ❌ Deferred | Backend sprint v13 P1 |
+| B4.8 | pin_group_post | ❌ Deferred | Backend sprint v13 P1.7 |
+| B4.10 | Group Moderation (full) | ❌ Deferred | Backend P1 + Frontend P4 |
+| B4.14 | Groups Feed Tab | ⚠️ Partial | Type/label/empty-state scaffolded; tab button not rendered; `get_groups_feed` not wired. Frontend sprint v13 P1 |
+| — | Share-to-Group UI | ❌ Not started | Frontend sprint v13 P2 |
+| — | Group badges on feed cards | ❌ Not started | Frontend sprint v13 P3 |
+
+### Sprint v13 Prompts Written
+
+| File | Lines | Focus |
+|------|-------|-------|
+| `backend-sprint-v13.md` | 371 | P1: Moderation commands (9 new), P2: AP Group actor, P3: AP inbox handlers, P4: Lemmy compatibility |
+| `frontend-sprint-v13.md` | 253 | P1: Wire up Groups feed tab, P2: Share-to-group menu, P3: Group badges, P4: Moderation UI, P5: useGroupsData cleanup, P6: Polish |
+
+---
+
 ## 📋 Sprint v12 — Backend Track A: Groups & Topic Hierarchy Foundation
 
 **Commit**: `c431990` on `main`
