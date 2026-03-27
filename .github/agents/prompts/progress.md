@@ -4,6 +4,70 @@
 
 ---
 
+## 📋 Sprint v12 — Backend Track A: Groups & Topic Hierarchy Foundation
+
+**Commit**: `c431990` on `main`
+**Date**: 2026-03-26
+**Build**: cargo 0 errors, 28+ Rust tests pass (9 new groups tests), tsc clean, 272/272 frontend tests
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P1 | Data Model | 10 types in `models/groups.rs`: GroupVisibility (Public/Closed/Private), MemberRole (Owner/Moderator/Member), MemberStatus (Active/Pending/Invited/Banned), Topic, TopicNode, LocalGroup, GroupSummary, GroupMember, GroupPost, TopicSubscription | ✅ Complete |
+| P2 | Redb Tables + CRUD | 5 new tables (topics, topic_subscriptions, groups, group_members, group_posts), ~30 CRUD methods in `db/groups.rs`, 9 unit tests | ✅ Complete |
+| P3 | Topic Tree Commands | 7 commands: create_topic, update_topic, delete_topic_cmd, get_topic_tree (recursive hierarchy + private group filtering + subscription status), subscribe_topic, unsubscribe_topic, get_subscribed_topics | ✅ Complete |
+| P4 | Group CRUD & Search | 6 commands: create_group (auto-creates Owner member), update_group (owner/mod only), delete_group_cmd (owner only, cascading delete), get_group_cmd (None for Private if non-member), list_groups_by_topic, search_groups_cmd | ✅ Complete |
+| P5 | Membership & Group Feed | 7 commands: join_group (Public→Active, Closed→Pending, Private→error), leave_group (owner guard), get_group_members_cmd (role-filtered visibility), get_user_group_memberships, post_to_group, share_to_group, get_group_feed + get_groups_feed (aggregated, paginated) | ✅ Complete |
+| P6 | Seed Default Topics | seed_default_topics() called at startup — 18 topics in 3-level hierarchy. Runs only if TOPICS_TABLE is empty. | ✅ Complete |
+
+### Seed Topic Tree
+
+```
+Fediverse/
+  Bytescape/ Announcements, Feature Requests, Bug Reports, Groups (meta)
+  Lemmy/
+  Mastodon/
+  PieFed/
+Technology/
+  Programming/
+  Linux & FOSS/
+  Security/
+Health & Wellness/
+Art & Creative/
+Gaming/
+Science/
+News & Politics/
+```
+
+### New Files
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src-tauri/src/models/groups.rs` | 133 | All group/topic type definitions |
+| `src-tauri/src/db/groups.rs` | 728 | Redb CRUD + 9 unit tests |
+| `src-tauri/src/commands/groups.rs` | 858 | 21 Tauri commands + seed function |
+
+### Modified Files (Track A)
+
+| File | Changes |
+|------|---------|
+| `src-tauri/src/models/mod.rs` | Added `pub mod groups; pub use groups::*;` |
+| `src-tauri/src/db/mod.rs` | Added 5 table definitions + 5 `open_table()` init calls + `pub mod groups;` |
+| `src-tauri/src/commands/mod.rs` | Added `pub mod groups; pub use groups::*;` |
+| `src-tauri/src/lib.rs` | Registered 21 commands + seed_default_topics() startup call |
+
+### Key Design Decisions
+
+- **Deterministic seed IDs**: Topic IDs use `topic:{slug}` format (e.g., `topic:fediverse`) for deterministic seeding without UUID v5 dependency
+- **Privacy enforcement**: Private groups return `None` from `get_group_cmd` for non-members; `get_topic_tree` filters Private groups; search excludes Private
+- **Membership flow**: Public groups auto-join as Active; Closed groups create Pending status; Private groups reject with error (invite-only)
+- **Owner protection**: Owner cannot leave group — must transfer ownership or delete
+- **Mod restrictions**: `posting_restricted_to_mods` flag enforced on `post_to_group` and `share_to_group`
+- **Aggregated feed**: `get_groups_feed` unions direct memberships + topic subscriptions (recursive), merges posts by timestamp
+
+---
+
 ## 📋 Sprint v11 — Frontend Track B: DataProvider, Settings, Relay Badge & Bug Fixes
 
 **Commits**: `3b83ae8`, `6cd04dc`, `ba05daa`, `88b2d38`, `f3da093`, `96808fb`, `2fbcb7a` on `main`
@@ -70,7 +134,7 @@ The DataProvider interface (P1) enables the React frontend to compile into three
 | P2 | Simplify `get_owner_did()` | Reduced from 5-level to 3-level fallback: `did:web` → `did:plc` (real Bluesky only) → `did:key` | ✅ Complete |
 | P3 | Fix AP actor DID derivation | Already fixed in sprint v8 — verified `did_key_from_ed25519_bytes()` used consistently | ✅ Already done |
 | P4 | Relay sync command stubs | 5 commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status` | ✅ Complete |
-| P5 | PDS account provisioning stub | `provision_pds_account` — returns descriptive error until Official PDS is deployed | ✅ Complete |
+| P5 | PDS account provisioning stub | `provision_pds_account` — returns descriptive error until Tranquil PDS is deployed | ✅ Complete |
 | P6 | AP actor provisioning stub | `provision_ap_actor` — returns descriptive error until axum AP server is deployed | ✅ Complete |
 
 ### Identity Migration Details
