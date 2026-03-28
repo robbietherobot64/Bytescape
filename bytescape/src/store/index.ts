@@ -345,16 +345,27 @@ interface FeedCacheState {
 
 export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     cache: {},
-    setCache: (tab, entries, cursor) => set((state) => ({
-        cache: {
-            ...state.cache,
-            [tab]: { entries, cursor, fetchedAt: Date.now() },
-        },
-    })),
+    setCache: (tab, entries, cursor) => set((state) => {
+        // Prune expired entries (>2 minutes) to prevent unbounded growth
+        const now = Date.now();
+        const pruned: Record<string, FeedCacheEntry> = {};
+        for (const [key, val] of Object.entries(state.cache)) {
+            if (now - val.fetchedAt < 120_000) pruned[key] = val;
+        }
+        pruned[tab] = { entries, cursor, fetchedAt: now };
+        return { cache: pruned };
+    }),
     getCache: (tab, maxAgeMs = 120_000) => {
         const entry = get().cache[tab];
         if (!entry) return null;
-        if (Date.now() - entry.fetchedAt > maxAgeMs) return null;
+        if (Date.now() - entry.fetchedAt > maxAgeMs) {
+            // Remove expired entry to free memory instead of just returning null
+            set((state) => {
+                const { [tab]: _, ...rest } = state.cache;
+                return { cache: rest };
+            });
+            return null;
+        }
         return entry;
     },
     appendCache: (tab, newEntries, cursor) => set((state) => {

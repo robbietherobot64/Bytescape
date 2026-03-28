@@ -8,8 +8,24 @@ import { blobCacheUrl } from '../utils/mediaServer';
  * but this avoids the IPC round-trip entirely for repeat renders.
  *
  * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
+ *
+ * Capped at RESOLVED_URL_CACHE_MAX entries with oldest-first eviction to prevent
+ * unbounded memory growth during long browsing sessions.
  */
+const RESOLVED_URL_CACHE_MAX = 500;
 export const resolvedUrlCache = new Map<string, string>();
+
+/** Set a value in resolvedUrlCache with LRU eviction. */
+export function cacheResolvedUrl(hash: string, url: string): void {
+    // Delete first so re-insertion moves to end (most-recently-used)
+    resolvedUrlCache.delete(hash);
+    if (resolvedUrlCache.size >= RESOLVED_URL_CACHE_MAX) {
+        // Maps iterate in insertion order — evict the oldest entry
+        const firstKey = resolvedUrlCache.keys().next().value;
+        if (firstKey !== undefined) resolvedUrlCache.delete(firstKey);
+    }
+    resolvedUrlCache.set(hash, url);
+}
 
 /**
  * Hook to resolve a media path that may be a blob hash.
@@ -110,7 +126,7 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
                     if (cancelled) return;
                     // Use local HTTP server to bypass WebKitGTK asset:// bugs
                     const httpUrl = await blobCacheUrl(filePath);
-                    resolvedUrlCache.set(hash, httpUrl);
+                    cacheResolvedUrl(hash, httpUrl);
                     setUrl(httpUrl);
                 })
                 .catch((e) => {

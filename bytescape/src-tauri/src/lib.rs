@@ -50,11 +50,19 @@ impl<T: Clone> CachedResponse<T> {
 
 /// In-memory cache for feed API responses.
 /// Keyed by cache slot name, holds serialized JSON to avoid type-parameter sprawl.
+/// Capped at MAX_ENTRIES and auto-prunes expired entries to prevent unbounded growth.
 pub struct FeedCache {
     entries: tokio::sync::RwLock<std::collections::HashMap<String, CachedResponse<serde_json::Value>>>,
 }
 
 impl FeedCache {
+    /// Maximum number of entries before pruning. Generously sized for normal use
+    /// but prevents unbounded growth during long sessions with many cursor pages.
+    const MAX_ENTRIES: usize = 64;
+
+    /// Age after which entries are considered stale and eligible for pruning.
+    const PRUNE_AGE: std::time::Duration = std::time::Duration::from_secs(300);
+
     pub fn new() -> Self {
         Self { entries: tokio::sync::RwLock::new(std::collections::HashMap::new()) }
     }
@@ -65,9 +73,22 @@ impl FeedCache {
         map.get(key).filter(|c| c.is_fresh(max_age)).map(|c| c.data.clone())
     }
 
-    /// Store a JSON value in the cache.
+    /// Store a JSON value in the cache. Prunes expired entries when capacity is reached.
     pub async fn set(&self, key: &str, value: serde_json::Value) {
         let mut map = self.entries.write().await;
+        // Prune expired entries when we're at or over capacity
+        if map.len() >= Self::MAX_ENTRIES {
+            map.retain(|_, v| v.fetched_at.elapsed() < Self::PRUNE_AGE);
+        }
+        // If still over capacity after pruning, remove the oldest entry
+        if map.len() >= Self::MAX_ENTRIES {
+            if let Some(oldest_key) = map.iter()
+                .min_by_key(|(_, v)| v.fetched_at)
+                .map(|(k, _)| k.clone())
+            {
+                map.remove(&oldest_key);
+            }
+        }
         map.insert(key.to_string(), CachedResponse::new(value));
     }
 

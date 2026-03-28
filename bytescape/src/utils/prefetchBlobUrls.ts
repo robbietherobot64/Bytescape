@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { resolvedUrlCache } from '../hooks/useBlobUrl';
+import { resolvedUrlCache, cacheResolvedUrl } from '../hooks/useBlobUrl';
 import { FeedEntry } from '../types';
 
 /**
@@ -75,7 +75,7 @@ export async function prefetchBlobUrls(entries: FeedEntry[]): Promise<void> {
             // Store under the normalized hash key that useBlobUrl uses
             const hash = normalizeBlobHash(src);
             if (hash && url) {
-                resolvedUrlCache.set(hash, url);
+                cacheResolvedUrl(hash, url);
             }
         }
     } catch (e) {
