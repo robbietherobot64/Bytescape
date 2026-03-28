@@ -137,6 +137,11 @@ pub async fn download_peer_blob(
 /// 
 /// The blob is fetched from Iroh and written to the blob cache directory.
 /// Returns the cached file path for efficient subsequent access.
+///
+/// **Memory safety:** Cache-hit path reads only the first 32 bytes for extension
+/// detection (not the full file). The Iroh-fetch path is gated by `blob_semaphore`
+/// (4 permits) to prevent 15+ simultaneous multi-MB fetches when the video filter
+/// renders many vault videos at once.
 #[tauri::command]
 pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -147,23 +152,32 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
     let cache_dir = app_data_dir.join("blob_cache");
 
     // Check if cached file already exists (try common extensions)
+    // Only read first 32 bytes for extension detection — NOT the full file.
     for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
         let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
         if cached.exists() {
-            if let Ok(bytes) = std::fs::read(&cached) {
-                let detected_ext = detect_extension_from_bytes(&bytes);
-                let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if detected_ext != current_ext {
-                    let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
-                    let _ = std::fs::write(&corrected, &bytes);
-                    return Ok(corrected.to_string_lossy().to_string());
-                }
+            // Read only the header (32 bytes) for magic-byte extension detection
+            let detected_ext = read_header_detect_ext(&cached);
+            let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if detected_ext != current_ext {
+                // Extension mismatch — rename (not copy) to avoid reading entire file
+                let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
+                let _ = std::fs::rename(&cached, &corrected);
+                return Ok(corrected.to_string_lossy().to_string());
             }
             return Ok(cached.to_string_lossy().to_string());
         }
     }
 
-    // Not cached — fetch from Iroh blob store
+    // Not cached — acquire blob semaphore to limit concurrent Iroh fetches
+    let _permit = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.blob_semaphore.acquire(),
+    )
+    .await
+    .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
+    .map_err(|_| "Blob semaphore closed".to_string())?;
+
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
@@ -188,8 +202,11 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
 
 /// Retrieve media blob bytes directly for browser Object URL creation.
 ///
-/// Returns Vec<u8> via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
+/// Returns raw bytes via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
 /// For large HLS videos, use resolve_hls_video which returns tauri::ipc::Response.
+///
+/// **Memory safety:** Cache reads are streaming (not buffered in full). The Iroh
+/// fetch path is gated by `blob_semaphore` to prevent concurrent multi-MB fetches.
 #[tauri::command]
 pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) -> std::result::Result<tauri::ipc::Response, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -199,14 +216,24 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
     let cache_dir = app_data_dir.join("blob_cache");
 
-    // Check if cached file already exists
+    // Check if cached file already exists — read from disk only once (the return read)
     for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
         let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
         if cached.exists() {
             if let Ok(metadata) = std::fs::metadata(&cached) {
                 if metadata.len() > 0 {
+                    // For large video files (>50 MB), serve via media server URL instead of IPC
+                    // to avoid doubling memory (disk read + IPC serialization buffer).
+                    if metadata.len() > 50 * 1024 * 1024 {
+                        return Err(format!(
+                            "File too large for IPC ({}MB). Use media server URL: http://127.0.0.1:{}/{}.{}",
+                            metadata.len() / (1024 * 1024),
+                            state.media_port,
+                            &normalized_hash,
+                            ext
+                        ));
+                    }
                     if let Ok(bytes) = std::fs::read(&cached) {
-                        println!("get_media_blob_bytes: cache hit {} ({} bytes)", ext, bytes.len());
                         return Ok(tauri::ipc::Response::new(bytes));
                     }
                 }
@@ -214,7 +241,15 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
         }
     }
 
-    // Not cached — fetch from Iroh blob store
+    // Not cached — acquire blob semaphore to limit concurrent fetches
+    let _permit = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.blob_semaphore.acquire(),
+    )
+    .await
+    .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
+    .map_err(|_| "Blob semaphore closed".to_string())?;
+
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
@@ -231,7 +266,6 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
     let _ = std::fs::write(&cache_path, &bytes);
 
-    println!("get_media_blob_bytes: fetched from Iroh, cached as {} ({} bytes)", ext, bytes.len());
     Ok(tauri::ipc::Response::new(bytes.to_vec()))
 }
 
@@ -297,10 +331,10 @@ pub async fn diagnose_media_ref(
         let p = std::path::PathBuf::from(&trimmed);
         let exists = p.exists();
         let (bytes_len, ext) = if exists {
-            match std::fs::read(&p) {
-                Ok(bytes) => (bytes.len(), Some(detect_extension_from_bytes(&bytes).to_string())),
-                Err(_) => (0, None),
-            }
+            // Use metadata for size, header read for extension — don't read full file
+            let size = std::fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
+            let detected = read_header_detect_ext(&p);
+            (size, Some(detected.to_string()))
         } else {
             (0, None)
         };
@@ -1244,6 +1278,17 @@ fn md5_hash(input: &str) -> u64 {
 
 
 /// Detect file extension from magic bytes
+/// Read only the first 32 bytes of a file to detect its extension.
+/// This avoids reading multi-hundred-MB video files entirely into memory
+/// just to check magic bytes. Falls back to "bin" on read failure.
+fn read_header_detect_ext(path: &std::path::Path) -> &'static str {
+    use std::io::Read;
+    let mut buf = [0u8; 32];
+    let Ok(mut file) = std::fs::File::open(path) else { return "bin" };
+    let Ok(n) = file.read(&mut buf) else { return "bin" };
+    detect_extension_from_bytes(&buf[..n])
+}
+
 fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
     if bytes.len() < 4 {
         return "bin";

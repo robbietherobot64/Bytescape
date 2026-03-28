@@ -113,6 +113,10 @@ pub struct AppState {
     /// Semaphore limiting concurrent video resolve operations (FFmpeg) to 2.
     /// Prevents the 32 GB memory spike when filtering feed by "Video".
     pub video_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Semaphore limiting concurrent blob resolution operations to 4.
+    /// Prevents memory explosion when video filter renders 15+ vault videos at once,
+    /// each calling get_media_blob simultaneously with full Iroh blob fetches.
+    pub blob_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -764,6 +768,7 @@ pub fn run() {
                 feed_cache: FeedCache::new(),
                 active_ffmpeg: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
                 video_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+                blob_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
             };
 
             app.manage(state);
