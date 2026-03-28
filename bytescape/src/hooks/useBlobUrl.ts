@@ -52,6 +52,21 @@ function extractBlobHash(path: string): string | null {
 }
 
 /**
+ * Extract the blob hash from a "blob-display:..." path.
+ * Returns null if the path is invalid.
+ */
+function extractDisplayBlobHash(path: string): string | null {
+    const afterPrefix = path.slice('blob-display:'.length).trim();
+    if (!afterPrefix) return null;
+    // Strip any nested blob: prefixes
+    let hash = afterPrefix;
+    while (hash.startsWith('blob:')) {
+        hash = hash.slice(5).trim();
+    }
+    return hash || null;
+}
+
+/**
  * Resolve a non-blob path synchronously (HTTP, data:, asset:, filesystem).
  */
 function resolveNonBlobSync(path: string): string {
@@ -71,6 +86,11 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
     // that causes images to flash a dark placeholder for 1-2 frames on mount.
     const [url, setUrl] = useState<string | null>(() => {
         if (!path) return null;
+        if (path.startsWith('blob-display:')) {
+            const hash = extractDisplayBlobHash(path);
+            if (!hash) return null;
+            return resolvedUrlCache.get(`display:${hash}`) ?? null;
+        }
         if (path.startsWith('blob:')) {
             const hash = extractBlobHash(path);
             if (hash === null) return path; // browser Object URL — pass through
@@ -85,6 +105,49 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
         if (!path) {
             setUrl(null);
             return;
+        }
+
+        // Display variant: blob-display:HASH → invoke get_media_blob_display
+        if (path.startsWith('blob-display:')) {
+            const hash = extractDisplayBlobHash(path);
+            if (!hash) {
+                setError('Invalid display blob hash');
+                setUrl(null);
+                setIsLoading(false);
+                return;
+            }
+
+            const cacheKey = `display:${hash}`;
+            const cached = resolvedUrlCache.get(cacheKey);
+            if (cached) {
+                setUrl(cached);
+                setIsLoading(false);
+                setError(null);
+                return;
+            }
+
+            setIsLoading(true);
+            setError(null);
+            let cancelled = false;
+
+            invoke<string>('get_media_blob_display', { hashStr: hash, maxDimension: 1200 })
+                .then(async (filePath) => {
+                    if (cancelled) return;
+                    const httpUrl = await blobCacheUrl(filePath);
+                    cacheResolvedUrl(cacheKey, httpUrl);
+                    setUrl(httpUrl);
+                })
+                .catch((e) => {
+                    if (cancelled) return;
+                    console.error('Failed to resolve display variant:', hash, e);
+                    setError(String(e));
+                    setUrl(null);
+                })
+                .finally(() => {
+                    if (!cancelled) setIsLoading(false);
+                });
+
+            return () => { cancelled = true; };
         }
 
         // Check if it's a blob reference
@@ -211,9 +274,13 @@ export function useLazyBlobUrl(path: string | undefined): [
     // Non-blob URLs (HTTP, filesystem) resolve synchronously in useBlobUrl, so
     // there's no reason to wait for the IntersectionObserver — skipping the gate
     // prevents the 1-2 frame placeholder flash on virtualizer remount.
-    // For blob: URLs, bypass if already in cache (prefetchBlobUrls pre-populates).
+    // For blob: and blob-display: URLs, bypass if already in cache.
     const isCached = path ? (() => {
-        if (!path.startsWith('blob:')) return true; // sync resolution — always bypass
+        if (!path.startsWith('blob:') && !path.startsWith('blob-display:')) return true; // sync resolution — always bypass
+        if (path.startsWith('blob-display:')) {
+            const hash = extractDisplayBlobHash(path);
+            return hash !== null && resolvedUrlCache.has(`display:${hash}`);
+        }
         const hash = extractBlobHash(path);
         return hash !== null && resolvedUrlCache.has(hash);
     })() : false;

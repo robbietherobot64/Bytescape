@@ -10,6 +10,11 @@ interface BlobImageProps {
     style?: React.CSSProperties;
     loading?: 'lazy' | 'eager';
     onError?: () => void;
+    /** When true, blob: URLs are resolved through get_media_blob_display
+     *  (1200px max-dimension WebP) instead of the full-resolution original.
+     *  Reduces WebKitGTK decoded bitmap memory from ~48 MB to ~5 MB per image.
+     *  Use for feed cards and grids; omit for gallery/lightbox full-size views. */
+    displayVariant?: boolean;
 }
 
 /**
@@ -20,16 +25,29 @@ interface BlobImageProps {
  * URL resolution is synchronous (useMemo) so cached blob URLs render on
  * the very first frame — no dark placeholder flash.
  */
-export function BlobImage({ src, alt = '', mediaDir, className, style, loading = 'lazy', onError }: BlobImageProps) {
-    const [containerRef, blobUrl, , error] = useLazyBlobUrl(src?.startsWith('blob:') ? src : undefined);
+export function BlobImage({ src, alt = '', mediaDir, className, style, loading = 'lazy', onError, displayVariant }: BlobImageProps) {
+    // When displayVariant is requested and src is a blob: hash, transform to
+    // blob-display: prefix so useBlobUrl invokes the display-size command.
+    const effectiveSrc = useMemo(() => {
+        if (displayVariant && src?.startsWith('blob:')) {
+            // Only transform if it's a real blob hash (not a browser Object URL)
+            const afterPrefix = src.slice(5);
+            if (!afterPrefix.startsWith('http://') && !afterPrefix.startsWith('https://') && !afterPrefix.startsWith('tauri://')) {
+                return `blob-display:${afterPrefix}`;
+            }
+        }
+        return src;
+    }, [src, displayVariant]);
+
+    const [containerRef, blobUrl, , error] = useLazyBlobUrl(effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:') ? effectiveSrc : undefined);
 
     // Synchronous URL resolution — eliminates the useState+useEffect gap
     // that caused a 1-2 frame dark placeholder flash on every mount.
     const resolvedUrl = useMemo(() => {
         if (!src) return null;
 
-        // Blob URLs are resolved by the hook
-        if (src.startsWith('blob:')) return blobUrl;
+        // Blob URLs (both regular and display variant) are resolved by the hook
+        if (effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:')) return blobUrl;
 
         // HTTP URLs pass through directly
         if (src.startsWith('http://') || src.startsWith('https://')) return src;
@@ -46,7 +64,7 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
             }
         }
         return convertFileSrc(src);
-    }, [src, blobUrl, mediaDir]);
+    }, [src, effectiveSrc, blobUrl, mediaDir]);
 
     // Always render <img> to avoid DOM element type switching (img↔div) that
     // causes WebKitGTK repaints and visible flicker on virtualizer remount.

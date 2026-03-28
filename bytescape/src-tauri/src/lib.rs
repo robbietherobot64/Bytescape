@@ -514,6 +514,7 @@ pub fn run() {
             // Media commands
             commands::media::store_media_blob,
             commands::media::get_media_blob,
+            commands::media::get_media_blob_display,
             commands::media::get_media_blob_bytes,
             commands::media::download_peer_blob,
             commands::media::resolve_hls_video,

@@ -1,4 +1,5 @@
 use warp::Filter;
+use warp::Reply;
 use std::path::PathBuf;
 
 /// Starts a dedicated Warp static file server bound to 127.0.0.1 on a random port.
@@ -26,12 +27,36 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
 
     let route = warp::fs::dir(cache_dir.clone())
         .map(|file: warp::fs::File| {
-            // Prevent WebKitGTK from caching video data in its HTTP cache.
-            // Without this, each video served gets double-buffered: once in
-            // GStreamer's decode pipeline and again in the HTTP cache layer.
-            // Since we serve from localhost (instant), the re-request cost is zero.
-            let resp = warp::reply::with_header(file, "cache-control", "no-store, no-cache, must-revalidate");
-            warp::reply::with_header(resp, "connection", "close")
+            // Content-type-aware cache headers:
+            // - Videos: no-store to prevent GStreamer double-buffering (each
+            //   pipeline + HTTP cache = 2× the memory). Re-request cost is
+            //   zero since we serve from localhost.
+            // - Images: max-age=300 + immutable so WebKitGTK caches the
+            //   decoded bitmap across virtualizer remount/unmount cycles.
+            //   Without this, scrolling re-decodes full-res images at 48 MB
+            //   each, causing multi-GB RSS spikes.
+            let mut resp = file.into_response();
+            let is_video = resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.starts_with("video/"))
+                .unwrap_or(false);
+
+            let cache_val = if is_video {
+                "no-store, no-cache, must-revalidate"
+            } else {
+                "public, max-age=300, immutable"
+            };
+
+            resp.headers_mut().insert(
+                "cache-control",
+                cache_val.parse().unwrap(),
+            );
+            resp.headers_mut().insert(
+                "connection",
+                "close".parse().unwrap(),
+            );
+            resp
         })
         .with(cors);
 

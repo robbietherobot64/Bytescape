@@ -79,6 +79,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
                         alt=""
                         mediaDir={mediaDir}
                         className="reader-hero-img"
+                        displayVariant
                     />
                 </div>
             )}

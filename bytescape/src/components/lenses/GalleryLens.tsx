@@ -122,6 +122,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                                             alt=""
                                             mediaDir={mediaDir}
                                             className="gallery-masonry-img"
+                                            displayVariant
                                         />
                                         <div className="gallery-masonry-video-badge">▶</div>
                                     </div>
@@ -131,6 +132,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                                         alt={entry.content?.slice(0, 60) || ''}
                                         mediaDir={mediaDir}
                                         className="gallery-masonry-img"
+                                        displayVariant
                                     />
                                 )}
 

@@ -210,6 +210,146 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
     Ok(cache_path.to_string_lossy().to_string())
 }
 
+/// Retrieve a display-size (max 1200px) variant of a media blob.
+///
+/// If the display variant is already cached on disk, returns immediately.
+/// Otherwise, locates (or fetches) the original blob, resizes it to fit within
+/// `max_dimension` × `max_dimension` pixels, encodes as WebP, and caches the
+/// result. Video files are returned unchanged (no resize).
+///
+/// **Memory safety:** The resize temporarily holds ~48 MB for a 12MP image in
+/// Rust memory, but the output (1200px WebP) is only ~100-300 KB. The temporary
+/// buffer is freed immediately after encoding. Concurrency is gated by
+/// `blob_semaphore` (4 permits) to prevent simultaneous multi-image decode storms.
+///
+/// The display variant reduces WebKitGTK decoded bitmap memory from 48 MB
+/// (4032×3024 RGBA) to ~5 MB (1200×900 RGBA) per image — a 90% reduction.
+#[tauri::command]
+pub async fn get_media_blob_display(
+    hash_str: String,
+    max_dimension: Option<u32>,
+    state: State<'_, AppState>,
+) -> std::result::Result<String, String> {
+    let max_dim = max_dimension.unwrap_or(1200);
+    let normalized_hash = normalize_blob_hash_input(&hash_str);
+
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let cache_dir = app_data_dir.join("blob_cache");
+
+    // Fast path: display variant already cached
+    let display_filename = format!("{}_display_{}.webp", &normalized_hash, max_dim);
+    let display_path = cache_dir.join(&display_filename);
+    if display_path.exists() {
+        return Ok(display_path.to_string_lossy().to_string());
+    }
+
+    // Find the original cached file
+    let mut original_path: Option<std::path::PathBuf> = None;
+    for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
+        let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
+        if cached.exists() {
+            original_path = Some(cached);
+            break;
+        }
+    }
+
+    // If original not cached, fetch it via Iroh (same pattern as get_media_blob)
+    let original_path = match original_path {
+        Some(p) => p,
+        None => {
+            let _permit = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                state.blob_semaphore.acquire(),
+            )
+            .await
+            .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
+            .map_err(|_| "Blob semaphore closed".to_string())?;
+
+            let hash = parse_hash_safe(&normalized_hash)?;
+            let blob_store = {
+                let sync_guard = state.sync_manager.lock().await;
+                let sync = sync_guard.as_ref()
+                    .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+                sync.blobs().clone()
+            };
+
+            std::fs::create_dir_all(&cache_dir)
+                .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+            let temp_path = cache_dir.join(format!("{}.tmp", &normalized_hash));
+            blob_store.export(hash, &temp_path)
+                .await
+                .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
+
+            let ext = read_header_detect_ext(&temp_path);
+            let final_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
+            std::fs::rename(&temp_path, &final_path)
+                .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+            final_path
+        }
+    };
+
+    // Videos and GIFs: return original path unchanged (no resize)
+    let ext = original_path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    match ext {
+        "mp4" | "mov" | "webm" | "mkv" | "gif" => {
+            return Ok(original_path.to_string_lossy().to_string());
+        }
+        _ => {}
+    }
+
+    // Acquire semaphore for resize (limits concurrent CPU-heavy decodes)
+    let _permit = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.blob_semaphore.acquire(),
+    )
+    .await
+    .map_err(|_| "Display variant resize queue timeout (30s)".to_string())?
+    .map_err(|_| "Blob semaphore closed".to_string())?;
+
+    // Double-check after acquiring permit (another task may have generated it)
+    if display_path.exists() {
+        return Ok(display_path.to_string_lossy().to_string());
+    }
+
+    // Resize in a blocking task to avoid blocking the tokio async runtime.
+    // image::open() does synchronous file I/O + decode; thumbnail() is CPU-heavy.
+    let display_path_out = display_path.clone();
+    let original_path_out = original_path.clone();
+    let cache_dir_out = cache_dir.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let img = image::open(&original_path_out)
+            .map_err(|e| format!("Failed to open image for display variant: {}", e))?;
+
+        // Only resize if larger than target dimension
+        let (w, h) = (img.width(), img.height());
+        let output = if w > max_dim || h > max_dim {
+            img.thumbnail(max_dim, max_dim)
+        } else {
+            // Already small enough — just re-encode as WebP for consistent format
+            img
+        };
+
+        // Encode as WebP (small file, fast decode by WebKitGTK)
+        let mut buf = std::io::Cursor::new(Vec::new());
+        output.write_to(&mut buf, image::ImageFormat::WebP)
+            .map_err(|e| format!("Failed to encode display variant as WebP: {}", e))?;
+
+        std::fs::create_dir_all(&cache_dir_out)
+            .map_err(|e| format!("Cache dir error: {}", e))?;
+        std::fs::write(&display_path_out, buf.into_inner())
+            .map_err(|e| format!("Failed to write display variant: {}", e))?;
+
+        Ok::<String, String>(display_path_out.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Spawn blocking error: {}", e))?
+}
+
 /// Retrieve media blob bytes directly for browser Object URL creation.
 ///
 /// Returns raw bytes via IPC. For vault videos (< 8MB), JSON overhead is acceptable.

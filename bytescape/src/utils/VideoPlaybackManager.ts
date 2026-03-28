@@ -12,12 +12,12 @@ class VideoPlaybackManagerClass {
     private videos = new Set<HTMLVideoElement>();
 
     /** Maximum registered elements before forced pruning.
-     * Lowered from 30 → 6 to aggressively reclaim GStreamer pipeline memory.
+     * Lowered from 30 → 6 → 3 to aggressively reclaim GStreamer pipeline memory.
      * WebKitGTK pipelines consume 100–500 MB each of native (non-JS-heap)
-     * memory. With a virtualizer showing ~10-15 items + 5 overscan, only
-     * 3-6 may be videos at once. Anything beyond that is a zombie pipeline.
+     * memory. At 3 pipelines max, worst-case video memory is ~1.5 GB instead
+     * of 3 GB. The virtualizer only shows ~3-4 videos on screen at once anyway.
      */
-    private static readonly MAX_REGISTERED = 6;
+    private static readonly MAX_REGISTERED = 3;
 
     /** Register a video element for global coordination. */
     register(el: HTMLVideoElement): void {
