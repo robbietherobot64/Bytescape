@@ -1,7 +1,7 @@
 /** This is the app file for Bytescape. It initializes the app, manages global state, and renders the main layout and screens. */
 
 /** Import global styles and themes */
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -12,7 +12,7 @@ import "./themes/win98.css";
 import "./themes/midnight.css";
 import "./themes/hacker.css";
 import "./App.css";
-import { VideoPlaybackManager } from "./utils/VideoPlaybackManager";
+import { TabActiveContext } from "./contexts/TabActiveContext";
 
 /**
  * Local error boundary for screen-level rendering failures.
@@ -109,18 +109,13 @@ function App() {
     return installLinkInterceptor();
   }, []);
 
-  // ─── Tab deactivation lifecycle: release video pipelines on tab switch ───
-  // When the active app-level tab changes, force-release all registered video
-  // elements. Without this, tabs hidden via display:none keep GStreamer
-  // pipelines alive (each ~100-500 MB native memory) because the components
-  // never unmount. Releasing clears src and calls el.load() to tear down.
-  const prevActiveTabIdRef = useRef(activeTabId);
-  useEffect(() => {
-    if (prevActiveTabIdRef.current !== activeTabId) {
-      VideoPlaybackManager.releaseAll();
-      prevActiveTabIdRef.current = activeTabId;
-    }
-  }, [activeTabId]);
+  // ─── Tab deactivation lifecycle ───
+  // Video cleanup is now handled declaratively via TabActiveContext.
+  // Each VideoPlayer reads useTabActive() and clears its src through React
+  // state when the tab becomes inactive — no DOM hacking needed.
+  // The old releaseAll() approach fought React: it removed src via DOM
+  // manipulation, but React would restore it from state on the next render,
+  // recreating the GStreamer pipeline immediately.
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
@@ -734,13 +729,14 @@ function App() {
           const isActive = tab.id === activeTabId;
           const isFullBleed = FULL_BLEED_SCREENS.has(tab.screen);
           return (
-            <div
-              key={tab.id}
-              className={`tab-pane ${isActive ? 'tab-pane--active' : ''} ${isFullBleed ? 'tab-pane--full-bleed' : 'tab-pane--standard'}`}
-              style={isActive ? (isFullBleed ? fullBleedStyle : standardStyle) : { display: 'none' }}
-            >
-              {renderTabScreen(tab)}
-            </div>
+            <TabActiveContext.Provider key={tab.id} value={isActive}>
+              <div
+                className={`tab-pane ${isActive ? 'tab-pane--active' : ''} ${isFullBleed ? 'tab-pane--full-bleed' : 'tab-pane--standard'}`}
+                style={isActive ? (isFullBleed ? fullBleedStyle : standardStyle) : { display: 'none' }}
+              >
+                {renderTabScreen(tab)}
+              </div>
+            </TabActiveContext.Provider>
           );
         })}
       </ErrorBoundary>

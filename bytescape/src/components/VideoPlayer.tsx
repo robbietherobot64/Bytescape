@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 import { getMediaPort } from '../utils/mediaServer';
 import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
+import { useTabActive } from '../contexts/TabActiveContext';
 
 interface VideoPlayerProps {
     src: string;
@@ -28,14 +29,17 @@ const VISIBILITY_DEBOUNCE_MS = 200;
  * Global count of currently active (src-loaded) video elements.
  * Used for backpressure: when too many videos are simultaneously loading,
  * new ones wait for existing pipelines to settle.
+ *
+ * IMPORTANT: This was previously a closure-captured variable that suffered
+ * from stale closures in useEffect cleanup. Now tracked via a simple global
+ * that's incremented/decremented symmetrically using a per-instance ref flag.
  */
 let activeVideoCount = 0;
-const MAX_CONCURRENT_VIDEOS = 6;
+const MAX_CONCURRENT_VIDEOS = 2;
 
 /** Cache a resolved video URL with LRU eviction to prevent unbounded growth. */
 function cacheVideoUrl(src: string, url: string) {
     if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
-        // Maps iterate in insertion order — evict the oldest entry
         const firstKey = videoUrlCache.keys().next().value;
         if (firstKey !== undefined) videoUrlCache.delete(firstKey);
     }
@@ -54,6 +58,11 @@ function releaseVideoResources(el: HTMLVideoElement) {
 /**
  * Standard, native VideoPlayer component for Bytescape.
  * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict drop-dead media restrictions.
+ *
+ * Tab-aware: reads TabActiveContext to know when its parent tab is hidden.
+ * When the tab is inactive, video src is cleared through React state (not DOM
+ * hacking) — this reliably tears down GStreamer pipelines because React drives
+ * the DOM update.
  */
 export function VideoPlayer({ src, poster, className, style, autoPlay = false }: VideoPlayerProps) {
     const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
@@ -62,13 +71,30 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
+    const isTabActive = useTabActive();
+
+    // Track whether this instance has incremented activeVideoCount.
+    // This ref is the single source of truth — no stale closure issues.
+    const isCountedRef = useRef(false);
+
+    function claimSlot() {
+        if (!isCountedRef.current) {
+            isCountedRef.current = true;
+            activeVideoCount++;
+        }
+    }
+    function releaseSlot() {
+        if (isCountedRef.current) {
+            isCountedRef.current = false;
+            activeVideoCount = Math.max(0, activeVideoCount - 1);
+        }
+    }
 
     // Smoothly resolve the poster if it's a blob:hash
     const [, resolvedPoster] = useLazyBlobUrl(poster);
 
     // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
-        // Release previous element's decoder buffers before losing the reference
         if (videoRef.current && videoRef.current !== el) {
             releaseVideoResources(videoRef.current);
             VideoPlaybackManager.unregister(videoRef.current);
@@ -79,7 +105,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     }, []);
 
-    // Cleanup on unmount — force WebKitGTK to release decoder memory
+    // Cleanup on unmount — release decoder + slot
     useEffect(() => {
         return () => {
             if (videoRef.current) {
@@ -87,6 +113,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 VideoPlaybackManager.unregister(videoRef.current);
                 videoRef.current = null;
             }
+            releaseSlot();
         };
     }, []);
 
@@ -96,11 +123,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     };
 
-    // Bidirectional intersection observer — tracks both entering AND leaving
-    // the viewport. Debounced to prevent rapid GStreamer pipeline churn when
-    // filter toggles cause mass mount/unmount of VideoPlayer components.
-    // The debounce ensures WebKitGTK has time to tear down old pipelines
-    // before new ones are created.
+    // Bidirectional intersection observer
     useEffect(() => {
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,10 +132,8 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 if (debounceTimer) clearTimeout(debounceTimer);
 
                 if (!entry.isIntersecting) {
-                    // Leaving viewport — apply immediately to release resources fast
                     setIsVisible(false);
                 } else {
-                    // Entering viewport — debounce to prevent pipeline churn
                     debounceTimer = setTimeout(() => {
                         setIsVisible(true);
                     }, VISIBILITY_DEBOUNCE_MS);
@@ -131,15 +152,17 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         };
     }, []);
 
+    // The "should load" gate: must be visible AND tab must be active.
+    // When tab becomes inactive, shouldLoad becomes false, clearing the URL
+    // through React state — not DOM hacking. This is the key fix for the
+    // GStreamer pipeline leak on tab switch.
+    const shouldLoad = isVisible && isTabActive;
+
     useEffect(() => {
-        if (!src || !isVisible) {
-            // Clear resolved URL when not visible — React will remove src from
-            // the <video> DOM element on the next render. This is more reliable
-            // than manual removeAttribute('src') because React drives the DOM.
-            // WebKitGTK tears down its GStreamer pipeline when src is removed.
-            if (resolvedUrl) {
-                activeVideoCount = Math.max(0, activeVideoCount - 1);
-            }
+        if (!src || !shouldLoad) {
+            // Clear resolved URL — React removes src from <video> on next render.
+            // WebKitGTK tears down the GStreamer pipeline when src disappears.
+            releaseSlot();
             setResolvedUrl(null);
             return;
         }
@@ -148,19 +171,16 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         let loadTimer: ReturnType<typeof setTimeout> | null = null;
 
         async function loadVideo() {
-            // Backpressure: wait for pipeline slots if too many videos are active.
-            // This prevents overwhelming WebKitGTK's GStreamer with 15+ simultaneous
-            // decode pipelines (which is the root cause of the memory leak on video filter).
+            // Backpressure: wait for pipeline slots
             if (activeVideoCount >= MAX_CONCURRENT_VIDEOS) {
-                // Wait and retry — another video will free a slot
                 loadTimer = setTimeout(() => {
                     if (!cancelled) loadVideo();
-                }, 100);
+                }, 200);
                 return;
             }
 
             if (videoUrlCache.has(src)) {
-                activeVideoCount++;
+                claimSlot();
                 setResolvedUrl(videoUrlCache.get(src)!);
                 return;
             }
@@ -169,10 +189,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             setError(null);
 
             try {
-                // 1. Handle HLS Bluesky Videos (which are m3u8 playlists)
                 if (src.includes('.m3u8')) {
-                    console.log(`[VideoPlayer] Resolving native file for HLS: ${src}`);
-                    // Backend efficiently downloads the segments and creates a single local .ts file
                     const filePath = await invoke<string>('resolve_hls_video', { playlistUrl: src });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
@@ -180,16 +197,13 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
                             cacheVideoUrl(src, assetUrl);
-                            activeVideoCount++;
+                            claimSlot();
                             setResolvedUrl(assetUrl);
                         }
                     }
                 }
-                // 2. Handle Vault Encrypted Blobs
                 else if (src.startsWith('blob:') && !src.startsWith('blob:http') && !src.startsWith('blob:tauri')) {
                     const hash = src.replace(/^blob:/, '').trim();
-                    console.log(`[VideoPlayer] Decoding Blob to native file path: ${hash}`);
-                    // Backend streams out the decrypted file to a cache and returns the path
                     const filePath = await invoke<string>('get_media_blob', { hashStr: hash });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
@@ -197,14 +211,13 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
                             cacheVideoUrl(src, assetUrl);
-                            activeVideoCount++;
+                            claimSlot();
                             setResolvedUrl(assetUrl);
                         }
                     }
                 }
-                // 3. Handle direct ready-to-play URLs (HTTP, Object URL, standard Tauri Asset URL)
                 else {
-                    activeVideoCount++;
+                    claimSlot();
                     setResolvedUrl(src);
                 }
             } catch (err) {
@@ -224,20 +237,16 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         return () => {
             cancelled = true;
             if (loadTimer) clearTimeout(loadTimer);
-            // Cancel in-progress video resolve when scrolling away (P8)
-            // Prevents CPU thrashing from multiple concurrent FFmpeg processes
             if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
                 invoke('cancel_video_resolve', { url: src }).catch(() => {});
             }
-            // Release video decoder resources to prevent WebKitGTK memory leak
+            // Release slot and video resources on cleanup
+            releaseSlot();
             if (videoRef.current) {
                 releaseVideoResources(videoRef.current);
             }
-            if (resolvedUrl) {
-                activeVideoCount = Math.max(0, activeVideoCount - 1);
-            }
         };
-    }, [src, isVisible]);
+    }, [src, shouldLoad]);
 
     return (
         <div ref={containerRef} className={className} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
