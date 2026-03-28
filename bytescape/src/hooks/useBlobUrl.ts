@@ -191,12 +191,13 @@ export function useLazyBlobUrl(path: string | undefined): [
         };
     }, []);
 
-    // Bypass visibility gate for already-cached blob URLs.
-    // This prevents the dark placeholder flash: if prefetchBlobUrls() has already
-    // resolved this blob, we can return the URL synchronously without waiting for
-    // the IntersectionObserver to fire.
+    // Bypass visibility gate when the URL can be resolved without async work.
+    // Non-blob URLs (HTTP, filesystem) resolve synchronously in useBlobUrl, so
+    // there's no reason to wait for the IntersectionObserver — skipping the gate
+    // prevents the 1-2 frame placeholder flash on virtualizer remount.
+    // For blob: URLs, bypass if already in cache (prefetchBlobUrls pre-populates).
     const isCached = path ? (() => {
-        if (!path.startsWith('blob:')) return false;
+        if (!path.startsWith('blob:')) return true; // sync resolution — always bypass
         const hash = extractBlobHash(path);
         return hash !== null && resolvedUrlCache.has(hash);
     })() : false;

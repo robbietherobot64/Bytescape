@@ -291,7 +291,7 @@
 .sub-section-header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     padding: 6px 0;
     cursor: pointer;
     user-select: none;
@@ -311,15 +311,8 @@
     color: var(--text-primary);
 }
 
-.sub-section-controls {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-}
-
 .sub-section-caret {
+    margin-left: auto;
     font-size: 12px;
     color: var(--text-primary);
     flex-shrink: 0;

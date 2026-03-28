@@ -127,17 +127,15 @@ export function FeedRightPanel({
                     <div className="sub-panel">
                         {/* Feeds header */}
                         <div className="sub-section-header" onClick={() => setFeedsExpanded(v => !v)}>
+                            <input
+                                type="checkbox"
+                                checked={feedsEnabled}
+                                onChange={e => { e.stopPropagation(); setFeedsEnabled(e.target.checked); }}
+                                onClick={e => e.stopPropagation()}
+                                title="Include feeds in your subscribed timeline"
+                            />
                             <span className="sub-section-label">Feeds</span>
-                            <span className="sub-section-controls">
-                                <input
-                                    type="checkbox"
-                                    checked={feedsEnabled}
-                                    onChange={e => { e.stopPropagation(); setFeedsEnabled(e.target.checked); }}
-                                    onClick={e => e.stopPropagation()}
-                                    title="Include feeds in your subscribed timeline"
-                                />
-                                <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
-                            </span>
+                            <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
                         </div>
 
                         {feedsExpanded && (
@@ -163,17 +161,15 @@ export function FeedRightPanel({
 
                         {/* Hashtags header */}
                         <div className="sub-section-header" onClick={() => setTagsExpanded(v => !v)}>
+                            <input
+                                type="checkbox"
+                                checked={tagsEnabled}
+                                onChange={e => { e.stopPropagation(); setTagsEnabled(e.target.checked); }}
+                                onClick={e => e.stopPropagation()}
+                                title="Include hashtag posts in your subscribed timeline"
+                            />
                             <span className="sub-section-label">Hashtags</span>
-                            <span className="sub-section-controls">
-                                <input
-                                    type="checkbox"
-                                    checked={tagsEnabled}
-                                    onChange={e => { e.stopPropagation(); setTagsEnabled(e.target.checked); }}
-                                    onClick={e => e.stopPropagation()}
-                                    title="Include hashtag posts in your subscribed timeline"
-                                />
-                                <span className="sub-section-caret">{tagsExpanded ? '▾' : '▸'}</span>
-                            </span>
+                            <span className="sub-section-caret">{tagsExpanded ? '▾' : '▸'}</span>
                         </div>
 
                         {tagsExpanded && (

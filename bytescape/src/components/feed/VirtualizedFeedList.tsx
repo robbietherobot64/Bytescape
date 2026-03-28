@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { FeedEntry } from '../../types';
 import { FeedItemRenderer } from '../lenses/FeedItemRenderer';
@@ -27,6 +27,12 @@ export function VirtualizedFeedList({
 }: VirtualizedFeedListProps) {
     const measurementCache = useRef<Map<number, number>>(new Map());
 
+    // Clear stale measurements when feed content changes (e.g., tab switch,
+    // new posts loaded). Without this, old heights persist and cause gaps.
+    useEffect(() => {
+        measurementCache.current.clear();
+    }, [entries]);
+
     const virtualizer = useVirtualizer({
         count: entries.length,
         getScrollElement: () => scrollContainerRef.current,
@@ -46,7 +52,7 @@ export function VirtualizedFeedList({
             if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80; // thread replies
             return estimate;
         }, [entries]),
-        overscan: 5,
+        overscan: 12,
         measureElement: (el: Element) => {
             const htmlEl = el as HTMLElement;
             const index = Number(htmlEl.dataset.index);
@@ -87,7 +93,8 @@ export function VirtualizedFeedList({
                             left: 0,
                             width: '100%',
                             transform: `translateY(${virtualRow.start}px)`,
-                        }}
+                            contain: 'layout style',
+                        } as React.CSSProperties}
                     >
                         {groupBadge?.(entry)}
                         <FeedItemRenderer

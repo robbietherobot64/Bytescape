@@ -47,7 +47,7 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                                     src={mediaSources[i]}
                                     alt=""
                                     mediaDir={mediaDir}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as React.CSSProperties}
+                                    style={{ width: '100%', height: '100%', display: 'block' } as React.CSSProperties}
                                 />
                                 <button
                                     className="media-expand-btn"

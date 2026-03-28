@@ -48,48 +48,28 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
         return convertFileSrc(src);
     }, [src, blobUrl, mediaDir]);
 
-    // Always render a stable container div for the IntersectionObserver ref.
-    // The <img> mounts inside it when the URL is available. This avoids DOM
-    // element type switching (div→img→div) which causes WebKitGTK repaints.
-    if (resolvedUrl && !error) {
-        return (
-            <img 
-                ref={containerRef as React.RefCallback<HTMLImageElement>}
-                src={resolvedUrl} 
-                alt={alt} 
-                className={className} 
-                style={style} 
-                loading={loading || 'lazy'}
-                decoding="auto"
-                onError={() => {
+    // Always render <img> to avoid DOM element type switching (img↔div) that
+    // causes WebKitGTK repaints and visible flicker on virtualizer remount.
+    // Use a transparent 1x1 GIF as placeholder when loading/errored.
+    const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const imgSrc = (resolvedUrl && !error) ? resolvedUrl : TRANSPARENT_PIXEL;
+
+    return (
+        <img
+            ref={containerRef as React.RefCallback<HTMLImageElement>}
+            src={imgSrc}
+            alt={error ? '⚠️ Failed to load' : alt}
+            className={className}
+            style={style}
+            loading={loading || 'lazy'}
+            decoding="auto"
+            onError={() => {
+                if (resolvedUrl) {
                     console.error('Image failed to load:', src);
                     onError?.();
-                }}
-            />
-        );
-    }
-
-    // Loading or error state — render a placeholder div with the observer ref.
-    // Use transparent background instead of dark to prevent "black flash".
-    return (
-        <div 
-            ref={containerRef}
-            className={className} 
-            style={{ 
-                ...style, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                width: '100%',
-                height: '100%',
+                }
             }}
-        >
-            {error && (
-                <span style={{ color: 'var(--text-muted, #666)' }}>
-                    ⚠️ Failed to load
-                </span>
-            )}
-        </div>
+        />
     );
 }
 
