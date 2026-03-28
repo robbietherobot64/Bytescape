@@ -4,6 +4,59 @@
 
 ---
 
+## 🎨 Frontend Sprint v13 — Complete (2026-03-28)
+
+**Commits**: `9e94147`, `5c2f16f`, `12e0524`, `f01e968`
+**Build**: 0 tsc errors, 272/272 tests pass
+
+### P0: Critical UX Fixes (🔥🔥)
+| Item | Status | Details |
+|------|--------|---------|
+| P0.1 Toggle alignment | ✅ | Restructured FeedRightPanel JSX — checkbox before label, caret uses `margin-left: auto` |
+| P0.2 Image blink | ✅ | Non-blob URLs bypass IntersectionObserver gate; BlobImage always renders `<img>` with transparent pixel placeholder; no DOM switching |
+| P0.3 Feed gaps/sizing | ✅ | Overscan 5→12; measurementCache cleared on entries change; `contain: layout style`; single-image aspect-ratio `4/3`; removed inline objectFit override |
+
+### P1-P3: Groups Feed Tab, Share-to-Group, Badges
+| Item | Status | Details |
+|------|--------|---------|
+| P1 Groups feed tab | ✅ | Tab bar renders Groups tab; `useUnifiedFeed` calls `provider.getGroupsFeed()`; empty state conditioned on `!isLoading` |
+| P2 Share-to-Group | ✅ | New `GroupPickerModal` component; added to EngagementBar repost dropdown; fetches user's joined groups; calls `share_to_group` |
+| P3 Group badge | ✅ | Badge rendered on VirtualizedFeedList items when Groups tab active |
+
+### P4-P5: Moderation UI + Backend Wiring
+| Item | Status | Details |
+|------|--------|---------|
+| P4 Moderation UI | ✅ | GroupScreen: pending members queue (approve/reject), member action menus (promote/demote/ban), invite flow (Private groups), post moderation (pin/unpin/remove) |
+| P5 useGroupsData cleanup | ✅ | `BACKEND_READY = true`; myRole detection via `check_auth_status` DID matching; `refresh()` after join |
+
+### P6: Forum/Group Polish
+| Item | Status | Details |
+|------|--------|---------|
+| P6.1 Search fix | ✅ | Fixed 3 invoke name mismatches: `get_group→get_group_cmd`, `get_group_members→get_group_members_cmd`, `search_groups→search_groups_cmd` |
+| P6.3 Loading states | ✅ | Animated spinners on ForumScreen (topic tree loading) and GroupScreen (group detail loading) |
+| P6.4 Accessibility | ✅ | `aria-expanded` on topic nodes, `aria-label` on all subscribe/join/back buttons, `role=tree/treeitem/group` on forum tree, Escape dismiss + auto-focus on CreateGroupModal, keyboard Escape clears search |
+
+### Files Modified (13 files)
+- `src/components/FeedRightPanel.tsx` — toggle alignment
+- `src/screens/FeedScreen.css` — toggle CSS cleanup
+- `src/hooks/useBlobUrl.ts` — non-blob URL bypass
+- `src/components/BlobImage.tsx` — stable `<img>` rendering
+- `src/components/feed/VirtualizedFeedList.tsx` — overscan, cache clear, contain
+- `src/components/feed/MediaGrid.tsx` — removed inline objectFit
+- `src/App.css` — aspect-ratio, GroupPicker CSS, group badge CSS
+- `src/screens/FeedScreen.tsx` — Groups tab, empty state, badge prop
+- `src/hooks/useUnifiedFeed.ts` — groups tab handler
+- `src/providers/DataProvider.ts` + `TauriDataProvider.ts` — getGroupsFeed
+- `src/components/GroupPickerModal.tsx` — NEW share-to-group modal
+- `src/components/feed/EngagementBar.tsx` — onShareToGroup prop
+- `src/components/FeedEntryCard.tsx` — GroupPickerModal wiring
+- `src/hooks/useGroupsData.ts` — BACKEND_READY, myRole, command name fixes
+- `src/screens/GroupScreen.tsx` + `GroupScreen.css` — full moderation rewrite + a11y + loading states
+- `src/screens/ForumScreen.tsx` + `ForumScreen.css` — a11y + spinner
+- `src/components/CreateGroupModal.tsx` — Escape dismiss, auto-focus, aria-modal
+
+---
+
 ## 📋 PM — Comprehensive User Feedback Review (2026-03-28)
 
 **Source**: `user-feedback` file — user performed a thorough review of the app and documented all observations.
