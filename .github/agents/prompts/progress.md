@@ -4,6 +4,45 @@
 
 ---
 
+## 📋 PM — Comprehensive User Feedback Review (2026-03-28)
+
+**Source**: `user-feedback` file — user performed a thorough review of the app and documented all observations.
+
+### Critical Issues Reported (must fix in sprint v13)
+
+| Issue | Category | Sprint v13 Owner | Notes |
+|-------|----------|-----------------|-------|
+| **Memory leak on video filter** | Backend perf | Track A P0.1 | 32+ GB RAM. Only Instagram videos show up. Videos never load. |
+| **CPU spike on app launch** | Backend perf | Track A P0.2 | ~100% CPU, UI lag on startup |
+| **Image/UI blink on scroll** | Frontend rendering | Track B P0.2 | STILL PRESENT — reopened from Sprint v5→v11. User wants ground-up feed redesign. |
+| **Toggle/checkbox text misalignment** | Frontend CSS | Track B P0.1 | Text far right, toggle centered. Should be left-aligned. |
+| **Forums = mock data only** | Frontend wiring | Track B P1/P5 | Already documented. Subscribe toggle works. |
+
+### Lower Priority Issues Reported (ROADMAP'd for future sprints)
+
+| Issue | New ROADMAP Item | Summary |
+|-------|-----------------|---------|
+| Feed gap/image sizing | UF.20 + Open Issue | Random gaps between posts, images sometimes 1/3 expected height |
+| Profile icon → account switcher | UF.17 | Move to top-right, dropdown for profile/account selection |
+| Profile image previews broken | Open Issue | Small box with X, no image loads on profile page |
+| Instagram posts slow initial load | Open Issue | First load slow, subsequent loads fast (cache warming) |
+| Profile layout rework | UF.9 (updated) | Three-column: About/Playing/Links | Guestbook | Connections. Remove Photos. |
+| Import animation + redirect | UF.12 (reopened) | ASCII terminal animation, auto-redirect to profile posts on complete |
+| Settings identity UI | UF.11 (updated) | Single "connect account" button with platform popup |
+| Vowel-less platform names | UF.18 | Convention: blsky, mstdn, lmmy, pfd for platform filters |
+| Auto-login to linked platforms | UF.19 | WebView injects session for linked accounts |
+| PDS hosting + federation | UF.21 | Confirms user priority alignment with Phase 4.5 |
+| Video stutter | Open Issue | Residual jank despite HLS fixes |
+
+### Actions Taken
+
+1. **ROADMAP updated**: Reopened Image Blink issue, added 8 new Open Issues, added UF.17-UF.21, updated UF.9/UF.11/UF.12 with new user details
+2. **Backend sprint v13 updated**: Added P0 section (memory leak investigation + CPU spike profiling) above existing P1
+3. **Frontend sprint v13 updated**: Added P0 section (toggle alignment + image blink regression + feed gap/sizing) above existing P1
+4. **HEAD updated** in both sprint prompts to `46c5777`
+
+---
+
 ## 📋 PM Post-Sprint v12 — User Observation (2026-03-27 evening)
 
 **User feedback**: Forums tab is visible and navigable, but entirely non-functional — displays only hardcoded mock data. No live content populates the forums. Root cause: `useGroupsData.ts` has `USE_MOCK = true` and makes zero `invoke()` calls to the Rust backend. The 21 groups Tauri commands are unreachable from the UI.

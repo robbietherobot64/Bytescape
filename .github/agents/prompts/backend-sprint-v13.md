@@ -1,12 +1,55 @@
-# Backend Sprint v13 — Group Moderation & AP Group Federation (Track A)
+# Backend Sprint v13 — Group Moderation, AP Group Federation & Critical Perf Fixes (Track A)
 
-**Sprint Goal:** Complete the remaining group management commands (approve/reject/invite/ban/pin) and begin AP Group federation so Bytescape groups can interoperate with Lemmy and PieFed communities.
+**Sprint Goal:** Complete the remaining group management commands (approve/reject/invite/ban/pin), begin AP Group federation so Bytescape groups can interoperate with Lemmy and PieFed communities, and **investigate/fix two critical performance regressions** reported by the user.
 
 **Context:** Sprint v12 delivered the full groups foundation — 10 types, 5 redb tables, 21 Tauri commands, 9 db tests, seed topic tree. Core membership flow works (join/leave for Public/Closed/Private). What's missing:
 - **Moderation ops:** approve_member, reject_member, invite_member, ban_member, set_member_role, pin_group_post (all specified in ROADMAP B4.7/B4.8/B4.10 but deferred)
 - **AP Group federation:** Federate local groups as AP `Group` actors so Lemmy/PieFed instances can follow and interact (ROADMAP A2.7)
+- **🔥 CRITICAL — Memory Leak (User feedback 2026-03-28):** Filtering feed by video → 32+ GB memory, only Instagram videos show, never load. Videos overall still stuttery.
+- **🔥 CRITICAL — CPU Spike on Launch (User feedback 2026-03-28):** CPU spikes to ~100% on app launch, causing lag.
 
-**HEAD:** `52b3d41` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass, cargo check clean.
+**HEAD:** `46c5777` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass, cargo check clean.
+
+---
+
+## P0: Critical Performance Investigations (🔥🔥 User-Reported)
+
+**Priority:** 🔥🔥 Highest — these are user-observed production issues that make the app feel broken.
+
+### 0.1 Memory Leak on Video Filter
+
+**Symptoms:** User filters feed to "Video" → only Instagram archive videos show up (not Bluesky/Mastodon video embeds) → videos attempt to load but never complete → memory usage climbs to 32+ GB.
+
+**Investigation path:**
+1. Check `get_unified_feed` / `get_timeline_unified` — does the `Video` content filter correctly include videos from all sources, or only vault-imported Instagram?
+2. Check the video HLS conversion pipeline — are FFmpeg child processes being spawned and not killed? Are temporary conversion files accumulating?
+3. Check `video_cache` / `hls_cache` — are converted video files being cleaned up? Is there a cache eviction policy?
+4. Check blob fetching for video content — is `get_media_blob` loading entire video files into memory without streaming?
+5. Profile memory with `MALLOC_CONF` or `heaptrack` to find the actual allocation source.
+
+**Fix requirements:**
+- Video filter must show videos from ALL sources (Bluesky, Mastodon, Instagram, vault), not just Instagram archives
+- Video loading must be streaming, not full-file-in-memory
+- FFmpeg processes must have timeouts and cleanup
+- Video cache must have size limits and eviction
+- Memory must stay under 2 GB under normal usage
+
+### 0.2 CPU Spike on Launch
+
+**Symptoms:** CPU hits ~100% when app first launches, causing UI lag for several seconds.
+
+**Investigation path:**
+1. Check `seed_default_topics()` — does it run on EVERY launch or only on first run? If it's idempotent with an early exit, this isn't the issue. If it re-creates topics every time, fix it.
+2. Check the blob consistency check (10s delay startup task) — does it scan ALL blobs on every launch?
+3. Check Iroh node initialization — is the DHT bootstrap taking excessive CPU?
+4. Check Bluesky OAuth session restoration — is it doing network calls during setup?
+5. Add timing logs to each setup phase to identify the bottleneck.
+
+**Fix requirements:**
+- `seed_default_topics()` must check if topics exist and return early
+- Blob consistency check should be throttled or deferred further
+- App should be interactive within 2 seconds of launch
+- Add `tracing::info!` timing spans to all startup phases
 
 ---
 

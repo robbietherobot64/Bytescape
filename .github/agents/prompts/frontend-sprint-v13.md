@@ -1,10 +1,67 @@
-# Frontend Sprint v13 — Groups Feed Tab, Moderation UI & Polish (Track B)
+# Frontend Sprint v13 — Groups Feed Tab, Moderation UI, Feed Stability & Critical UX Fixes (Track B)
 
-**Sprint Goal:** Wire up the Groups feed tab that was scaffolded but never completed in v12, add the moderation UI for group owners/mods, add the share-to-group flow, and polish the existing Forum/Group screens.
+**Sprint Goal:** Wire up the Groups feed tab that was scaffolded but never completed in v12, add the moderation UI for group owners/mods, add the share-to-group flow, polish the existing Forum/Group screens, and **fix critical UX regressions** reported by the user including image blink, toggle alignment, and feed gap/sizing issues.
 
 **Context:** Sprint v12 delivered ForumScreen, GroupScreen, CreateGroupModal, VirtualizedFeedList, and TypeScript types. However, the Groups feed tab on FeedScreen was only scaffolded (type/label/empty-state exist but the tab button isn't rendered and `get_groups_feed` isn't wired). The share-to-group UI and group badges on feed cards are also missing. Additionally, the backend agent built most of the frontend UI (track violation) — some of it uses `any[]` types and non-reactive mock state that should be cleaned up.
 
-**HEAD:** `52b3d41` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass.
+**🔥 CRITICAL User Feedback (2026-03-28):**
+- Images and UI "blink" black during scroll — user says prior fix was insufficient, wants fundamental feed stability overhaul
+- Toggle buttons/checkboxes have text extremely misaligned to the right, toggles centered instead of left-aligned
+- Random gaps between feed posts, images inconsistently sized (sometimes correct, sometimes 1/3 height)
+- Forums tab shows only mock data (already documented — sprint v13 P1/P5 address this)
+
+**HEAD:** `46c5777` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass.
+
+---
+
+## P0: Critical UX Fixes (🔥🔥 User-Reported)
+
+**Priority:** 🔥🔥 Highest — these are user-observed regressions that make the app feel broken.
+
+### 0.1 Toggle/Checkbox Text Misalignment
+
+**Symptoms:** Toggle buttons and checkboxes throughout the app have their label text extremely misaligned to the right. The toggle element itself is centered on screen rather than left-aligned like all other text content.
+
+**Fix:** Find all toggle/checkbox components (likely in SettingsScreen, ForumScreen subscribe buttons, and any modal forms). Ensure:
+- Toggle + label are in a flex row with `justify-content: flex-start` (left-aligned)
+- Label text is immediately adjacent to the toggle with a small gap (8-12px)
+- No `text-align: center` or `margin: auto` on the toggle container
+- Check App.css and component-specific CSS for global toggle/checkbox styles
+
+**Key files:** Search for `toggle`, `checkbox`, `switch` in CSS files. Check `App.css`, `SettingsScreen.css`, `ForumScreen.css`.
+
+### 0.2 Image/UI Blink on Scroll (REGRESSION)
+
+**Symptoms:** Images and overall UI "blink" when scrolling — go black for a split second when hovered. One part of the UI is affected by interactivity of another part. The user has reported this across multiple sprints and prior fixes (synchronous cache init in `useBlobUrl`, removed hover effects, removed dark placeholder) were insufficient.
+
+**Investigation path:**
+1. Check if `VirtualizedFeedList` (from `@tanstack/react-virtual`) is unmounting/remounting items during scroll — this would cause BlobImage to re-resolve URLs
+2. Check if CSS `contain: content` or `contain: layout paint` is applied to feed items — without containment, reflow from one item affects siblings
+3. Check if any CSS transitions/animations are triggering on scroll (hover states, opacity transitions, transform animations)
+4. Check if the virtualizer's `estimateSize` function is returning unstable values, causing items to "jump" as they're measured
+5. Test: add `will-change: transform` to feed item containers and `content-visibility: auto` for off-screen items
+
+**Fix requirements:**
+- Zero visual flicker during normal feed scrolling
+- Hover interactions on one feed item must NOT cause visual changes in other items
+- BlobImage must never show a black/empty frame for already-loaded images
+- Add CSS `contain: content` to feed item wrappers
+
+### 0.3 Feed Gap & Image Sizing Inconsistency
+
+**Symptoms:** Random extra whitespace between feed posts. Images sometimes render correctly, other times they're cut off and the post shrinks to 1/3 expected height.
+
+**Investigation path:**
+1. Check VirtualizedFeedList `estimateSize` — if it returns a fixed estimate and the actual measured size differs, gaps appear
+2. Check FeedEntryCard image container — is it using `aspect-ratio: 4/3` consistently? Are missing images collapsing the container to 0 height?
+3. Check if `BlobImage` has a `loading` state with no minimum height — before the blob resolves, the container might collapse
+4. Check CSS for any `overflow: hidden` clipping images without proper `min-height`
+
+**Fix requirements:**
+- Images must have a placeholder height matching expected aspect ratio before loading
+- No random gaps between feed posts
+- All images render at their full expected size, never clipped to 1/3 height
+- VirtualizedFeedList must re-measure items after images load (call `measureElement` ref)
 
 ---
 
