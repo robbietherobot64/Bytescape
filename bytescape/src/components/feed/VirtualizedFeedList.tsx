@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { FeedEntry } from '../../types';
 import { FeedItemRenderer } from '../lenses/FeedItemRenderer';
+import { prefetchBlobUrls } from '../../utils/prefetchBlobUrls';
 
 interface VirtualizedFeedListProps {
     entries: FeedEntry[];
@@ -65,6 +66,27 @@ export function VirtualizedFeedList({
     });
 
     const virtualItems = virtualizer.getVirtualItems();
+
+    // ── Viewport-aware blob prefetch ──
+    // Instead of resolving ALL blob URLs for ALL feed entries on load
+    // (which hammered the backend with hundreds of IPC calls), only prefetch
+    // blobs for entries currently visible + a small lookahead buffer.
+    // This turns O(N_total_entries) into O(N_visible + lookahead) per render.
+    const prefetchedRangeRef = useRef<string>('');
+    useEffect(() => {
+        if (virtualItems.length === 0) return;
+        const startIdx = virtualItems[0].index;
+        const endIdx = virtualItems[virtualItems.length - 1].index;
+        // Extend by lookahead of 5 entries in each direction
+        const lo = Math.max(0, startIdx - 5);
+        const hi = Math.min(entries.length - 1, endIdx + 5);
+        const rangeKey = `${lo}:${hi}`;
+        // Skip if we already prefetched this exact range
+        if (prefetchedRangeRef.current === rangeKey) return;
+        prefetchedRangeRef.current = rangeKey;
+        const visibleEntries = entries.slice(lo, hi + 1);
+        prefetchBlobUrls(visibleEntries).catch(() => {});
+    }, [virtualItems, entries]);
 
     if (entries.length === 0) return null;
 

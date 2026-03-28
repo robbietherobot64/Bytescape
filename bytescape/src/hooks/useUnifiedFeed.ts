@@ -2,8 +2,22 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { AuthStatus, BlueskyPost, FeedEntry, GeneratorView, LinkedAccount, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
-import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
 import { useDataProvider } from '../providers';
+
+/**
+ * Maximum feed entries held in React state. Prevents unbounded growth
+ * during repeated "Load More" operations. Aligned with the Zustand
+ * cache cap (500) but more conservative since React state drives renders.
+ * 300 entries × ~5 KB avg ≈ 1.5 MB max in component state.
+ */
+const MAX_FEED_ENTRIES = 300;
+
+/** Cap an entry array to MAX_FEED_ENTRIES, keeping newest (end of array). */
+function capEntries(entries: FeedEntry[]): FeedEntry[] {
+    return entries.length > MAX_FEED_ENTRIES
+        ? entries.slice(entries.length - MAX_FEED_ENTRIES)
+        : entries;
+}
 
 /**
  * Nest owner replies under their parent posts.
@@ -169,18 +183,20 @@ export function useUnifiedFeed({
         // Cache key includes source filter to prevent cross-filter cache corruption
         const cacheKey = `${tab}:${archiveSourceFilter}:${selectedFeedUris.join(',')}:${selectedHashtagsFilter.join(',')}`;
 
-        // Cache-first: show stale data immediately while refreshing in background
+        // Cache-first: if fresh cache exists, use it and skip the network fetch.
+        // The 45-second auto-refresh handles eventual freshness — no need for
+        // stale-while-revalidate which doubled every pipeline run (2× backend,
+        // 2× IPC, 2× state updates, 2× blob resolution).
         if (!background) {
             const cached = getCache(cacheKey);
             if (cached) {
-                // Instant render from cache — no loading spinner
+                // Instant render from cache — no loading spinner, no background fetch
                 setFeedEntries(cached.entries);
                 setCursor(cached.cursor);
-                // Still fetch fresh data in background (stale-while-revalidate)
-                background = true;
-            } else {
-                setIsLoading(true);
+                setFeedError(null);
+                return;
             }
+            setIsLoading(true);
             setFeedError(null);
             verifiedIdsRef.current.clear();
         }
@@ -201,8 +217,6 @@ export function useUnifiedFeed({
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
                 setCache(cacheKey, deduped, nextCursor);
-                // Batch-prefetch blob URLs for images (P6)
-                prefetchBlobUrls(deduped).catch(() => {});
                 await fetchFollowingList(auth.did);
 
             } else if (tab === 'you') {
@@ -240,8 +254,6 @@ export function useUnifiedFeed({
                 setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
                 setCache(cacheKey, dedupedYou, bskyCursor);
-                // Batch-prefetch blob URLs for images (P6)
-                prefetchBlobUrls(dedupedYou).catch(() => {});
 
             } else if (tab === 'subscribed') {
                 // ── Subscribed tab: show content from user's saved/subscribed feeds ──
@@ -311,8 +323,6 @@ export function useUnifiedFeed({
                         setFeedEntries(deduped);
                         setCursor(nextCur);
                         setCache(cacheKey, deduped, nextCur);
-                        // Batch-prefetch blob URLs for images (P6)
-                        prefetchBlobUrls(deduped).catch(() => {});
                     } catch (e: any) {
                         console.error('get_unified_feed failed for subscribed tab:', e);
                         if (!isStale()) {
@@ -367,8 +377,6 @@ export function useUnifiedFeed({
                     setCursor(response.next_cursor);
                     setCache(cacheKey, deduped, response.next_cursor);
                     setArchiveOffset(200);
-                    // Batch-prefetch blob URLs for images (P6)
-                    prefetchBlobUrls(deduped).catch(() => {});
                 } catch (e) {
                     console.error('get_timeline_unified/list_saved_feeds failed:', e);
                     if (isStale()) return;
@@ -395,7 +403,6 @@ export function useUnifiedFeed({
                     setFeedEntries(deduped);
                     setCursor(null);
                     setCache(cacheKey, deduped, null);
-                    prefetchBlobUrls(deduped).catch(() => {});
                 } catch (e) {
                     console.error('get_groups_feed failed:', e);
                     if (!isStale()) {
@@ -458,12 +465,14 @@ export function useUnifiedFeed({
         return () => clearInterval(interval);
     }, [auth, activeTab, autoRefreshFeeds, fetchFeed]);
 
-    // Background verification of active syndications
+    // Background verification of active syndications.
+    // Batched: mark all IDs as verified upfront, run checks, then do at most
+    // ONE background refresh if any syndication state changed.
+    // Previous pattern fired N individual IPC calls and each "changed" response
+    // triggered a full fetchFeed — cascading into N full pipeline replays.
     useEffect(() => {
         if (!auth || feedEntries.length === 0) return;
 
-        // Vault IDs are internal identifiers (UUIDs, etc.) — not protocol URIs.
-        // Exclude AT Protocol and HTTP(S) URIs (Bluesky, ActivityPub, Mastodon, RSS).
         const isVaultId = (id: string) =>
             !id.startsWith('at://') &&
             !id.startsWith('http://') &&
@@ -476,17 +485,31 @@ export function useUnifiedFeed({
 
         if (unverified.length === 0) return;
 
-        unverified.forEach(async (entry) => {
+        // Mark all as verified upfront to prevent re-triggering on re-render
+        for (const entry of unverified) {
             verifiedIdsRef.current.add(entry.id);
-            try {
-                const changed = await provider.verifySyndications({ itemId: entry.id });
-                if (changed) {
-                    fetchFeed(activeTab, true);
+        }
+
+        // Run all verifications, then do at most one refresh
+        let cancelled = false;
+        (async () => {
+            let anyChanged = false;
+            for (const entry of unverified) {
+                if (cancelled) return;
+                try {
+                    const changed = await provider.verifySyndications({ itemId: entry.id });
+                    if (changed) anyChanged = true;
+                } catch (e) {
+                    console.error(`sync: verify failed for ${entry.id}`, e);
                 }
-            } catch (e) {
-                console.error(`sync: verify failed for ${entry.id}`, e);
             }
-        });
+            // Single background refresh if anything changed (not N refreshes)
+            if (anyChanged && !cancelled) {
+                fetchFeed(activeTab, true);
+            }
+        })();
+
+        return () => { cancelled = true; };
     }, [feedEntries, auth, activeTab, fetchFeed]);
 
     // === Load More ===
@@ -502,7 +525,7 @@ export function useUnifiedFeed({
                 if (archiveSourceFilter) {
                     newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
                 }
-                setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newEntries]));
+                setFeedEntries(prev => capEntries(deduplicateFeedEntries([...prev, ...newEntries])));
                 setCursor(nextCursor);
 
             } else if (activeTab === 'you') {
@@ -528,7 +551,7 @@ export function useUnifiedFeed({
                 if (archiveSourceFilter) {
                     newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
                 }
-                setFeedEntries(prev => nestOwnerReplies(deduplicateFeedEntries([...prev, ...newEntries])));
+                setFeedEntries(prev => capEntries(nestOwnerReplies(deduplicateFeedEntries([...prev, ...newEntries]))));
                 setArchiveOffset(prev => prev + ARCHIVE_PAGE_SIZE);
                 setCursor(bskyCursor);
 
@@ -564,7 +587,7 @@ export function useUnifiedFeed({
                     if (archiveSourceFilter) {
                         newEntries = newEntries.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
                     }
-                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newEntries]));
+                    setFeedEntries(prev => capEntries(deduplicateFeedEntries([...prev, ...newEntries])));
                     setCursor(nextCur);
                 }
 
@@ -582,7 +605,7 @@ export function useUnifiedFeed({
                     if (archiveSourceFilter) {
                         newItems = newItems.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase());
                     }
-                    setFeedEntries(prev => deduplicateFeedEntries([...prev, ...newItems]));
+                    setFeedEntries(prev => capEntries(deduplicateFeedEntries([...prev, ...newItems])));
                     setCursor(response.next_cursor);
                     setArchiveOffset(prev => prev + 200);
                 }

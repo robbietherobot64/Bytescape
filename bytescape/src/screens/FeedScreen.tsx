@@ -67,6 +67,17 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         }
     }, [mediaFilter]);
 
+    // Also release all video pipelines on tab switch — prevents zombie
+    // GStreamer pipelines from the previous tab's videos from lingering
+    // (each consuming 100–500 MB of native memory invisible to JS heap).
+    const prevTabRef = useRef(activeTab);
+    useEffect(() => {
+        if (prevTabRef.current !== activeTab) {
+            VideoPlaybackManager.releaseAll();
+            prevTabRef.current = activeTab;
+        }
+    }, [activeTab]);
+
     // === Data Hook ===
     const {
         feedEntries,
