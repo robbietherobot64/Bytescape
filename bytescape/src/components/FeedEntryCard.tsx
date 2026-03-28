@@ -7,6 +7,7 @@ import { AudiencePills } from './AudiencePills';
 import { AudienceDrawer } from './AudienceDrawer';
 import { ReplyCompose } from './ReplyCompose';
 import { QuoteRepostModal } from './QuoteRepostModal';
+import { GroupPickerModal } from './GroupPickerModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { RichText } from './RichText';
 import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
@@ -77,6 +78,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const [threadLoading, setThreadLoading] = useState(false);
     const [quoteModalOpen, setQuoteModalOpen] = useState(false);
     const [repostMenuOpen, setRepostMenuOpen] = useState(false);
+    const [groupPickerOpen, setGroupPickerOpen] = useState(false);
 
     const isBluesky = entry.source === 'bluesky';
     const isMastodon = entry.source === 'mastodon';
@@ -460,6 +462,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     onRepostClick={handleRepostClick}
                     onDirectRepost={handleDirectRepost}
                     onQuoteRepost={handleQuoteRepost}
+                    onShareToGroup={(e) => { e.stopPropagation(); setRepostMenuOpen(false); setGroupPickerOpen(true); }}
                     onThreadToggle={handleThreadToggle}
                     onShareClick={handleShareClick}
                 />
@@ -516,6 +519,18 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     }}
                 />,
                 document.body
+            )}
+
+            {/* Share to Group Modal */}
+            {groupPickerOpen && (
+                <GroupPickerModal
+                    itemId={entry.id}
+                    onClose={() => setGroupPickerOpen(false)}
+                    onShared={(_, groupName) => {
+                        console.log(`Shared to group: ${groupName}`);
+                        setGroupPickerOpen(false);
+                    }}
+                />
             )}
 
             {/* Fullscreen Gallery */}

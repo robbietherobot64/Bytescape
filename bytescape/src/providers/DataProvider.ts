@@ -75,6 +75,11 @@ export interface GetTimelineUnifiedParams {
   sourceFilter?: string | null;
 }
 
+export interface GetGroupsFeedParams {
+  limit: number;
+  cursor?: string | null;
+}
+
 export interface GetPostThreadParams {
   uri: string;
 }
@@ -446,6 +451,7 @@ export interface DataProvider {
   removeFollowedHashtag(params: FollowedHashtagParams): Promise<string[]>;
   getPostThread(params: GetPostThreadParams): Promise<ThreadReply[]>;
   verifySyndications(params: VerifySyndicationsParams): Promise<boolean>;
+  getGroupsFeed(params: GetGroupsFeedParams): Promise<BytescapeItem[]>;
 
   // ── Auth ──────────────────────────────────────────────────────
   checkAuthStatus(): Promise<AuthStatus | null>;

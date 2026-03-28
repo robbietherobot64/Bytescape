@@ -91,6 +91,7 @@ import type {
 import type {
   AuthStatus,
   BlueskyPost,
+  BytescapeItem,
   CollabDocMeta,
   CollabStateResponse,
   FeedEntry,
@@ -150,6 +151,13 @@ export class TauriDataProvider implements DataProvider {
       cursor: params.cursor,
       vaultOffset: params.vaultOffset,
       sourceFilter: params.sourceFilter ?? null,
+    });
+  }
+
+  async getGroupsFeed(params: { limit: number; cursor?: string | null }): Promise<BytescapeItem[]> {
+    return invoke('get_groups_feed', {
+      limit: params.limit,
+      cursor: params.cursor ?? null,
     });
   }
 

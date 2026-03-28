@@ -18,6 +18,7 @@ interface EngagementBarProps {
     onRepostClick: (e: React.MouseEvent) => void;
     onDirectRepost: (e: React.MouseEvent) => void;
     onQuoteRepost: (e: React.MouseEvent) => void;
+    onShareToGroup?: (e: React.MouseEvent) => void;
     onThreadToggle: (e: React.MouseEvent) => void;
     onShareClick: (e: React.MouseEvent) => void;
 }
@@ -38,6 +39,7 @@ export function EngagementBar({
     onRepostClick,
     onDirectRepost,
     onQuoteRepost,
+    onShareToGroup,
     onThreadToggle,
     onShareClick,
 }: EngagementBarProps) {
@@ -81,6 +83,11 @@ export function EngagementBar({
                         {source === 'bluesky' && (
                             <button className="repost-menu-item" onClick={onQuoteRepost}>
                                 💬 Quote Post
+                            </button>
+                        )}
+                        {onShareToGroup && (
+                            <button className="repost-menu-item" onClick={onShareToGroup}>
+                                📋 Share to Group
                             </button>
                         )}
                     </div>

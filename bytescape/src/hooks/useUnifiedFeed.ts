@@ -380,6 +380,29 @@ export function useUnifiedFeed({
                 }
 
                 await fetchFollowingList(auth.did);
+            } else if (tab === 'groups') {
+                // ── Groups tab: posts from subscribed groups & topics ──
+                try {
+                    const items = await provider.getGroupsFeed({ limit: 100 });
+                    if (isStale()) return;
+
+                    const adapted = items.map(adaptBytescapeItem);
+                    // Apply client-side source filter
+                    const filtered = archiveSourceFilter
+                        ? adapted.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase())
+                        : adapted;
+                    const deduped = deduplicateFeedEntries(filtered);
+                    setFeedEntries(deduped);
+                    setCursor(null);
+                    setCache(cacheKey, deduped, null);
+                    prefetchBlobUrls(deduped).catch(() => {});
+                } catch (e) {
+                    console.error('get_groups_feed failed:', e);
+                    if (!isStale()) {
+                        setFeedError(typeof e === 'string' ? e : 'Failed to load groups feed');
+                        setFeedEntries([]);
+                    }
+                }
             }
         } catch (e) {
             console.error('Failed to fetch feed:', e);
