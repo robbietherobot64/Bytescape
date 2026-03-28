@@ -80,14 +80,14 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     };
 
-    // Intersection observer for lazy loading metadata bounds
+    // Bidirectional intersection observer — tracks both entering AND leaving
+    // the viewport. When a video scrolls out of view, isVisible goes false,
+    // which triggers the loading effect cleanup and clears resolvedUrl.
+    // This is the primary mechanism for releasing WebKitGTK GStreamer pipelines.
     useEffect(() => {
         const observer = new IntersectionObserver(
             ([entry]) => {
-                if (entry.isIntersecting) {
-                    setIsVisible(true);
-                    observer.disconnect();
-                }
+                setIsVisible(entry.isIntersecting);
             },
             { rootMargin: '200px' }
         );
@@ -100,7 +100,14 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     }, []);
 
     useEffect(() => {
-        if (!src || !isVisible) return;
+        if (!src || !isVisible) {
+            // Clear resolved URL when not visible — React will remove src from
+            // the <video> DOM element on the next render. This is more reliable
+            // than manual removeAttribute('src') because React drives the DOM.
+            // WebKitGTK tears down its GStreamer pipeline when src is removed.
+            setResolvedUrl(null);
+            return;
+        }
 
         let cancelled = false;
 
@@ -214,9 +221,8 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 poster={resolvedPoster || undefined}
                 controls={!!resolvedUrl}
                 autoPlay={autoPlay && !!resolvedUrl}
-                loop
                 playsInline
-                preload="metadata"
+                preload="none"
                 style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                 onPlay={handlePlay}
                 onError={(e) => {

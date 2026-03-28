@@ -52,7 +52,7 @@ export function VirtualizedFeedList({
             if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80; // thread replies
             return estimate;
         }, [entries]),
-        overscan: 12,
+        overscan: 5,
         measureElement: (el: Element) => {
             const htmlEl = el as HTMLElement;
             const index = Number(htmlEl.dataset.index);

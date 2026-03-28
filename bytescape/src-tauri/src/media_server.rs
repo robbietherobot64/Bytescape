@@ -25,6 +25,14 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
         .max_age(std::time::Duration::from_secs(86400)); // 24 hours
 
     let route = warp::fs::dir(cache_dir.clone())
+        .map(|file: warp::fs::File| {
+            // Prevent WebKitGTK from caching video data in its HTTP cache.
+            // Without this, each video served gets double-buffered: once in
+            // GStreamer's decode pipeline and again in the HTTP cache layer.
+            // Since we serve from localhost (instant), the re-request cost is zero.
+            let resp = warp::reply::with_header(file, "cache-control", "no-store, no-cache, must-revalidate");
+            warp::reply::with_header(resp, "connection", "close")
+        })
         .with(cors);
 
     // Reserve a random port by binding a TcpListener, then immediately start
