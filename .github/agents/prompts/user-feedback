@@ -6,8 +6,21 @@ Feedback:
 
 Critical priorities:
 
-- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.
+- Memory leak of some sort going on, leading to 32+gb of memory use.  This happens particularly when filtering the feed by video.  The only videos that show up are from instagram, rather than the actual platforms linked, but they never really load and the memory just skyrockets while loading.  Also, unrelatedly, the CPU spikes to nearly 100% usage when the app first launched, resulting in lag.  Videos in general are stilly slightly janky/stuttery/laggy.
+- **STILL AN ISSUE** Images and overall UI "blink" when scrolling.  They go black for a split second when an image is hovered over. Not sure the cause, but it's not a very stable looking scrolling experience overall. It's like one part ofthe UI is affected by the interactivity of another part.  I think this needs a fundamental ground up redesign of how the feed UI functions, so it's not so twitchy and is more stable overall.
+- Forums - no content currently federated, just dummy directory.  Subscribed button does toggle correctly.  
+- UI - Toggle buttons and check boxes have their text extremely misaligned off to the right.  The button itself is also centered in the screen, when it should be left aligned like all text.  
 
 Lower priorities:
 
-- Images and overall UI somewhat jittery when scrolling.  Not sure the cause, but it's not a very stable looking scrolling experience overall.
+- Random gaps appearing in the feed.  Not like a post is missing, just that sometimes posts leave more space between other posts thans they should.  Also, images are inconsistently formatted, sometimes they are the correct size, other times they get cut off in the preview and the post is srunk down to 1/3 the height it should be.  Again, a fundamental rethink of the feed functionality is required.
+- "Profile" should be made into a menu navigation item in addition to the icon.  The icon that is currently on the left side of the URL navigation bar at the top should be moved to the top right of the browser, over the hamburger navigation menu and on the same horizontal level as the tabs section.  It should function as a dropdown that lets you select your profiles (bytescape, bluesky, mastodon, etc) and link new ones (prompts a pop up box with source selection and linking work flow).  
+- Image previews on the profile page do not work, it's just a small box with an X attached to it, but no image loads.  
+- Instagram posts take a while to load on the feed.  Once they have been loaded a couple times, they load quickly.  
+- Let's move the "About me", "Now playing" and "Links" boxes on the profile off to a left column, put the "Guestbook" in a center column, and put the "Connections" in a right column.  We can get rid of the "Photos" section, as that doesn't make sense for a default profile section, and can be replicated in the posts section.  
+- Data import screen should be more animated, scrolling progress bar or at least a rotating loading screen.  Perhaps some ascii art terminal style dealio?
+- When data import is complete, it should direct you to your profile posts to see the posts you just imported displayed as a feed.  We may want to also consider adding a review process if there are any posts that are of an uncertain classification.  
+- Identity section in the settings screen should have more options than just mastodon and bluesky.  It should just be a single green box that says "connect account", and the previously mentioned pop up box should show up
+- Let's follow a rule for filtering friends lists by platform that we will spell the name of the platform without any vowels.  So bluesky would be blsky.  Mastodon would mstdn.  Lemmy would lmmy.  Piefed would pfd.  Etc.  Let's use that as the convention for friend filtering by platform, any time we have a friends list present (feed, chat, social, etc).  Any time we have a friends list, we want to be able to filter by platform.  
+- Platforms should automatically be logged in if a user has linked their account for that site.  I.e., if I click to visit a profile on bluesky, and I have linked a bluesky account, I should be logged in and able to interact.  If I don't have a linked account on that site, I should see a placeholder bytescape profile, which allows you to interact with that user through bytescape, and a toggle in the upper left hand side that lets you view their profile on their original platform, with no interactivity options since you would be logged out on their platform by default, unless you make an account on their instance.  
+- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.
