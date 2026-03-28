@@ -12,7 +12,7 @@ import {
 // ─── Backend availability flag ───
 // Set to true once backend sprint v12 commands are registered in lib.rs.
 // Until then, all functions return mock/seeded data so the UI can be developed.
-const BACKEND_READY = false;
+const BACKEND_READY = true;
 
 // ─── Mock / Seed Data ───
 
@@ -243,6 +243,7 @@ export function useGroupDetail(groupId: string | null) {
     const [posts, setPosts] = useState<FeedEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [membership, setMembership] = useState<'none' | 'member' | 'pending'>('none');
+    const [myRole, setMyRole] = useState<'Owner' | 'Moderator' | 'Member' | null>(null);
 
     const refresh = useCallback(async () => {
         if (!groupId) return;
@@ -257,21 +258,51 @@ export function useGroupDetail(groupId: string | null) {
                 setGroup(g);
                 setMembers(m);
                 setPosts(p);
+
+                // Determine current user's membership and role from the members list.
+                // The backend returns the current user's DID — we match by checking
+                // if any member's status is Active/Pending and try to find ourselves.
+                // Since we don't have the DID here directly, we rely on the backend
+                // to include us in the members list or use a separate call.
+                try {
+                    const myInfo = await invoke<{ did: string }>('check_auth_status');
+                    const myMember = m.find(member => member.member_did === myInfo.did);
+                    if (myMember) {
+                        if (myMember.status === 'Active') {
+                            setMembership('member');
+                            setMyRole(myMember.role);
+                        } else if (myMember.status === 'Pending') {
+                            setMembership('pending');
+                            setMyRole(null);
+                        } else {
+                            setMembership('none');
+                            setMyRole(null);
+                        }
+                    } else {
+                        setMembership('none');
+                        setMyRole(null);
+                    }
+                } catch {
+                    // Auth check failed — treat as non-member
+                    setMembership('none');
+                    setMyRole(null);
+                }
             } else {
                 setGroup(MOCK_GROUPS[groupId] || null);
                 setMembers(MOCK_MEMBERS[groupId] || []);
                 setPosts([]);
+                if (MOCK_JOINED_GROUPS.has(groupId)) setMembership('member');
+                else if (MOCK_PENDING_GROUPS.has(groupId)) setMembership('pending');
+                else setMembership('none');
             }
         } catch (err) {
             console.error('Failed to load group:', err);
             setGroup(MOCK_GROUPS[groupId] || null);
             setMembers([]);
             setPosts([]);
+            setMembership('none');
+            setMyRole(null);
         }
-        // Determine membership
-        if (MOCK_JOINED_GROUPS.has(groupId)) setMembership('member');
-        else if (MOCK_PENDING_GROUPS.has(groupId)) setMembership('pending');
-        else setMembership('none');
         setLoading(false);
     }, [groupId]);
 
@@ -289,7 +320,8 @@ export function useGroupDetail(groupId: string | null) {
             MOCK_JOINED_GROUPS.add(groupId);
             setMembership('member');
         }
-    }, [groupId, group]);
+        await refresh();
+    }, [groupId, group, refresh]);
 
     const leaveGroup = useCallback(async () => {
         if (!groupId) return;
@@ -299,9 +331,10 @@ export function useGroupDetail(groupId: string | null) {
         MOCK_JOINED_GROUPS.delete(groupId);
         MOCK_PENDING_GROUPS.delete(groupId);
         setMembership('none');
+        setMyRole(null);
     }, [groupId]);
 
-    return { group, members, posts, loading, membership, joinGroup, leaveGroup, refresh };
+    return { group, members, posts, loading, membership, myRole, joinGroup, leaveGroup, refresh };
 }
 
 /** Search groups */

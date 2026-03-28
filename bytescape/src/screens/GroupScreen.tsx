@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
-import { BsArrowLeft, BsLock, BsShieldLock, BsGlobe, BsPencilSquare, BsPersonFill, BsShieldCheck, BsStar } from 'react-icons/bs';
+import { useState, useMemo, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { BsArrowLeft, BsLock, BsShieldLock, BsGlobe, BsPencilSquare, BsPersonFill, BsShieldCheck, BsStar, BsThreeDotsVertical, BsPin } from 'react-icons/bs';
 import { useGroupDetail } from '../hooks/useGroupsData';
 import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { GroupMember, MemberRole } from '../types';
@@ -13,7 +14,7 @@ interface GroupScreenProps {
 type GroupTab = 'posts' | 'about' | 'members';
 
 export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
-    const { group, members, posts, loading, membership, joinGroup, leaveGroup } = useGroupDetail(groupId);
+    const { group, members, posts, loading, membership, myRole, joinGroup, leaveGroup, refresh } = useGroupDetail(groupId);
     const [activeTab, setActiveTab] = useState<GroupTab>('posts');
 
     const visibilityIcon = useMemo(() => {
@@ -24,6 +25,9 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
             case 'Private': return <BsShieldLock className="group-vis-icon" />;
         }
     }, [group]);
+
+    const isModerator = myRole === 'Owner' || myRole === 'Moderator';
+    const pendingCount = members.filter(m => m.status === 'Pending').length;
 
     if (loading || !group) {
         return (
@@ -58,6 +62,14 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                         <span className="group-visibility-label">{group.visibility}</span>
                         <span className="group-meta-sep">·</span>
                         <span className="group-member-count">{group.member_count} members</span>
+                        {myRole && (
+                            <>
+                                <span className="group-meta-sep">·</span>
+                                <span className="group-my-role">
+                                    {myRole === 'Owner' ? '👑' : myRole === 'Moderator' ? '🛡️' : ''} {myRole}
+                                </span>
+                            </>
+                        )}
                     </div>
                     <div className="group-header-actions">
                         {membership === 'member' ? (
@@ -88,6 +100,9 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                         {tab === 'posts' && 'Posts'}
                         {tab === 'about' && 'About'}
                         {tab === 'members' && `Members (${members.length})`}
+                        {tab === 'members' && isModerator && pendingCount > 0 && (
+                            <span className="pending-badge">{pendingCount}</span>
+                        )}
                     </button>
                 ))}
             </div>
@@ -95,13 +110,26 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
             {/* Tab content */}
             <div className="group-tab-content">
                 {activeTab === 'posts' && (
-                    <GroupPostsTab posts={posts} membership={membership} />
+                    <GroupPostsTab
+                        groupId={groupId}
+                        posts={posts}
+                        membership={membership}
+                        isModerator={isModerator}
+                        onRefresh={refresh}
+                    />
                 )}
                 {activeTab === 'about' && (
                     <GroupAboutTab description={group.description} rules={group.rules} />
                 )}
                 {activeTab === 'members' && (
-                    <GroupMembersTab members={members} />
+                    <GroupMembersTab
+                        groupId={groupId}
+                        members={members}
+                        isModerator={isModerator}
+                        isOwner={myRole === 'Owner'}
+                        visibility={group.visibility}
+                        onRefresh={refresh}
+                    />
                 )}
             </div>
         </div>
@@ -110,7 +138,42 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
 
 // ─── Posts Tab ───
 
-function GroupPostsTab({ posts, membership }: { posts: any[]; membership: string }) {
+interface GroupPostsTabProps {
+    groupId: string;
+    posts: any[];
+    membership: string;
+    isModerator: boolean;
+    onRefresh: () => void;
+}
+
+function GroupPostsTab({ groupId, posts, membership, isModerator, onRefresh }: GroupPostsTabProps) {
+    const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
+
+    const handlePin = async (itemId: string) => {
+        try {
+            await invoke('pin_group_post', { groupId, itemId });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to pin:', e); }
+    };
+
+    const handleUnpin = async (itemId: string) => {
+        try {
+            await invoke('unpin_group_post', { groupId, itemId });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to unpin:', e); }
+    };
+
+    const handleRemovePost = async (itemId: string) => {
+        if (!confirm('Remove this post from the group?')) return;
+        try {
+            await invoke('remove_group_post', { groupId, itemId });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to remove post:', e); }
+    };
+
     return (
         <div className="group-posts-tab">
             {membership === 'member' && (
@@ -126,9 +189,44 @@ function GroupPostsTab({ posts, membership }: { posts: any[]; membership: string
                 </div>
             ) : (
                 <div className="group-posts-list">
-                    {posts.map(entry => (
-                        <FeedItemRenderer key={entry.id} entry={entry} />
-                    ))}
+                    {posts.map((entry: any) => {
+                        const itemId = entry.id || entry.item_id;
+                        return (
+                            <div key={itemId} className="group-post-wrapper">
+                                {entry.pinned && (
+                                    <div className="group-pinned-badge"><BsPin /> Pinned</div>
+                                )}
+                                <FeedItemRenderer entry={entry} />
+                                {isModerator && (
+                                    <div className="group-post-mod-actions">
+                                        <button
+                                            className="group-mod-menu-btn"
+                                            onClick={() => setActionMenuOpen(actionMenuOpen === itemId ? null : itemId)}
+                                            aria-label="Post moderation"
+                                        >
+                                            <BsThreeDotsVertical />
+                                        </button>
+                                        {actionMenuOpen === itemId && (
+                                            <div className="group-mod-menu">
+                                                {entry.pinned ? (
+                                                    <button onClick={() => handleUnpin(itemId)}>
+                                                        <BsPin /> Unpin
+                                                    </button>
+                                                ) : (
+                                                    <button onClick={() => handlePin(itemId)}>
+                                                        <BsPin /> Pin
+                                                    </button>
+                                                )}
+                                                <button className="group-mod-danger" onClick={() => handleRemovePost(itemId)}>
+                                                    🗑️ Remove
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -160,7 +258,71 @@ function GroupAboutTab({ description, rules }: { description: string; rules: str
 
 // ─── Members Tab ───
 
-function GroupMembersTab({ members }: { members: GroupMember[] }) {
+interface GroupMembersTabProps {
+    groupId: string;
+    members: GroupMember[];
+    isModerator: boolean;
+    isOwner: boolean;
+    visibility: string;
+    onRefresh: () => void;
+}
+
+function GroupMembersTab({ groupId, members, isModerator, isOwner, visibility, onRefresh }: GroupMembersTabProps) {
+    const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
+    const [inviteInput, setInviteInput] = useState('');
+    const [inviteStatus, setInviteStatus] = useState<string | null>(null);
+
+    const activeMembers = members.filter(m => m.status === 'Active');
+    const pendingMembers = members.filter(m => m.status === 'Pending');
+    const bannedMembers = members.filter(m => m.status === 'Banned');
+
+    const handleApprove = useCallback(async (memberDid: string) => {
+        try {
+            await invoke('approve_member', { groupId, memberDid });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to approve:', e); }
+    }, [groupId, onRefresh]);
+
+    const handleReject = useCallback(async (memberDid: string) => {
+        try {
+            await invoke('reject_member', { groupId, memberDid });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to reject:', e); }
+    }, [groupId, onRefresh]);
+
+    const handleBan = useCallback(async (memberDid: string) => {
+        if (!confirm('Ban this member? They will not be able to rejoin.')) return;
+        try {
+            await invoke('ban_member', { groupId, memberDid });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to ban:', e); }
+    }, [groupId, onRefresh]);
+
+    const handleSetRole = useCallback(async (memberDid: string, role: MemberRole) => {
+        try {
+            await invoke('set_member_role', { groupId, memberDid, role });
+            setActionMenuOpen(null);
+            onRefresh();
+        } catch (e) { console.error('Failed to set role:', e); }
+    }, [groupId, onRefresh]);
+
+    const handleInvite = useCallback(async () => {
+        const did = inviteInput.trim();
+        if (!did) return;
+        setInviteStatus(null);
+        try {
+            await invoke('invite_member', { groupId, memberDid: did });
+            setInviteInput('');
+            setInviteStatus('Invitation sent!');
+            onRefresh();
+        } catch (e) {
+            setInviteStatus(typeof e === 'string' ? e : 'Failed to send invitation');
+        }
+    }, [groupId, inviteInput, onRefresh]);
+
     const roleIcon = (role: MemberRole) => {
         switch (role) {
             case 'Owner': return <BsStar className="member-role-icon owner" />;
@@ -171,17 +333,92 @@ function GroupMembersTab({ members }: { members: GroupMember[] }) {
 
     return (
         <div className="group-members-tab">
-            {members.length === 0 ? (
-                <div className="group-empty-state">
-                    <p>No members yet.</p>
+            {/* Invite (Private groups, Owner/Mod only) */}
+            {isModerator && visibility === 'Private' && (
+                <div className="group-invite-section">
+                    <h4 className="group-section-heading">Invite Member</h4>
+                    <div className="group-invite-row">
+                        <input
+                            type="text"
+                            placeholder="Enter DID or handle..."
+                            value={inviteInput}
+                            onChange={e => setInviteInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleInvite()}
+                            className="group-invite-input"
+                        />
+                        <button className="group-invite-btn" onClick={handleInvite} disabled={!inviteInput.trim()}>
+                            Invite
+                        </button>
+                    </div>
+                    {inviteStatus && <div className="group-invite-status">{inviteStatus}</div>}
                 </div>
-            ) : (
-                <div className="group-members-list">
-                    {members.map(member => (
-                        <div key={member.member_did} className="group-member-row">
+            )}
+
+            {/* Pending (Owner/Mod only) */}
+            {isModerator && pendingMembers.length > 0 && (
+                <div className="group-members-section">
+                    <h4 className="group-section-heading">Pending ({pendingMembers.length})</h4>
+                    {pendingMembers.map(member => (
+                        <div key={member.member_did} className="group-member-row pending">
                             {roleIcon(member.role)}
                             <span className="member-did">{member.member_did}</span>
-                            <span className="member-role-label">{member.role}</span>
+                            <div className="member-pending-actions">
+                                <button className="member-approve-btn" onClick={() => handleApprove(member.member_did)} aria-label="Approve">✅</button>
+                                <button className="member-reject-btn" onClick={() => handleReject(member.member_did)} aria-label="Reject">❌</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Active members */}
+            <div className="group-members-section">
+                <h4 className="group-section-heading">Active ({activeMembers.length})</h4>
+                {activeMembers.length === 0 ? (
+                    <div className="group-empty-state"><p>No members yet.</p></div>
+                ) : (
+                    <div className="group-members-list">
+                        {activeMembers.map(member => (
+                            <div key={member.member_did} className="group-member-row">
+                                {roleIcon(member.role)}
+                                <span className="member-did">{member.member_did}</span>
+                                <span className="member-role-label">{member.role}</span>
+                                {isModerator && member.role !== 'Owner' && (
+                                    <div className="member-action-menu-container">
+                                        <button
+                                            className="member-action-btn"
+                                            onClick={() => setActionMenuOpen(actionMenuOpen === member.member_did ? null : member.member_did)}
+                                            aria-label="Member actions"
+                                        >
+                                            <BsThreeDotsVertical />
+                                        </button>
+                                        {actionMenuOpen === member.member_did && (
+                                            <div className="member-action-menu">
+                                                {isOwner && member.role === 'Member' && (
+                                                    <button onClick={() => handleSetRole(member.member_did, 'Moderator')}>🛡️ Promote to Mod</button>
+                                                )}
+                                                {isOwner && member.role === 'Moderator' && (
+                                                    <button onClick={() => handleSetRole(member.member_did, 'Member')}>👤 Demote to Member</button>
+                                                )}
+                                                <button className="member-action-danger" onClick={() => handleBan(member.member_did)}>🚫 Ban</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Banned (Owner/Mod only) */}
+            {isModerator && bannedMembers.length > 0 && (
+                <div className="group-members-section">
+                    <h4 className="group-section-heading">Banned ({bannedMembers.length})</h4>
+                    {bannedMembers.map(member => (
+                        <div key={member.member_did} className="group-member-row banned">
+                            <span className="member-did">{member.member_did}</span>
+                            <span className="member-role-label banned-label">Banned</span>
                         </div>
                     ))}
                 </div>

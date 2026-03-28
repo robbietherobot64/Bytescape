@@ -289,3 +289,239 @@
 .group-member-count {
     font-variant-numeric: tabular-nums;
 }
+
+/* ─── Moderation UI ─── */
+
+.group-my-role {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-purple);
+}
+
+.pending-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    margin-left: 6px;
+    padding: 0 5px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #e74c3c;
+    border-radius: 9px;
+}
+
+.group-members-section {
+    margin-bottom: 16px;
+}
+
+.group-section-heading {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 16px;
+    margin: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* Pending member row */
+.group-member-row.pending {
+    background: rgba(231, 76, 60, 0.06);
+}
+
+.member-pending-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.member-approve-btn,
+.member-reject-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.member-approve-btn:hover { background: rgba(46, 204, 113, 0.15); }
+.member-reject-btn:hover { background: rgba(231, 76, 60, 0.15); }
+
+/* Banned member row */
+.group-member-row.banned {
+    opacity: 0.5;
+}
+
+.banned-label {
+    background: rgba(231, 76, 60, 0.2) !important;
+    color: #e74c3c !important;
+}
+
+/* Member action menu */
+.member-action-menu-container {
+    position: relative;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.member-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 3px;
+}
+
+.member-action-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.member-action-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 50;
+    background: var(--bg-card, #2a2a2a);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    min-width: 160px;
+}
+
+.member-action-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.member-action-menu button:hover {
+    background: var(--bg-card-hover, #333);
+}
+
+.member-action-danger { color: #e74c3c !important; }
+.member-action-danger:hover { background: rgba(231, 76, 60, 0.1) !important; }
+
+/* Invite section */
+.group-invite-section {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.group-invite-row {
+    display: flex;
+    gap: 8px;
+}
+
+.group-invite-input {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--bg-secondary, #1a1a1a);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.group-invite-btn {
+    padding: 6px 14px;
+    background: var(--accent-purple);
+    border: none;
+    border-radius: 3px;
+    color: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.group-invite-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.group-invite-btn:hover:not(:disabled) { filter: brightness(1.1); }
+
+.group-invite-status {
+    font-size: 12px;
+    margin-top: 6px;
+    color: var(--accent-purple);
+}
+
+/* Post moderation */
+.group-post-wrapper {
+    position: relative;
+}
+
+.group-pinned-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-purple);
+    background: rgba(168, 85, 247, 0.08);
+    border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.group-post-mod-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+}
+
+.group-mod-menu-btn {
+    background: var(--bg-toolbar, #333);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 3px;
+}
+
+.group-mod-menu-btn:hover {
+    color: var(--text-primary);
+}
+
+.group-mod-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 50;
+    background: var(--bg-card, #2a2a2a);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    min-width: 140px;
+}
+
+.group-mod-menu button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.group-mod-menu button:hover {
+    background: var(--bg-card-hover, #333);
+}
+
+.group-mod-danger { color: #e74c3c !important; }
+.group-mod-danger:hover { background: rgba(231, 76, 60, 0.1) !important; }
