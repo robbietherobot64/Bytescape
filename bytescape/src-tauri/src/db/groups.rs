@@ -376,8 +376,11 @@ impl DbManager {
             }
         }
 
-        // Sort newest first (keys are lexicographic ascending by timestamp, we want descending)
-        posts.sort_by(|a, b| b.posted_at.cmp(&a.posted_at));
+        // Sort: pinned first, then newest-first within each group
+        posts.sort_by(|a, b| {
+            b.pinned.cmp(&a.pinned)
+                .then_with(|| b.posted_at.cmp(&a.posted_at))
+        });
 
         // Apply cursor: skip entries until we pass the cursor timestamp
         let posts = if let Some(ref cursor_str) = cursor {
@@ -467,6 +470,43 @@ impl DbManager {
             }
         }
         Ok(false)
+    }
+
+    /// Update the pinned status of a group post.
+    pub async fn update_group_post_pin(&self, group_id: &str, item_id: &str, pinned: bool) -> Result<(), String> {
+        let prefix = format!("{}:", group_id);
+        let suffix = format!(":{}", item_id);
+        let db = self.db.write().await;
+
+        // Find the matching key and current value
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(GROUP_POSTS_TABLE).map_err(|e| e.to_string())?;
+        let mut found_key = None;
+        let mut found_post = None;
+        for item in table.iter().map_err(|e| e.to_string())? {
+            let (key, value) = item.map_err(|e| e.to_string())?;
+            let k = key.value();
+            if k.starts_with(&prefix) && k.ends_with(&suffix) {
+                found_key = Some(k.to_string());
+                found_post = Some(serde_json::from_str::<GroupPost>(value.value()).map_err(|e| e.to_string())?);
+                break;
+            }
+        }
+        drop(table);
+        drop(read_txn);
+
+        let key = found_key.ok_or_else(|| format!("Post '{}' not found in group '{}'", item_id, group_id))?;
+        let mut post = found_post.unwrap();
+        post.pinned = pinned;
+
+        let serialized = serde_json::to_string(&post).map_err(|e| e.to_string())?;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn.open_table(GROUP_POSTS_TABLE).map_err(|e| e.to_string())?;
+            table.insert(key.as_str(), serialized.as_str()).map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -723,5 +763,178 @@ mod tests {
         let deleted = db.delete_all_group_members("g1").await.unwrap();
         assert_eq!(deleted, 3);
         assert_eq!(db.get_group_members("g1").await.unwrap().len(), 0);
+    }
+
+    // ── Sprint v13 P1: Moderation tests ──
+
+    #[tokio::test]
+    async fn test_approve_member_flow() {
+        let db = make_db().await;
+        let group = make_group("g1", "t1", GroupVisibility::Closed);
+        db.save_group(&group).await.unwrap();
+
+        // Create a pending member
+        let pending = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:alice".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Pending,
+            joined_at: 1000,
+        };
+        db.save_group_member(&pending).await.unwrap();
+
+        // Verify pending
+        let fetched = db.get_group_member("g1", "did:key:alice").await.unwrap().unwrap();
+        assert_eq!(fetched.status, MemberStatus::Pending);
+
+        // "Approve" by updating status
+        let mut approved = fetched;
+        approved.status = MemberStatus::Active;
+        approved.joined_at = 2000;
+        db.save_group_member(&approved).await.unwrap();
+        db.update_group_member_count("g1", 1).await.unwrap();
+
+        let result = db.get_group_member("g1", "did:key:alice").await.unwrap().unwrap();
+        assert_eq!(result.status, MemberStatus::Active);
+        assert_eq!(db.get_group("g1").await.unwrap().unwrap().member_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_reject_member_removes_record() {
+        let db = make_db().await;
+
+        let pending = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:bob".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Pending,
+            joined_at: 1000,
+        };
+        db.save_group_member(&pending).await.unwrap();
+        assert!(db.get_group_member("g1", "did:key:bob").await.unwrap().is_some());
+
+        // Reject = delete
+        db.delete_group_member("g1", "did:key:bob").await.unwrap();
+        assert!(db.get_group_member("g1", "did:key:bob").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_invite_accept_flow() {
+        let db = make_db().await;
+        let group = make_group("g1", "t1", GroupVisibility::Private);
+        db.save_group(&group).await.unwrap();
+
+        // Invite
+        let invited = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:carol".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Invited,
+            joined_at: 1000,
+        };
+        db.save_group_member(&invited).await.unwrap();
+
+        let fetched = db.get_group_member("g1", "did:key:carol").await.unwrap().unwrap();
+        assert_eq!(fetched.status, MemberStatus::Invited);
+
+        // Accept
+        let mut accepted = fetched;
+        accepted.status = MemberStatus::Active;
+        accepted.joined_at = 2000;
+        db.save_group_member(&accepted).await.unwrap();
+        db.update_group_member_count("g1", 1).await.unwrap();
+
+        let result = db.get_group_member("g1", "did:key:carol").await.unwrap().unwrap();
+        assert_eq!(result.status, MemberStatus::Active);
+        assert_eq!(db.get_group("g1").await.unwrap().unwrap().member_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_ban_prevents_rejoin() {
+        let db = make_db().await;
+
+        // Create banned member
+        let banned = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:dave".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Banned,
+            joined_at: 1000,
+        };
+        db.save_group_member(&banned).await.unwrap();
+
+        // Verify banned status persists (join_group would check this before allowing)
+        let fetched = db.get_group_member("g1", "did:key:dave").await.unwrap().unwrap();
+        assert_eq!(fetched.status, MemberStatus::Banned);
+
+        // get_user_groups should NOT include banned memberships (Active filter)
+        let groups = db.get_user_groups("did:key:dave").await.unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_pin_unpin_post() {
+        let db = make_db().await;
+
+        let post = GroupPost {
+            group_id: "g1".to_string(),
+            item_id: "item-x".to_string(),
+            pinned: false,
+            shared_by: None,
+            posted_at: 1000,
+        };
+        db.save_group_post(&post).await.unwrap();
+
+        // Pin
+        db.update_group_post_pin("g1", "item-x", true).await.unwrap();
+        let posts = db.get_group_posts("g1", 10, None).await.unwrap();
+        assert_eq!(posts[0].pinned, true);
+
+        // Unpin
+        db.update_group_post_pin("g1", "item-x", false).await.unwrap();
+        let posts = db.get_group_posts("g1", 10, None).await.unwrap();
+        assert_eq!(posts[0].pinned, false);
+    }
+
+    #[tokio::test]
+    async fn test_role_change() {
+        let db = make_db().await;
+
+        let member = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:eve".to_string(),
+            role: MemberRole::Member,
+            status: MemberStatus::Active,
+            joined_at: 1000,
+        };
+        db.save_group_member(&member).await.unwrap();
+
+        // Promote to Moderator
+        let mut updated = db.get_group_member("g1", "did:key:eve").await.unwrap().unwrap();
+        assert_eq!(updated.role, MemberRole::Member);
+        updated.role = MemberRole::Moderator;
+        db.save_group_member(&updated).await.unwrap();
+
+        let result = db.get_group_member("g1", "did:key:eve").await.unwrap().unwrap();
+        assert_eq!(result.role, MemberRole::Moderator);
+    }
+
+    #[tokio::test]
+    async fn test_pinned_posts_sort_first() {
+        let db = make_db().await;
+
+        let post1 = GroupPost { group_id: "g1".to_string(), item_id: "old".to_string(), pinned: false, shared_by: None, posted_at: 1000 };
+        let post2 = GroupPost { group_id: "g1".to_string(), item_id: "new".to_string(), pinned: false, shared_by: None, posted_at: 3000 };
+        let post3 = GroupPost { group_id: "g1".to_string(), item_id: "pinned-old".to_string(), pinned: true, shared_by: None, posted_at: 500 };
+
+        db.save_group_post(&post1).await.unwrap();
+        db.save_group_post(&post2).await.unwrap();
+        db.save_group_post(&post3).await.unwrap();
+
+        let posts = db.get_group_posts("g1", 10, None).await.unwrap();
+        // Pinned first, then newest
+        assert_eq!(posts[0].item_id, "pinned-old"); // pinned=true
+        assert_eq!(posts[1].item_id, "new");        // pinned=false, newest
+        assert_eq!(posts[2].item_id, "old");         // pinned=false, oldest
     }
 }

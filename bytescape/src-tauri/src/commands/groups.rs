@@ -797,6 +797,275 @@ pub async fn get_groups_feed(
     Ok(items)
 }
 
+// ─── P1 (Sprint v13): Moderation Commands ─────────────────────────
+
+/// Approve a pending member (Closed groups). Owner or Moderator only.
+#[tauri::command]
+pub async fn approve_member(
+    state: State<'_, AppState>,
+    group_id: String,
+    member_did: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    // Caller must be Owner or Moderator
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can approve members".to_string());
+    }
+
+    let mut member = db.get_group_member(&group_id, &member_did).await?
+        .ok_or_else(|| format!("Member '{}' not found in group", member_did))?;
+
+    if member.status != MemberStatus::Pending {
+        return Err(format!("Member is {:?}, not Pending", member.status));
+    }
+
+    member.status = MemberStatus::Active;
+    member.joined_at = now_ms();
+    db.save_group_member(&member).await?;
+    db.update_group_member_count(&group_id, 1).await?;
+    Ok(())
+}
+
+/// Reject a pending member (deletes the record). Owner or Moderator only.
+#[tauri::command]
+pub async fn reject_member(
+    state: State<'_, AppState>,
+    group_id: String,
+    member_did: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can reject members".to_string());
+    }
+
+    let member = db.get_group_member(&group_id, &member_did).await?
+        .ok_or_else(|| format!("Member '{}' not found in group", member_did))?;
+
+    if member.status != MemberStatus::Pending {
+        return Err(format!("Member is {:?}, not Pending — use ban_member for active members", member.status));
+    }
+
+    db.delete_group_member(&group_id, &member_did).await?;
+    Ok(())
+}
+
+/// Invite a member to a group. Owner or Moderator only.
+/// For Private groups, this is the only way to add members.
+#[tauri::command]
+pub async fn invite_member(
+    state: State<'_, AppState>,
+    group_id: String,
+    member_did: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can invite members".to_string());
+    }
+
+    // Check for existing membership
+    if let Some(existing) = db.get_group_member(&group_id, &member_did).await? {
+        return Err(format!("Member already exists with status {:?}", existing.status));
+    }
+
+    let member = GroupMember {
+        group_id,
+        member_did,
+        role: MemberRole::Member,
+        status: MemberStatus::Invited,
+        joined_at: now_ms(),
+    };
+    db.save_group_member(&member).await?;
+    Ok(())
+}
+
+/// Accept an invitation. Current user must have status Invited.
+#[tauri::command]
+pub async fn accept_invite(
+    state: State<'_, AppState>,
+    group_id: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let mut member = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You have not been invited to this group".to_string())?;
+
+    if member.status != MemberStatus::Invited {
+        return Err(format!("Your status is {:?}, not Invited", member.status));
+    }
+
+    member.status = MemberStatus::Active;
+    member.joined_at = now_ms();
+    db.save_group_member(&member).await?;
+    db.update_group_member_count(&group_id, 1).await?;
+    Ok(())
+}
+
+/// Ban a member from a group. Owner only. Cannot ban the Owner.
+/// Banned members cannot re-join (enforced in join_group).
+#[tauri::command]
+pub async fn ban_member(
+    state: State<'_, AppState>,
+    group_id: String,
+    member_did: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner {
+        return Err("Only the Owner can ban members".to_string());
+    }
+
+    let mut member = db.get_group_member(&group_id, &member_did).await?
+        .ok_or_else(|| format!("Member '{}' not found in group", member_did))?;
+
+    if member.role == MemberRole::Owner {
+        return Err("Cannot ban the group Owner".to_string());
+    }
+
+    let was_active = member.status == MemberStatus::Active;
+    member.status = MemberStatus::Banned;
+    db.save_group_member(&member).await?;
+
+    if was_active {
+        db.update_group_member_count(&group_id, -1).await?;
+    }
+    Ok(())
+}
+
+/// Change a member's role. Owner only. Cannot change own role.
+#[tauri::command]
+pub async fn set_member_role(
+    state: State<'_, AppState>,
+    group_id: String,
+    member_did: String,
+    role: MemberRole,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner {
+        return Err("Only the Owner can change member roles".to_string());
+    }
+
+    if member_did == user_did {
+        return Err("Cannot change your own role — use a transfer_ownership flow instead".to_string());
+    }
+
+    let mut member = db.get_group_member(&group_id, &member_did).await?
+        .ok_or_else(|| format!("Member '{}' not found in group", member_did))?;
+
+    if member.status != MemberStatus::Active {
+        return Err(format!("Member must be Active to change role (current: {:?})", member.status));
+    }
+
+    member.role = role;
+    db.save_group_member(&member).await?;
+    Ok(())
+}
+
+/// Pin a post in a group. Owner or Moderator only.
+#[tauri::command]
+pub async fn pin_group_post(
+    state: State<'_, AppState>,
+    group_id: String,
+    item_id: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can pin posts".to_string());
+    }
+
+    db.update_group_post_pin(&group_id, &item_id, true).await
+}
+
+/// Unpin a post in a group. Owner or Moderator only.
+#[tauri::command]
+pub async fn unpin_group_post(
+    state: State<'_, AppState>,
+    group_id: String,
+    item_id: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can unpin posts".to_string());
+    }
+
+    db.update_group_post_pin(&group_id, &item_id, false).await
+}
+
+/// Remove a post from a group. Owner/Moderator can remove any post.
+/// Regular members can remove their own posts.
+#[tauri::command]
+pub async fn remove_group_post(
+    state: State<'_, AppState>,
+    group_id: String,
+    item_id: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+
+    // Mods/Owners can remove any post; regular members can only remove their own
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        // Check if the underlying item belongs to the caller
+        if let Some(item) = db.get_item_by_id(&item_id).await? {
+            if item.author_did.as_deref() != Some(&user_did) {
+                return Err("You can only remove your own posts".to_string());
+            }
+        } else {
+            return Err(format!("Item '{}' not found", item_id));
+        }
+    }
+
+    db.delete_group_post(&group_id, &item_id).await
+}
+
+/// Get all pending members for a group. Owner or Moderator only.
+#[tauri::command]
+pub async fn get_pending_members(
+    state: State<'_, AppState>,
+    group_id: String,
+) -> Result<Vec<GroupMember>, String> {
+    let db = require_db(&state).await?;
+    let user_did = current_user_did(&state).await?;
+
+    let caller = db.get_group_member(&group_id, &user_did).await?
+        .ok_or_else(|| "You are not a member of this group".to_string())?;
+    if caller.role != MemberRole::Owner && caller.role != MemberRole::Moderator {
+        return Err("Only Owner or Moderator can view pending members".to_string());
+    }
+
+    let members = db.get_group_members(&group_id).await?;
+    Ok(members.into_iter().filter(|m| m.status == MemberStatus::Pending).collect())
+}
+
 // ─── P6: Seed Default Topic Tree ───────────────────────────────────
 
 /// Seed the default topic hierarchy on first launch (when TOPICS_TABLE is empty).
@@ -854,5 +1123,67 @@ pub async fn seed_default_topics(db: &DbManager) -> Result<(), String> {
     }
 
     println!("Startup: Seeded {} default topics", topics.len());
+    Ok(())
+}
+
+// ─── Sprint v13 P4: Lemmy Compatibility Commands ───────────────────
+
+#[tauri::command]
+pub async fn discover_lemmy_communities(
+    state: State<'_, AppState>,
+    instance_url: String,
+) -> Result<Vec<crate::activitypub::lemmy::RemoteCommunity>, String> {
+    crate::activitypub::lemmy::discover_communities(
+        &state.http_client,
+        &instance_url,
+    ).await
+}
+
+#[tauri::command]
+pub async fn follow_remote_community(
+    state: State<'_, AppState>,
+    community_actor_url: String,
+) -> Result<(), String> {
+    let db = require_db(&state).await?;
+    let owner_did = current_user_did(&state).await?;
+
+    // Fetch remote community's AP actor document
+    let actor = crate::activitypub::lemmy::fetch_community_actor(
+        &state.http_client,
+        &community_actor_url,
+    ).await?;
+
+    // Extract instance from URL
+    let instance = url::Url::parse(&community_actor_url)
+        .map(|u| u.host_str().unwrap_or("unknown").to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Create local placeholder group entry
+    let group = crate::activitypub::lemmy::remote_community_to_local_group(&actor, &instance)?;
+    db.save_group(&group).await?;
+
+    // Auto-join the local user as Owner of the placeholder
+    let member = crate::models::groups::GroupMember {
+        group_id: group.group_id.clone(),
+        member_did: owner_did.clone(),
+        role: crate::models::groups::MemberRole::Owner,
+        status: crate::models::groups::MemberStatus::Active,
+        joined_at: now_ms(),
+    };
+    db.save_group_member(&member).await?;
+
+    // Build the Follow activity (for future signed delivery)
+    let local_actor_id = format!("https://bytescape.social/@{}", owner_did);
+    let (follow_activity, inbox_url) = crate::activitypub::lemmy::build_community_follow(
+        &local_actor_id,
+        &actor,
+    )?;
+
+    eprintln!(
+        "Follow activity built for {} → inbox: {} (delivery pending relay deployment)",
+        community_actor_url, inbox_url
+    );
+    eprintln!("Activity: {}", serde_json::to_string_pretty(&follow_activity).unwrap_or_default());
+
     Ok(())
 }

@@ -109,7 +109,10 @@ pub struct AppState {
     pub feed_cache: FeedCache,
     /// Active FFmpeg processes tracked by URL hash for cancellation support.
     /// Frontend can call `cancel_video_resolve` when user scrolls past a video.
-    pub active_ffmpeg: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
+    pub active_ffmpeg: Arc<tokio::sync::Mutex<std::collections::HashMap<String, u32>>>,
+    /// Semaphore limiting concurrent video resolve operations (FFmpeg) to 2.
+    /// Prevents the 32 GB memory spike when filtering feed by "Video".
+    pub video_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -619,6 +622,20 @@ pub fn run() {
             commands::groups::share_to_group,
             commands::groups::get_group_feed,
             commands::groups::get_groups_feed,
+            // Sprint v13 P1: Moderation
+            commands::groups::approve_member,
+            commands::groups::reject_member,
+            commands::groups::invite_member,
+            commands::groups::accept_invite,
+            commands::groups::ban_member,
+            commands::groups::set_member_role,
+            commands::groups::pin_group_post,
+            commands::groups::unpin_group_post,
+            commands::groups::remove_group_post,
+            commands::groups::get_pending_members,
+            // Sprint v13 P4: Lemmy Compatibility
+            commands::groups::discover_lemmy_communities,
+            commands::groups::follow_remote_community,
         ])
         .setup(|app| {
             // Initialize application state
@@ -745,7 +762,8 @@ pub fn run() {
                     .unwrap_or_else(|_| reqwest::Client::new()),
                 session_restored: AtomicBool::new(false),
                 feed_cache: FeedCache::new(),
-                active_ffmpeg: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                active_ffmpeg: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+                video_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             };
 
             app.manage(state);
@@ -780,15 +798,18 @@ pub fn run() {
                 }
             });
 
-            // Background: backfill media_mimes for existing items
-            let backfill_handle = app.handle().clone();
+            // ── Background maintenance (sequential pipeline) ──
+            // Previously three parallel tasks (3s, 4s, 10s) that all scanned the item
+            // table concurrently, causing CPU spikes on startup. Now a single task that
+            // runs them in sequence: backfill → cleanup → consistency. One table scan
+            // is shared between backfill and consistency.
+            let maintenance_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Short delay to let the rest of setup complete
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                let state = backfill_handle.state::<AppState>();
+                // Let startup, session restore, and UI render finish first
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-                // Clone DbManager and SyncManager out of the locks so we don't
-                // hold them during the (potentially long) backfill loop.
+                let state = maintenance_handle.state::<AppState>();
+
                 let db = {
                     let guard = state.db_manager.read().await;
                     match guard.as_ref() {
@@ -796,114 +817,92 @@ pub fn run() {
                         None => return,
                     }
                 };
-                let sync = {
-                    let guard = state.sync_manager.lock().await;
-                    match guard.as_ref() {
-                        Some(s) => s.clone(),
-                        None => return,
-                    }
-                };
 
+                // ── Phase 1: Backfill media_mimes ──
+                // Scan headers once — reused by consistency check below.
                 let item_headers = match db.list_all_item_headers().await {
                     Ok(headers) => headers,
                     Err(_) => return,
                 };
-                let mut updated = 0usize;
-                for h in item_headers {
-                    // Lightweight check before full fetch
-                    if h.media_blob_count == 0 { continue; }
-                    if h.media_blob_count == h.media_mimes_count { continue; }
 
-                    // Fetch full item only if it needs backfill
-                    let mut item = match db.get_item_by_id(&h.id).await {
-                        Ok(Some(item)) => item,
-                        _ => continue,
+                // Only acquire SyncManager if there are items needing work
+                let needs_backfill: Vec<_> = item_headers.iter()
+                    .filter(|h| h.media_blob_count > 0 && h.media_blob_count != h.media_mimes_count)
+                    .collect();
+
+                let mut backfill_updated = 0usize;
+
+                if !needs_backfill.is_empty() {
+                    let sync = {
+                        let guard = state.sync_manager.lock().await;
+                        match guard.as_ref() {
+                            Some(s) => s.clone(),
+                            None => {
+                                println!("backfill: skipped — SyncManager not initialized");
+                                // Can't do backfill or consistency without SyncManager
+                                // Still run cleanup below
+                                let _cleanup = cleanup_syndication(&db).await;
+                                return;
+                            }
+                        }
                     };
 
-                    let mut mimes = Vec::with_capacity(item.media_blobs.len());
-                    for blob_ref in &item.media_blobs {
-                        let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
-                            Ok(h) => h,
-                            Err(_) => {
-                                mimes.push("application/octet-stream".to_string());
-                                continue;
-                            }
+                    for h in &needs_backfill {
+                        let mut item = match db.get_item_by_id(&h.id).await {
+                            Ok(Some(item)) => item,
+                            _ => continue,
                         };
-                        match sync.get_media(hash).await {
-                            Ok(data) => {
-                                mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+
+                        let mut mimes = Vec::with_capacity(item.media_blobs.len());
+                        for blob_ref in &item.media_blobs {
+                            let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
+                                Ok(h) => h,
+                                Err(_) => {
+                                    mimes.push("application/octet-stream".to_string());
+                                    continue;
+                                }
+                            };
+                            match sync.get_media(hash).await {
+                                Ok(data) => {
+                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+                                }
+                                Err(_) => mimes.push("application/octet-stream".to_string()),
                             }
-                            Err(_) => mimes.push("application/octet-stream".to_string()),
                         }
+                        item.media_mimes = mimes;
+                        if db.upsert_item(&item).await.is_ok() {
+                            backfill_updated += 1;
+                        }
+                        tokio::task::yield_now().await;
                     }
-                    item.media_mimes = mimes;
-                    if db.upsert_item(&item).await.is_ok() {
-                        updated += 1;
+                    if backfill_updated > 0 {
+                        println!("backfill_media_mimes: updated {} items on startup", backfill_updated);
                     }
-
-                    // Yield between items to avoid starving other tasks
-                    tokio::task::yield_now().await;
                 }
-                if updated > 0 {
-                    println!("backfill_media_mimes: updated {} items on startup", updated);
-                }
-            });
 
-            // Background: clean up mis-imported syndicated duplicates
-            let cleanup_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // Short delay to let the rest of setup complete
-                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                let state = cleanup_handle.state::<AppState>();
-                // Clone DbManager out of the lock so cleanup doesn't hold the outer lock
-                let db = {
-                    let guard = state.db_manager.read().await;
-                    match guard.as_ref() {
-                        Some(d) => d.clone(),
-                        None => return,
+                // ── Phase 2: Syndication duplicate cleanup ──
+                let _cleanup = cleanup_syndication(&db).await;
+
+                // ── Phase 3: Blob consistency check ──
+                // Re-use the same headers list (or refresh if backfill changed things)
+                let headers_for_consistency = if backfill_updated > 0 {
+                    // Headers may have changed — re-scan (cheap: just reads the index table)
+                    match db.list_all_item_headers().await {
+                        Ok(h) => h,
+                        Err(_) => return,
                     }
+                } else {
+                    item_headers
                 };
-                if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
-                    if removed_count > 0 {
-                        println!("cleanup: Removed {} duplicate syndicated items from vault.", removed_count);
-                    }
-                }
-            });
 
-            // Background: cross-store blob consistency check (P7)
-            // Verifies that all blob hashes referenced in BytescapeItem.media_blobs
-            // actually exist in the Iroh blob store. Logs orphans and broken references.
-            let consistency_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // Wait 10s so startup, session restore, and other background jobs finish first
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-
-                let state = consistency_handle.state::<AppState>();
-
-                let db = {
-                    let guard = state.db_manager.read().await;
-                    match guard.as_ref() {
-                        Some(d) => d.clone(),
-                        None => return,
-                    }
-                };
                 let sync = {
                     let guard = state.sync_manager.lock().await;
                     match guard.as_ref() {
                         Some(s) => s.clone(),
                         None => {
-                            // No SyncManager = no blob store to check against
                             println!("consistency_check: skipped — SyncManager not initialized");
                             return;
                         }
-                    }
-                };
-
-                let headers = match db.list_all_item_headers().await {
-                    Ok(h) => h,
-                    Err(e) => {
-                        eprintln!("consistency_check: failed to list items: {}", e);
-                        return;
                     }
                 };
 
@@ -912,12 +911,11 @@ pub fn run() {
                 let mut items_with_broken = 0usize;
                 let mut items_healed = 0usize;
 
-                for header in &headers {
+                for header in &headers_for_consistency {
                     if header.media_blob_count == 0 {
                         continue;
                     }
 
-                    // Fetch full item to inspect blob references
                     let mut item = match db.get_item_by_id(&header.id).await {
                         Ok(Some(item)) => item,
                         _ => continue,
@@ -933,7 +931,6 @@ pub fn run() {
                         let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
                             Ok(h) => h,
                             Err(_) => {
-                                // Unparseable hash — broken reference
                                 broken_refs += 1;
                                 has_broken = true;
                                 continue;
@@ -942,7 +939,6 @@ pub fn run() {
 
                         if sync.has_media(hash).await {
                             valid_blobs.push(blob_ref.clone());
-                            // Preserve parallel arrays
                             if i < item.thumbnail_blobs.len() {
                                 valid_thumbs.push(item.thumbnail_blobs[i].clone());
                             }
@@ -957,18 +953,13 @@ pub fn run() {
 
                     if has_broken {
                         items_with_broken += 1;
-
-                        // Auto-heal: remove broken blob references from the item
                         item.media_blobs = valid_blobs;
                         item.thumbnail_blobs = valid_thumbs;
                         item.media_mimes = valid_mimes;
-
                         if db.upsert_item(&item).await.is_ok() {
                             items_healed += 1;
                         }
                     }
-
-                    // Yield between items to avoid starving other tasks
                     tokio::task::yield_now().await;
                 }
 
@@ -981,7 +972,7 @@ pub fn run() {
                     println!(
                         "consistency_check: all {} blob refs valid across {} items",
                         total_refs,
-                        headers.iter().filter(|h| h.media_blob_count > 0).count()
+                        headers_for_consistency.iter().filter(|h| h.media_blob_count > 0).count()
                     );
                 }
             });
@@ -990,6 +981,18 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running bytescape");
+}
+
+// ── Background maintenance helpers ──
+
+/// Run syndication duplicate cleanup. Extracted to avoid duplicating the logic
+/// across multiple code paths in the sequential maintenance pipeline.
+async fn cleanup_syndication(db: &db::DbManager) {
+    if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
+        if removed_count > 0 {
+            println!("cleanup: Removed {} duplicate syndicated items from vault.", removed_count);
+        }
+    }
 }
 
 // Re-export commonly used types
