@@ -280,6 +280,24 @@
     text-align: center;
     padding: 40px 20px;
     color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.group-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-purple);
+    border-radius: 50%;
+    animation: group-spin 0.8s linear infinite;
+}
+
+@keyframes group-spin {
+    to { transform: rotate(360deg); }
 }
 
 .group-visibility-label {

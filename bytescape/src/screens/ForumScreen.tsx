@@ -61,9 +61,11 @@ export function ForumScreen({ onOpenGroup, onCreateGroup }: ForumScreenProps) {
                             placeholder="Search groups..."
                             value={searchQuery}
                             onChange={handleSearch}
+                            aria-label="Search groups"
+                            onKeyDown={e => { if (e.key === 'Escape') { setSearchQuery(''); search(''); } }}
                         />
                     </div>
-                    <button className="forum-create-btn" onClick={onCreateGroup} title="Create Group">
+                    <button className="forum-create-btn" onClick={onCreateGroup} title="Create Group" aria-label="Create a new group">
                         <BsPlusCircle />
                     </button>
                 </div>
@@ -87,9 +89,12 @@ export function ForumScreen({ onOpenGroup, onCreateGroup }: ForumScreenProps) {
             )}
 
             {/* Topic tree */}
-            <div className="forum-tree">
+            <div className="forum-tree" role="tree" aria-label="Forum topics">
                 {loading ? (
-                    <div className="forum-loading">Loading forums...</div>
+                    <div className="forum-loading">
+                        <span className="forum-spinner" />
+                        Loading forums...
+                    </div>
                 ) : (
                     topics.map(topic => (
                         <TopicTreeNode
@@ -135,13 +140,18 @@ function TopicTreeNode({ topic, depth, expanded, onToggleExpand, onSubscribeTogg
     };
 
     return (
-        <div className="topic-node">
+        <div className="topic-node" role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
             <div
                 className={`topic-row ${depth % 2 === 1 ? 'topic-row-alt' : ''}`}
                 style={nodeStyle}
             >
                 {hasChildren ? (
-                    <button className="topic-expand-btn" onClick={() => onToggleExpand(topic.id)}>
+                    <button
+                        className="topic-expand-btn"
+                        onClick={() => onToggleExpand(topic.id)}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${topic.name}`}
+                    >
                         {isExpanded ? <BsChevronDown /> : <BsChevronRight />}
                     </button>
                 ) : (
@@ -152,13 +162,14 @@ function TopicTreeNode({ topic, depth, expanded, onToggleExpand, onSubscribeTogg
                 <button
                     className={`topic-subscribe-btn ${topic.subscribed ? 'subscribed' : ''}`}
                     onClick={() => onSubscribeToggle(topic.id, topic.subscribed)}
+                    aria-label={`${topic.subscribed ? 'Unsubscribe from' : 'Subscribe to'} ${topic.name}`}
                 >
                     {topic.subscribed ? 'Subscribed ✓' : 'Subscribe'}
                 </button>
             </div>
 
             {isExpanded && (
-                <div className="topic-children">
+                <div className="topic-children" role="group">
                     {topic.children.map(child => (
                         <TopicTreeNode
                             key={child.id}
@@ -202,7 +213,7 @@ function GroupListItem({ group, depth = 0, onOpen }: GroupListItemProps) {
 
     return (
         <div className="group-list-item" style={itemStyle}>
-            <button className="group-name-btn" onClick={() => onOpen(group.group_id)}>
+            <button className="group-name-btn" onClick={() => onOpen(group.group_id)} aria-label={`Open group ${group.name}`}>
                 {group.visibility === 'Closed' && <BsLock className="group-lock-icon" />}
                 {group.name}
                 <span className="group-member-count">({group.member_count})</span>

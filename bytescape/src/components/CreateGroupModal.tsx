@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { BsGlobe, BsLock, BsShieldLock, BsXLg } from 'react-icons/bs';
 import { useTopicTree, createGroup, flattenTopics } from '../hooks/useGroupsData';
 import { GroupVisibility } from '../types';
@@ -28,6 +28,19 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
     const [topicId, setTopicId] = useState('');
     const [rules, setRules] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const nameRef = useRef<HTMLInputElement>(null);
+
+    // Escape key dismisses modal
+    useEffect(() => {
+        const handleKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !submitting) onClose();
+        };
+        window.addEventListener('keydown', handleKey);
+        return () => window.removeEventListener('keydown', handleKey);
+    }, [onClose, submitting]);
+
+    // Auto-focus name input on mount
+    useEffect(() => { nameRef.current?.focus(); }, []);
     const [error, setError] = useState('');
 
     const flatTopics = useMemo(() => flattenTopics(topics), [topics]);
@@ -72,7 +85,7 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
     }, [name, slug, description, visibility, topicId, rules, onCreated]);
 
     return (
-        <div className="cgm-overlay" onClick={onClose}>
+        <div className="cgm-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Create group">
             <div className="cgm-card" onClick={e => e.stopPropagation()}>
                 <div className="cgm-header">
                     <h2 className="cgm-title">Create Group</h2>
@@ -81,11 +94,12 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
                     </button>
                 </div>
 
-                <form className="cgm-form" onSubmit={handleSubmit}>
+                <form className="cgm-form" onSubmit={handleSubmit} aria-busy={submitting}>
                     {/* Name */}
                     <div className="cgm-field">
                         <label className="cgm-label">Name *</label>
                         <input
+                            ref={nameRef}
                             className="cgm-input"
                             type="text"
                             placeholder="Mindfulness Daily"

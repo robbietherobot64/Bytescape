@@ -37,7 +37,11 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                         <BsArrowLeft /> Back to Forums
                     </button>
                 </div>
-                <div className="group-loading">{loading ? 'Loading group...' : 'Group not found'}</div>
+                <div className="group-loading">
+                    {loading ? (
+                        <><span className="group-spinner" /> Loading group...</>
+                    ) : 'Group not found'}
+                </div>
             </div>
         );
     }
@@ -45,7 +49,7 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
     return (
         <div className="group-screen">
             <div className="group-back-bar">
-                <button className="group-back-btn" onClick={onBack}>
+                <button className="group-back-btn" onClick={onBack} aria-label="Back to Forums">
                     <BsArrowLeft /> Back to Forums
                 </button>
             </div>
@@ -73,15 +77,15 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                     </div>
                     <div className="group-header-actions">
                         {membership === 'member' ? (
-                            <button className="group-action-btn group-leave-btn" onClick={leaveGroup}>
+                            <button className="group-action-btn group-leave-btn" onClick={leaveGroup} aria-label={`Leave ${group.name}`}>
                                 Joined ✓
                             </button>
                         ) : membership === 'pending' ? (
-                            <button className="group-action-btn group-pending-btn" disabled>
+                            <button className="group-action-btn group-pending-btn" disabled aria-label="Join request pending">
                                 Pending ⏳
                             </button>
                         ) : (
-                            <button className="group-action-btn group-join-btn" onClick={joinGroup}>
+                            <button className="group-action-btn group-join-btn" onClick={joinGroup} aria-label={`Join ${group.name}`}>
                                 Join
                             </button>
                         )}

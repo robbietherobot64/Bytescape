@@ -251,8 +251,8 @@ export function useGroupDetail(groupId: string | null) {
         try {
             if (BACKEND_READY) {
                 const [g, m, p] = await Promise.all([
-                    invoke<LocalGroup>('get_group', { groupId }),
-                    invoke<GroupMember[]>('get_group_members', { groupId }),
+                    invoke<LocalGroup>('get_group_cmd', { groupId }),
+                    invoke<GroupMember[]>('get_group_members_cmd', { groupId }),
                     invoke<FeedEntry[]>('get_group_feed', { groupId, limit: 50 }),
                 ]);
                 setGroup(g);
@@ -347,7 +347,7 @@ export function useGroupSearch() {
         setSearching(true);
         try {
             if (BACKEND_READY) {
-                const r = await invoke<GroupSummary[]>('search_groups', { query });
+                const r = await invoke<GroupSummary[]>('search_groups_cmd', { query });
                 setResults(r);
             } else {
                 const q = query.toLowerCase();
