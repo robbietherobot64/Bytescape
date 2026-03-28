@@ -888,9 +888,9 @@ pub fn run() {
                                     continue;
                                 }
                             };
-                            match sync.get_media(hash).await {
-                                Ok(data) => {
-                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+                            match sync.get_media_header(hash, 32).await {
+                                Ok(header) => {
+                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&header));
                                 }
                                 Err(_) => mimes.push("application/octet-stream".to_string()),
                             }

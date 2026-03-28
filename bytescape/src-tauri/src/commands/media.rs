@@ -178,23 +178,33 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
     .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
     .map_err(|_| "Blob semaphore closed".to_string())?;
 
-    let sync_guard = state.sync_manager.lock().await;
-    let sync = sync_guard.as_ref()
-        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
-
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    let bytes = sync.get_media(hash).await
-        .map_err(|e| BytescapeError::BlobStorage(e))?;
+    // Clone the blob store handle out of the Mutex — Store is Arc-based, clone is free.
+    // This lets us release the Mutex immediately instead of holding it for the entire export.
+    let blob_store = {
+        let sync_guard = state.sync_manager.lock().await;
+        let sync = sync_guard.as_ref()
+            .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+        sync.blobs().clone()
+    }; // sync_guard dropped — Mutex released BEFORE any I/O
 
-    // Detect extension from magic bytes
-    let ext = detect_extension_from_bytes(&bytes);
-
-    // Write to cache file
+    // Stream blob directly to a temp file — ZERO memory buffering.
+    // iroh-blobs export() writes from the blob store to disk internally
+    // without loading the full blob into memory.
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let temp_path = cache_dir.join(format!("{}.tmp", &normalized_hash));
+    blob_store.export(hash, &temp_path)
+        .await
+        .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
+
+    // Detect extension from just the file header (32 bytes, not the full file)
+    let ext = read_header_detect_ext(&temp_path);
+
+    // Atomic rename to final cached path
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    std::fs::write(&cache_path, &bytes)
+    std::fs::rename(&temp_path, &cache_path)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
 
     Ok(cache_path.to_string_lossy().to_string())
@@ -250,23 +260,45 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
     .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
     .map_err(|_| "Blob semaphore closed".to_string())?;
 
-    let sync_guard = state.sync_manager.lock().await;
-    let sync = sync_guard.as_ref()
-        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
-
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    let bytes = sync.get_media(hash).await
-        .map_err(|e| BytescapeError::BlobStorage(e))?;
+    // Clone blob store handle out of Mutex — release lock before I/O.
+    let blob_store = {
+        let sync_guard = state.sync_manager.lock().await;
+        let sync = sync_guard.as_ref()
+            .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+        sync.blobs().clone()
+    };
 
-    // Cache to disk for future use
-    let ext = detect_extension_from_bytes(&bytes);
+    // Stream to disk first — ZERO in-memory buffering for the blob itself.
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-    let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    let _ = std::fs::write(&cache_path, &bytes);
+    let temp_path = cache_dir.join(format!("{}.tmp_bytes", &normalized_hash));
+    let size = blob_store.export(hash, &temp_path)
+        .await
+        .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
 
-    Ok(tauri::ipc::Response::new(bytes.to_vec()))
+    let ext = read_header_detect_ext(&temp_path);
+    let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
+    std::fs::rename(&temp_path, &cache_path)
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+
+    // For large files (>50 MB), redirect to media server URL instead of IPC
+    // to avoid buffering a huge file through Tauri's IPC channel.
+    if size > 50 * 1024 * 1024 {
+        return Err(format!(
+            "File too large for IPC ({}MB). Use media server URL: http://127.0.0.1:{}/{}.{}",
+            size / (1024 * 1024),
+            state.media_port,
+            &normalized_hash,
+            ext
+        ));
+    }
+
+    // Read from disk for IPC response — bounded by 50 MB guard above
+    let data = std::fs::read(&cache_path)
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    Ok(tauri::ipc::Response::new(data))
 }
 
 /// Get the media directory path for storing imported files.
@@ -493,9 +525,9 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
             // Try to parse and fetch blob for MIME detection
             let hash_opt = decode_base32_hash_like(&hash_str);
             if let Some(hash) = hash_opt {
-                match sync.get_media(hash).await {
-                    Ok(bytes) => {
-                        mimes.push(mime_from_magic_bytes(bytes.as_ref()));
+                match sync.get_media_header(hash, 32).await {
+                    Ok(header) => {
+                        mimes.push(mime_from_magic_bytes(&header));
                     }
                     Err(_) => {
                         // Fall back to path hint if available

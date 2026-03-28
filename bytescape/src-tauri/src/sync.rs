@@ -8,7 +8,7 @@ pub use iroh_blobs::api::downloader::Downloader;
 pub use iroh_blobs::Hash;
 use iroh_gossip::net::Gossip;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::collections::HashMap;
 use bytes::Bytes;
@@ -268,12 +268,39 @@ impl SyncManager {
     }
 
     /// Retrieve media bytes by hash.
+    ///
+    /// **Warning:** This reads the entire blob into memory.  Use only for blobs
+    /// known to be small (thumbnails, images <10 MB).  For large or unknown blobs
+    /// use [`export_media_to_file`] which streams directly to disk.
     pub async fn get_media(&self, hash: Hash) -> Result<Bytes, String> {
         use tokio::io::AsyncReadExt;
         let mut reader = self.blobs.reader(hash);
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;
         Ok(Bytes::from(buf))
+    }
+
+    /// Export a blob directly to a file on disk — **zero memory buffering**.
+    ///
+    /// Uses iroh-blobs' built-in export which streams from the blob store to the
+    /// target path without materialising the full blob in memory.  Returns the
+    /// number of bytes written.
+    pub async fn export_media_to_file(&self, hash: Hash, target: &Path) -> Result<u64, String> {
+        self.blobs.export(hash, target)
+            .await
+            .map_err(|e| format!("Blob export to {:?} failed for {}: {}", target, hash, e))
+    }
+
+    /// Read only the first `n` bytes of a blob for MIME / extension detection.
+    ///
+    /// For a 500 MB video this reads 32 bytes instead of 500 MB.
+    pub async fn get_media_header(&self, hash: Hash, n: usize) -> Result<Vec<u8>, String> {
+        use tokio::io::AsyncReadExt;
+        let mut reader = self.blobs.reader(hash);
+        let mut buf = vec![0u8; n];
+        let bytes_read = reader.read(&mut buf).await.map_err(|e| e.to_string())?;
+        buf.truncate(bytes_read);
+        Ok(buf)
     }
 
     /// Check if media exists in the blob store.
