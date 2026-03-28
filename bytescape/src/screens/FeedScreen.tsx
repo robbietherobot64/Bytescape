@@ -502,6 +502,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 groupBadge={activeTab === 'groups' ? () => (
                                     <div className="group-feed-badge">📋 Group post</div>
                                 ) : undefined}
+                                overscan={mediaFilter === 'video' ? 2 : undefined}
                             />
                         )}
 

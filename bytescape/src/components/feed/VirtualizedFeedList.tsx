@@ -12,6 +12,12 @@ interface VirtualizedFeedListProps {
     scrollContainerRef: React.RefObject<HTMLDivElement | null>;
     /** Optional group badge renderer for group feed context */
     groupBadge?: (entry: FeedEntry) => React.ReactNode;
+    /**
+     * Number of items to render above/below the visible window.
+     * Default: 5.  Reduce to 1-2 for video-dense feeds to limit
+     * the number of simultaneously mounted VideoPlayer components.
+     */
+    overscan?: number;
 }
 
 /**
@@ -25,6 +31,7 @@ export function VirtualizedFeedList({
     mediaDir,
     scrollContainerRef,
     groupBadge,
+    overscan: overscanProp,
 }: VirtualizedFeedListProps) {
     const measurementCache = useRef<Map<number, number>>(new Map());
 
@@ -53,7 +60,7 @@ export function VirtualizedFeedList({
             if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80; // thread replies
             return estimate;
         }, [entries]),
-        overscan: 5,
+        overscan: overscanProp ?? 5,
         measureElement: (el: Element) => {
             const htmlEl = el as HTMLElement;
             const index = Number(htmlEl.dataset.index);

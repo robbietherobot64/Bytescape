@@ -1,11 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { BytescapeItem, PeerFeedResponse } from '../types';
-import { FeedEntryCard } from '../components/FeedEntryCard';
+import { BytescapeItem, PeerFeedResponse, FeedEntry } from '../types';
+import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
 import { adaptBytescapeItem } from '../utils/adapters';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import { useNavStore } from '../store';
 
 const PAGE_SIZE = 20;
+/** Hard cap on accumulated peer profile entries to prevent unbounded memory growth. */
+const MAX_PEER_ENTRIES = 200;
 
 /**
  * Download all media blobs from a peer's feed items via iroh-blobs.
@@ -71,6 +74,23 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
     // Source filter
     const [sourceFilter, setSourceFilter] = useState<string | null>(null);
     const [sources, setSources] = useState<string[]>([]);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+    // Release all video pipelines when source filter changes — prevents
+    // GStreamer pipeline pile-up during filter toggle (each pipeline ~100-500 MB).
+    const prevSourceFilterRef = useRef(sourceFilter);
+    useEffect(() => {
+        if (prevSourceFilterRef.current !== sourceFilter) {
+            VideoPlaybackManager.releaseAll();
+            prevSourceFilterRef.current = sourceFilter;
+        }
+    }, [sourceFilter]);
+
+    // Convert BytescapeItem[] to FeedEntry[] for VirtualizedFeedList
+    const feedEntries: FeedEntry[] = useMemo(
+        () => items.map(adaptBytescapeItem),
+        [items]
+    );
 
     const loadFeed = useCallback(async (offset: number, append: boolean) => {
         if (!append) setLoading(true);
@@ -111,7 +131,10 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                 }
 
                 if (append) {
-                    setItems(prev => [...prev, ...response.items]);
+                    setItems(prev => {
+                        const merged = [...prev, ...response.items];
+                        return merged.length > MAX_PEER_ENTRIES ? merged.slice(0, MAX_PEER_ENTRIES) : merged;
+                    });
                 } else {
                     setItems(response.items);
                     // Derive unique sources from items for the filter
@@ -180,10 +203,10 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
         return { label: 'Identity', value: aka, emoji: '🆔' };
     });
 
-    const hasMore = offsetRef.current < totalCount;
+    const hasMore = offsetRef.current < totalCount && items.length < MAX_PEER_ENTRIES;
 
     return (
-        <div style={{ height: '100%', overflow: 'auto', background: 'var(--bg-primary)' }}>
+        <div ref={scrollContainerRef} style={{ height: '100%', overflow: 'auto', background: 'var(--bg-primary)' }}>
             <div style={{ maxWidth: 700, margin: '0 auto', padding: '16px' }}>
                 {/* Back button */}
                 <button
@@ -400,15 +423,13 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                     </div>
                 )}
 
-                {/* Feed items */}
-                {!loading && items.map(item => {
-                    const entry = adaptBytescapeItem(item);
-                    return (
-                        <div key={item.id}>
-                            <FeedEntryCard entry={entry} />
-                        </div>
-                    );
-                })}
+                {/* Feed items — virtualized to prevent unbounded VideoPlayer mounts */}
+                {!loading && feedEntries.length > 0 && (
+                    <VirtualizedFeedList
+                        entries={feedEntries}
+                        scrollContainerRef={scrollContainerRef}
+                    />
+                )}
 
                 {/* Load more */}
                 {!loading && hasMore && (

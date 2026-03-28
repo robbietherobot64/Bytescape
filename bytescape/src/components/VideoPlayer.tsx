@@ -275,26 +275,46 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             )}
 
             {/*
-               Progressive playback: render the video element immediately
-               with the poster so the user sees a frame right away.
-               Once resolvedUrl is ready, it becomes the src and playback begins.
+               Conditional rendering: only mount a <video> element when we
+               actually have a URL to play. Otherwise render a lightweight
+               poster image or empty placeholder. This prevents dozens of
+               idle <video> elements from existing in the DOM in video-dense
+               feeds — each one costs ~2-5 MB of WebKitGTK overhead even
+               without a src, and creates an IntersectionObserver.
             */}
-            <video
-                ref={videoRefCallback}
-                src={resolvedUrl || undefined}
-                poster={resolvedPoster || undefined}
-                controls={!!resolvedUrl}
-                autoPlay={autoPlay && !!resolvedUrl}
-                playsInline
-                preload="none"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                onPlay={handlePlay}
-                onError={(e) => {
-                    if (resolvedUrl) {
+            {resolvedUrl ? (
+                <video
+                    ref={videoRefCallback}
+                    src={resolvedUrl}
+                    poster={resolvedPoster || undefined}
+                    controls
+                    autoPlay={autoPlay}
+                    playsInline
+                    preload="none"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                    onPlay={handlePlay}
+                    onError={(e) => {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
-                    }
-                }}
-            />
+                    }}
+                />
+            ) : resolvedPoster ? (
+                <img
+                    src={resolvedPoster}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                />
+            ) : (
+                <div style={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: 120,
+                }}>
+                    <span style={{ color: '#666', fontSize: '1.5rem' }}>▶</span>
+                </div>
+            )}
         </div>
     );
 }
