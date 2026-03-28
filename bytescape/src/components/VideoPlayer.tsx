@@ -16,6 +16,22 @@ interface VideoPlayerProps {
 const VIDEO_URL_CACHE_MAX = 50;
 const videoUrlCache = new Map<string, string>();
 
+/**
+ * Debounce delay (ms) before a visibility change triggers video loading.
+ * Prevents GStreamer pipeline churn when rapidly toggling filters or scrolling.
+ * WebKitGTK needs ~150-300ms to fully tear down a GStreamer pipeline —
+ * this delay ensures the old pipeline is released before we create a new one.
+ */
+const VISIBILITY_DEBOUNCE_MS = 200;
+
+/**
+ * Global count of currently active (src-loaded) video elements.
+ * Used for backpressure: when too many videos are simultaneously loading,
+ * new ones wait for existing pipelines to settle.
+ */
+let activeVideoCount = 0;
+const MAX_CONCURRENT_VIDEOS = 6;
+
 /** Cache a resolved video URL with LRU eviction to prevent unbounded growth. */
 function cacheVideoUrl(src: string, url: string) {
     if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
@@ -81,13 +97,26 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     };
 
     // Bidirectional intersection observer — tracks both entering AND leaving
-    // the viewport. When a video scrolls out of view, isVisible goes false,
-    // which triggers the loading effect cleanup and clears resolvedUrl.
-    // This is the primary mechanism for releasing WebKitGTK GStreamer pipelines.
+    // the viewport. Debounced to prevent rapid GStreamer pipeline churn when
+    // filter toggles cause mass mount/unmount of VideoPlayer components.
+    // The debounce ensures WebKitGTK has time to tear down old pipelines
+    // before new ones are created.
     useEffect(() => {
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
         const observer = new IntersectionObserver(
             ([entry]) => {
-                setIsVisible(entry.isIntersecting);
+                if (debounceTimer) clearTimeout(debounceTimer);
+
+                if (!entry.isIntersecting) {
+                    // Leaving viewport — apply immediately to release resources fast
+                    setIsVisible(false);
+                } else {
+                    // Entering viewport — debounce to prevent pipeline churn
+                    debounceTimer = setTimeout(() => {
+                        setIsVisible(true);
+                    }, VISIBILITY_DEBOUNCE_MS);
+                }
             },
             { rootMargin: '200px' }
         );
@@ -96,7 +125,10 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             observer.observe(containerRef.current);
         }
 
-        return () => observer.disconnect();
+        return () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            observer.disconnect();
+        };
     }, []);
 
     useEffect(() => {
@@ -105,14 +137,30 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             // the <video> DOM element on the next render. This is more reliable
             // than manual removeAttribute('src') because React drives the DOM.
             // WebKitGTK tears down its GStreamer pipeline when src is removed.
+            if (resolvedUrl) {
+                activeVideoCount = Math.max(0, activeVideoCount - 1);
+            }
             setResolvedUrl(null);
             return;
         }
 
         let cancelled = false;
+        let loadTimer: ReturnType<typeof setTimeout> | null = null;
 
         async function loadVideo() {
+            // Backpressure: wait for pipeline slots if too many videos are active.
+            // This prevents overwhelming WebKitGTK's GStreamer with 15+ simultaneous
+            // decode pipelines (which is the root cause of the memory leak on video filter).
+            if (activeVideoCount >= MAX_CONCURRENT_VIDEOS) {
+                // Wait and retry — another video will free a slot
+                loadTimer = setTimeout(() => {
+                    if (!cancelled) loadVideo();
+                }, 100);
+                return;
+            }
+
             if (videoUrlCache.has(src)) {
+                activeVideoCount++;
                 setResolvedUrl(videoUrlCache.get(src)!);
                 return;
             }
@@ -132,6 +180,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
                             cacheVideoUrl(src, assetUrl);
+                            activeVideoCount++;
                             setResolvedUrl(assetUrl);
                         }
                     }
@@ -148,12 +197,14 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
                             cacheVideoUrl(src, assetUrl);
+                            activeVideoCount++;
                             setResolvedUrl(assetUrl);
                         }
                     }
                 }
                 // 3. Handle direct ready-to-play URLs (HTTP, Object URL, standard Tauri Asset URL)
                 else {
+                    activeVideoCount++;
                     setResolvedUrl(src);
                 }
             } catch (err) {
@@ -172,6 +223,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
 
         return () => {
             cancelled = true;
+            if (loadTimer) clearTimeout(loadTimer);
             // Cancel in-progress video resolve when scrolling away (P8)
             // Prevents CPU thrashing from multiple concurrent FFmpeg processes
             if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
@@ -180,6 +232,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             // Release video decoder resources to prevent WebKitGTK memory leak
             if (videoRef.current) {
                 releaseVideoResources(videoRef.current);
+            }
+            if (resolvedUrl) {
+                activeVideoCount = Math.max(0, activeVideoCount - 1);
             }
         };
     }, [src, isVisible]);

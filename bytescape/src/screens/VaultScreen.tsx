@@ -58,8 +58,29 @@ function formatTimeFull(ts: number): string {
     });
 }
 
-/** Cache of thumbnail object URLs keyed by file ID to avoid re-fetching. */
+/**
+ * Cache of thumbnail object URLs keyed by file ID to avoid re-fetching.
+ * Capped at 200 entries with LRU eviction — evicted blob URLs are revoked
+ * to release the underlying Blob memory. Without this cap, hundreds of
+ * blob URLs accumulate during long sessions (each holding 10-50KB).
+ */
+const THUMB_CACHE_MAX = 200;
 const thumbCache = new Map<string, string>();
+
+/** Set a thumbnail URL with LRU eviction + blob URL revocation. */
+function cacheThumbUrl(id: string, url: string): void {
+    // Delete first so re-insertion moves to end (most-recently-used)
+    thumbCache.delete(id);
+    if (thumbCache.size >= THUMB_CACHE_MAX) {
+        const firstKey = thumbCache.keys().next().value;
+        if (firstKey !== undefined) {
+            const evictedUrl = thumbCache.get(firstKey);
+            if (evictedUrl) URL.revokeObjectURL(evictedUrl);
+            thumbCache.delete(firstKey);
+        }
+    }
+    thumbCache.set(id, url);
+}
 
 function FileThumbnail({ file }: { file: VaultFile }) {
     const [thumbUrl, setThumbUrl] = useState<string | null>(thumbCache.get(file.id) ?? null);
@@ -74,7 +95,7 @@ function FileThumbnail({ file }: { file: VaultFile }) {
                 if (cancelled || !bytes) return;
                 const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
                 const url = URL.createObjectURL(blob);
-                thumbCache.set(file.id, url);
+                cacheThumbUrl(file.id, url);
                 setThumbUrl(url);
             })
             .catch(() => { /* silently fail */ });

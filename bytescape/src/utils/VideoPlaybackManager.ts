@@ -4,18 +4,38 @@
  *
  * When any video starts playing, all other registered videos are paused.
  * Gallery overlays call `pauseAll()` to silence background videos.
+ *
+ * Includes defensive pruning to prevent stale HTMLVideoElement references
+ * from accumulating (which hold GStreamer pipeline memory in WebKitGTK).
  */
 class VideoPlaybackManagerClass {
     private videos = new Set<HTMLVideoElement>();
 
+    /** Maximum registered elements before forced pruning. */
+    private static readonly MAX_REGISTERED = 30;
+
     /** Register a video element for global coordination. */
     register(el: HTMLVideoElement): void {
         this.videos.add(el);
+        // Defensive: if the set grows beyond what the virtualizer should
+        // produce (~10-15 visible + 5 overscan), prune disconnected elements.
+        if (this.videos.size > VideoPlaybackManagerClass.MAX_REGISTERED) {
+            this.pruneDisconnected();
+        }
     }
 
     /** Unregister a video element (call on unmount). */
     unregister(el: HTMLVideoElement): void {
         this.videos.delete(el);
+    }
+
+    /** Remove elements that are no longer in the DOM (stale refs). */
+    private pruneDisconnected(): void {
+        for (const el of this.videos) {
+            if (!el.isConnected) {
+                this.videos.delete(el);
+            }
+        }
     }
 
     /** Notify that a video started playing — pause all others. */
@@ -34,6 +54,26 @@ class VideoPlaybackManagerClass {
                 el.pause();
             }
         }
+    }
+
+    /** Number of currently registered video elements (for debugging). */
+    get count(): number {
+        return this.videos.size;
+    }
+
+    /**
+     * Force-release all registered video elements and clear the set.
+     * Call when switching away from a video-heavy view (e.g. filter toggle).
+     */
+    releaseAll(): void {
+        for (const el of this.videos) {
+            try {
+                el.pause();
+                el.removeAttribute('src');
+                el.load();
+            } catch (_) { /* ignore cleanup errors */ }
+        }
+        this.videos.clear();
     }
 }
 

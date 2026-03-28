@@ -10,6 +10,7 @@ import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 
 export type MediaFilter = 'all' | 'images' | 'video' | 'short' | 'long' | 'articles';
 
@@ -51,6 +52,21 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     activeTabRef.current = activeTab;
     const PULL_THRESHOLD = 80;
     const triggerRefreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+    // Force-release all video pipelines when the media filter changes.
+    // Without this, toggling the "Video" filter causes mass unmount/remount
+    // of VideoPlayer components, and WebKitGTK's async GStreamer teardown
+    // can't keep up — leading to pipeline pile-up and memory leak.
+    // By releasing all pipelines synchronously before the filter change
+    // takes effect, we give WebKitGTK a clean slate.
+    const prevMediaFilterRef = useRef(mediaFilter);
+    useEffect(() => {
+        if (prevMediaFilterRef.current !== mediaFilter) {
+            VideoPlaybackManager.releaseAll();
+            prevMediaFilterRef.current = mediaFilter;
+        }
+    }, [mediaFilter]);
+
     // === Data Hook ===
     const {
         feedEntries,

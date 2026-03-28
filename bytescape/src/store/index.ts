@@ -371,10 +371,17 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     appendCache: (tab, newEntries, cursor) => set((state) => {
         const existing = state.cache[tab];
         const merged = existing ? [...existing.entries, ...newEntries] : newEntries;
+        // Cap merged entries to prevent unbounded state growth from repeated
+        // "Load More" operations. 500 entries × ~5KB avg = ~2.5MB max per tab.
+        // Keep the newest entries (end of array) since older ones scroll off.
+        const MAX_CACHE_ENTRIES = 500;
+        const capped = merged.length > MAX_CACHE_ENTRIES
+            ? merged.slice(merged.length - MAX_CACHE_ENTRIES)
+            : merged;
         return {
             cache: {
                 ...state.cache,
-                [tab]: { entries: merged, cursor, fetchedAt: existing?.fetchedAt ?? Date.now() },
+                [tab]: { entries: capped, cursor, fetchedAt: existing?.fetchedAt ?? Date.now() },
             },
         };
     }),
