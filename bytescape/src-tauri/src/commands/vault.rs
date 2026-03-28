@@ -356,15 +356,19 @@ pub async fn delete_hashtag(state: State<'_, AppState>, tag: String) -> std::res
         .map_err(|e| e.to_string())
 }
 
+/// List followed hashtags (internal helper — no Tauri State wrapper)
+pub async fn list_followed_hashtags_impl(state: &crate::AppState) -> std::result::Result<Vec<String>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or("Database not initialized")?;
+    db.list_followed_hashtags().await
+        .map_err(|e| e.to_string())
+}
+
 /// List followed hashtags
 #[tauri::command]
 pub async fn list_followed_hashtags(state: State<'_, AppState>) -> std::result::Result<Vec<String>, String> {
-    let db_guard = state.db_manager.read().await;
-    let db = db_guard.as_ref()
-        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
-    
-    db.list_followed_hashtags().await
-        .map_err(|e| e.to_string())
+    list_followed_hashtags_impl(&state).await
 }
 
 /// Alias for list_followed_hashtags to support existing frontend calls.

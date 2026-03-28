@@ -435,6 +435,34 @@ impl DbManager {
         Ok((sorted, total))
     }
 
+    /// Like list_my_items_paged but without the owner-only filter.
+    /// Used by the unified feed "All" tab to include vault items from all sources
+    /// (P2P synced posts, shared items, etc.) not just the owner's own posts.
+    pub async fn list_all_items_paged(&self, source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
+        let mut headers = self.get_cached_headers().await?;
+
+        // Optional source filter
+        if let Some(src) = source_filter {
+            headers.retain(|h| h.source.eq_ignore_ascii_case(src));
+        }
+
+        let total = headers.len();
+        let page_headers: Vec<BytescapeItemHeader> = headers.into_iter().skip(offset).take(limit).collect();
+
+        if page_headers.is_empty() {
+            return Ok((vec![], total));
+        }
+
+        let needed_ids: std::collections::HashSet<String> = page_headers.iter().map(|h| h.id.clone()).collect();
+        let full_items = self.bulk_get_items_by_ids(&needed_ids).await?;
+
+        let id_to_pos: std::collections::HashMap<&str, usize> = page_headers.iter().enumerate().map(|(i, h)| (h.id.as_str(), i)).collect();
+        let mut sorted = full_items;
+        sorted.sort_by_key(|item| id_to_pos.get(item.id.as_str()).copied().unwrap_or(usize::MAX));
+
+        Ok((sorted, total))
+    }
+
     /// Fetch multiple items by ID in a single table scan.
     /// Much faster than calling get_item_by_id N times.
     async fn bulk_get_items_by_ids(&self, ids: &std::collections::HashSet<String>) -> Result<Vec<BytescapeItem>, String> {

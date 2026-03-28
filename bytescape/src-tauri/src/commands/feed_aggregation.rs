@@ -193,6 +193,10 @@ impl From<BytescapeItem> for FeedEntry {
 pub struct UnifiedFeedResponse {
     pub items: Vec<FeedEntry>,
     pub next_cursor: Option<String>,
+    /// Non-fatal warnings (e.g. "Bluesky timeline unavailable").
+    /// Frontend can display these as banners without blocking the feed.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 // === Unified Feed (All Tab) ===
@@ -222,6 +226,7 @@ pub async fn get_timeline_unified(
 
     let mut feed: Vec<FeedEntry> = Vec::new();
     let mut next_cursor: Option<String> = None;
+    let mut warnings: Vec<String> = Vec::new();
 
     // Normalize the source filter (lowercase, trim, None if empty)
     let source_filter = source_filter
@@ -238,7 +243,7 @@ pub async fn get_timeline_unified(
     let cache_ttl = std::time::Duration::from_secs(30);
 
     // Load session DID upfront (keychain is not Clone)
-    let owner_did = state.keychain.load_session()
+    let _owner_did = state.keychain.load_session()
         .ok()
         .flatten()
         .map(|(did, _)| did);
@@ -247,27 +252,20 @@ pub async fn get_timeline_unified(
     // Pass source_filter to the vault query so the DB returns only matching items.
     let db_manager_clone = state.db_manager.clone();
     let vault_offset_val = vault_offset.unwrap_or(0);
-    let owner_did_clone = owner_did.clone();
     let vault_source_filter = source_filter.clone();
     let vault_fut = async move {
-        if let Some(did) = owner_did_clone {
-            let db_guard = db_manager_clone.read().await;
-            if let Some(db) = db_guard.as_ref() {
-                if let Ok((items, _)) = db.list_my_items_paged(
-                    &did,
-                    vault_source_filter.as_deref(),
-                    200,
-                    vault_offset_val,
-                ).await {
-                    return items.into_iter().map(FeedEntry::from).collect::<Vec<_>>();
-                }
+        let db_guard = db_manager_clone.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            if let Ok((items, _)) = db.list_all_items_paged(
+                vault_source_filter.as_deref(),
+                200,
+                vault_offset_val,
+            ).await {
+                return items.into_iter().map(FeedEntry::from).collect::<Vec<_>>();
             }
         }
         Vec::new()
     };
-
-    // ── 1 + 2. Live timeline + custom feeds — with feed cache ──
-    let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
     // When filtering to a source that doesn't come from the live timeline
     // (e.g., archived imports like facebook, instagram), skip the network
@@ -276,6 +274,25 @@ pub async fn get_timeline_unified(
     let skip_network = source_filter.as_deref()
         .map(|sf| sf != "bluesky" && sf != "mastodon" && sf != "all")
         .unwrap_or(false);
+
+    // ── 1 + 2. Live timeline + custom feeds — with feed cache ──
+    // If frontend passed empty feedUris (it fetches savedFeeds in parallel and
+    // can't wait for them), resolve saved feeds internally so custom feed
+    // content appears on the initial load — not just on "Load More".
+    let (feed_uris, tags) = if feed_uris.is_empty() && tags.is_empty() && !skip_network {
+        let resolved_feeds = crate::commands::import::list_saved_feeds(state.clone()).await.unwrap_or_default();
+        let resolved_tags = crate::commands::vault::list_followed_hashtags_impl(&state).await.unwrap_or_default();
+        let uris: Vec<String> = resolved_feeds.iter()
+            .map(|f| f.uri.clone())
+            .filter(|uri| !uri.contains("app.bsky.feed.generator/following"))
+            .collect();
+        #[cfg(debug_assertions)]
+        println!("get_timeline_unified: auto-resolved {} feed URIs + {} tags", uris.len(), resolved_tags.len());
+        (uris, resolved_tags)
+    } else {
+        (feed_uris, tags)
+    };
+    let has_custom = !tags.is_empty() || !feed_uris.is_empty();
 
     // Build a cache key incorporating cursor/offset AND source filter to prevent
     // cache poisoning (filtered result served for unfiltered request or vice-versa).
@@ -341,6 +358,7 @@ pub async fn get_timeline_unified(
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
+                warnings.push(format!("Timeline unavailable: {}", e));
             }
         }
 
@@ -352,6 +370,7 @@ pub async fn get_timeline_unified(
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: custom feeds fetch FAILED: {}", e);
+                warnings.push(format!("Custom feeds unavailable: {}", e));
             }
         }
 
@@ -396,6 +415,7 @@ pub async fn get_timeline_unified(
             }
             Err(e) => {
                 eprintln!("get_timeline_unified: live timeline fetch FAILED: {}", e);
+                warnings.push(format!("Timeline unavailable: {}", e));
             }
         }
 
@@ -469,5 +489,6 @@ pub async fn get_timeline_unified(
     Ok(UnifiedFeedResponse {
         items: feed,
         next_cursor,
+        warnings,
     })
 }

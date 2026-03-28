@@ -365,6 +365,11 @@ export function useUnifiedFeed({
                     setCachedSavedFeeds(feedsData);
                     setFollowedHashtags(tags);
 
+                    // Surface backend warnings (e.g. timeline unavailable, custom feed errors)
+                    if (response.warnings && response.warnings.length > 0) {
+                        console.warn('Feed pipeline warnings:', response.warnings);
+                    }
+
                     let items = response.items;
                     // Safety: client-side filter in case backend missed anything
                     if (archiveSourceFilter) {

@@ -416,6 +416,7 @@ export interface PagedVaultResult {
 export interface UnifiedFeedResult {
   items: FeedEntry[];
   next_cursor: string | null;
+  warnings?: string[];
 }
 
 export interface SyncDocResult {

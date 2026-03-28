@@ -1,15 +1,18 @@
 import "./ProfileScreen.css";
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AuthStatus, BytescapeItem } from '../types';
-import { FeedEntryCard } from '../components/FeedEntryCard';
+import { AuthStatus, BytescapeItem, FeedEntry } from '../types';
+import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
 import { ProfileRenderer } from '../components/ProfileRenderer';
 import { ProfileBioSections } from '../components/ProfileBioSections';
 import { adaptBytescapeItem } from '../utils/adapters';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import { useNavStore } from '../store';
 import { BsPersonFill, BsPencilFill } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
+/** Hard cap on accumulated profile entries to prevent unbounded memory growth. */
+const MAX_PROFILE_ENTRIES = 200;
 
 interface PagedResult {
     items: BytescapeItem[];
@@ -35,7 +38,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [hasCustomLayout, setHasCustomLayout] = useState(false);
     const [profileTab, setProfileTab] = useState<ProfileTab>('wall');
     const offsetRef = useRef(0);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
     const { setScreen, setActiveSidebar } = useNavStore();
+
+    // Release all video pipelines when source filter changes — prevents
+    // GStreamer pipeline pile-up during filter toggle (each pipeline ~100-500 MB).
+    const prevSourceFilterRef = useRef(sourceFilter);
+    useEffect(() => {
+        if (prevSourceFilterRef.current !== sourceFilter) {
+            VideoPlaybackManager.releaseAll();
+            prevSourceFilterRef.current = sourceFilter;
+        }
+    }, [sourceFilter]);
 
     // Check for custom profile layout
     useEffect(() => {
@@ -81,7 +95,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 offset: offsetRef.current,
                 source: sourceFilter === 'all' ? null : sourceFilter,
             });
-            setItems(prev => [...prev, ...result.items]);
+            setItems(prev => {
+                const combined = [...prev, ...result.items];
+                return combined.length > MAX_PROFILE_ENTRIES
+                    ? combined.slice(0, MAX_PROFILE_ENTRIES)
+                    : combined;
+            });
             offsetRef.current += result.items.length;
         } catch (e) {
             console.error('ProfileScreen loadMore error:', e);
@@ -111,10 +130,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         }
     };
 
-    const hasMore = offsetRef.current < total;
+    const hasMore = offsetRef.current < total && items.length < MAX_PROFILE_ENTRIES;
+
+    // Convert BytescapeItem[] to FeedEntry[] for VirtualizedFeedList
+    const feedEntries: FeedEntry[] = useMemo(
+        () => items.map(adaptBytescapeItem),
+        [items]
+    );
 
     return (
-        <div className="profile-geocities">
+        <div ref={scrollContainerRef} className="profile-geocities" style={{ overflowY: 'auto', height: '100%' }}>
             {/* ═══ Hero Banner ═══ */}
             <div className="profile-hero">
                 <div className="profile-hero-gradient" />
@@ -238,11 +263,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             </div>
                         )}
 
-                        {!loading && items.map(item => (
-                            <div key={item.id} style={{ marginBottom: 10 } as React.CSSProperties}>
-                                <FeedEntryCard entry={adaptBytescapeItem(item)} />
-                            </div>
-                        ))}
+                        {!loading && feedEntries.length > 0 && (
+                            <VirtualizedFeedList
+                                entries={feedEntries}
+                                scrollContainerRef={scrollContainerRef}
+                            />
+                        )}
 
                         {!loading && hasMore && (
                             <div className="profile-load-more">
