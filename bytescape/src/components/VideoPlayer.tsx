@@ -13,7 +13,27 @@ interface VideoPlayerProps {
     autoPlay?: boolean;
 }
 
+const VIDEO_URL_CACHE_MAX = 50;
 const videoUrlCache = new Map<string, string>();
+
+/** Cache a resolved video URL with LRU eviction to prevent unbounded growth. */
+function cacheVideoUrl(src: string, url: string) {
+    if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
+        // Maps iterate in insertion order — evict the oldest entry
+        const firstKey = videoUrlCache.keys().next().value;
+        if (firstKey !== undefined) videoUrlCache.delete(firstKey);
+    }
+    videoUrlCache.set(src, url);
+}
+
+/** Force WebKitGTK to release a video element's decoder buffers. */
+function releaseVideoResources(el: HTMLVideoElement) {
+    try {
+        el.pause();
+        el.removeAttribute('src');
+        el.load(); // Triggers WebKitGTK to tear down the media pipeline
+    } catch (_) { /* ignore errors during cleanup */ }
+}
 
 /**
  * Standard, native VideoPlayer component for Bytescape.
@@ -32,8 +52,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
 
     // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
-        // Unregister previous element
-        if (videoRef.current) {
+        // Release previous element's decoder buffers before losing the reference
+        if (videoRef.current && videoRef.current !== el) {
+            releaseVideoResources(videoRef.current);
             VideoPlaybackManager.unregister(videoRef.current);
         }
         videoRef.current = el;
@@ -42,11 +63,13 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     }, []);
 
-    // Cleanup on unmount
+    // Cleanup on unmount — force WebKitGTK to release decoder memory
     useEffect(() => {
         return () => {
             if (videoRef.current) {
+                releaseVideoResources(videoRef.current);
                 VideoPlaybackManager.unregister(videoRef.current);
+                videoRef.current = null;
             }
         };
     }, []);
@@ -101,7 +124,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         if (filename) {
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
-                            videoUrlCache.set(src, assetUrl);
+                            cacheVideoUrl(src, assetUrl);
                             setResolvedUrl(assetUrl);
                         }
                     }
@@ -117,7 +140,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         if (filename) {
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
-                            videoUrlCache.set(src, assetUrl);
+                            cacheVideoUrl(src, assetUrl);
                             setResolvedUrl(assetUrl);
                         }
                     }
@@ -146,6 +169,10 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             // Prevents CPU thrashing from multiple concurrent FFmpeg processes
             if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
                 invoke('cancel_video_resolve', { url: src }).catch(() => {});
+            }
+            // Release video decoder resources to prevent WebKitGTK memory leak
+            if (videoRef.current) {
+                releaseVideoResources(videoRef.current);
             }
         };
     }, [src, isVisible]);
