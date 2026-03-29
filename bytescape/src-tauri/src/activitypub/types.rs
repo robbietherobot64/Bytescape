@@ -1,13 +1,61 @@
-//! Core ActivityStreams JSON-LD type definitions.
+//! # activitypub/types.rs — ActivityStreams JSON-LD Type Definitions
+//!
+//! This module defines the core data types for the ActivityPub federation protocol.
+//! ActivityPub is the standard that Mastodon, Lemmy, Pixelfed, and other "fediverse"
+//! platforms use to communicate with each other. When Bytescape federates with these
+//! platforms, it sends and receives messages in this format.
+//!
+//! ## Key Concepts
+//! - **ActivityStreams**: The JSON format specification that ActivityPub messages use.
+//!   Every message has a `@context` pointing to the ActivityStreams namespace.
+//! - **JSON-LD**: JSON for Linked Data — a way to embed semantic meaning in JSON.
+//!   The `@context` field tells receivers how to interpret the data.
+//! - **Objects**: Things that exist (posts/Notes, images, profiles/Actors)
+//! - **Activities**: Things that happen (Create, Like, Follow, Announce/boost)
+//! - **Collections**: Ordered lists (inbox, outbox, followers list)
+//!
+//! ## How Bytescape Uses These
+//! - **Outbound**: When a user publishes a post to the fediverse, Bytescape creates
+//!   an `ApActivity` (type: "Create") wrapping an `ApObject` (type: "Note") and
+//!   sends it to followers' inboxes via HTTP POST with cryptographic signatures.
+//! - **Inbound**: When a remote server sends us a Follow, Like, or Create activity,
+//!   the inbox handler (`activitypub/inbox.rs`) deserializes it into these types.
+//!
+//! ## Related Files
+//! - `activitypub/inbox.rs` — Handles incoming activities from remote servers
+//! - `activitypub/outbox.rs` — Creates and sends activities to remote servers
+//! - `activitypub/activities.rs` — Builder functions for common activity types
+//! - `activitypub/signatures.rs` — HTTP signature creation/verification
+//! - `activitypub/actor.rs` — User/group actor profile representation
 
 use serde::{Deserialize, Serialize};
 
+/// The ActivityStreams namespace URI — included in every AP message's @context.
 pub const AS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";
+/// The W3C Security namespace — needed for HTTP signature verification fields.
 pub const SECURITY_CONTEXT: &str = "https://w3id.org/security/v1";
 
+/// Builds the standard `@context` array for ActivityPub messages.
+/// Every outgoing message includes this to tell receivers: "I'm speaking
+/// ActivityStreams and I support cryptographic signatures."
 pub fn ap_context() -> serde_json::Value {
     serde_json::json!([AS_CONTEXT, SECURITY_CONTEXT])
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CORE ACTIVITYPUB TYPES
+// These mirror the ActivityStreams specification, adapted for Bytescape's
+// use cases. Not every AS field is represented — only the ones we use.
+// ═══════════════════════════════════════════════════════════════════
+
+/// An ActivityPub Object — represents a piece of content (usually a post/Note).
+///
+/// In ActivityPub, everything is either an Object or an Activity. Objects are
+/// the "things" — posts (Notes), articles, images, profiles (Actors).
+/// Activities are the "verbs" — Create, Like, Follow, Delete, etc.
+///
+/// This struct covers the most common Note/Article fields. The `object_type`
+/// field determines what kind of object it is (e.g., "Note", "Article", "Image").
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +93,18 @@ pub struct ApObject {
     pub expires_at: Option<String>,
 }
 
+/// An ActivityPub Activity — represents something that happened.
+///
+/// Activities are the "verbs" of ActivityPub:
+/// - **Create**: A user published a new post
+/// - **Like**: A user liked a post
+/// - **Follow**: A user wants to follow another user
+/// - **Announce**: A user boosted/reposted someone else's post
+/// - **Delete**: A user deleted a post
+/// - **Undo**: A user un-liked or un-followed
+///
+/// The `object` field contains what the activity is about (the post being
+/// liked, the user being followed, etc.) as a JSON value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApActivity {
@@ -62,6 +122,11 @@ pub struct ApActivity {
     pub published: Option<String>,
 }
 
+/// An ActivityPub Collection — an ordered list of items.
+///
+/// Used for: inboxes, outboxes, follower lists, following lists.
+/// Collections can be paginated (first/next/prev links) for large lists.
+/// The total_items count helps the UI show "42 followers" without loading all.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApCollection {
@@ -84,6 +149,10 @@ pub struct ApCollection {
     pub part_of: Option<String>,
 }
 
+/// A public key attached to an ActivityPub actor profile.
+/// Used for HTTP Signature verification — when a remote server sends us
+/// an activity, we fetch the sender's public key to verify the signature
+/// is authentic (not forged by a third party).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApPublicKey {
@@ -92,6 +161,9 @@ pub struct ApPublicKey {
     pub public_key_pem: String,
 }
 
+/// A media attachment on an ActivityPub object (image, video, audio).
+/// Appears in the `attachment` array of an `ApObject`.
+/// The `media_type` field is the MIME type (e.g., "image/jpeg", "video/mp4").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApMediaLink {
@@ -108,6 +180,8 @@ pub struct ApMediaLink {
     pub height: Option<u32>,
 }
 
+/// A tag on an ActivityPub object — mentions (@user) or hashtags (#topic).
+/// The `tag_type` is usually "Mention" or "Hashtag".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApTag {
     #[serde(rename = "type")]
@@ -118,6 +192,9 @@ pub struct ApTag {
     pub name: Option<String>,
 }
 
+/// The original source text of a post before HTML rendering.
+/// Some ActivityPub servers include this so clients can show the
+/// raw Markdown/plaintext version alongside the rendered HTML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApSource {

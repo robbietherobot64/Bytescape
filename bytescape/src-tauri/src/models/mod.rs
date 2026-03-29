@@ -1,46 +1,123 @@
+//! # models/mod.rs — Core Data Models
+//!
+//! This module defines every data structure used throughout Bytescape's backend.
+//! These are the "shapes" that all data takes — posts, contacts, messages, vault
+//! items, feed entries, etc. Every struct here is serializable to JSON (via serde)
+//! so it can be:
+//!
+//! 1. Stored in the redb database (serialized to JSON strings)
+//! 2. Sent to the React frontend over Tauri's IPC bridge
+//! 3. Exchanged with P2P peers over the Iroh network
+//!
+//! ## Key Types
+//! - [`BytescapeItem`] — The universal container for ALL content (posts, photos, articles)
+//! - [`FeedEntry`] — A feed item optimized for UI display (sent to frontend)
+//! - [`BytescapeItemHeader`] — Lightweight metadata for fast feed filtering without loading full items
+//! - [`BytescapeType`] — Content classification enum (Status, Gallery, Article, Link, Video)
+//!
+//! ## TypeScript Mirror
+//! Every public type here has a corresponding TypeScript interface in
+//! `src/types/index.ts`. **These must stay in sync** — if you add a field here,
+//! add it there too, or the frontend will silently drop it.
+//!
+//! ## Related Files
+//! - `src/types/index.ts` — TypeScript counterparts
+//! - `db/mod.rs` — Where these types are stored/retrieved
+//! - `connectors/*.rs` — Where these types are created from platform data
+//! - `commands/*.rs` — Where these types are sent to the frontend
+
 use serde::{Deserialize, Serialize};
 
 pub mod groups;
 pub use groups::*;
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: COMMUNICATION & TRANSPORT ENUMS
+// Enums that classify how messages are sent between users.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Whether a conversation is private (encrypted P2P) or public.
+/// PendingPublic is a transitional state while waiting for the other
+/// user to accept making the conversation public.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum ConversationMode {
+    /// End-to-end private between two peers
     Private,
+    /// Publicly visible (e.g., in a group context)
     Public,
+    /// One party has requested making it public; awaiting acceptance
     PendingPublic,
 }
 
+/// Which network layer a message was sent over.
+/// Iroh = direct P2P (no intermediary), Bluesky = via AT Protocol servers.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum TransportLayer {
+    /// Direct peer-to-peer via Iroh networking
     Iroh,
+    /// Via Bluesky's AT Protocol servers
     Bluesky,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: BASIC DATA STRUCTURES
+// Simple structs for posts, contacts, and conversations.
+// ═══════════════════════════════════════════════════════════════════
+
+/// A simple post record — used for P2P-originated posts before they
+/// get promoted to full BytescapeItems.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Post {
     pub id: String,
     pub content: String,
+    /// DID of the author (e.g., "did:plc:abc123")
     pub author_did: String,
+    /// Unix timestamp when the post was created
     pub created_at: u64,
 }
 
+/// A contact in the user's address book.
+/// Contacts may be from Bluesky, Mastodon, or direct P2P connections.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Contact {
+    /// The contact's Decentralized Identifier
     pub did: String,
+    /// Display handle (e.g., "user.bsky.social")
     pub handle: String,
+    /// Whether this contact supports direct P2P connections (has a Bytescape node)
     pub p2p_capable: bool,
+    /// Iroh node ID, if the contact has a Bytescape P2P node
     pub node_id: Option<String>,
+    /// When we last checked this contact's status (Unix timestamp)
     pub last_polled_at: u64,
 }
 
+/// A conversation thread between the current user and another person.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Conversation {
+    /// Unique conversation identifier
     pub id: String,
+    /// DID of the other participant
     pub peer_did: String,
+    /// Whether this conversation is private, public, or transitioning
     pub current_mode: ConversationMode,
+    /// Unix timestamp of the most recent message
     pub last_message_at: u64,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: CONTENT CLASSIFICATION & SYNDICATION
+// How content is categorized and how it gets shared across platforms.
+// ═══════════════════════════════════════════════════════════════════
+
+/// The five content types in Bytescape. Every piece of content is automatically
+/// classified into one of these based on its content (see [`classify_item`]).
+/// This classification drives how the content is displayed in the UI:
+/// - Status = short text (tweet-like)
+/// - Gallery = image-focused with photos
+/// - Article = long-form text (500+ chars)
+/// - Link = shared URL with preview card
+/// - Video = has video attachment(s)
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum BytescapeType {
     Status,
@@ -50,6 +127,10 @@ pub enum BytescapeType {
     Video,
 }
 
+/// Tracks whether a post has been published to external platforms.
+/// - LocalOnly = only exists in the user's vault (default)
+/// - PendingSyndication = queued for publishing
+/// - Syndicated = successfully published to at least one platform
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum SyndicationStatus {
     LocalOnly,
@@ -57,32 +138,49 @@ pub enum SyndicationStatus {
     Syndicated,
 }
 
+/// Returns the default syndication status for new items (LocalOnly).
 pub fn default_syndication_status() -> SyndicationStatus {
     SyndicationStatus::LocalOnly
 }
 
-/// Networks where a post is currently published.
+/// Which audiences/networks a post has been shared to.
+/// A post can be on multiple networks simultaneously.
+/// For example, a post might be Local + Bluesky + P2p.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Audience {
+    /// Only in the user's local vault (private)
     Local,
+    /// Published to Bluesky via AT Protocol
     Bluesky,
+    /// Shared with connected Bytescape peers
     P2p,
+    /// Published to the fediverse (Mastodon, Lemmy, etc.)
     Activitypub,
 }
 
+/// A single event in a post's sharing history.
+/// These form an append-only log tracking every time a post was published
+/// to (or removed from) an external platform.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SyndicationEvent {
-    pub platform: String, // "bluesky", "p2p"
-    pub uri: String,      // The remote ID on that platform
-    pub timestamp: u64,   // When the share happened
-    pub active: bool,     // True if currently live, False if synced as deleted upstream
+    /// Which platform: "bluesky", "mastodon", "p2p", etc.
+    pub platform: String,
+    /// The post's identifier on that platform (e.g., AT-URI for Bluesky)
+    pub uri: String,
+    /// When the share happened (Unix timestamp)
+    pub timestamp: u64,
+    /// Whether the post is still live on that platform
+    pub active: bool,
 }
 
+/// Default audiences for a new item: just Local (private).
 pub fn default_audiences() -> Vec<Audience> {
     vec![Audience::Local]
 }
 
-/// Compute audiences from legacy syndication_status + syndicated_uri.
+/// Migrates old-format syndication data to the new Audience list.
+/// Early versions of Bytescape only tracked syndication_status + syndicated_uri.
+/// This converts that into the modern audiences array.
 pub fn audiences_from_legacy(status: &SyndicationStatus, syndicated_uri: &Option<String>) -> Vec<Audience> {
     let mut audiences = vec![Audience::Local];
     match status {
@@ -96,7 +194,9 @@ pub fn audiences_from_legacy(status: &SyndicationStatus, syndicated_uri: &Option
     audiences
 }
 
-/// Compute syndicated_uris map from legacy syndicated_uri.
+/// Migrates old-format syndicated_uri (single string) to the new map format.
+/// Early versions only supported syndicating to Bluesky, so the single URI
+/// is always mapped to the "bluesky" key.
 pub fn syndicated_uris_from_legacy(syndicated_uri: &Option<String>) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if let Some(uri) = syndicated_uri {
@@ -105,6 +205,11 @@ pub fn syndicated_uris_from_legacy(syndicated_uri: &Option<String>) -> std::coll
     map
 }
 
+/// Migrates all legacy syndication data into the modern share_history event log.
+/// Tries three migration paths in order:
+/// 1. syndicated_uris + syndicated_at maps (v2 format)
+/// 2. syndicated_uri + syndication_status (v1 format)
+/// 3. Empty history if nothing to migrate
 pub fn share_history_from_legacy(
     syndicated_uris: &std::collections::HashMap<String, String>,
     syndicated_at: &std::collections::HashMap<String, u64>,
@@ -144,6 +249,12 @@ pub fn share_history_from_legacy(
     history
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: VAULT STATISTICS & AUDIT TYPES
+// ═══════════════════════════════════════════════════════════════════
+
+/// Summary statistics for the user's vault. Sent to the frontend
+/// for dashboard display (total items, breakdowns by source/type).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VaultStats {
     pub total: usize,
@@ -152,6 +263,10 @@ pub struct VaultStats {
     pub media_count: usize,
 }
 
+/// A single audit record from the Willow write-parity check.
+/// Willow is the data sync protocol — this tracks whether vault items
+/// were correctly written to the Willow store (for P2P sync).
+/// Used during development to catch sync mismatches.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WillowWriteParityEntry {
     pub id: String,
@@ -168,6 +283,8 @@ pub struct WillowWriteParityEntry {
     pub path_matches_canonical: bool,
 }
 
+/// Aggregated report of Willow write-parity across all vault items.
+/// Shows how many items are correctly synced vs. mismatched.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WillowWriteParityReport {
     pub total_writes: usize,
@@ -185,8 +302,16 @@ pub struct WillowWriteParityReport {
     pub parity_coverage_ratio: f64,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: BACKWARD-COMPATIBLE DESERIALIZERS
+// These custom deserializers handle old data formats gracefully.
+// Early versions stored tagged_people and location as JSON strings;
+// newer versions store them as proper typed objects. These functions
+// accept either format so old vault data can still be read.
+// ═══════════════════════════════════════════════════════════════════
+
 /// Backward-compatible deserializer for tagged_people.
-/// Accepts: null, JSON string (legacy), or native Vec<TaggedPerson>.
+/// Accepts: null, JSON string (legacy format from early imports), or native Vec<TaggedPerson>.
 fn deserialize_tagged_people<'de, D>(deserializer: D) -> Result<Vec<TaggedPerson>, D::Error>
 where D: serde::Deserializer<'de> {
     use serde::de;
@@ -241,6 +366,31 @@ where D: serde::Deserializer<'de> {
     deserializer.deserialize_any(LocationVisitor)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6: BYTESCAPE ITEM — THE UNIVERSAL CONTENT CONTAINER
+// This is the single most important type in the entire backend.
+// Every piece of content in Bytescape becomes a BytescapeItem.
+// ═══════════════════════════════════════════════════════════════════
+
+/// The universal content container — the core type of Bytescape.
+///
+/// Every piece of content, regardless of its origin platform, gets
+/// normalized into this struct before storage. A Bluesky post, a Facebook
+/// memory, an Instagram photo, and a locally-composed article all share
+/// this exact shape. This is what makes the unified feed possible.
+///
+/// ## Fields by Category
+/// - **Identity**: id, original_id, source, path
+/// - **Content**: content, content_html, title, item_type
+/// - **Author**: author_did, author_handle, author_avatar
+/// - **Media**: media_paths (legacy), media_blobs + thumbnail_blobs (current), media_mimes
+/// - **Metadata**: tagged_people, location, link_url
+/// - **Engagement**: is_liked, like_count, reply_count, repost_count, quote_count
+/// - **Syndication**: syndication_status, audiences, share_history
+/// - **Context**: reposted_by_*, reply_parent_*, collab_doc_id
+///
+/// ## TypeScript Mirror
+/// `src/types/index.ts::BytescapeItem`
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BytescapeItem {
     pub id: String,
@@ -324,6 +474,14 @@ pub struct BytescapeItem {
     pub collab_doc_id: Option<String>,
 }
 
+/// Lightweight metadata extracted from a BytescapeItem for fast filtering.
+///
+/// Loading all ~500+ BytescapeItems from the database just to filter by type
+/// or date would be slow. Instead, the database maintains a cache of these
+/// headers, which contain just enough info to filter and sort the feed
+/// without deserializing the full item JSON.
+///
+/// Created by `BytescapeItem::header()` and cached in `DbManager::header_cache`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BytescapeItemHeader {
     pub id: String,
@@ -342,6 +500,10 @@ pub struct BytescapeItemHeader {
 }
 
 impl BytescapeItem {
+    /// Creates a lightweight header from this item for cache storage.
+    /// The effective_timestamp is the later of original_timestamp and
+    /// the most recent active share event — so reshared posts sort
+    /// by when they were reshared, not when originally created.
     pub fn header(&self) -> BytescapeItemHeader {
         let max_share_ts = self.share_history.iter()
             .filter(|e| e.active)
@@ -372,6 +534,15 @@ impl BytescapeItem {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7: CONTENT CLASSIFICATION
+// Automatic classification of content into BytescapeType.
+// Three entry points depending on the data source:
+// - classify_item() — for BytescapeItems already in the vault
+// - classify_bluesky_post() — for raw Bluesky API data
+// - classify_feed_entry() — for FeedEntry objects in the UI pipeline
+// ═══════════════════════════════════════════════════════════════════
 
 pub fn default_item_type() -> BytescapeType {
     BytescapeType::Status
@@ -501,10 +672,24 @@ pub struct TaggedPerson {
     pub linked_handle: Option<String>,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8: WILLOW PATH & VAULT STORAGE
+// Functions for generating hierarchical storage paths for vault items.
+// Each item gets a path like /facebook/status/2024/03/abc123 which
+// organizes the Willow/Iroh sync store.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Maximum length for any single path component in a Willow path.
 pub fn willow_component_limit() -> usize {
     1024
 }
 
+/// Generates the canonical storage path for a BytescapeItem in the Willow store.
+/// Format: /{source}/{type}/{year}/{month}/{id}
+/// Example: /facebook/status/2024/03/abc123
+///
+/// Path components are normalized: lowercased, non-alphanumeric chars replaced
+/// with hyphens, and truncated to the component limit.
 pub fn canonical_willow_path(item: &BytescapeItem) -> String {
     fn normalize_component(raw: &str) -> String {
         let cleaned = raw
@@ -550,6 +735,14 @@ pub fn canonical_willow_path(item: &BytescapeItem) -> String {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 9: MESSAGING TYPES
+// Structs for chat messages — both imported (from archives) and
+// live (from P2P or Bluesky DMs).
+// ═══════════════════════════════════════════════════════════════════
+
+/// A chat message stored in the vault from an imported archive
+/// (Facebook Messenger, Instagram DMs, etc.).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VaultMessage {
     pub id: String,
@@ -568,15 +761,25 @@ pub struct VaultMessage {
     pub peer_handle: Option<String>,
 }
 
+/// A live chat message (P2P or Bluesky DMs).
+/// Unlike VaultMessage (imported from archives), Message represents
+/// real-time conversations between Bytescape users.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
+    /// Unique message identifier
     pub id: String,
+    /// Which conversation this message belongs to
     pub conversation_id: String,
+    /// DID of the sender
     pub sender_did: String,
+    /// Message text content
     pub content: String,
+    /// When the message was sent (Unix timestamp)
     pub created_at: u64,
+    /// Which network the message was sent over (Iroh P2P or Bluesky)
     #[serde(default = "default_transport_layer")]
     pub transport_layer: TransportLayer,
+    /// Whether this message has been synced to the Bluesky convo
     pub synced_with_bsky: bool,
 }
 
@@ -584,6 +787,20 @@ pub fn default_transport_layer() -> TransportLayer {
     TransportLayer::Bluesky
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 10: FEED ENTRY (BACKEND → FRONTEND)
+// The struct sent across the IPC bridge to the React frontend.
+// Unlike BytescapeItem (which is for storage), FeedEntry is
+// optimized for what the UI needs to render each feed card.
+// ═══════════════════════════════════════════════════════════════════
+
+/// A feed item ready for frontend display.
+///
+/// Created by `commands/feed_aggregation.rs` from either:
+/// - A live Bluesky/Mastodon API response (never stored in vault)
+/// - A BytescapeItem loaded from the vault database
+///
+/// TypeScript mirror: `src/types/index.ts::FeedEntry`
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FeedEntry {
     pub id: String,

@@ -1,13 +1,40 @@
-//! Bytescape Error Types
-//! 
-//! Structured error hierarchy for type-safe error handling throughout the application.
+//! # error.rs — Bytescape Error Types
+//!
+//! This module defines a structured error hierarchy for all backend operations.
+//! Instead of passing around raw `String` errors, Bytescape uses typed errors
+//! so callers can distinguish between "you need to log in again" vs. "the
+//! database is corrupted" vs. "the network is down".
+//!
+//! ## How It Works
+//! - All errors are variants of [`BytescapeError`]
+//! - [`BytescapeResult<T>`] is a convenience alias for `Result<T, BytescapeError>`
+//! - Tauri commands return `Result<T, String>` — the `From<BytescapeError> for String`
+//!   impl converts our typed errors to human-readable strings for the frontend
+//! - Common error conversions (`reqwest::Error`, `serde_json::Error`, etc.) are
+//!   implemented via `#[from]` so they auto-convert with `?`
+//!
+//! ## Error Categories
+//! - **Initialization**: App failed to start up
+//! - **Database**: redb read/write failures
+//! - **Authentication**: Login failures, expired sessions
+//! - **Keychain**: Credential storage problems
+//! - **P2P/Iroh**: Network and peer connection issues
+//! - **Import/Export**: Archive parsing and file handling
+//! - **Connector**: Platform-specific API errors
+//! - **Network**: HTTP, URL, and JSON errors
+//! - **Validation**: Invalid user input
+//! - **Internal**: Catch-all for unexpected errors
 
 use thiserror::Error;
 
-/// Main error type for all Bytescape operations
+/// The main error type for all Bytescape backend operations.
+/// Each variant represents a specific category of failure.
+/// The `#[error("...")]` attribute defines the human-readable message
+/// shown to the user (via Tauri IPC error strings).
 #[derive(Error, Debug)]
 pub enum BytescapeError {
     // === Initialization Errors ===
+    // These occur during app startup if something is misconfigured
     #[error("Failed to initialize application: {0}")]
     Initialization(String),
 
@@ -18,6 +45,8 @@ pub enum BytescapeError {
     SyncNotInitialized,
 
     // === Database Errors ===
+    // Problems reading/writing the redb database. These can occur if the
+    // database file is corrupted, the disk is full, or a transaction fails.
     #[error("Database error: {0}")]
     Database(#[from] redb::Error),
 
@@ -34,6 +63,8 @@ pub enum BytescapeError {
     DuplicateRecord(String),
 
     // === Authentication Errors ===
+    // Login failures, expired sessions, and invalid tokens.
+    // The frontend checks for these to redirect to the login screen.
     #[error("Authentication required. Please log in.")]
     Unauthenticated,
 
@@ -50,6 +81,8 @@ pub enum BytescapeError {
     TokenRefreshFailed(String),
 
     // === Keychain Errors ===
+    // Problems with the encrypted credential store (keychain_encrypted.rs).
+    // Usually means the OS keychain is locked or the encryption key is wrong.
     #[error("Keychain error: {0}")]
     Keychain(String),
 
@@ -60,6 +93,8 @@ pub enum BytescapeError {
     KeychainSave(String),
 
     // === Iroh/P2P Errors ===
+    // Problems with the peer-to-peer networking layer (Iroh).
+    // Connection failures, sync errors, and blob storage issues.
     #[error("P2P network error: {0}")]
     P2PNetwork(String),
 
@@ -82,6 +117,7 @@ pub enum BytescapeError {
     BlobNotFound(String),
 
     // === Import/Export Errors ===
+    // Problems parsing social media archives or exporting vault data.
     #[error("Import failed: {0}")]
     Import(String),
 
@@ -104,6 +140,7 @@ pub enum BytescapeError {
     MediaProcessing(String),
 
     // === Connector Errors ===
+    // Platform-specific API failures (Bluesky rate limit, Facebook parse error, etc.)
     #[error("Bluesky API error: {0}")]
     BlueskyApi(String),
 
@@ -152,6 +189,8 @@ pub enum BytescapeError {
 pub type BytescapeResult<T> = std::result::Result<T, BytescapeError>;
 
 // === Conversion helpers ===
+// These `From` implementations let us use the `?` operator to automatically
+// convert common error types into BytescapeError without explicit mapping.
 
 impl From<String> for BytescapeError {
     fn from(s: String) -> Self {
@@ -172,6 +211,8 @@ impl From<anyhow::Error> for BytescapeError {
 }
 
 // === Tauri-compatible error conversion ===
+// Tauri commands must return Result<T, String>. This converts our typed
+// errors to human-readable strings that get sent to the React frontend.
 
 impl From<BytescapeError> for String {
     fn from(e: BytescapeError) -> Self {

@@ -1,8 +1,28 @@
-//! Group & Topic data model for Bytescape's hierarchical forum system.
+//! # models/groups.rs — Group & Topic Data Models
 //!
-//! Topics form a tree hierarchy (e.g., Health → Mental Health → Anxiety).
-//! Groups are user-created communities filed under topics.
-//! Three visibility modes: Public (auto-join), Closed (mod approval), Private (invite-only).
+//! This module defines the data structures for Bytescape's hierarchical
+//! community/forum system. It's organized into:
+//!
+//! - **Topics**: Categories that form a navigable tree hierarchy.
+//!   Example: Health → Mental Health → Anxiety
+//! - **Groups**: User-created communities filed under topics.
+//!   Each group has a visibility mode, member list, and post feed.
+//! - **Members**: Users belonging to a group, with roles (Owner/Mod/Member)
+//! - **Group Posts**: References linking BytescapeItems to groups
+//!
+//! ## Visibility Modes
+//! - **Public**: Anyone can find and join automatically
+//! - **Closed**: Searchable, but joining requires moderator approval
+//! - **Private**: Not listed in search; invite-only
+//!
+//! ## TypeScript Mirror
+//! All types here have corresponding interfaces in `src/types/index.ts`
+//! (Section 16: Groups & Topics).
+//!
+//! ## Related Files
+//! - `db/groups.rs` — Database CRUD operations for these types
+//! - `commands/groups.rs` — Tauri commands exposing group operations to frontend
+//! - `activitypub/group_actor.rs` — ActivityPub federation for groups
 
 use serde::{Deserialize, Serialize};
 
