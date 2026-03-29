@@ -12,7 +12,7 @@
 
 | Batch | Layer | Files | Lines | Status |
 |-------|-------|-------|-------|--------|
-| 1 | Core Types & Models | 6 | 1,911 | ⬜ Not started |
+| 1 | Core Types & Models | 6 | 1,911 | ✅ Complete |
 | 2 | Database Layer | 6 | 2,312 | ⬜ Not started |
 | 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ⬜ Not started |
 | 4 | Platform Connectors | 4 | 6,662 | ⬜ Not started |
@@ -38,12 +38,12 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/types/index.ts` | 658 | ⬜ | TypeScript interfaces mirroring Rust structs |
-| `src-tauri/src/models/mod.rs` | 659 | ⬜ | Core Rust data models (BytescapeItem, etc.) |
-| `src-tauri/src/models/groups.rs` | 133 | ⬜ | Group/community data models |
-| `src-tauri/src/connectors/mod.rs` | 77 | ⬜ | Source enum, connector trait definitions |
-| `src-tauri/src/error.rs` | 222 | ⬜ | Error types used across the backend |
-| `src-tauri/src/activitypub/types.rs` | 164 | ⬜ | ActivityPub protocol type definitions |
+| `src/types/index.ts` | 658 | ✅ | File header, 16 section dividers, 50+ interface docs, field comments |
+| `src-tauri/src/models/mod.rs` | 659 | ✅ | Module doc, 10 section dividers, all struct/enum/fn docs |
+| `src-tauri/src/models/groups.rs` | 133 | ✅ | Expanded module doc with related files |
+| `src-tauri/src/connectors/mod.rs` | 77 | ✅ | Full module doc, enum variant docs, method docs |
+| `src-tauri/src/error.rs` | 222 | ✅ | Expanded module doc, section explanations |
+| `src-tauri/src/activitypub/types.rs` | 164 | ✅ | Full module doc, 7 struct docs |
 
 **Subtotal**: 6 files · 1,913 lines
 
@@ -368,6 +368,7 @@
 
 | Date | Session | Batch(es) | Files Done | Agent |
 |------|---------|-----------|------------|-------|
+| 2026-03-28 | S6.13 | Batch 1 | 6 files (1,913 lines) | Systems |
 | — | — | — | — | — |
 
 ---
