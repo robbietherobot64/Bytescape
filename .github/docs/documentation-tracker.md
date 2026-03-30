@@ -14,7 +14,7 @@
 |-------|-------|-------|-------|--------|
 | 1 | Core Types & Models | 6 | 1,911 | ✅ Complete |
 | 2 | Database Layer | 6 | 2,312 | ✅ Complete |
-| 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ⬜ Not started |
+| 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ✅ Complete |
 | 4 | Platform Connectors | 4 | 6,662 | ⬜ Not started |
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ⬜ Not started |
 | 6 | ActivityPub Federation | 9 | 2,866 | ⬜ Not started |
@@ -72,12 +72,12 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/lib.rs` | 1,028 | ⬜ | App entry point, Tauri command registration, AppState |
-| `src-tauri/src/auth.rs` | 74 | ⬜ | Bluesky session management |
-| `src-tauri/src/keychain_encrypted.rs` | 1,481 | ⬜ | Secure credential storage with encryption |
-| `src-tauri/src/oauth.rs` | 1,031 | ⬜ | OAuth PKCE+DPoP implementation |
-| `src-tauri/src/contacts.rs` | 113 | ⬜ | Contact management logic |
-| `src-tauri/src/main.rs` | 6 | ⬜ | Rust binary entry point (trivial) |
+| `src-tauri/src/lib.rs` | 1,028 | ✅ | Enhanced 37-line header, 7 section dividers, AppState field docs, run() init order |
+| `src-tauri/src/auth.rs` | 74 | ✅ | 30-line module header (dual auth modes), Session field docs, method docs |
+| `src-tauri/src/keychain_encrypted.rs` | 1,481 | ✅ | 52-line header (5 DID types, recovery escrow, security), 7 section dividers, AuthData/recovery type docs |
+| `src-tauri/src/oauth.rs` | 1,031 | ✅ | 48-line header (full OAuth flow, DPoP, session persistence), 7 section dividers |
+| `src-tauri/src/contacts.rs` | 113 | ✅ | Module header (P2P discovery protocol), section dividers, all method docs |
+| `src-tauri/src/main.rs` | 6 | ✅ | Module header explaining binary/library separation |
 
 **Subtotal**: 6 files · 3,733 lines
 
