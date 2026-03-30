@@ -89,11 +89,6 @@ pub(crate) const VAULT_MESSAGES_TABLE: TableDefinition<&str, &str> = TableDefini
 /// Value is a Unix timestamp of when the tag was followed.
 pub(crate) const FOLLOWED_HASHTAGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("followed_hashtags");
 
-/// Diagnostic audit trail for Willow protocol migration.
-/// Tracks every write to `ITEMS_TABLE` and verifies that the storage key
-/// and Willow path are consistent. Used for debugging sync issues.
-pub(crate) const WILLOW_WRITE_PARITY_TABLE: TableDefinition<&str, &str> = TableDefinition::new("willow_write_parity");
-
 /// Known P2P peers (Iroh nodes), keyed by node_id (public key).
 /// See `peers.rs` for CRUD operations and the `PeerInfo` struct.
 pub(crate) const PEERS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("peers");
@@ -209,7 +204,6 @@ impl DbManager {
             let _ = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
-            let _ = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(COLLAB_DOCS_TABLE).map_err(|e| e.to_string())?;
             let _ = write_txn.open_table(AP_ACTORS_TABLE).map_err(|e| e.to_string())?;
@@ -312,7 +306,7 @@ impl DbManager {
     /// Nuclear option: deletes ALL user data across all tables.
     ///
     /// Wipes posts, messages, contacts, conversations, vault items, hashtags,
-    /// parity entries, peers, and profile layouts. Returns total count of all
+    /// peers, and profile layouts. Returns total count of all
     /// deleted records. Each table is deleted and immediately recreated as empty.
     ///
     /// **Does NOT delete**: Groups, topics, group posts, AP actors, guestbook, collab docs.
@@ -334,8 +328,6 @@ impl DbManager {
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         let hashtags = read_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
-        let parity = read_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?
-            .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         let peers = read_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?
             .len().map_err(|e: redb::StorageError| e.to_string())? as usize;
         let profile_layouts = read_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?
@@ -351,7 +343,6 @@ impl DbManager {
             write_txn.delete_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
-            write_txn.delete_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(PEERS_TABLE).map_err(|e| e.to_string())?;
             write_txn.delete_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
 
@@ -362,13 +353,12 @@ impl DbManager {
             write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(VAULT_MESSAGES_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(FOLLOWED_HASHTAGS_TABLE).map_err(|e| e.to_string())?;
-            write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(PEERS_TABLE).map_err(|e| e.to_string())?;
             write_txn.open_table(PROFILE_LAYOUT_TABLE).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
 
-        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + parity + peers + profile_layouts)
+        Ok(posts + messages + contacts + convos + items + vault_messages + hashtags + peers + profile_layouts)
     }
 
     /// Returns the total number of posts in the legacy `posts` table.

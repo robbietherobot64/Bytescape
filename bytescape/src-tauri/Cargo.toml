@@ -20,7 +20,6 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
-willow = ["dep:willow_25"]
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "unstable"] }
@@ -62,7 +61,6 @@ argon2 = "0.5"
 base64 = "0.22"
 data-encoding = "2.10"
 bs58 = "0.5"
-willow_25 = { version = "0.1.1", optional = true }
 warp = { version = "0.4.2", features = ["server"] }
 tokio-stream = { version = "0.1.18", features = ["net"] }
 yrs = "0.25"

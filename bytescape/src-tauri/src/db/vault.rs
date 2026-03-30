@@ -31,12 +31,6 @@
 //! every item from disk on each feed load, we cache lightweight
 //! `BytescapeItemHeader` objects in memory. The cache is invalidated on any write.
 //!
-//! ### Willow Write Parity (Diagnostic System)
-//! Every write to the items table also creates an audit entry in the
-//! `WILLOW_WRITE_PARITY_TABLE`. This tracks whether the storage key and
-//! the Willow protocol path are consistent — used for debugging P2P sync
-//! issues during the migration to Willow-based storage.
-//!
 //! ### Syndication Dedup
 //! When a user composes a post locally and syndicates it to Bluesky, the
 //! local copy and the API-imported copy are different records. The
@@ -45,7 +39,7 @@
 //!
 //! ## Related Files
 //! - `models/mod.rs` — `BytescapeItem`, `BytescapeItemHeader`, `BytescapeType`
-//! - `db/mod.rs` — `ITEMS_TABLE` and `WILLOW_WRITE_PARITY_TABLE` constants
+//! - `db/mod.rs` — `ITEMS_TABLE` constant
 //! - `commands/vault.rs` — Tauri commands that call these methods
 //! - `connectors/bluesky.rs` — Creates items from Bluesky API responses
 
@@ -63,7 +57,7 @@ impl DbManager {
     /// importing the same Bluesky post twice won't create duplicates.
     ///
     /// **Side effects**:
-    /// - Writes to `ITEMS_TABLE` and `WILLOW_WRITE_PARITY_TABLE`
+    /// - Writes to `ITEMS_TABLE`
     /// - Invalidates the header cache (next feed load will rebuild from disk)
     pub async fn save_item(&self, item: &BytescapeItem) -> Result<bool, String> {
         let serialized = serde_json::to_string(item).map_err(|e| e.to_string())?;
@@ -85,18 +79,10 @@ impl DbManager {
             return Ok(false); // not new
         }
 
-        let parity = Self::build_willow_write_parity_entry(item, "save", &key);
-        let parity_key = Self::willow_parity_storage_key(&parity);
-        let parity_serialized = serde_json::to_string(&parity).map_err(|e| e.to_string())?;
-
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
             table.insert(key.as_str(), serialized.as_str()).map_err(|e| e.to_string())?;
-            drop(table);
-
-            let mut parity_table = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
-            parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
         self.invalidate_header_cache().await;
@@ -117,162 +103,24 @@ impl DbManager {
         }
     }
 
-    /// Computes the storage key for a Willow write-parity audit entry.
-    /// Format: `"timestamp:uuid"` — ensures uniqueness and chronological ordering.
-    fn willow_parity_storage_key(entry: &WillowWriteParityEntry) -> String {
-        format!("{}:{}", entry.written_at, entry.id)
-    }
-
-    /// Builds a diagnostic audit record for every vault write operation.
-    ///
-    /// Records the item's storage key, Willow path, and whether they match
-    /// the canonical expected values. This helps detect sync inconsistencies
-    /// between the local redb storage and the Willow P2P layer.
-    fn build_willow_write_parity_entry(item: &BytescapeItem, write_mode: &str, legacy_key: &str) -> WillowWriteParityEntry {
-        let expected_legacy_key = Self::item_storage_key(item);
-        let canonical_path = canonical_willow_path(item);
-        let willow_path = item.path.trim().to_string();
-        let written_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        WillowWriteParityEntry {
-            id: uuid::Uuid::new_v4().to_string(),
-            written_at,
-            write_mode: write_mode.to_string(),
-            item_id: item.id.clone(),
-            source: item.source.clone(),
-            legacy_key: legacy_key.to_string(),
-            expected_legacy_key: expected_legacy_key.clone(),
-            legacy_key_matches: legacy_key == expected_legacy_key,
-            willow_path: willow_path.clone(),
-            canonical_path: canonical_path.clone(),
-            path_present: !willow_path.is_empty(),
-            path_matches_canonical: !willow_path.is_empty() && willow_path == canonical_path,
-        }
-    }
-
     /// Saves a vault item, overwriting if it already exists (unconditional upsert).
     ///
     /// Unlike `save_item()` which skips duplicates, this always writes. Used when
     /// updating an existing item (e.g. adding a like, updating share_history).
-    /// Also writes a parity audit entry and invalidates the header cache.
+    /// Invalidates the header cache.
     pub async fn upsert_item(&self, item: &BytescapeItem) -> Result<(), String> {
         let serialized = serde_json::to_string(item).map_err(|e| e.to_string())?;
         let key = Self::item_storage_key(item);
-        let parity = Self::build_willow_write_parity_entry(item, "upsert", &key);
-        let parity_key = Self::willow_parity_storage_key(&parity);
-        let parity_serialized = serde_json::to_string(&parity).map_err(|e| e.to_string())?;
 
         let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
         {
             let mut table = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
             table.insert(key.as_str(), serialized.as_str()).map_err(|e| e.to_string())?;
-            drop(table);
-
-            let mut parity_table = write_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
-            parity_table.insert(parity_key.as_str(), parity_serialized.as_str()).map_err(|e| e.to_string())?;
         }
         write_txn.commit().map_err(|e| e.to_string())?;
         self.invalidate_header_cache().await;
         Ok(())
-    }
-
-    // ─── Willow Write Parity (Diagnostics) ─────────────────────────────
-
-    /// Generates a diagnostic report about storage consistency.
-    ///
-    /// Scans both the parity table and the items table to produce statistics:
-    /// - How many writes were saves vs. upserts
-    /// - How many items have mismatched storage keys
-    /// - How many items are missing Willow paths
-    /// - Coverage ratio (what % of items have a Willow path)
-    ///
-    /// This is exposed as a Tauri command for debugging sync issues.
-    pub async fn get_willow_write_parity_report(&self) -> Result<WillowWriteParityReport, String> {
-        let db = self.db.read().await;
-        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
-        let table = read_txn.open_table(WILLOW_WRITE_PARITY_TABLE).map_err(|e| e.to_string())?;
-        let items_table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
-
-        let mut total_writes = 0usize;
-        let mut save_writes = 0usize;
-        let mut upsert_writes = 0usize;
-        let mut mismatched_legacy_keys = 0usize;
-        let mut missing_paths = 0usize;
-        let mut mismatched_paths = 0usize;
-        let mut last_written_at: Option<u64> = None;
-        let mut total_items = 0usize;
-        let mut items_with_path = 0usize;
-        let mut items_missing_path = 0usize;
-        let mut items_matching_canonical_path = 0usize;
-        let mut items_mismatched_canonical_path = 0usize;
-
-        for row in table.iter().map_err(|e| e.to_string())? {
-            let (_key, value) = row.map_err(|e| e.to_string())?;
-            let entry: WillowWriteParityEntry = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-
-            total_writes += 1;
-            match entry.write_mode.as_str() {
-                "save" => save_writes += 1,
-                "upsert" => upsert_writes += 1,
-                _ => {}
-            }
-
-            if !entry.legacy_key_matches {
-                mismatched_legacy_keys += 1;
-            }
-            if !entry.path_present {
-                missing_paths += 1;
-            } else if !entry.path_matches_canonical {
-                mismatched_paths += 1;
-            }
-
-            last_written_at = Some(last_written_at.map_or(entry.written_at, |current| current.max(entry.written_at)));
-        }
-
-        for row in items_table.iter().map_err(|e| e.to_string())? {
-            let (_key, value) = row.map_err(|e| e.to_string())?;
-            let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
-            total_items += 1;
-
-            if item.path.trim().is_empty() {
-                items_missing_path += 1;
-                continue;
-            }
-
-            items_with_path += 1;
-            let canonical_path = canonical_willow_path(&item);
-            if item.path == canonical_path {
-                items_matching_canonical_path += 1;
-            } else {
-                items_mismatched_canonical_path += 1;
-            }
-        }
-
-        let parity_coverage_ratio = if total_items == 0 {
-            1.0
-        } else {
-            (items_with_path as f64) / (total_items as f64)
-        };
-
-        Ok(WillowWriteParityReport {
-            total_writes,
-            save_writes,
-            upsert_writes,
-            mismatched_legacy_keys,
-            missing_paths,
-            mismatched_paths,
-            last_written_at,
-            total_items,
-            items_with_path,
-            items_missing_path,
-            items_matching_canonical_path,
-            items_mismatched_canonical_path,
-            parity_coverage_ratio,
-        })
     }
 
     // ─── Single-Item Retrieval ──────────────────────────────────────────

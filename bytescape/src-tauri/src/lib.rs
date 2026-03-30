@@ -637,7 +637,6 @@ pub fn run() {
             commands::import::commit_memories,
             commands::import::import_bluesky_posts,
             commands::import::migrate_willow_paths,
-            commands::import::get_willow_write_parity_report,
             commands::import::get_timeline,
             commands::import::get_author_feed,
             commands::feed_aggregation::get_timeline_unified,

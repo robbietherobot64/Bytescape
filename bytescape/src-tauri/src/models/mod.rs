@@ -263,45 +263,6 @@ pub struct VaultStats {
     pub media_count: usize,
 }
 
-/// A single audit record from the Willow write-parity check.
-/// Willow is the data sync protocol — this tracks whether vault items
-/// were correctly written to the Willow store (for P2P sync).
-/// Used during development to catch sync mismatches.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct WillowWriteParityEntry {
-    pub id: String,
-    pub written_at: u64,
-    pub write_mode: String,
-    pub item_id: String,
-    pub source: String,
-    pub legacy_key: String,
-    pub expected_legacy_key: String,
-    pub legacy_key_matches: bool,
-    pub willow_path: String,
-    pub canonical_path: String,
-    pub path_present: bool,
-    pub path_matches_canonical: bool,
-}
-
-/// Aggregated report of Willow write-parity across all vault items.
-/// Shows how many items are correctly synced vs. mismatched.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct WillowWriteParityReport {
-    pub total_writes: usize,
-    pub save_writes: usize,
-    pub upsert_writes: usize,
-    pub mismatched_legacy_keys: usize,
-    pub missing_paths: usize,
-    pub mismatched_paths: usize,
-    pub last_written_at: Option<u64>,
-    pub total_items: usize,
-    pub items_with_path: usize,
-    pub items_missing_path: usize,
-    pub items_matching_canonical_path: usize,
-    pub items_mismatched_canonical_path: usize,
-    pub parity_coverage_ratio: f64,
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 5: BACKWARD-COMPATIBLE DESERIALIZERS
 // These custom deserializers handle old data formats gracefully.

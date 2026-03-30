@@ -10,19 +10,16 @@ use std::sync::Arc;
 use chrono::Datelike;
 use crate::blob_hash;
 
-#[cfg(feature = "willow")]
-use willow_25::{MCC25, MCL25, MPL25};
-
-#[cfg(not(feature = "willow"))]
+/// Max component length for Willow-style hierarchical paths.
 const MCL25: usize = 1024;
-#[cfg(not(feature = "willow"))]
+/// Max component count for Willow-style hierarchical paths.
 const MCC25: usize = 1024;
-#[cfg(not(feature = "willow"))]
+/// Max path length for Willow-style hierarchical paths.
 const MPL25: usize = 1024;
 
 use crate::error::BytescapeError;
 use crate::models::VaultMessage;
-use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, WillowWriteParityReport, Audience};
+use crate::db::{DbManager, BytescapeItem, BytescapeType, SyndicationStatus, Audience};
 use crate::models::classify_bluesky_post;
 use crate::connectors::{Source, facebook};
 use crate::sync::{Hash, SyncManager};
@@ -150,17 +147,6 @@ pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Re
         scanned,
         migrated,
     })
-}
-
-#[tauri::command]
-pub async fn get_willow_write_parity_report(state: State<'_, AppState>) -> std::result::Result<WillowWriteParityReport, String> {
-    let db_guard = state.db_manager.read().await;
-    let db = db_guard
-        .as_ref()
-        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
-
-    db.get_willow_write_parity_report().await
-        .map_err(|e| e.to_string())
 }
 
 /// Import a Facebook ZIP archive and parse its contents.
