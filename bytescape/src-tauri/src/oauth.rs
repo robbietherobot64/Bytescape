@@ -1,15 +1,48 @@
-//! Bluesky OAuth Authentication
+//! # oauth.rs — Bluesky OAuth Authentication (PKCE + DPoP)
 //!
-//! Implements AT Protocol OAuth (PKCE + DPoP + PAR) for native Bluesky login
-//! using the `atrium-oauth` crate. This replaces app-password auth as the
-//! primary login method while keeping app-password as a fallback.
+//! Implements AT Protocol OAuth for native Bluesky login using the `atrium-oauth`
+//! crate. This is the **recommended** authentication method (replacing app-passwords)
+//! because it never exposes the user's actual account password to Bytescape.
 //!
-//! Flow:
-//! 1. Frontend calls `start_bluesky_oauth(handle)` → gets auth URL
-//! 2. User authenticates in system browser
-//! 3. Browser redirects to local callback server (http://127.0.0.1:{port}/callback)
-//! 4. Callback server exchanges code for tokens via DPoP + PKCE
-//! 5. Session stored, Tauri event emitted → frontend updates
+//! ## How the OAuth Flow Works
+//! 1. User clicks "Log in with Bluesky" → frontend calls `start_bluesky_oauth(handle)`
+//! 2. Backend resolves the handle to a PDS and authorization server via DID resolution
+//! 3. Backend binds a local TCP callback server on port 28457 (or fallback ports)
+//! 4. Backend calls the authorization server to get an auth URL with PKCE challenge
+//! 5. The auth URL is returned to the frontend, which opens it in the system browser
+//! 6. User authenticates in the browser and approves the OAuth scopes
+//! 7. Browser redirects to `http://127.0.0.1:28457/callback?code=...&state=...`
+//! 8. The callback server exchanges the code for DPoP-bound tokens via PKCE
+//! 9. Session is stored (encrypted on disk + in-memory), event emitted to frontend
+//! 10. The callback server sends a success HTML page and shuts down after 2 seconds
+//!
+//! ## DPoP (Demonstration of Proof-of-Possession)
+//! Unlike simple Bearer tokens, DPoP tokens are bound to a cryptographic key.
+//! Each API request includes a DPoP proof header signed with the client's private key.
+//! This prevents token theft — even if someone intercepts the token, they can't use
+//! it without the corresponding private key. The `atrium-oauth` crate handles this
+//! transparently via its `send_xrpc()` method.
+//!
+//! ## Session Persistence
+//! OAuth sessions are stored in two places:
+//! - **`FileSessionStore`** (this module): Encrypted file (`oauth_sessions.enc`) that
+//!   atrium-oauth reads/writes via the `Store<Did, Session>` trait
+//! - **`EncryptedKeychain`** (keychain_encrypted.rs): Stores the sentinel JWT values
+//!   and the user's DID/handle for the rest of the app to detect auth state
+//!
+//! On app restart, `OAuthManager::restore_session()` reads the encrypted store and
+//! rebuilds a live `OAuthSession` with working DPoP credentials.
+//!
+//! ## Scopes Requested
+//! - `atproto` — Full AT Protocol access (read/write repos, upload blobs)
+//! - `transition:generic` — Generic transition scope for compatibility
+//! - `transition:chat.bsky` — Direct message access via Bluesky chat
+//!
+//! ## Related Files
+//! - `auth.rs` — The legacy app-password authentication (fallback)
+//! - `keychain_encrypted.rs` — Where the session sentinel and DID are stored
+//! - `lib.rs` — `xrpc_get()` / `xrpc_post_json()` which dispatch to OAuth when active
+//! - `commands/auth.rs` — `start_bluesky_oauth` and `cancel_bluesky_oauth` Tauri commands
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,11 +77,18 @@ const OAUTH_PREFERRED_PORT: u16 = 28457;
 /// All ports are registered in the OAuth client metadata's redirect_uris.
 const OAUTH_FALLBACK_PORTS: &[u16] = &[28458, 28459, 28460, 38457];
 
-// ─── DNS TXT Resolver via Cloudflare DNS-over-HTTPS (JSON API) ──────────────
-//
-// Avoids the `hickory-resolver` dependency by using Cloudflare's JSON DNS API.
-// Used by `AtprotoHandleResolver` to look up `_atproto.{handle}` TXT records.
+// ═══════════════════════════════════════════════════════════════════
+// DNS TXT RESOLVER
+// Resolves `_atproto.{handle}` TXT records via Cloudflare DNS-over-HTTPS.
+// This avoids pulling in the heavy `hickory-resolver` crate — we just
+// make an HTTPS request to Cloudflare's JSON DNS API.
+// ═══════════════════════════════════════════════════════════════════
 
+/// DNS TXT record resolver using Cloudflare's DNS-over-HTTPS JSON API.
+///
+/// Used by `AtprotoHandleResolver` to look up `_atproto.{handle}` records
+/// that map Bluesky handles to DIDs. For example, `_atproto.alice.bsky.social`
+/// might return `did=did:plc:abc123...`.
 pub(crate) struct CloudflareDnsTxtResolver {
     client: reqwest::Client,
 }
@@ -100,6 +140,13 @@ impl DnsTxtResolver for CloudflareDnsTxtResolver {
 const SESSION_FILE_NAME: &str = "oauth_sessions.enc";
 const SESSION_SALT_LEN: usize = 16;
 const SESSION_NONCE_LEN: usize = 12;
+
+// ═══════════════════════════════════════════════════════════════════
+// ENCRYPTED SESSION STORE
+// Implements atrium-oauth's `Store<Did, Session>` trait with encrypted
+// file-backed persistence. Similar encryption scheme to EncryptedKeychain
+// (Argon2id + ChaCha20-Poly1305) but tailored for atrium's session format.
+// ═══════════════════════════════════════════════════════════════════
 
 /// File-backed session store with at-rest encryption.
 ///
@@ -279,10 +326,12 @@ impl Store<Did, Session> for FileSessionStore {
 
 impl SessionStore for FileSessionStore {}
 
-// ─── Concrete Type Aliases ──────────────────────────────────────────────────
-//
-// The atrium-oauth crate is heavily generic. These aliases pin the concrete
-// types for our desktop app configuration.
+// ═══════════════════════════════════════════════════════════════════
+// CONCRETE TYPE ALIASES
+// The atrium-oauth crate is heavily generic. These aliases pin the
+// concrete implementations for our desktop app — HTTPS client, DID
+// resolver, handle resolver, session store, and state store.
+// ═══════════════════════════════════════════════════════════════════
 
 type OAuthHttp = DefaultHttpClient;
 type OAuthDidResolver = CommonDidResolver<OAuthHttp>;
@@ -303,10 +352,18 @@ type ConcreteOAuthSession = OAuthSession<
     FileSessionStore,
 >;
 
-// ─── OAuth Manager ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// OAUTH MANAGER
+// The main public interface for OAuth operations. Stored in `AppState`
+// and used by Tauri commands and the XRPC helpers in `lib.rs`.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Manages the Bluesky OAuth lifecycle: authorization, callback handling,
-/// and session storage. Stored in `AppState`.
+/// session storage, and authenticated API requests.
+///
+/// Stored in `AppState` and shared across all Tauri commands. The `session`
+/// field holds the live `OAuthSession` after successful authentication —
+/// this is what provides DPoP-authenticated API calls.
 pub struct OAuthManager {
     client: Arc<ConcreteOAuthClient>,
     callback_shutdown: Mutex<Option<oneshot::Sender<()>>>,
@@ -450,6 +507,11 @@ impl OAuthManager {
 
         Ok(url)
     }
+
+    // ─── Callback Server (localhost TCP) ───────────────────────────────
+    // A minimal HTTP server that listens for the browser redirect after
+    // the user authenticates. Parses the OAuth callback params, exchanges
+    // the code for tokens, stores the session, and emits a Tauri event.
 
     /// Try binding to the preferred port, then fallback ports.
     ///
@@ -765,6 +827,8 @@ impl OAuthManager {
         self.session.read().await.is_some()
     }
 
+    // ─── Session Lifecycle ───────────────────────────────────────────
+
     /// Get the user's PDS URL from the active OAuth session.
     ///
     /// The `OAuthSession` implements `XrpcClient` whose `base_uri()` returns
@@ -781,6 +845,11 @@ impl OAuthManager {
 
         Ok(session.base_uri())
     }
+
+    // ─── Authenticated XRPC API Calls ────────────────────────────────
+    // These methods make DPoP-authenticated requests to the Bluesky API.
+    // They clone the Arc<OAuthSession> and drop the lock BEFORE the network
+    // call, allowing concurrent requests from different Tauri commands.
 
     /// Make an authenticated XRPC GET request using `send_xrpc` which properly
     /// handles DPoP Authorization headers, proof generation, and automatic
@@ -880,6 +949,10 @@ impl OAuthManager {
         }
     }
 
+    // ─── Legacy URL-Based API Methods ────────────────────────────────
+    // These accept full XRPC URLs (from the app-password code path) and
+    // extract the NSID to delegate to the DPoP-authenticated methods above.
+
     /// Legacy authenticated_get — delegates to xrpc_get by parsing the URL.
     ///
     /// Callers pass a full URL like `https://pds.example.com/xrpc/app.bsky.feed.getTimeline?limit=50`.
@@ -919,6 +992,11 @@ impl OAuthManager {
             Ok((after_xrpc.to_string(), None))
         }
     }
+
+    // ─── Chat Proxy Methods ────────────────────────────────────────────
+    // Bluesky DMs go through a separate chat service. These methods clone
+    // the OAuth session with a proxy header so the PDS forwards requests
+    // to `did:web:api.bsky.chat#bsky_chat`.
 
     /// Make a DPoP-authenticated GET request routed through the Bluesky chat proxy.
     ///
@@ -1021,7 +1099,11 @@ impl OAuthManager {
     }
 }
 
-/// Query parameters from the OAuth callback redirect.
+/// Query parameters extracted from the OAuth callback redirect URL.
+///
+/// The browser redirects to `http://127.0.0.1:{port}/callback?code=...&state=...&iss=...`
+/// after the user authenticates. If the user denied access, the `error` and
+/// `error_description` fields are populated instead of `code`.
 pub struct OAuthCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,
