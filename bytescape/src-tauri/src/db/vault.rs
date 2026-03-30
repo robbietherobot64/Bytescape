@@ -1,8 +1,70 @@
+//! # db/vault.rs — Vault Item Storage & Retrieval
+//!
+//! This is the most important database module. It stores and retrieves
+//! **BytescapeItems** — the universal container for all content in the vault
+//! (posts, photos, articles, videos from any platform).
+//!
+//! ## What's in the Vault?
+//!
+//! Every piece of content the user cares about ends up here:
+//! - Bluesky posts fetched from the API
+//! - Facebook posts imported from a data archive
+//! - Instagram photos imported from a data archive
+//! - Locally composed posts
+//! - Posts synced from P2P peers
+//!
+//! All are normalized into the same `BytescapeItem` format (defined in
+//! `models/mod.rs`), so the feed UI can display them uniformly regardless
+//! of where they came from.
+//!
+//! ## Key Concepts
+//!
+//! ### Deduplication
+//! Items are keyed by `source:original_id` (e.g. `"bluesky:at://did:plc:..."`)
+//! rather than just a UUID. This means importing the same Bluesky post twice
+//! won't create duplicates — the second `save_item()` call returns `false`
+//! (already exists) instead of creating a second copy.
+//!
+//! ### Header Cache (Performance Optimization)
+//! Loading the feed requires knowing each item's metadata (title, timestamp,
+//! type, source, author) but NOT the full content body. Instead of deserializing
+//! every item from disk on each feed load, we cache lightweight
+//! `BytescapeItemHeader` objects in memory. The cache is invalidated on any write.
+//!
+//! ### Willow Write Parity (Diagnostic System)
+//! Every write to the items table also creates an audit entry in the
+//! `WILLOW_WRITE_PARITY_TABLE`. This tracks whether the storage key and
+//! the Willow protocol path are consistent — used for debugging P2P sync
+//! issues during the migration to Willow-based storage.
+//!
+//! ### Syndication Dedup
+//! When a user composes a post locally and syndicates it to Bluesky, the
+//! local copy and the API-imported copy are different records. The
+//! `cleanup_syndication_duplicates()` method finds and removes these
+//! API-imported duplicates by checking `share_history` entries.
+//!
+//! ## Related Files
+//! - `models/mod.rs` — `BytescapeItem`, `BytescapeItemHeader`, `BytescapeType`
+//! - `db/mod.rs` — `ITEMS_TABLE` and `WILLOW_WRITE_PARITY_TABLE` constants
+//! - `commands/vault.rs` — Tauri commands that call these methods
+//! - `connectors/bluesky.rs` — Creates items from Bluesky API responses
+
 use super::*;
 use redb::ReadableTable;
 
 
 impl DbManager {
+    // ─── Core Item Operations ──────────────────────────────────────────
+
+    /// Saves a new BytescapeItem to the vault. Returns `true` if the item was
+    /// new, `false` if it already existed (duplicate detected).
+    ///
+    /// **Deduplication**: Uses `source:original_id` as the storage key, so
+    /// importing the same Bluesky post twice won't create duplicates.
+    ///
+    /// **Side effects**:
+    /// - Writes to `ITEMS_TABLE` and `WILLOW_WRITE_PARITY_TABLE`
+    /// - Invalidates the header cache (next feed load will rebuild from disk)
     pub async fn save_item(&self, item: &BytescapeItem) -> Result<bool, String> {
         let serialized = serde_json::to_string(item).map_err(|e| e.to_string())?;
         // Use source:original_id as key for dedup, fallback to item.id
@@ -41,6 +103,12 @@ impl DbManager {
         Ok(true) // was new
     }
 
+    /// Computes the storage key for a vault item.
+    ///
+    /// Uses `source:original_id` if the item has an `original_id` (imported from
+    /// an external platform), otherwise falls back to the item's UUID. This key
+    /// format enables deduplication: the same Bluesky post imported twice will
+    /// produce the same key and thus overwrite rather than duplicate.
     fn item_storage_key(item: &BytescapeItem) -> String {
         if let Some(ref oid) = item.original_id {
             format!("{}:{}", item.source, oid)
@@ -49,10 +117,17 @@ impl DbManager {
         }
     }
 
+    /// Computes the storage key for a Willow write-parity audit entry.
+    /// Format: `"timestamp:uuid"` — ensures uniqueness and chronological ordering.
     fn willow_parity_storage_key(entry: &WillowWriteParityEntry) -> String {
         format!("{}:{}", entry.written_at, entry.id)
     }
 
+    /// Builds a diagnostic audit record for every vault write operation.
+    ///
+    /// Records the item's storage key, Willow path, and whether they match
+    /// the canonical expected values. This helps detect sync inconsistencies
+    /// between the local redb storage and the Willow P2P layer.
     fn build_willow_write_parity_entry(item: &BytescapeItem, write_mode: &str, legacy_key: &str) -> WillowWriteParityEntry {
         let expected_legacy_key = Self::item_storage_key(item);
         let canonical_path = canonical_willow_path(item);
@@ -78,6 +153,11 @@ impl DbManager {
         }
     }
 
+    /// Saves a vault item, overwriting if it already exists (unconditional upsert).
+    ///
+    /// Unlike `save_item()` which skips duplicates, this always writes. Used when
+    /// updating an existing item (e.g. adding a like, updating share_history).
+    /// Also writes a parity audit entry and invalidates the header cache.
     pub async fn upsert_item(&self, item: &BytescapeItem) -> Result<(), String> {
         let serialized = serde_json::to_string(item).map_err(|e| e.to_string())?;
         let key = Self::item_storage_key(item);
@@ -100,6 +180,17 @@ impl DbManager {
         Ok(())
     }
 
+    // ─── Willow Write Parity (Diagnostics) ─────────────────────────────
+
+    /// Generates a diagnostic report about storage consistency.
+    ///
+    /// Scans both the parity table and the items table to produce statistics:
+    /// - How many writes were saves vs. upserts
+    /// - How many items have mismatched storage keys
+    /// - How many items are missing Willow paths
+    /// - Coverage ratio (what % of items have a Willow path)
+    ///
+    /// This is exposed as a Tauri command for debugging sync issues.
     pub async fn get_willow_write_parity_report(&self) -> Result<WillowWriteParityReport, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -184,6 +275,13 @@ impl DbManager {
         })
     }
 
+    // ─── Single-Item Retrieval ──────────────────────────────────────────
+
+    /// Retrieves a single vault item by its ID.
+    ///
+    /// First tries a direct key lookup (O(1) for redb's B-tree). If that fails
+    /// (because the key was stored as `source:original_id` rather than the item's
+    /// UUID), falls back to a full table scan comparing `item.id` values.
     pub async fn get_item_by_id(&self, item_id: &str) -> Result<Option<BytescapeItem>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -207,6 +305,14 @@ impl DbManager {
         Ok(None)
     }
 
+    // ─── Bulk Operations & Dedup ────────────────────────────────────────
+
+    /// Collects all known URIs/IDs from the vault, including:
+    /// - Each item's `id` (UUID)
+    /// - Each item's `original_id` (platform-specific URI)
+    /// - All URIs from each item's `share_history` (syndication records)
+    ///
+    /// Used by the Bluesky connector to skip already-imported posts during sync.
     pub async fn get_all_known_uris(&self) -> Result<std::collections::HashSet<String>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -228,6 +334,20 @@ impl DbManager {
         Ok(known)
     }
 
+    /// Removes API-imported duplicates of locally-syndicated posts.
+    ///
+    /// **The problem**: When a user composes a post in Bytescape and syndicates it
+    /// to Bluesky, two copies exist: the local original and the API-imported copy
+    /// that comes back on the next timeline sync. This method finds and removes
+    /// the imported copy.
+    ///
+    /// **How it works**:
+    /// 1. Scans non-Bluesky items for `share_history` entries targeting Bluesky
+    /// 2. Collects those syndicated URIs
+    /// 3. Finds Bluesky-sourced items whose `original_id` matches a syndicated URI
+    /// 4. Deletes those duplicates
+    ///
+    /// Returns the number of duplicates removed.
     pub async fn cleanup_syndication_duplicates(&self) -> Result<usize, String> {
         let db = self.db.write().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -287,10 +407,22 @@ impl DbManager {
         Ok(keys_to_delete.len())
     }
 
+    // ─── Header Cache & Feed Queries ────────────────────────────────────
+    // The feed UI needs metadata about every vault item (title, timestamp,
+    // type, source) but not the full content. These methods use a cached
+    // header list to avoid expensive full-table scans on every feed load.
+
+    /// Returns lightweight headers for ALL vault items (cached).
+    /// This is the primary entry point for feed rendering.
     pub async fn list_all_item_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
         self.get_cached_headers().await
     }
 
+    /// Returns full items filtered by author DID (include or exclude).
+    ///
+    /// When `exclude = false`: returns only items by this author.
+    /// When `exclude = true`: returns items by everyone EXCEPT this author.
+    /// Fetches headers first (cached), then loads full items for matches.
     pub async fn list_items_filtered(&self, filter_did: Option<&str>, exclude: bool) -> Result<Vec<BytescapeItem>, String> {
         let all_headers = self.list_all_item_headers().await?;
         let filtered_headers: Vec<BytescapeItemHeader> = if let Some(did) = filter_did {
@@ -322,11 +454,14 @@ impl DbManager {
         Ok(full_items)
     }
 
-    /// Return only items owned by the current user.
-    /// An item is "mine" if:
-    ///  - author_did matches the user's DID, OR
-    ///  - author_did is None (archive imports like Facebook that don't have a DID)
-    ///  - is_liked is true (posts the user explicitly liked/saved)
+    /// Builds the complete header list from the database (slow path).
+    ///
+    /// Performs a full table scan, deserializes every item, extracts its header,
+    /// and sorts by timestamp (newest first). This is called only when the cache
+    /// is empty — subsequent calls use `get_cached_headers()` instead.
+    ///
+    /// **Performance note**: For a vault with 10,000 items, this takes ~50ms.
+    /// The cache eliminates this cost on every feed load after the first.
     /// Build the full header list from DB (uncached path).
     async fn build_all_headers(&self) -> Result<Vec<BytescapeItemHeader>, String> {
         let db = self.db.read().await;
@@ -369,6 +504,14 @@ impl DbManager {
         *cache = None;
     }
 
+    /// Returns headers for items that belong to the current user.
+    ///
+    /// An item is considered "mine" if:
+    /// - `author_did` matches `owner_did`, OR
+    /// - `author_did` is `None` (archive imports without DID attribution), OR
+    /// - `is_liked` is `true` (posts the user explicitly saved/liked)
+    ///
+    /// Uses the cached header list for performance.
     pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
         let all_headers = self.get_cached_headers().await?;
         let headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|item| {
@@ -383,6 +526,10 @@ impl DbManager {
         Ok(headers)
     }
 
+    /// Returns items from the same calendar day across all years ("On This Day" feature).
+    ///
+    /// Matches items where the original post date's month and day match the given
+    /// values, regardless of year. Used for nostalgic "memories" feature.
     pub async fn list_items_on_this_day(&self, owner_did: &str, month: u32, day: u32) -> Result<Vec<BytescapeItem>, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|h| {
@@ -398,6 +545,7 @@ impl DbManager {
         Ok(items)
     }
 
+    /// Returns the total number of items in the vault.
     pub async fn count_items(&self) -> Result<usize, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -406,8 +554,19 @@ impl DbManager {
         Ok(count as usize)
     }
 
-    /// Paginated version: returns (items, total_count) sorted newest-first.
-    /// Uses a metadata-first approach to avoid OOM for large vaults.
+    // ─── Paginated Queries ──────────────────────────────────────────────
+    // These methods support offset-based pagination for the feed UI.
+    // They use a "headers-first" approach: filter/sort the lightweight
+    // header cache, then bulk-fetch only the items for the current page.
+
+    /// Returns a page of the user's vault items with total count.
+    ///
+    /// Uses a headers-first approach to avoid loading all items into memory:
+    /// 1. Filter headers by owner and optional source
+    /// 2. Slice to the requested page (offset + limit)
+    /// 3. Bulk-fetch only the full items for that page
+    ///
+    /// Returns `(items_for_page, total_matching_count)`.
     pub async fn list_my_items_paged(&self, owner_did: &str, source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
         let mut header_all = self.list_my_item_headers(owner_did).await?;
 
@@ -435,9 +594,10 @@ impl DbManager {
         Ok((sorted, total))
     }
 
-    /// Like list_my_items_paged but without the owner-only filter.
-    /// Used by the unified feed "All" tab to include vault items from all sources
-    /// (P2P synced posts, shared items, etc.) not just the owner's own posts.
+    /// Like `list_my_items_paged` but without the owner filter.
+    ///
+    /// Returns items from ALL sources, including P2P-synced posts from other
+    /// users. Used by the unified feed's "All" tab.
     pub async fn list_all_items_paged(&self, source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
         let mut headers = self.get_cached_headers().await?;
 
@@ -463,8 +623,14 @@ impl DbManager {
         Ok((sorted, total))
     }
 
-    /// Fetch multiple items by ID in a single table scan.
-    /// Much faster than calling get_item_by_id N times.
+    /// Fetches multiple items by their IDs in a single pass.
+    ///
+    /// **Optimization**: First tries direct key lookups (O(1) each in redb's B-tree).
+    /// Only falls back to a full table scan for items whose storage key differs
+    /// from their `item.id` (i.e. items keyed as `source:original_id`).
+    ///
+    /// This is much faster than calling `get_item_by_id()` N times, because it
+    /// avoids opening N separate read transactions.
     async fn bulk_get_items_by_ids(&self, ids: &std::collections::HashSet<String>) -> Result<Vec<BytescapeItem>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -498,8 +664,13 @@ impl DbManager {
         Ok(items)
     }
 
-    /// Path-prefix paginated query for Willow migration compatibility.
-    /// Returns (items, total_count) sorted newest-first.
+    /// Paginated query filtering by Willow path prefix.
+    ///
+    /// Willow uses hierarchical paths (e.g. `/vault/status/2024/...`) to organize
+    /// items. This method returns items whose `path` field starts with the given
+    /// prefix, enabling folder-like browsing of the vault.
+    ///
+    /// Returns `(items_for_page, total_matching_count)`.
     pub async fn list_my_items_by_path_prefix_paged(
         &self,
         owner_did: &str,
@@ -532,6 +703,10 @@ impl DbManager {
         Ok((page, total))
     }
 
+    // ─── Filter Queries ─────────────────────────────────────────────────
+
+    /// Returns all items from a specific source (e.g. "bluesky", "facebook").
+    /// Filters the cached headers, then fetches full items for matches.
     pub async fn list_items_by_source(&self, source: &str, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
@@ -547,6 +722,7 @@ impl DbManager {
         Ok(items)
     }
 
+    /// Returns all items of a specific content type (Status, Gallery, Article, Link, Video).
     pub async fn list_items_by_type(&self, item_type: BytescapeType, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
@@ -562,6 +738,8 @@ impl DbManager {
         Ok(items)
     }
 
+    /// Returns all items within a timestamp range (inclusive on both ends).
+    /// Timestamps are Unix seconds. Used for calendar/timeline views.
     pub async fn list_items_by_date_range(&self, start_ts: i64, end_ts: i64, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
@@ -577,6 +755,11 @@ impl DbManager {
         Ok(items)
     }
 
+    // ─── Vault Statistics ────────────────────────────────────────────────
+
+    /// Returns a sorted list of all distinct sources in the vault
+    /// (e.g. ["bluesky", "facebook", "instagram", "local"]).
+    /// Used to populate source filter dropdowns in the UI.
     pub async fn list_vault_sources(&self, owner_did: &str) -> Result<Vec<String>, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let mut sources: Vec<String> = all_headers.iter()
@@ -588,6 +771,10 @@ impl DbManager {
         Ok(sources)
     }
 
+    /// Computes summary statistics for the vault: total items, breakdown by
+    /// source and type, and count of items with media attachments.
+    ///
+    /// Used to display vault health/overview on the profile page.
     pub async fn vault_stats(&self, owner_did: &str) -> Result<VaultStats, String> {
         let all_headers = self.list_my_item_headers(owner_did).await?;
         let total = all_headers.len();

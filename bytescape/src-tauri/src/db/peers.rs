@@ -1,3 +1,23 @@
+//! # db/peers.rs — P2P Peer Identity Tracking
+//!
+//! Stores known peers on the Bytescape P2P network. Each peer is identified
+//! by their **Iroh NodeId** (a public key) and may optionally have a display
+//! name and a Bytescape DID.
+//!
+//! ## How Peers Work
+//!
+//! When two Bytescape users connect over the P2P network (powered by Iroh),
+//! they exchange node IDs. This module stores those identities locally so the
+//! app can:
+//! - Show a list of known peers in the UI
+//! - Track when each peer was last seen online
+//! - Remember which peers the user is following
+//!
+//! ## Related Files
+//! - `sync.rs` — P2P connection management (Iroh Docs, Blobs, Gossip)
+//! - `db/mod.rs` — `PEERS_TABLE` constant
+//! - `commands/peers.rs` — Tauri commands for peer management UI
+
 use super::*;
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};

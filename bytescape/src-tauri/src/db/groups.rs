@@ -1,4 +1,51 @@
-//! Redb CRUD operations for Topics, Groups, Members, GroupPosts, and TopicSubscriptions.
+//! # db/groups.rs — Community Groups & Topics (Database Operations)
+//!
+//! This module provides all database operations for Bytescape's community system:
+//! **Topics**, **Groups**, **Members**, **Group Posts**, and **Topic Subscriptions**.
+//!
+//! ## How Communities Work
+//!
+//! The community system has a hierarchy:
+//!
+//! ```text
+//!   Topic (category)          e.g. "Music", "Programming", "Art"
+//!     └── Group (community)   e.g. "Indie Rock Fans", "Rust Developers"
+//!           ├── Members       Users who joined, with roles (Owner/Mod/Member)
+//!           └── Group Posts   Vault items shared into the group
+//! ```
+//!
+//! - **Topics** are broad categories created by users. They can be nested
+//!   (a topic can have a `parent_id` pointing to another topic).
+//! - **Groups** live within a topic and have visibility levels:
+//!   - `Public` — anyone can see and join
+//!   - `Closed` — anyone can see, but joining requires approval
+//!   - `Private` — only visible to members (hidden from search)
+//! - **Members** have roles (`Owner`, `Moderator`, `Member`) and statuses
+//!   (`Active`, `Pending`, `Invited`, `Banned`).
+//! - **Group Posts** link existing vault items (BytescapeItems) into a group,
+//!   with optional pinning and cross-posting attribution.
+//!
+//! ## Key Design Patterns
+//!
+//! ### Composite Keys for Relations
+//! Since redb is a flat key-value store (no SQL JOINs), related records use
+//! composite string keys to enable prefix-based filtering:
+//! - Members: `"group_id:member_did"` → scan all keys starting with `"g1:"` to
+//!   get all members of group "g1"
+//! - Group Posts: `"group_id:timestamp:item_id"` → sorted by time within a group
+//! - Subscriptions: `"user_did:topic_id"` → scan prefix to get a user's subscriptions
+//!
+//! ### Read-then-Write Pattern
+//! Operations that need to modify a record (e.g. updating member count) first
+//! read the current value in a read transaction, then write the updated value
+//! in a separate write transaction. The read transaction must be dropped before
+//! the write transaction starts.
+//!
+//! ## Related Files
+//! - `models/groups.rs` — Data structures: `Topic`, `LocalGroup`, `GroupMember`,
+//!   `GroupPost`, `TopicSubscription`, `GroupVisibility`, `MemberRole`, `MemberStatus`
+//! - `db/mod.rs` — Table constants: `TOPICS_TABLE`, `GROUPS_TABLE`, etc.
+//! - `commands/groups.rs` — Tauri commands that call these database methods
 
 use super::*;
 use redb::ReadableTable;
@@ -6,7 +53,11 @@ use crate::models::groups::*;
 
 impl DbManager {
     // ─── Topics ────────────────────────────────────────────────────
+    // Topics are top-level categories that groups are organized under.
+    // They can be nested (a topic can have a parent_id pointing to another).
 
+    /// Saves a topic to the database, keyed by `topic.id`.
+    /// If a topic with this ID already exists, it will be overwritten (upsert).
     pub async fn save_topic(&self, topic: &Topic) -> Result<(), String> {
         let serialized = serde_json::to_string(topic).map_err(|e| e.to_string())?;
         let db = self.db.write().await;
@@ -19,6 +70,7 @@ impl DbManager {
         Ok(())
     }
 
+    /// Retrieves a single topic by ID, or `None` if it doesn't exist.
     pub async fn get_topic(&self, topic_id: &str) -> Result<Option<Topic>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -33,6 +85,7 @@ impl DbManager {
         }
     }
 
+    /// Returns every topic in the database. Used to build the topic tree in the UI.
     pub async fn get_all_topics(&self) -> Result<Vec<Topic>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -46,6 +99,10 @@ impl DbManager {
         Ok(topics)
     }
 
+    /// Deletes a topic by ID.
+    ///
+    /// **Warning**: This does NOT cascade-delete groups under this topic.
+    /// The caller (command layer) is responsible for cleaning up child groups first.
     pub async fn delete_topic(&self, topic_id: &str) -> Result<(), String> {
         let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
@@ -57,6 +114,7 @@ impl DbManager {
         Ok(())
     }
 
+    /// Returns the total number of topics in the database.
     pub async fn topics_count(&self) -> Result<usize, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -65,7 +123,11 @@ impl DbManager {
     }
 
     // ─── Topic Subscriptions ───────────────────────────────────────
+    // A user can subscribe to topics to receive updates when new groups
+    // are created or popular posts appear in that topic.
+    // Key format: "user_did:topic_id" (composite key for prefix scanning).
 
+    /// Subscribes a user to a topic. Key is `user_did:topic_id`.
     pub async fn save_topic_subscription(&self, sub: &TopicSubscription) -> Result<(), String> {
         let key = format!("{}:{}", sub.user_did, sub.topic_id);
         let serialized = serde_json::to_string(sub).map_err(|e| e.to_string())?;
@@ -79,6 +141,11 @@ impl DbManager {
         Ok(())
     }
 
+    /// Returns all topics a user is subscribed to.
+    ///
+    /// Scans the entire subscriptions table, filtering by keys that start
+    /// with `"user_did:"`. This is a linear scan — fine for typical user
+    /// counts (dozens of subscriptions), but would need indexing at scale.
     pub async fn get_topic_subscriptions(&self, user_did: &str) -> Result<Vec<TopicSubscription>, String> {
         let prefix = format!("{}:", user_did);
         let db = self.db.read().await;
@@ -95,6 +162,7 @@ impl DbManager {
         Ok(subs)
     }
 
+    /// Unsubscribes a user from a topic by removing the composite key.
     pub async fn delete_topic_subscription(&self, user_did: &str, topic_id: &str) -> Result<(), String> {
         let key = format!("{}:{}", user_did, topic_id);
         let db = self.db.write().await;
@@ -107,6 +175,8 @@ impl DbManager {
         Ok(())
     }
 
+    /// Checks if a specific user is subscribed to a specific topic.
+    /// O(1) lookup by composite key.
     pub async fn is_topic_subscribed(&self, user_did: &str, topic_id: &str) -> Result<bool, String> {
         let key = format!("{}:{}", user_did, topic_id);
         let db = self.db.read().await;
@@ -120,7 +190,12 @@ impl DbManager {
     }
 
     // ─── Groups ────────────────────────────────────────────────────
+    // Groups are communities that live within a topic. Each group has
+    // a visibility level (Public/Closed/Private), an owner, and optional
+    // rules and moderation settings.
 
+    /// Saves a group to the database, keyed by `group.group_id`.
+    /// Overwrites if it already exists (upsert behavior).
     pub async fn save_group(&self, group: &LocalGroup) -> Result<(), String> {
         let serialized = serde_json::to_string(group).map_err(|e| e.to_string())?;
         let db = self.db.write().await;
@@ -133,6 +208,7 @@ impl DbManager {
         Ok(())
     }
 
+    /// Retrieves a single group by its ID, or `None` if not found.
     pub async fn get_group(&self, group_id: &str) -> Result<Option<LocalGroup>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -147,6 +223,8 @@ impl DbManager {
         }
     }
 
+    /// Returns all groups that belong to a specific topic.
+    /// Full table scan with filter — fine for typical group counts.
     pub async fn get_groups_by_topic(&self, topic_id: &str) -> Result<Vec<LocalGroup>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -162,6 +240,7 @@ impl DbManager {
         Ok(groups)
     }
 
+    /// Returns every group in the database. Used for admin/debug views.
     pub async fn get_all_groups(&self) -> Result<Vec<LocalGroup>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -175,6 +254,11 @@ impl DbManager {
         Ok(groups)
     }
 
+    /// Searches groups by name or description (case-insensitive substring match).
+    ///
+    /// **Privacy**: Private groups are excluded from search results — they are
+    /// only visible to their members. Public and Closed groups are discoverable.
+    /// Returns at most 50 results to prevent UI overload.
     pub async fn search_groups(&self, query: &str) -> Result<Vec<LocalGroup>, String> {
         let query_lower = query.to_lowercase();
         let db = self.db.read().await;
@@ -200,6 +284,9 @@ impl DbManager {
         Ok(results)
     }
 
+    /// Deletes a group by ID. Does NOT cascade to members or posts —
+    /// the caller must also call `delete_all_group_members()` and
+    /// `delete_all_group_posts()` to fully clean up.
     pub async fn delete_group(&self, group_id: &str) -> Result<(), String> {
         let db = self.db.write().await;
         let write_txn = db.begin_write().map_err(|e| e.to_string())?;
@@ -211,6 +298,11 @@ impl DbManager {
         Ok(())
     }
 
+    /// Adjusts the group's `member_count` by a delta (+1 for join, -1 for leave).
+    ///
+    /// Uses read-then-write pattern: reads the current group, modifies the count
+    /// in memory, then writes the updated group back. Uses `saturating_add`/`sub`
+    /// so the count never wraps around to negative or overflows.
     pub async fn update_group_member_count(&self, group_id: &str, delta: i32) -> Result<(), String> {
         let db = self.db.write().await;
         // Read current group
@@ -243,7 +335,13 @@ impl DbManager {
     }
 
     // ─── Group Members ─────────────────────────────────────────────
+    // Membership records track who belongs to which group, their role
+    // (Owner/Moderator/Member), and their status (Active/Pending/Invited/Banned).
+    // Key format: "group_id:member_did" — composite key for prefix scanning.
 
+    /// Saves a group membership record. Key is `group_id:member_did`.
+    /// Used for both creating new memberships and updating existing ones
+    /// (e.g. changing role from Member to Moderator, or status from Pending to Active).
     pub async fn save_group_member(&self, member: &GroupMember) -> Result<(), String> {
         let key = format!("{}:{}", member.group_id, member.member_did);
         let serialized = serde_json::to_string(member).map_err(|e| e.to_string())?;
@@ -257,6 +355,8 @@ impl DbManager {
         Ok(())
     }
 
+    /// Looks up a specific member's record in a group. O(1) key lookup.
+    /// Returns `None` if the user is not a member (or was never added).
     pub async fn get_group_member(&self, group_id: &str, member_did: &str) -> Result<Option<GroupMember>, String> {
         let key = format!("{}:{}", group_id, member_did);
         let db = self.db.read().await;
@@ -272,6 +372,8 @@ impl DbManager {
         }
     }
 
+    /// Returns all members of a group (any status: active, pending, invited, banned).
+    /// Scans the table for keys starting with `"group_id:"`.
     pub async fn get_group_members(&self, group_id: &str) -> Result<Vec<GroupMember>, String> {
         let prefix = format!("{}:", group_id);
         let db = self.db.read().await;
@@ -288,6 +390,10 @@ impl DbManager {
         Ok(members)
     }
 
+    /// Returns the IDs of all groups a user is an **active** member of.
+    ///
+    /// Only includes memberships with `status == Active` — not Pending,
+    /// Invited, or Banned. Full table scan with filter.
     pub async fn get_user_groups(&self, user_did: &str) -> Result<Vec<String>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -303,6 +409,8 @@ impl DbManager {
         Ok(group_ids)
     }
 
+    /// Removes a single member from a group. Used for both voluntary leave
+    /// and moderator-initiated kicks/rejections.
     pub async fn delete_group_member(&self, group_id: &str, member_did: &str) -> Result<(), String> {
         let key = format!("{}:{}", group_id, member_did);
         let db = self.db.write().await;
@@ -346,7 +454,16 @@ impl DbManager {
     }
 
     // ─── Group Posts ───────────────────────────────────────────────
+    // Group posts are vault items (BytescapeItems) that have been shared
+    // into a group. The post itself doesn't duplicate the item — it just
+    // records the link (item_id) plus metadata (who shared it, when, pinned?).
+    //
+    // Key format: "group_id:timestamp(zero-padded):item_id"
+    // The zero-padded timestamp (20 digits) ensures lexicographic ordering
+    // matches chronological ordering within a group.
 
+    /// Links a vault item into a group by creating a GroupPost record.
+    /// The key includes a zero-padded timestamp for chronological ordering.
     pub async fn save_group_post(&self, post: &GroupPost) -> Result<(), String> {
         let key = format!("{}:{:020}:{}", post.group_id, post.posted_at, post.item_id);
         let serialized = serde_json::to_string(post).map_err(|e| e.to_string())?;
@@ -360,6 +477,16 @@ impl DbManager {
         Ok(())
     }
 
+    /// Returns posts in a group, sorted with pinned posts first, then newest.
+    ///
+    /// Supports cursor-based pagination: if `cursor` is provided (as a timestamp
+    /// string), only posts older than that timestamp are returned. This lets the
+    /// UI load more posts as the user scrolls down.
+    ///
+    /// # Arguments
+    /// * `group_id` — Which group to fetch posts from
+    /// * `limit` — Maximum number of posts to return
+    /// * `cursor` — Optional timestamp cursor for pagination (posts older than this)
     pub async fn get_group_posts(&self, group_id: &str, limit: usize, cursor: Option<String>) -> Result<Vec<GroupPost>, String> {
         let prefix = format!("{}:", group_id);
         let db = self.db.read().await;
@@ -396,6 +523,9 @@ impl DbManager {
         Ok(posts.into_iter().take(limit).collect())
     }
 
+    /// Removes a post from a group. Must scan to find the exact key because
+    /// the key includes a timestamp that the caller doesn't know.
+    /// Matches keys starting with `"group_id:"` and ending with `":item_id"`.
     pub async fn delete_group_post(&self, group_id: &str, item_id: &str) -> Result<(), String> {
         let prefix = format!("{}:", group_id);
         let suffix = format!(":{}", item_id);
@@ -456,6 +586,8 @@ impl DbManager {
         Ok(count)
     }
 
+    /// Checks whether a specific vault item has been posted to a specific group.
+    /// Scans keys matching the group_id prefix and item_id suffix.
     pub async fn is_item_in_group(&self, group_id: &str, item_id: &str) -> Result<bool, String> {
         let prefix = format!("{}:", group_id);
         let suffix = format!(":{}", item_id);
@@ -511,6 +643,9 @@ impl DbManager {
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────
+// Comprehensive test suite covering all group/topic CRUD operations,
+// membership workflows (join, approve, reject, ban, invite), post
+// pinning, role changes, and member count management.
 
 #[cfg(test)]
 mod tests {

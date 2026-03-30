@@ -1,8 +1,47 @@
+//! # db/chat.rs — Chat & Messaging Storage
+//!
+//! Handles all database operations for Bytescape's messaging system:
+//!
+//! - **Messages** — Individual chat messages between peers (P2P or local),
+//!   stored in `MESSAGES_TABLE`, keyed by message ID.
+//! - **Conversations** — Metadata about a chat thread (participants, last
+//!   message timestamp), stored in `CONVERSATIONS_TABLE`, keyed by convo ID.
+//! - **Vault Messages** — Direct messages imported from external platforms
+//!   (Bluesky DMs, Mastodon DMs), stored in `VAULT_MESSAGES_TABLE` with
+//!   composite key `owner_did:source:message_id`.
+//!
+//! ## Messages vs. Vault Messages
+//!
+//! **Messages** are native Bytescape P2P messages — sent between peers using
+//! Iroh. They live in `MESSAGES_TABLE`.
+//!
+//! **Vault Messages** are imported copies of DMs from external platforms.
+//! They're read-only (you can't reply through Bytescape) and exist so the
+//! user can search and browse their full message history in one place.
+//! They live in `VAULT_MESSAGES_TABLE`.
+//!
+//! ## Multi-DID Support
+//!
+//! A user can have multiple identities (Bluesky DID, Mastodon acct URI,
+//! web DID, did:key, etc.). The `list_vault_messages_multi()` method accepts
+//! a list of all known DIDs and matches messages owned by ANY of them.
+//!
+//! ## Related Files
+//! - `models/mod.rs` — `Message`, `Conversation`, `VaultMessage` structs
+//! - `db/mod.rs` — Table constants
+//! - `commands/chat.rs` — Tauri commands for the chat UI
+//! - `sync.rs` — P2P message delivery via Iroh
+
 use super::*;
 use redb::ReadableTable;
 
 
 impl DbManager {
+    // ─── P2P Chat Messages ─────────────────────────────────────────────
+
+    /// Saves a chat message to the `messages` table, keyed by `msg.id`.\n    ///
+    /// Used for P2P messages sent/received via Iroh. The message must have
+    /// a `conversation_id` linking it to a conversation record.
     pub async fn save_message(&self, msg: &Message) -> Result<(), String> {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
 
@@ -16,7 +55,8 @@ impl DbManager {
         Ok(())
     }
 
-    /// Blocking version of save_message for use in non-async contexts
+    /// Blocking (non-async) version of `save_message()` for use in synchronous
+    /// contexts like Iroh's gossip callback handler, which can't use `.await`.
     pub fn blocking_save_message(&self, msg: &Message) -> Result<(), String> {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
 
@@ -30,6 +70,10 @@ impl DbManager {
         Ok(())
     }
 
+    /// Returns all messages in a conversation, sorted oldest-first (chronological).
+    ///
+    /// Performs a full table scan with filter (since messages aren't keyed by
+    /// conversation ID). Fine for typical chat histories (hundreds of messages).
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -52,6 +96,9 @@ impl DbManager {
         Ok(messages)
     }
 
+    // ─── Conversations ─────────────────────────────────────────────────
+
+    /// Saves or updates conversation metadata (participant list, last message, etc.).
     pub async fn save_conversation(&self, convo: &Conversation) -> Result<(), String> {
         let serialized = serde_json::to_string(convo).map_err(|e| e.to_string())?;
         let db = self.db.write().await;
@@ -64,6 +111,7 @@ impl DbManager {
         Ok(())
     }
 
+    /// Retrieves conversation metadata by ID, or `None` if not found.
     pub async fn get_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
@@ -78,6 +126,15 @@ impl DbManager {
         }
     }
 
+    // ─── Vault Messages (Imported DMs) ──────────────────────────────────
+
+    /// Saves a DM imported from an external platform (Bluesky, Mastodon).
+    ///
+    /// Returns `true` if the message was new, `false` if it already existed.
+    /// If the message exists but metadata has changed (sender handle, peer handle,
+    /// or peer DID), it updates the record and returns `false`.
+    ///
+    /// Key format: `owner_did:source:message_id` — enables per-owner filtering.
     pub async fn save_vault_message(&self, msg: &VaultMessage) -> Result<bool, String> {
         let serialized = serde_json::to_string(msg).map_err(|e| e.to_string())?;
         let owner_key = msg.owner_did.clone().unwrap_or_else(|| "unknown".to_string());
@@ -118,6 +175,8 @@ impl DbManager {
         Ok(is_new)
     }
 
+    /// Lists vault messages for a single owner DID, sorted newest-first.
+    /// Convenience wrapper around `list_vault_messages_multi()`.
     pub async fn list_vault_messages(&self, owner_did: Option<&str>) -> Result<Vec<VaultMessage>, String> {
         self.list_vault_messages_multi(owner_did.map(|d| vec![d.to_string()]).unwrap_or_default()).await
     }
@@ -149,7 +208,10 @@ impl DbManager {
         Ok(messages)
     }
 
-    /// Paginated version of list_vault_messages. Returns (messages, total_count).
+    /// Paginated version of vault message listing with optional conversation filter.
+    ///
+    /// Returns `(messages_for_page, total_matching_count)`. Supports filtering
+    /// by conversation ID to show a single DM thread.
     pub async fn list_vault_messages_paged(
         &self,
         owner_dids: &[String],
@@ -184,6 +246,7 @@ impl DbManager {
         Ok((page, total))
     }
 
+    /// Returns the total number of imported vault messages across all sources.
     pub async fn count_vault_messages(&self) -> Result<usize, String> {
         let db = self.db.read().await;
         let read_txn = db.begin_read().map_err(|e| e.to_string())?;
