@@ -1,66 +1,13 @@
-//! # lib.rs — Application Entry Point & State Management
-//!
-//! This is the heart of Bytescape's Rust backend. When the app starts, `run()`
-//! initializes everything: the encrypted keychain for storing secrets, the redb
-//! database for local data, the OAuth manager for Bluesky login, and the media
-//! server for serving images/videos to the UI. It then registers ~130 Tauri
-//! commands that the React frontend can call via IPC.
-//!
-//! ## How It Works
-//! 1. `main.rs` calls `run()` which creates a Tauri application builder
-//! 2. The `.setup()` closure runs at launch to:
-//!    a. Create the app data directory (`~/.local/share/com.bytescape.app/`)
-//!    b. Start a native HTTP media server on localhost (bypasses WebKitGTK bugs)
-//!    c. Initialize the encrypted keychain (generates master key on first run)
-//!    d. Run identity migrations (e.g., fixing fabricated `did:plc` identifiers)
-//!    e. Open the redb database and seed default topics if needed
-//!    f. Build `AppState` with all shared resources (keychain, DB, auth, etc.)
-//! 3. A background task restores the OAuth session if one was active last time
-//! 4. A sequential maintenance pipeline runs: media backfill → syndication
-//!    cleanup → blob consistency check
-//!
-//! ## Key Concepts
-//!
-//! ### Dual Auth Mode
-//! Bytescape supports two ways to log into Bluesky:
-//! - **App-password**: Simple JWT bearer tokens managed by `auth.rs`
-//! - **OAuth**: Modern PKCE + DPoP flow managed by `oauth.rs`
-//!
-//! The XRPC helper methods (`xrpc_get`, `xrpc_post_json`, etc.) transparently
-//! dispatch to the correct auth mode. The `OAUTH_SESSION_SENTINEL` value in the
-//! keychain signals which mode is active.
-//!
-//! ### Feed Cache
-//! API responses are cached in-memory with TTL to avoid hammering Bluesky's
-//! servers on every UI refresh. The cache is capped at 64 entries with 5-minute
-//! expiry and LRU eviction.
-//!
-//! ### Background Maintenance
-//! After startup settles (5s delay), a single sequential pipeline runs:
-//! - **Phase 1**: Backfill `media_mimes` for items with blobs but no MIME types
-//! - **Phase 2**: Remove duplicate syndicated items in the vault
-//! - **Phase 3**: Verify blob integrity — remove references to missing blobs
-//!
-//! ## Related Files
-//! - `main.rs` — The binary entry point that calls `run()`
-//! - `auth.rs` — App-password session creation and refresh
-//! - `oauth.rs` — OAuth PKCE + DPoP implementation
-//! - `keychain_encrypted.rs` — Encrypted credential storage
-//! - `db/mod.rs` — Database initialization and table definitions
-//! - `commands/` — All Tauri command implementations (130+ commands)
-//! - `media_server.rs` — Native HTTP server for media assets
+//! Bytescape Library
+//! 
+//! Main library entry point for the Bytescape Tauri application.
+//! This module sets up the application state and registers Tauri commands.
 
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 use iroh::Endpoint;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-
-// ═══════════════════════════════════════════════════════════════════
-// MODULE DECLARATIONS
-// Each `pub mod` exposes a sub-module that other crates (test-peer) can
-// import. Private `mod` declarations are internal-only.
-// ═══════════════════════════════════════════════════════════════════
 
 pub mod error;
 pub mod db;
@@ -85,13 +32,6 @@ pub mod oauth;
 mod traffic;
 use traffic::TrafficController;
 
-// ═══════════════════════════════════════════════════════════════════
-// CACHE INFRASTRUCTURE
-// In-memory caches that avoid redundant API calls. Used primarily for
-// feed data — the timeline doesn't need to be re-fetched every time
-// the user switches tabs.
-// ═══════════════════════════════════════════════════════════════════
-
 /// Cached API response with TTL.
 #[derive(Clone)]
 pub struct CachedResponse<T: Clone> {
@@ -110,19 +50,11 @@ impl<T: Clone> CachedResponse<T> {
 
 /// In-memory cache for feed API responses.
 /// Keyed by cache slot name, holds serialized JSON to avoid type-parameter sprawl.
-/// Capped at MAX_ENTRIES and auto-prunes expired entries to prevent unbounded growth.
 pub struct FeedCache {
     entries: tokio::sync::RwLock<std::collections::HashMap<String, CachedResponse<serde_json::Value>>>,
 }
 
 impl FeedCache {
-    /// Maximum number of entries before pruning. Generously sized for normal use
-    /// but prevents unbounded growth during long sessions with many cursor pages.
-    const MAX_ENTRIES: usize = 64;
-
-    /// Age after which entries are considered stale and eligible for pruning.
-    const PRUNE_AGE: std::time::Duration = std::time::Duration::from_secs(300);
-
     pub fn new() -> Self {
         Self { entries: tokio::sync::RwLock::new(std::collections::HashMap::new()) }
     }
@@ -133,22 +65,9 @@ impl FeedCache {
         map.get(key).filter(|c| c.is_fresh(max_age)).map(|c| c.data.clone())
     }
 
-    /// Store a JSON value in the cache. Prunes expired entries when capacity is reached.
+    /// Store a JSON value in the cache.
     pub async fn set(&self, key: &str, value: serde_json::Value) {
         let mut map = self.entries.write().await;
-        // Prune expired entries when we're at or over capacity
-        if map.len() >= Self::MAX_ENTRIES {
-            map.retain(|_, v| v.fetched_at.elapsed() < Self::PRUNE_AGE);
-        }
-        // If still over capacity after pruning, remove the oldest entry
-        if map.len() >= Self::MAX_ENTRIES {
-            if let Some(oldest_key) = map.iter()
-                .min_by_key(|(_, v)| v.fetched_at)
-                .map(|(k, _)| k.clone())
-            {
-                map.remove(&oldest_key);
-            }
-        }
         map.insert(key.to_string(), CachedResponse::new(value));
     }
 
@@ -166,56 +85,19 @@ impl FeedCache {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// APPLICATION STATE
-// The central struct shared by all Tauri commands. Everything a command
-// needs to do its work — auth tokens, database handle, P2P endpoint,
-// cache — lives here. Tauri automatically wraps this in an Arc so all
-// commands get a shared reference.
-// ═══════════════════════════════════════════════════════════════════
-
-/// Application-wide state shared across all Tauri commands.
-///
-/// This is the single source of truth for all backend resources. When the
-/// React frontend calls `invoke('some_command', ...)`, Tauri passes a
-/// reference to this struct (via `State<'_, AppState>`) to the command handler.
-///
-/// ## Thread Safety
-/// All fields are either `Send + Sync` (Arc, AtomicBool) or wrapped in a
-/// `Mutex`/`RwLock` for interior mutability. This allows ~130 commands to
-/// safely share state across Tauri's async runtime.
+/// Application-wide state shared across all commands
 pub struct AppState {
-    /// Handle to the Tauri application — used for emitting events to the frontend
-    /// and accessing the app data directory.
     pub app_handle: AppHandle,
-    /// The Iroh P2P network endpoint, initialized when the user sets up a node.
-    /// `None` until `setup_iroh_node` is called.
     pub endpoint: Mutex<Option<Endpoint>>,
-    /// Encrypted keychain for storing all sensitive data: session tokens, DIDs,
-    /// Iroh keys, linked accounts. See `keychain_encrypted.rs`.
     pub keychain: keychain_encrypted::EncryptedKeychain,
-    /// Legacy auth manager for Bluesky app-password login. See `auth.rs`.
     pub auth_manager: AuthManager,
-    /// The redb database handle. Wrapped in `Option` because it's initialized
-    /// during setup and `RwLock` for concurrent read access from commands.
     pub db_manager: Arc<tokio::sync::RwLock<Option<db::DbManager>>>,
-    /// Bluesky chat/API client for fetching social graph data, profiles, and DMs.
     pub chat_client: Arc<ChatClient>,
-    /// Iroh sync manager for P2P document synchronization and blob storage.
-    /// `None` until `setup_iroh_node` is called.
     pub sync_manager: Mutex<Option<Arc<sync::SyncManager>>>,
-    /// Iroh protocol router for handling incoming P2P connections.
-    /// `None` until `setup_iroh_node` is called.
     pub router: Mutex<Option<iroh::protocol::Router>>,
-    /// Rate limiter and traffic shaper for API calls.
     pub traffic_controller: Arc<TrafficController>,
-    /// Staging area for archive imports. When a user selects a ZIP file,
-    /// the parsed data is held here until they call `commit_memories`.
     pub pending_import: Mutex<Option<commands::import::ParseResult>>,
-    /// Port number for the native media server (localhost HTTP server that
-    /// serves images/videos to the webview, bypassing WebKitGTK protocol bugs).
     pub media_port: u16,
-    /// OAuth manager for Bluesky PKCE + DPoP authentication. See `oauth.rs`.
     pub oauth_manager: oauth::OAuthManager,
     /// Shared HTTP client for connection pooling across all API calls.
     /// Reusing a single client avoids redundant TLS handshakes per request.
@@ -227,27 +109,12 @@ pub struct AppState {
     pub feed_cache: FeedCache,
     /// Active FFmpeg processes tracked by URL hash for cancellation support.
     /// Frontend can call `cancel_video_resolve` when user scrolls past a video.
-    pub active_ffmpeg: Arc<tokio::sync::Mutex<std::collections::HashMap<String, u32>>>,
-    /// Semaphore limiting concurrent video resolve operations (FFmpeg) to 2.
-    /// Prevents the 32 GB memory spike when filtering feed by "Video".
-    pub video_semaphore: Arc<tokio::sync::Semaphore>,
-    /// Semaphore limiting concurrent blob resolution operations to 4.
-    /// Prevents memory explosion when video filter renders 15+ vault videos at once,
-    /// each calling get_media_blob simultaneously with full Iroh blob fetches.
-    pub blob_semaphore: Arc<tokio::sync::Semaphore>,
+    pub active_ffmpeg: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
 /// OAuth sessions manage their own DPoP-bound tokens via `OAuthManager::session`.
-/// When we see this value as the `access_jwt`, we know to route API calls through
-/// the OAuth path instead of using raw Bearer tokens.
 pub const OAUTH_SESSION_SENTINEL: &str = "oauth_session";
-
-// ═══════════════════════════════════════════════════════════════════
-// AUTH MODE DETECTION & TOKEN MANAGEMENT
-// These methods determine which auth mode is active (app-password vs
-// OAuth) and handle JWT lifecycle (expiry checks, automatic refresh).
-// ═══════════════════════════════════════════════════════════════════
 
 impl AppState {
     /// Check whether the current session was established via OAuth.
@@ -315,16 +182,6 @@ impl AppState {
     }
 
     // ─── Unified XRPC Helpers (OAuth + App-Password) ───────────────────────
-
-    // ═══════════════════════════════════════════════════════════════════
-    // UNIFIED XRPC HELPERS
-    // Every API call to Bluesky goes through one of these methods. They
-    // detect the active auth mode and dispatch accordingly:
-    // - App-password → raw Bearer JWT via BlueskyClient
-    // - OAuth → DPoP-bound tokens via OAuthManager::session
-    // This way, the 130+ Tauri commands don't need to care which auth
-    // mode is active — they just call `state.xrpc_get(...)`.
-    // ═══════════════════════════════════════════════════════════════════
 
     /// Get the user's DID from the keychain. Works for both auth modes.
     pub fn get_user_did(&self) -> Result<String, String> {
@@ -541,34 +398,9 @@ impl AppState {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// APPLICATION BOOTSTRAP
-// The `run()` function is the main entry point called from `main.rs`.
-// It builds the Tauri app, registers all commands, and initializes
-// every subsystem in the `.setup()` closure.
-// ═══════════════════════════════════════════════════════════════════
-
-/// Initialize and run the Bytescape application.
-///
-/// This is the top-level entry point called from `main.rs`. It:
-/// 1. Creates a Tauri builder and registers all plugins (dialog, filesystem, opener)
-/// 2. Registers ~130 Tauri commands grouped by domain (vault, auth, import, media, etc.)
-/// 3. Runs the `.setup()` closure which initializes all backend subsystems
-/// 4. Starts the event loop (blocking until the window is closed)
-///
-/// ## Subsystem Initialization Order (in `.setup()`)
-/// 1. App data directory creation
-/// 2. Media server startup (localhost HTTP for images/videos)
-/// 3. Encrypted keychain initialization (master key generation on first run)
-/// 4. Identity migrations (fix legacy identifier formats)
-/// 5. Database opening (redb) and topic seeding
-/// 6. Auth/OAuth/Chat/Traffic controller creation
-/// 7. `AppState` construction and registration with Tauri
-/// 8. Background OAuth session restore (500ms delay)
-/// 9. Background maintenance pipeline (5s delay)
-///
-/// ## Panics
-/// Panics if the Tauri runtime fails to start (e.g., no display server on Linux).
+/// Run the Bytescape application
+/// 
+/// This is the main entry point called from main.rs
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 
@@ -653,7 +485,6 @@ pub fn run() {
             // Media commands
             commands::media::store_media_blob,
             commands::media::get_media_blob,
-            commands::media::get_media_blob_display,
             commands::media::get_media_blob_bytes,
             commands::media::download_peer_blob,
             commands::media::resolve_hls_video,
@@ -787,28 +618,8 @@ pub fn run() {
             commands::groups::share_to_group,
             commands::groups::get_group_feed,
             commands::groups::get_groups_feed,
-            // Sprint v13 P1: Moderation
-            commands::groups::approve_member,
-            commands::groups::reject_member,
-            commands::groups::invite_member,
-            commands::groups::accept_invite,
-            commands::groups::ban_member,
-            commands::groups::set_member_role,
-            commands::groups::pin_group_post,
-            commands::groups::unpin_group_post,
-            commands::groups::remove_group_post,
-            commands::groups::get_pending_members,
-            // Sprint v13 P4: Lemmy Compatibility
-            commands::groups::discover_lemmy_communities,
-            commands::groups::follow_remote_community,
         ])
         .setup(|app| {
-            // ═══════════════════════════════════════════════════════════
-            // SETUP CLOSURE — runs once at app launch
-            // Initializes all subsystems in a specific order. Errors
-            // here are fatal — the app cannot start without these.
-            // ═══════════════════════════════════════════════════════════
-
             // Initialize application state
             let app_handle = app.handle().clone();
 
@@ -933,17 +744,12 @@ pub fn run() {
                     .unwrap_or_else(|_| reqwest::Client::new()),
                 session_restored: AtomicBool::new(false),
                 feed_cache: FeedCache::new(),
-                active_ffmpeg: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-                video_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
-                blob_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
+                active_ffmpeg: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             };
 
             app.manage(state);
 
-            // ─── Background Task 1: OAuth Session Restore ──────────────────
-            // If the user was logged in via OAuth last time, restore the
-            // session from the encrypted file store so they don't have to
-            // re-authenticate. Runs after a 500ms delay to let the UI render.
+            // Background: restore OAuth session if one was active before the app closed
             let restore_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -973,17 +779,105 @@ pub fn run() {
                 }
             });
 
-            // ─── Background Task 2: Sequential Maintenance Pipeline ─────
-            // Previously three parallel tasks (3s, 4s, 10s) that all scanned the item
-            // table concurrently, causing CPU spikes on startup. Now a single task that
-            // runs them in sequence: backfill → cleanup → consistency. One table scan
-            // is shared between backfill and consistency.
-            let maintenance_handle = app.handle().clone();
+            // Background: backfill media_mimes for existing items
+            let backfill_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Let startup, session restore, and UI render finish first
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                // Short delay to let the rest of setup complete
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let state = backfill_handle.state::<AppState>();
 
-                let state = maintenance_handle.state::<AppState>();
+                // Clone DbManager and SyncManager out of the locks so we don't
+                // hold them during the (potentially long) backfill loop.
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
+                        None => return,
+                    }
+                };
+                let sync = {
+                    let guard = state.sync_manager.lock().await;
+                    match guard.as_ref() {
+                        Some(s) => s.clone(),
+                        None => return,
+                    }
+                };
+
+                let item_headers = match db.list_all_item_headers().await {
+                    Ok(headers) => headers,
+                    Err(_) => return,
+                };
+                let mut updated = 0usize;
+                for h in item_headers {
+                    // Lightweight check before full fetch
+                    if h.media_blob_count == 0 { continue; }
+                    if h.media_blob_count == h.media_mimes_count { continue; }
+
+                    // Fetch full item only if it needs backfill
+                    let mut item = match db.get_item_by_id(&h.id).await {
+                        Ok(Some(item)) => item,
+                        _ => continue,
+                    };
+
+                    let mut mimes = Vec::with_capacity(item.media_blobs.len());
+                    for blob_ref in &item.media_blobs {
+                        let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
+                            Ok(h) => h,
+                            Err(_) => {
+                                mimes.push("application/octet-stream".to_string());
+                                continue;
+                            }
+                        };
+                        match sync.get_media(hash).await {
+                            Ok(data) => {
+                                mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+                            }
+                            Err(_) => mimes.push("application/octet-stream".to_string()),
+                        }
+                    }
+                    item.media_mimes = mimes;
+                    if db.upsert_item(&item).await.is_ok() {
+                        updated += 1;
+                    }
+
+                    // Yield between items to avoid starving other tasks
+                    tokio::task::yield_now().await;
+                }
+                if updated > 0 {
+                    println!("backfill_media_mimes: updated {} items on startup", updated);
+                }
+            });
+
+            // Background: clean up mis-imported syndicated duplicates
+            let cleanup_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Short delay to let the rest of setup complete
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                let state = cleanup_handle.state::<AppState>();
+                // Clone DbManager out of the lock so cleanup doesn't hold the outer lock
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
+                        None => return,
+                    }
+                };
+                if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
+                    if removed_count > 0 {
+                        println!("cleanup: Removed {} duplicate syndicated items from vault.", removed_count);
+                    }
+                }
+            });
+
+            // Background: cross-store blob consistency check (P7)
+            // Verifies that all blob hashes referenced in BytescapeItem.media_blobs
+            // actually exist in the Iroh blob store. Logs orphans and broken references.
+            let consistency_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait 10s so startup, session restore, and other background jobs finish first
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+                let state = consistency_handle.state::<AppState>();
 
                 let db = {
                     let guard = state.db_manager.read().await;
@@ -992,92 +886,23 @@ pub fn run() {
                         None => return,
                     }
                 };
-
-                // ── Phase 1: Backfill media_mimes ──
-                // Scan headers once — reused by consistency check below.
-                let item_headers = match db.list_all_item_headers().await {
-                    Ok(headers) => headers,
-                    Err(_) => return,
-                };
-
-                // Only acquire SyncManager if there are items needing work
-                let needs_backfill: Vec<_> = item_headers.iter()
-                    .filter(|h| h.media_blob_count > 0 && h.media_blob_count != h.media_mimes_count)
-                    .collect();
-
-                let mut backfill_updated = 0usize;
-
-                if !needs_backfill.is_empty() {
-                    let sync = {
-                        let guard = state.sync_manager.lock().await;
-                        match guard.as_ref() {
-                            Some(s) => s.clone(),
-                            None => {
-                                println!("backfill: skipped — SyncManager not initialized");
-                                // Can't do backfill or consistency without SyncManager
-                                // Still run cleanup below
-                                let _cleanup = cleanup_syndication(&db).await;
-                                return;
-                            }
-                        }
-                    };
-
-                    for h in &needs_backfill {
-                        let mut item = match db.get_item_by_id(&h.id).await {
-                            Ok(Some(item)) => item,
-                            _ => continue,
-                        };
-
-                        let mut mimes = Vec::with_capacity(item.media_blobs.len());
-                        for blob_ref in &item.media_blobs {
-                            let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
-                                Ok(h) => h,
-                                Err(_) => {
-                                    mimes.push("application/octet-stream".to_string());
-                                    continue;
-                                }
-                            };
-                            match sync.get_media_header(hash, 32).await {
-                                Ok(header) => {
-                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&header));
-                                }
-                                Err(_) => mimes.push("application/octet-stream".to_string()),
-                            }
-                        }
-                        item.media_mimes = mimes;
-                        if db.upsert_item(&item).await.is_ok() {
-                            backfill_updated += 1;
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                    if backfill_updated > 0 {
-                        println!("backfill_media_mimes: updated {} items on startup", backfill_updated);
-                    }
-                }
-
-                // ── Phase 2: Syndication duplicate cleanup ──
-                let _cleanup = cleanup_syndication(&db).await;
-
-                // ── Phase 3: Blob consistency check ──
-                // Re-use the same headers list (or refresh if backfill changed things)
-                let headers_for_consistency = if backfill_updated > 0 {
-                    // Headers may have changed — re-scan (cheap: just reads the index table)
-                    match db.list_all_item_headers().await {
-                        Ok(h) => h,
-                        Err(_) => return,
-                    }
-                } else {
-                    item_headers
-                };
-
                 let sync = {
                     let guard = state.sync_manager.lock().await;
                     match guard.as_ref() {
                         Some(s) => s.clone(),
                         None => {
+                            // No SyncManager = no blob store to check against
                             println!("consistency_check: skipped — SyncManager not initialized");
                             return;
                         }
+                    }
+                };
+
+                let headers = match db.list_all_item_headers().await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        eprintln!("consistency_check: failed to list items: {}", e);
+                        return;
                     }
                 };
 
@@ -1086,11 +911,12 @@ pub fn run() {
                 let mut items_with_broken = 0usize;
                 let mut items_healed = 0usize;
 
-                for header in &headers_for_consistency {
+                for header in &headers {
                     if header.media_blob_count == 0 {
                         continue;
                     }
 
+                    // Fetch full item to inspect blob references
                     let mut item = match db.get_item_by_id(&header.id).await {
                         Ok(Some(item)) => item,
                         _ => continue,
@@ -1106,6 +932,7 @@ pub fn run() {
                         let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
                             Ok(h) => h,
                             Err(_) => {
+                                // Unparseable hash — broken reference
                                 broken_refs += 1;
                                 has_broken = true;
                                 continue;
@@ -1114,6 +941,7 @@ pub fn run() {
 
                         if sync.has_media(hash).await {
                             valid_blobs.push(blob_ref.clone());
+                            // Preserve parallel arrays
                             if i < item.thumbnail_blobs.len() {
                                 valid_thumbs.push(item.thumbnail_blobs[i].clone());
                             }
@@ -1128,13 +956,18 @@ pub fn run() {
 
                     if has_broken {
                         items_with_broken += 1;
+
+                        // Auto-heal: remove broken blob references from the item
                         item.media_blobs = valid_blobs;
                         item.thumbnail_blobs = valid_thumbs;
                         item.media_mimes = valid_mimes;
+
                         if db.upsert_item(&item).await.is_ok() {
                             items_healed += 1;
                         }
                     }
+
+                    // Yield between items to avoid starving other tasks
                     tokio::task::yield_now().await;
                 }
 
@@ -1147,7 +980,7 @@ pub fn run() {
                     println!(
                         "consistency_check: all {} blob refs valid across {} items",
                         total_refs,
-                        headers_for_consistency.iter().filter(|h| h.media_blob_count > 0).count()
+                        headers.iter().filter(|h| h.media_blob_count > 0).count()
                     );
                 }
             });
@@ -1157,27 +990,6 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running bytescape");
 }
-
-// ─── Background maintenance helpers ──
-
-/// Remove duplicate syndicated items from the vault.
-///
-/// Extracted from the maintenance pipeline so it can be called from
-/// multiple code paths without duplicating the error-handling logic.
-async fn cleanup_syndication(db: &db::DbManager) {
-    if let Ok(removed_count) = db.cleanup_syndication_duplicates().await {
-        if removed_count > 0 {
-            println!("cleanup: Removed {} duplicate syndicated items from vault.", removed_count);
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// RE-EXPORTS
-// Commonly used types re-exported at the crate root for convenience.
-// Other modules can `use bytescape_lib::BytescapeItem` instead of
-// `use bytescape_lib::db::BytescapeItem`.
-// ═══════════════════════════════════════════════════════════════════
 
 // Re-export commonly used types
 pub use error::{BytescapeError, BytescapeResult};

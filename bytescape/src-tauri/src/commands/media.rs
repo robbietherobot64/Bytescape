@@ -137,11 +137,6 @@ pub async fn download_peer_blob(
 /// 
 /// The blob is fetched from Iroh and written to the blob cache directory.
 /// Returns the cached file path for efficient subsequent access.
-///
-/// **Memory safety:** Cache-hit path reads only the first 32 bytes for extension
-/// detection (not the full file). The Iroh-fetch path is gated by `blob_semaphore`
-/// (4 permits) to prevent 15+ simultaneous multi-MB fetches when the video filter
-/// renders many vault videos at once.
 #[tauri::command]
 pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -152,211 +147,49 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
     let cache_dir = app_data_dir.join("blob_cache");
 
     // Check if cached file already exists (try common extensions)
-    // Only read first 32 bytes for extension detection — NOT the full file.
     for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
         let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
         if cached.exists() {
-            // Read only the header (32 bytes) for magic-byte extension detection
-            let detected_ext = read_header_detect_ext(&cached);
-            let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if detected_ext != current_ext {
-                // Extension mismatch — rename (not copy) to avoid reading entire file
-                let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
-                let _ = std::fs::rename(&cached, &corrected);
-                return Ok(corrected.to_string_lossy().to_string());
+            if let Ok(bytes) = std::fs::read(&cached) {
+                let detected_ext = detect_extension_from_bytes(&bytes);
+                let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if detected_ext != current_ext {
+                    let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
+                    let _ = std::fs::write(&corrected, &bytes);
+                    return Ok(corrected.to_string_lossy().to_string());
+                }
             }
             return Ok(cached.to_string_lossy().to_string());
         }
     }
 
-    // Not cached — acquire blob semaphore to limit concurrent Iroh fetches
-    let _permit = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        state.blob_semaphore.acquire(),
-    )
-    .await
-    .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
-    .map_err(|_| "Blob semaphore closed".to_string())?;
+    // Not cached — fetch from Iroh blob store
+    let sync_guard = state.sync_manager.lock().await;
+    let sync = sync_guard.as_ref()
+        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    // Clone the blob store handle out of the Mutex — Store is Arc-based, clone is free.
-    // This lets us release the Mutex immediately instead of holding it for the entire export.
-    let blob_store = {
-        let sync_guard = state.sync_manager.lock().await;
-        let sync = sync_guard.as_ref()
-            .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
-        sync.blobs().clone()
-    }; // sync_guard dropped — Mutex released BEFORE any I/O
+    let bytes = sync.get_media(hash).await
+        .map_err(|e| BytescapeError::BlobStorage(e))?;
 
-    // Stream blob directly to a temp file — ZERO memory buffering.
-    // iroh-blobs export() writes from the blob store to disk internally
-    // without loading the full blob into memory.
+    // Detect extension from magic bytes
+    let ext = detect_extension_from_bytes(&bytes);
+
+    // Write to cache file
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-    let temp_path = cache_dir.join(format!("{}.tmp", &normalized_hash));
-    blob_store.export(hash, &temp_path)
-        .await
-        .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
-
-    // Detect extension from just the file header (32 bytes, not the full file)
-    let ext = read_header_detect_ext(&temp_path);
-
-    // Atomic rename to final cached path
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    std::fs::rename(&temp_path, &cache_path)
+    std::fs::write(&cache_path, &bytes)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
 
     Ok(cache_path.to_string_lossy().to_string())
 }
 
-/// Retrieve a display-size (max 1200px) variant of a media blob.
-///
-/// If the display variant is already cached on disk, returns immediately.
-/// Otherwise, locates (or fetches) the original blob, resizes it to fit within
-/// `max_dimension` × `max_dimension` pixels, encodes as WebP, and caches the
-/// result. Video files are returned unchanged (no resize).
-///
-/// **Memory safety:** The resize temporarily holds ~48 MB for a 12MP image in
-/// Rust memory, but the output (1200px WebP) is only ~100-300 KB. The temporary
-/// buffer is freed immediately after encoding. Concurrency is gated by
-/// `blob_semaphore` (4 permits) to prevent simultaneous multi-image decode storms.
-///
-/// The display variant reduces WebKitGTK decoded bitmap memory from 48 MB
-/// (4032×3024 RGBA) to ~5 MB (1200×900 RGBA) per image — a 90% reduction.
-#[tauri::command]
-pub async fn get_media_blob_display(
-    hash_str: String,
-    max_dimension: Option<u32>,
-    state: State<'_, AppState>,
-) -> std::result::Result<String, String> {
-    let max_dim = max_dimension.unwrap_or(1200);
-    let normalized_hash = normalize_blob_hash_input(&hash_str);
-
-    let app_data_dir = state.app_handle.path()
-        .app_data_dir()
-        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-    let cache_dir = app_data_dir.join("blob_cache");
-
-    // Fast path: display variant already cached
-    let display_filename = format!("{}_display_{}.webp", &normalized_hash, max_dim);
-    let display_path = cache_dir.join(&display_filename);
-    if display_path.exists() {
-        return Ok(display_path.to_string_lossy().to_string());
-    }
-
-    // Find the original cached file
-    let mut original_path: Option<std::path::PathBuf> = None;
-    for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
-        let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-        if cached.exists() {
-            original_path = Some(cached);
-            break;
-        }
-    }
-
-    // If original not cached, fetch it via Iroh (same pattern as get_media_blob)
-    let original_path = match original_path {
-        Some(p) => p,
-        None => {
-            let _permit = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                state.blob_semaphore.acquire(),
-            )
-            .await
-            .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
-            .map_err(|_| "Blob semaphore closed".to_string())?;
-
-            let hash = parse_hash_safe(&normalized_hash)?;
-            let blob_store = {
-                let sync_guard = state.sync_manager.lock().await;
-                let sync = sync_guard.as_ref()
-                    .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
-                sync.blobs().clone()
-            };
-
-            std::fs::create_dir_all(&cache_dir)
-                .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-            let temp_path = cache_dir.join(format!("{}.tmp", &normalized_hash));
-            blob_store.export(hash, &temp_path)
-                .await
-                .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
-
-            let ext = read_header_detect_ext(&temp_path);
-            let final_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-            std::fs::rename(&temp_path, &final_path)
-                .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-            final_path
-        }
-    };
-
-    // Videos and GIFs: return original path unchanged (no resize)
-    let ext = original_path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-    match ext {
-        "mp4" | "mov" | "webm" | "mkv" | "gif" => {
-            return Ok(original_path.to_string_lossy().to_string());
-        }
-        _ => {}
-    }
-
-    // Acquire semaphore for resize (limits concurrent CPU-heavy decodes)
-    let _permit = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        state.blob_semaphore.acquire(),
-    )
-    .await
-    .map_err(|_| "Display variant resize queue timeout (30s)".to_string())?
-    .map_err(|_| "Blob semaphore closed".to_string())?;
-
-    // Double-check after acquiring permit (another task may have generated it)
-    if display_path.exists() {
-        return Ok(display_path.to_string_lossy().to_string());
-    }
-
-    // Resize in a blocking task to avoid blocking the tokio async runtime.
-    // image::open() does synchronous file I/O + decode; thumbnail() is CPU-heavy.
-    let display_path_out = display_path.clone();
-    let original_path_out = original_path.clone();
-    let cache_dir_out = cache_dir.clone();
-
-    tokio::task::spawn_blocking(move || {
-        let img = image::open(&original_path_out)
-            .map_err(|e| format!("Failed to open image for display variant: {}", e))?;
-
-        // Only resize if larger than target dimension
-        let (w, h) = (img.width(), img.height());
-        let output = if w > max_dim || h > max_dim {
-            img.thumbnail(max_dim, max_dim)
-        } else {
-            // Already small enough — just re-encode as WebP for consistent format
-            img
-        };
-
-        // Encode as WebP (small file, fast decode by WebKitGTK)
-        let mut buf = std::io::Cursor::new(Vec::new());
-        output.write_to(&mut buf, image::ImageFormat::WebP)
-            .map_err(|e| format!("Failed to encode display variant as WebP: {}", e))?;
-
-        std::fs::create_dir_all(&cache_dir_out)
-            .map_err(|e| format!("Cache dir error: {}", e))?;
-        std::fs::write(&display_path_out, buf.into_inner())
-            .map_err(|e| format!("Failed to write display variant: {}", e))?;
-
-        Ok::<String, String>(display_path_out.to_string_lossy().to_string())
-    })
-    .await
-    .map_err(|e| format!("Spawn blocking error: {}", e))?
-}
-
 /// Retrieve media blob bytes directly for browser Object URL creation.
 ///
-/// Returns raw bytes via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
+/// Returns Vec<u8> via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
 /// For large HLS videos, use resolve_hls_video which returns tauri::ipc::Response.
-///
-/// **Memory safety:** Cache reads are streaming (not buffered in full). The Iroh
-/// fetch path is gated by `blob_semaphore` to prevent concurrent multi-MB fetches.
 #[tauri::command]
 pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) -> std::result::Result<tauri::ipc::Response, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -366,24 +199,14 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
     let cache_dir = app_data_dir.join("blob_cache");
 
-    // Check if cached file already exists — read from disk only once (the return read)
+    // Check if cached file already exists
     for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
         let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
         if cached.exists() {
             if let Ok(metadata) = std::fs::metadata(&cached) {
                 if metadata.len() > 0 {
-                    // For large video files (>50 MB), serve via media server URL instead of IPC
-                    // to avoid doubling memory (disk read + IPC serialization buffer).
-                    if metadata.len() > 50 * 1024 * 1024 {
-                        return Err(format!(
-                            "File too large for IPC ({}MB). Use media server URL: http://127.0.0.1:{}/{}.{}",
-                            metadata.len() / (1024 * 1024),
-                            state.media_port,
-                            &normalized_hash,
-                            ext
-                        ));
-                    }
                     if let Ok(bytes) = std::fs::read(&cached) {
+                        println!("get_media_blob_bytes: cache hit {} ({} bytes)", ext, bytes.len());
                         return Ok(tauri::ipc::Response::new(bytes));
                     }
                 }
@@ -391,54 +214,25 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
         }
     }
 
-    // Not cached — acquire blob semaphore to limit concurrent fetches
-    let _permit = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        state.blob_semaphore.acquire(),
-    )
-    .await
-    .map_err(|_| "Blob resolve queue timeout (30s) — too many concurrent fetches".to_string())?
-    .map_err(|_| "Blob semaphore closed".to_string())?;
+    // Not cached — fetch from Iroh blob store
+    let sync_guard = state.sync_manager.lock().await;
+    let sync = sync_guard.as_ref()
+        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    // Clone blob store handle out of Mutex — release lock before I/O.
-    let blob_store = {
-        let sync_guard = state.sync_manager.lock().await;
-        let sync = sync_guard.as_ref()
-            .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
-        sync.blobs().clone()
-    };
+    let bytes = sync.get_media(hash).await
+        .map_err(|e| BytescapeError::BlobStorage(e))?;
 
-    // Stream to disk first — ZERO in-memory buffering for the blob itself.
+    // Cache to disk for future use
+    let ext = detect_extension_from_bytes(&bytes);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-    let temp_path = cache_dir.join(format!("{}.tmp_bytes", &normalized_hash));
-    let size = blob_store.export(hash, &temp_path)
-        .await
-        .map_err(|e| BytescapeError::BlobStorage(format!("Blob export failed: {}", e)))?;
-
-    let ext = read_header_detect_ext(&temp_path);
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    std::fs::rename(&temp_path, &cache_path)
-        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let _ = std::fs::write(&cache_path, &bytes);
 
-    // For large files (>50 MB), redirect to media server URL instead of IPC
-    // to avoid buffering a huge file through Tauri's IPC channel.
-    if size > 50 * 1024 * 1024 {
-        return Err(format!(
-            "File too large for IPC ({}MB). Use media server URL: http://127.0.0.1:{}/{}.{}",
-            size / (1024 * 1024),
-            state.media_port,
-            &normalized_hash,
-            ext
-        ));
-    }
-
-    // Read from disk for IPC response — bounded by 50 MB guard above
-    let data = std::fs::read(&cache_path)
-        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
-    Ok(tauri::ipc::Response::new(data))
+    println!("get_media_blob_bytes: fetched from Iroh, cached as {} ({} bytes)", ext, bytes.len());
+    Ok(tauri::ipc::Response::new(bytes.to_vec()))
 }
 
 /// Get the media directory path for storing imported files.
@@ -503,10 +297,10 @@ pub async fn diagnose_media_ref(
         let p = std::path::PathBuf::from(&trimmed);
         let exists = p.exists();
         let (bytes_len, ext) = if exists {
-            // Use metadata for size, header read for extension — don't read full file
-            let size = std::fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
-            let detected = read_header_detect_ext(&p);
-            (size, Some(detected.to_string()))
+            match std::fs::read(&p) {
+                Ok(bytes) => (bytes.len(), Some(detect_extension_from_bytes(&bytes).to_string())),
+                Err(_) => (0, None),
+            }
         } else {
             (0, None)
         };
@@ -665,9 +459,9 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
             // Try to parse and fetch blob for MIME detection
             let hash_opt = decode_base32_hash_like(&hash_str);
             if let Some(hash) = hash_opt {
-                match sync.get_media_header(hash, 32).await {
-                    Ok(header) => {
-                        mimes.push(mime_from_magic_bytes(&header));
+                match sync.get_media(hash).await {
+                    Ok(bytes) => {
+                        mimes.push(mime_from_magic_bytes(bytes.as_ref()));
                     }
                     Err(_) => {
                         // Fall back to path hint if available
@@ -825,9 +619,6 @@ pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, 
 /// 4. Manual segment download + tiered remux (A→B→C)
 /// 5. Full re-encode (Strategy C — 5-20s, last resort)
 /// 6. Raw `.ts` — if FFmpeg is entirely unavailable
-///
-/// Concurrency-limited to 2 simultaneous resolves via `AppState::video_semaphore`.
-/// FFmpeg child PIDs are registered in `active_ffmpeg` for cancellation support.
 #[tauri::command]
 pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
     use std::io::Write;
@@ -843,10 +634,11 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     let ts_path = cache_dir.join(format!("{}.ts", url_hash));
 
     // ── Cache hit — prefer MP4 (validate to catch old broken conversions) ──
-    // Cache checks bypass the semaphore — they're instant and don't spawn FFmpeg.
     if mp4_path.exists() {
         if let Ok(meta) = std::fs::metadata(&mp4_path) {
             if meta.len() > 1000 {
+                // Validate cached file — old FFmpeg flags (discardcorrupt + fps_mode cfr
+                // with stream copy) produced stuttery MP4s. Re-convert if invalid.
                 if validate_mp4_with_ffprobe(&mp4_path) {
                     println!("resolve_hls_video: MP4 cache hit ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
                     return Ok(mp4_path.to_string_lossy().into_owned());
@@ -856,13 +648,10 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             }
         }
     }
-    // Stale TS without MP4 — try tiered remux (still needs semaphore for FFmpeg)
+    // Stale TS without MP4 — try tiered remux
     if ts_path.exists() {
         if let Ok(meta) = std::fs::metadata(&ts_path) {
             if meta.len() > 1000 {
-                // Acquire semaphore for TS remux (uses FFmpeg)
-                let _permit = state.video_semaphore.acquire().await
-                    .map_err(|_| "Video semaphore closed".to_string())?;
                 let ts_for_stale = ts_path.clone();
                 let mp4_for_stale = mp4_path.clone();
                 if let Ok(Ok(remuxed)) = tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_stale, &mp4_for_stale)).await {
@@ -870,96 +659,59 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
                         std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
                     return Ok(remuxed);
                 }
-                // FFmpeg unavailable — return TS as fallback (permit drops here)
+                // FFmpeg unavailable — return TS as fallback
                 println!("resolve_hls_video: TS cache hit, no FFmpeg ({:.1} MB)", meta.len() as f64 / (1024.0 * 1024.0));
                 return Ok(ts_path.to_string_lossy().into_owned());
             }
         }
     }
 
-    // ── Acquire concurrency permit (max 2 simultaneous FFmpeg processes) ──
-    let _permit = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        state.video_semaphore.acquire(),
-    ).await {
-        Ok(Ok(permit)) => permit,
-        Ok(Err(_)) => return Err("Video processing queue closed".to_string()),
-        Err(_) => return Err("Video queue full — too many videos loading. Try again later.".to_string()),
-    };
-
-    // Clone active_ffmpeg handle for PID tracking inside spawn_blocking
-    let active_ffmpeg = state.active_ffmpeg.clone();
-    let url_hash_for_pid = url_hash.clone();
-
     // ── Strategy 1: FFmpeg native HLS → MP4 (tiered: copy → audio re-encode → full re-encode) ──
+    // Try the fastest approach first, fall back to more expensive ones only if validation fails.
     println!("resolve_hls_video: Trying FFmpeg native HLS download (tiered)...");
     let playlist_for_ffmpeg = playlist_url.clone();
     let mp4_for_ffmpeg = mp4_path.clone();
     let ts_for_cleanup = ts_path.clone();
-    let active_ffmpeg_s1 = active_ffmpeg.clone();
-    let hash_s1 = url_hash_for_pid.clone();
-    let ffmpeg_result = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        tokio::task::spawn_blocking(move || {
-            let mp4 = &mp4_for_ffmpeg;
-
-            // Strategy A: Stream copy — fastest (<1s)
-            if let Ok(path) = ffmpeg_hls_stream_copy_tracked(&playlist_for_ffmpeg, mp4, &active_ffmpeg_s1, &hash_s1) {
-                if validate_mp4_with_ffprobe(mp4) {
-                    println!("resolve_hls_video: Strategy A (stream copy) succeeded");
-                    return Ok(path);
-                }
-                println!("resolve_hls_video: Strategy A produced invalid MP4, trying B...");
-                let _ = std::fs::remove_file(mp4);
-            } else {
-                println!("resolve_hls_video: Strategy A failed, trying B...");
+    match tokio::task::spawn_blocking(move || {
+        // Strategy A: Stream copy — fastest (<1s, I/O bound)
+        let mp4 = &mp4_for_ffmpeg;
+        if let Ok(path) = ffmpeg_hls_stream_copy(&playlist_for_ffmpeg, mp4) {
+            if validate_mp4_with_ffprobe(mp4) {
+                println!("resolve_hls_video: Strategy A (stream copy) succeeded");
+                return Ok(path);
             }
+            println!("resolve_hls_video: Strategy A produced invalid MP4, trying B...");
+            let _ = std::fs::remove_file(mp4);
+        } else {
+            println!("resolve_hls_video: Strategy A failed, trying B...");
+        }
 
-            // Strategy B: Audio re-encode (1-2s)
-            if let Ok(path) = ffmpeg_hls_audio_reencode_tracked(&playlist_for_ffmpeg, mp4, &active_ffmpeg_s1, &hash_s1) {
-                if validate_mp4_with_ffprobe(mp4) {
-                    println!("resolve_hls_video: Strategy B (audio re-encode) succeeded");
-                    return Ok(path);
-                }
-                println!("resolve_hls_video: Strategy B produced invalid MP4, trying C...");
-                let _ = std::fs::remove_file(mp4);
-            } else {
-                println!("resolve_hls_video: Strategy B failed, trying C...");
+        // Strategy B: Copy video, re-encode audio only (1-2s)
+        if let Ok(path) = ffmpeg_hls_audio_reencode(&playlist_for_ffmpeg, mp4) {
+            if validate_mp4_with_ffprobe(mp4) {
+                println!("resolve_hls_video: Strategy B (audio re-encode) succeeded");
+                return Ok(path);
             }
+            println!("resolve_hls_video: Strategy B produced invalid MP4, trying C...");
+            let _ = std::fs::remove_file(mp4);
+        } else {
+            println!("resolve_hls_video: Strategy B failed, trying C...");
+        }
 
-            // Strategy C: Full re-encode (5-20s)
-            ffmpeg_hls_full_reencode_tracked(&playlist_for_ffmpeg, mp4, &active_ffmpeg_s1, &hash_s1)
-        }),
-    ).await;
-
-    // Clean up PID tracking after strategies complete (success or failure)
-    {
-        let mut active = active_ffmpeg.lock().await;
-        active.remove(&url_hash_for_pid);
-    }
-
-    match ffmpeg_result {
-        Ok(Ok(Ok(path))) => {
+        // Strategy C: Full re-encode (5-20s, last resort)
+        ffmpeg_hls_full_reencode(&playlist_for_ffmpeg, mp4)
+    }).await {
+        Ok(Ok(path)) => {
             println!("resolve_hls_video: FFmpeg HLS → MP4 success ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
-            let _ = std::fs::remove_file(&ts_for_cleanup);
+            let _ = std::fs::remove_file(&ts_for_cleanup); // clean any stale TS
             return Ok(path);
         }
-        Ok(Ok(Err(e))) => {
+        Ok(Err(e)) => {
             println!("resolve_hls_video: All FFmpeg HLS strategies failed ({}), falling back to manual download...", e);
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             println!("resolve_hls_video: FFmpeg task panicked ({}), falling back to manual download...", e);
-        }
-        Err(_) => {
-            // Timeout — kill any remaining FFmpeg process
-            let mut active = active_ffmpeg.lock().await;
-            if let Some(pid) = active.remove(&url_hash_for_pid) {
-                let _ = std::process::Command::new("kill").arg(pid.to_string()).output();
-                println!("resolve_hls_video: FFmpeg timed out (120s), killed pid {}", pid);
-            } else {
-                println!("resolve_hls_video: FFmpeg timed out (120s)");
-            }
         }
     }
 
@@ -1116,122 +868,111 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     }
 }
 
-/// ── PID-tracked FFmpeg helpers ──
+/// ── Strategy A: Stream copy with PTS fixup (fastest, <1 second) ──
 ///
-/// These variants register the child PID in `active_ffmpeg` so that
-/// `cancel_video_resolve` can kill them, and clean up the PID on completion.
-/// They run inside `spawn_blocking` (synchronous context).
-
-fn run_ffmpeg_tracked(
-    args: &[&str],
-    active_ffmpeg: &tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
-    url_hash: &str,
-) -> std::result::Result<std::process::Output, String> {
-    let child = std::process::Command::new("ffmpeg")
-        .args(args)
+/// Copies both video and audio streams without re-encoding.
+/// Uses genpts+igndts to regenerate PTS from stream data (igndts avoids DTS
+/// discontinuities at HLS segment boundaries that discardcorrupt would drop).
+/// Does NOT use -fps_mode cfr — cfr requires frame decoding which stream copy skips.
+fn ffmpeg_hls_stream_copy(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
+            "-avoid_negative_ts", "make_zero",
+            "-i", playlist_url,
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .output()
         .map_err(|e| format!("FFmpeg not found or failed to execute: {}", e))?;
 
-    // Register PID for cancellation (blocking context → use try_lock or block_on)
-    let pid = child.id();
-    // We're in a blocking context; create a mini runtime to lock the async mutex
-    {
-        let rt = tokio::runtime::Handle::current();
-        let _ = rt.block_on(async {
-            let mut active = active_ffmpeg.lock().await;
-            active.insert(url_hash.to_string(), pid);
-        });
-    }
-
-    let output = child.wait_with_output()
-        .map_err(|e| format!("FFmpeg process failed: {}", e))?;
-
-    // Unregister PID
-    {
-        let rt = tokio::runtime::Handle::current();
-        let _ = rt.block_on(async {
-            let mut active = active_ffmpeg.lock().await;
-            active.remove(url_hash);
-        });
-    }
-
-    Ok(output)
-}
-
-fn ffmpeg_hls_stream_copy_tracked(
-    playlist_url: &str,
-    mp4_path: &std::path::Path,
-    active_ffmpeg: &tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
-    url_hash: &str,
-) -> std::result::Result<String, String> {
-    let mp4_str = mp4_path.to_string_lossy();
-    let output = run_ffmpeg_tracked(
-        &[
-            "-y", "-analyzeduration", "10M", "-probesize", "10M",
-            "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero",
-            "-i", playlist_url,
-            "-c:v", "copy", "-c:a", "copy",
-            "-bsf:a", "aac_adtstoasc",
-            "-movflags", "+faststart", "-f", "mp4", &mp4_str,
-        ],
-        active_ffmpeg, url_hash,
-    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("FFmpeg stream-copy exited with {}: {}", output.status, stderr));
     }
+
     validate_mp4_file_size(mp4_path)
 }
 
-fn ffmpeg_hls_audio_reencode_tracked(
-    playlist_url: &str,
-    mp4_path: &std::path::Path,
-    active_ffmpeg: &tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
-    url_hash: &str,
-) -> std::result::Result<String, String> {
-    let mp4_str = mp4_path.to_string_lossy();
-    let output = run_ffmpeg_tracked(
-        &[
-            "-y", "-analyzeduration", "10M", "-probesize", "10M",
-            "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero",
+/// ── Strategy B: Copy video, re-encode audio only (1-2 seconds) ──
+///
+/// Fixes AAC-in-TS framing issues by re-encoding audio while keeping
+/// video stream-copy speed. The AAC encoder outputs correct MP4 framing
+/// natively — no aac_adtstoasc bitstream filter needed (that filter
+/// expects ADTS input, not encoder output).
+fn ffmpeg_hls_audio_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
+            "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart", "-f", "mp4", &mp4_str,
-        ],
-        active_ffmpeg, url_hash,
-    )?;
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg audio-reencode failed: {}", e))?;
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("FFmpeg audio-reencode exited with {}: {}", output.status, stderr));
     }
+
     validate_mp4_file_size(mp4_path)
 }
 
-fn ffmpeg_hls_full_reencode_tracked(
-    playlist_url: &str,
-    mp4_path: &std::path::Path,
-    active_ffmpeg: &tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
-    url_hash: &str,
-) -> std::result::Result<String, String> {
-    let mp4_str = mp4_path.to_string_lossy();
-    let output = run_ffmpeg_tracked(
-        &[
-            "-y", "-analyzeduration", "10M", "-probesize", "10M",
-            "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero",
+/// ── Strategy C: Full re-encode (5-20 seconds, last resort) ──
+///
+/// Re-encodes both video and audio to regenerate all timestamps from scratch.
+/// Only used when stream copy and audio-only re-encode both fail validation.
+/// fps_mode cfr is valid here because the decoder produces real frames.
+fn ffmpeg_hls_full_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> std::result::Result<String, String> {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-analyzeduration", "10M",
+            "-probesize", "10M",
+            "-fflags", "+genpts+igndts",
+            "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-fps_mode", "cfr", "-max_muxing_queue_size", "1024",
-            "-movflags", "+faststart", "-f", "mp4", &mp4_str,
-        ],
-        active_ffmpeg, url_hash,
-    )?;
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-fps_mode", "cfr",
+            "-max_muxing_queue_size", "1024",
+            "-movflags", "+faststart",
+            "-f", "mp4",
+            &mp4_path.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("FFmpeg full-reencode failed: {}", e))?;
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("FFmpeg full-reencode exited with {}: {}", output.status, stderr));
     }
+
     validate_mp4_file_size(mp4_path)
 }
 
@@ -1450,17 +1191,6 @@ fn md5_hash(input: &str) -> u64 {
 
 
 /// Detect file extension from magic bytes
-/// Read only the first 32 bytes of a file to detect its extension.
-/// This avoids reading multi-hundred-MB video files entirely into memory
-/// just to check magic bytes. Falls back to "bin" on read failure.
-fn read_header_detect_ext(path: &std::path::Path) -> &'static str {
-    use std::io::Read;
-    let mut buf = [0u8; 32];
-    let Ok(mut file) = std::fs::File::open(path) else { return "bin" };
-    let Ok(n) = file.read(&mut buf) else { return "bin" };
-    detect_extension_from_bytes(&buf[..n])
-}
-
 fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
     if bytes.len() < 4 {
         return "bin";

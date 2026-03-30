@@ -8,24 +8,8 @@ import { blobCacheUrl } from '../utils/mediaServer';
  * but this avoids the IPC round-trip entirely for repeat renders.
  *
  * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
- *
- * Capped at RESOLVED_URL_CACHE_MAX entries with oldest-first eviction to prevent
- * unbounded memory growth during long browsing sessions.
  */
-const RESOLVED_URL_CACHE_MAX = 500;
 export const resolvedUrlCache = new Map<string, string>();
-
-/** Set a value in resolvedUrlCache with LRU eviction. */
-export function cacheResolvedUrl(hash: string, url: string): void {
-    // Delete first so re-insertion moves to end (most-recently-used)
-    resolvedUrlCache.delete(hash);
-    if (resolvedUrlCache.size >= RESOLVED_URL_CACHE_MAX) {
-        // Maps iterate in insertion order — evict the oldest entry
-        const firstKey = resolvedUrlCache.keys().next().value;
-        if (firstKey !== undefined) resolvedUrlCache.delete(firstKey);
-    }
-    resolvedUrlCache.set(hash, url);
-}
 
 /**
  * Hook to resolve a media path that may be a blob hash.
@@ -52,21 +36,6 @@ function extractBlobHash(path: string): string | null {
 }
 
 /**
- * Extract the blob hash from a "blob-display:..." path.
- * Returns null if the path is invalid.
- */
-function extractDisplayBlobHash(path: string): string | null {
-    const afterPrefix = path.slice('blob-display:'.length).trim();
-    if (!afterPrefix) return null;
-    // Strip any nested blob: prefixes
-    let hash = afterPrefix;
-    while (hash.startsWith('blob:')) {
-        hash = hash.slice(5).trim();
-    }
-    return hash || null;
-}
-
-/**
  * Resolve a non-blob path synchronously (HTTP, data:, asset:, filesystem).
  */
 function resolveNonBlobSync(path: string): string {
@@ -86,11 +55,6 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
     // that causes images to flash a dark placeholder for 1-2 frames on mount.
     const [url, setUrl] = useState<string | null>(() => {
         if (!path) return null;
-        if (path.startsWith('blob-display:')) {
-            const hash = extractDisplayBlobHash(path);
-            if (!hash) return null;
-            return resolvedUrlCache.get(`display:${hash}`) ?? null;
-        }
         if (path.startsWith('blob:')) {
             const hash = extractBlobHash(path);
             if (hash === null) return path; // browser Object URL — pass through
@@ -105,49 +69,6 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
         if (!path) {
             setUrl(null);
             return;
-        }
-
-        // Display variant: blob-display:HASH → invoke get_media_blob_display
-        if (path.startsWith('blob-display:')) {
-            const hash = extractDisplayBlobHash(path);
-            if (!hash) {
-                setError('Invalid display blob hash');
-                setUrl(null);
-                setIsLoading(false);
-                return;
-            }
-
-            const cacheKey = `display:${hash}`;
-            const cached = resolvedUrlCache.get(cacheKey);
-            if (cached) {
-                setUrl(cached);
-                setIsLoading(false);
-                setError(null);
-                return;
-            }
-
-            setIsLoading(true);
-            setError(null);
-            let cancelled = false;
-
-            invoke<string>('get_media_blob_display', { hashStr: hash, maxDimension: 1200 })
-                .then(async (filePath) => {
-                    if (cancelled) return;
-                    const httpUrl = await blobCacheUrl(filePath);
-                    cacheResolvedUrl(cacheKey, httpUrl);
-                    setUrl(httpUrl);
-                })
-                .catch((e) => {
-                    if (cancelled) return;
-                    console.error('Failed to resolve display variant:', hash, e);
-                    setError(String(e));
-                    setUrl(null);
-                })
-                .finally(() => {
-                    if (!cancelled) setIsLoading(false);
-                });
-
-            return () => { cancelled = true; };
         }
 
         // Check if it's a blob reference
@@ -189,7 +110,7 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
                     if (cancelled) return;
                     // Use local HTTP server to bypass WebKitGTK asset:// bugs
                     const httpUrl = await blobCacheUrl(filePath);
-                    cacheResolvedUrl(hash, httpUrl);
+                    resolvedUrlCache.set(hash, httpUrl);
                     setUrl(httpUrl);
                 })
                 .catch((e) => {
@@ -270,17 +191,12 @@ export function useLazyBlobUrl(path: string | undefined): [
         };
     }, []);
 
-    // Bypass visibility gate when the URL can be resolved without async work.
-    // Non-blob URLs (HTTP, filesystem) resolve synchronously in useBlobUrl, so
-    // there's no reason to wait for the IntersectionObserver — skipping the gate
-    // prevents the 1-2 frame placeholder flash on virtualizer remount.
-    // For blob: and blob-display: URLs, bypass if already in cache.
+    // Bypass visibility gate for already-cached blob URLs.
+    // This prevents the dark placeholder flash: if prefetchBlobUrls() has already
+    // resolved this blob, we can return the URL synchronously without waiting for
+    // the IntersectionObserver to fire.
     const isCached = path ? (() => {
-        if (!path.startsWith('blob:') && !path.startsWith('blob-display:')) return true; // sync resolution — always bypass
-        if (path.startsWith('blob-display:')) {
-            const hash = extractDisplayBlobHash(path);
-            return hash !== null && resolvedUrlCache.has(`display:${hash}`);
-        }
+        if (!path.startsWith('blob:')) return false;
         const hash = extractBlobHash(path);
         return hash !== null && resolvedUrlCache.has(hash);
     })() : false;

@@ -12,7 +12,6 @@ import "./themes/win98.css";
 import "./themes/midnight.css";
 import "./themes/hacker.css";
 import "./App.css";
-import { TabActiveContext } from "./contexts/TabActiveContext";
 
 /**
  * Local error boundary for screen-level rendering failures.
@@ -108,14 +107,6 @@ function App() {
   useEffect(() => {
     return installLinkInterceptor();
   }, []);
-
-  // ─── Tab deactivation lifecycle ───
-  // Video cleanup is now handled declaratively via TabActiveContext.
-  // Each VideoPlayer reads useTabActive() and clears its src through React
-  // state when the tab becomes inactive — no DOM hacking needed.
-  // The old releaseAll() approach fought React: it removed src via DOM
-  // manipulation, but React would restore it from state on the next render,
-  // recreating the GStreamer pipeline immediately.
 
   const importStatus = importStatusRaw || "";
   const [loading, setLoading] = useState(true);
@@ -729,14 +720,13 @@ function App() {
           const isActive = tab.id === activeTabId;
           const isFullBleed = FULL_BLEED_SCREENS.has(tab.screen);
           return (
-            <TabActiveContext.Provider key={tab.id} value={isActive}>
-              <div
-                className={`tab-pane ${isActive ? 'tab-pane--active' : ''} ${isFullBleed ? 'tab-pane--full-bleed' : 'tab-pane--standard'}`}
-                style={isActive ? (isFullBleed ? fullBleedStyle : standardStyle) : { display: 'none' }}
-              >
-                {renderTabScreen(tab)}
-              </div>
-            </TabActiveContext.Provider>
+            <div
+              key={tab.id}
+              className={`tab-pane ${isActive ? 'tab-pane--active' : ''} ${isFullBleed ? 'tab-pane--full-bleed' : 'tab-pane--standard'}`}
+              style={isActive ? (isFullBleed ? fullBleedStyle : standardStyle) : { display: 'none' }}
+            >
+              {renderTabScreen(tab)}
+            </div>
           );
         })}
       </ErrorBoundary>

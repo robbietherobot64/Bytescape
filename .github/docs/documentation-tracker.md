@@ -15,7 +15,7 @@
 | 1 | Core Types & Models | 6 | 1,911 | ✅ Complete |
 | 2 | Database Layer | 6 | 2,312 | ✅ Complete |
 | 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ✅ Complete |
-| 4 | Platform Connectors | 4 | 6,662 | ⬜ Not started |
+| 4 | Platform Connectors | 4 | 6,662 | ✅ Complete |
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ⬜ Not started |
 | 6 | ActivityPub Federation | 9 | 2,866 | ⬜ Not started |
 | 7 | Tauri Commands (Backend API) | 20 | 9,824 | ⬜ Not started |
@@ -89,12 +89,12 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/connectors/bluesky.rs` | 2,093 | ⬜ | AT Protocol / Bluesky API integration |
-| `src-tauri/src/connectors/facebook.rs` | 2,676 | ⬜ | Facebook archive HTML parser |
-| `src-tauri/src/connectors/mastodon.rs` | 1,386 | ⬜ | Mastodon / ActivityPub client |
-| `src-tauri/src/connectors/instagram.rs` | 507 | ⬜ | Instagram archive JSON parser |
+| `src-tauri/src/connectors/bluesky.rs` | 2,214 | ✅ | 43-line module header (auth modes, media pipeline, related files), 13 section dividers, 18+ type docs |
+| `src-tauri/src/connectors/facebook.rs` | 2,766 | ✅ | 33-line module header (dual format, encoding quirk, related files), 8 section dividers, `parse_facebook_zip` doc |
+| `src-tauri/src/connectors/mastodon.rs` | 1,420 | ✅ | Enhanced 35-line module header (How It Works, Bluesky-compat, rate limiting), 8 section dividers |
+| `src-tauri/src/connectors/instagram.rs` | 570 | ✅ | 32-line module header (shared types, related files), 5 section dividers, 12+ function/type docs |
 
-**Subtotal**: 4 files · 6,662 lines
+**Subtotal**: 4 files · 6,970 lines (+308 lines of documentation)
 
 ---
 

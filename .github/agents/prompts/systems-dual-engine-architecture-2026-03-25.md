@@ -42,14 +42,13 @@ This is **not a rewrite**. The existing Tauri app (23,000+ lines Rust, 12,000+ l
 │  │  • Indexes Iroh blobs → SQL for discovery/search                │  │
 │  │  • Publishes PDS repo changes → Iroh for edge sync             │  │
 │  │  • Routes AP inbox → Iroh blobs for offline edge users          │  │
-│  │  • Maps did:web ↔ did:plc ↔ AP actor URLs (via IdentityVerifier)│  │
+│  │  • Maps did:web ↔ did:plc ↔ AP actor URLs                      │  │
 │  └─────────────────────────────┬───────────────────────────────────┘  │
 │                                │                                     │
 │  ┌─────────────────────────────┴───────────────────────────────────┐  │
 │  │           Identity Resolver (/.well-known/*)                    │  │
 │  │                                                                 │  │
-│  │  • /.well-known/did.json         → did:web document (user-facing│  │
-│  │  • /.well-known/did.jsonl        → did:webvh verifiable log     │  │
+│  │  • /.well-known/did.json         → did:web document             │  │
 │  │  • /.well-known/webfinger        → acct: resolution             │  │
 │  │  • /.well-known/atproto-did      → did:plc for handle           │  │
 │  │  • HTTPS actor endpoint          → AP actor JSON                │  │
@@ -154,117 +153,6 @@ The current `get_owner_did()` has a 5-level fallback chain including fabricated 
 - Mastodon: `acct:user@instance` 
 - Generic AP: actor URL
 - The `generate_platform_plc()` function is removed.
-
-### DID Verifiability: Phased Approach (did:webvh → did:webs)
-
-#### The Problem with Plain `did:web`
-
-Plain `did:web` resolves to a DID Document hosted at a URL — but there's no verifiable history. If the server is compromised, an attacker can silently replace the DID Document (and therefore the keys). There's no audit trail, no way to detect tampering, and no key rotation history.
-
-#### UX Principle: Users Only See `did:web`
-
-**Users never see `did:webvh`, `did:webs`, or any internal DID method.** The user-facing identity is always the clean, human-readable form:
-
-```
-alice.bytescape.social          ← handle (AT Proto & AP)
-did:web:bytescape.social:alice   ← shown in advanced/developer UI only
-```
-
-The verifiable DID methods (`did:webvh`, later `did:webs`) are **infrastructure internals** — they secure the identity system behind the scenes, but the user never needs to know they exist. This is analogous to how HTTPS certificates secure the web without users ever seeing the X.509 chain.
-
-This UX principle also **eliminates rework on method transitions**. Since no user-facing surface displays `did:webvh` or `did:webs`, swapping the underlying verifiability layer requires zero UI changes.
-
-#### Phase 1: `did:webvh` (Deploy with Server Foundation — Phase 4.5)
-
-[did:webvh](https://identity.foundation/didwebvh/) (v1.0, DIF) adds a **verifiable history** layer to `did:web` by publishing a hash-chained JSON Lines log alongside the standard `did.json`:
-
-```
-https://bytescape.social/alice/did.json      ← standard did:web document (unchanged)
-https://bytescape.social/alice/did.jsonl     ← did:webvh verifiable log (new)
-```
-
-Key properties:
-- **Parallel `did:web` publishing**: Every `did:webvh` DID is simultaneously a valid `did:web`. AT Protocol, ActivityPub, and all existing resolvers continue to work unchanged.
-- **SCID (Self-Certifying Identifier)**: The DID contains a hash of the inception document, binding the identifier to its creation event. Enables domain portability — if `bytescape.social` moves to a new host, the SCID proves continuity.
-- **Hash-chained log**: Every DID Document update is appended to `did.jsonl` with a hash of the previous entry. Tampering with history breaks the chain.
-- **Pre-rotation** (optional): Commit to next rotation keys at creation time. Even if current keys are compromised, the attacker can't rotate.
-- **Witnesses** (optional): Third-party services that countersign log entries, providing independent verification.
-- **Rust library**: `didwebvh-rs` v0.4.0 on crates.io — production-ready.
-
-**What we deploy:**
-- Identity Resolver generates both `did.json` and `did.jsonl` for every user
-- Rust backend uses `didwebvh-rs` crate for log generation and verification
-- `did:web` continues to be the resolver entrypoint for all protocols
-- `did:webvh` log is published alongside for verifiers that support it
-- No witnesses initially (add in Phase 5 if needed)
-
-#### Phase 2: `did:webs` (Upgrade Path — Phase 6+)
-
-[did:webs](https://trustoverip.github.io/kswg-did-method-webs-specification/) (v0.9.18, ToIP/GLEIF) replaces the hash-chain with full **KERI infrastructure** — a cryptographic key event receipt system with pre-rotation, witnesses, watchers, multi-signature, delegation, and verifiable credentials (ACDCs) baked in.
-
-```
-https://bytescape.social/alice/did.json      ← same did:web document
-https://bytescape.social/alice/keri.cesr     ← KERI event stream (replaces did.jsonl)
-```
-
-Key properties beyond did:webvh:
-- **KERI pre-rotation**: Post-quantum-safe key commitment at inception
-- **Native multi-signature**: ConditionalProof2022 threshold schemes
-- **Delegation**: Hierarchical identity (e.g., family accounts, org structure)
-- **ACDC integration**: Verifiable credentials anchored to the key event log
-- **GLEIF backing**: The spec is driven by the Global Legal Entity Identifier Foundation
-
-**Why wait:**
-- Requires full KERI stack (KEL + CESR + ACDC + TEL) — significant implementation effort
-- Reference implementation is Python only; no Rust `did:webs` resolver exists yet
-- Overkill for personal social vault at current scale
-- `did:webvh` covers all near-term security needs
-
-**Why plan for it:**
-- Enterprise features (multisig, delegation) become relevant as Bytescape grows
-- GLEIF backing means institutional adoption pressure
-- The same `did.json` file serves both methods — the upgrade is additive (publish `keri.cesr` alongside, retire `did.jsonl`)
-
-#### Abstraction Layer: `IdentityVerifier` Trait
-
-To minimize technical debt on the webvh → webs transition, all verifiable DID operations go through a Rust trait:
-
-```rust
-/// Backend identity verifier — all DID verifiability operations
-/// go through this trait. Implementations are swappable.
-pub trait IdentityVerifier: Send + Sync {
-    /// Create a new verifiable DID for a user.
-    /// Returns the did:web identifier (user-facing) and writes
-    /// the verifiable artifacts (did.jsonl or keri.cesr) to storage.
-    async fn create_did(&self, username: &str, signing_key: &Ed25519KeyPair) -> Result<String>;
-    
-    /// Rotate keys for an existing DID.
-    async fn rotate_keys(&self, did: &str, new_key: &Ed25519KeyPair) -> Result<()>;
-    
-    /// Resolve and verify a DID, returning the verified DID Document.
-    async fn resolve_and_verify(&self, did: &str) -> Result<DidDocument>;
-    
-    /// Generate the publishable artifacts for the web server.
-    /// For webvh: did.json + did.jsonl
-    /// For webs:  did.json + keri.cesr
-    async fn export_artifacts(&self, did: &str) -> Result<DidArtifacts>;
-}
-
-/// Phase 1 implementation
-pub struct WebvhVerifier { /* uses didwebvh-rs */ }
-
-/// Phase 2 implementation (future)
-pub struct WebsVerifier { /* uses keri-rs + cesr-rs */ }
-```
-
-The Identity Resolver HTTP handler calls `export_artifacts()` to serve files. The Sync Bridge calls `resolve_and_verify()` to validate incoming DIDs. Frontend never touches any of this — it only sees `did:web` strings.
-
-**Transition plan:**
-1. Deploy with `WebvhVerifier`
-2. When ready for `did:webs`, implement `WebsVerifier`
-3. Run both in parallel during transition (publish both `did.jsonl` and `keri.cesr`)
-4. Retire `did.jsonl` once all verifiers support `did:webs`
-5. Zero frontend changes required at any step
 
 ### Custom Domain Handles (Indieweb Identity)
 
@@ -593,7 +481,7 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 | **I-1** | Docker Compose scaffold | `caddy` + `postgres` + empty slots for PDS/AP/relay services. Caddy config with wildcard TLS for `*.bytescape.social`. | 2-3 days |
 | **I-2** | Deploy Official PDS | Deploy the official Bluesky PDS (`ghcr.io/bluesky-social/pds`) using its Docker Compose setup. Verify XRPC health endpoint (`/xrpc/_health`), account creation via `goat` CLI, WebSocket firehose (`subscribeRepos`). | 1-2 days |
 | **I-3** | Deploy custom AP server | Build `axum` server binary extending existing AP module. Multi-user actor registry, persistent follower/following storage (Postgres), inbox POST handler, outbox GET, WebFinger resolution. Verify basic federation with external Mastodon instance. | 2-3 weeks |
-| **I-4** | Identity resolver | Serve `/.well-known/did.json` generating `did:web` documents dynamically from user records. Serve `/.well-known/did.jsonl` with did:webvh verifiable log (generated via `IdentityVerifier` trait). Serve `/.well-known/webfinger` routing to either PDS (AT handle resolution) or AP server (acct resolution). Users only ever see `did:web` — the `did:webvh` log is infrastructure-only. | 4-6 days |
+| **I-4** | Identity resolver | Serve `/.well-known/did.json` generating `did:web` documents dynamically from user records. Serve `/.well-known/webfinger` routing to either PDS (AT handle resolution) or GoToSocial (AP acct resolution). | 3-5 days |
 | **I-5** | Iroh relay daemon | Rust binary using `iroh` crate. Accepts encrypted blob uploads from edge clients, stores in content-addressed filesystem, serves on request. No decryption — blind relay only. | 1-2 weeks |
 | **I-6** | Sync Bridge MVP | Internal daemon that: (a) watches PDS firehose for new records, packages as Iroh blobs for edge sync; (b) accepts Iroh blobs from edge clients, creates PDS repo records; (c) translates AP inbox messages into Iroh blobs for offline edge users. | 2-3 weeks |
 | **I-7** | DNS + domain setup | Configure `bytescape.social` A records, wildcard subdomain, MX (for future email), Caddy auto-TLS. | 1 day |
@@ -603,7 +491,6 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 | ID | Task | Description | Effort |
 |----|------|-------------|--------|
 | **A-S1** | Identity migration (keychain) | Remove `generate_platform_plc()`. Migrate `LinkedAccount.identifier` to platform-native IDs. Simplify `get_owner_did()` to 3-level hierarchy. | 3-5 days |
-| **A-S1b** | `IdentityVerifier` trait + `WebvhVerifier` | Implement the `IdentityVerifier` trait (see §2). First implementation: `WebvhVerifier` using `didwebvh-rs` crate. Generates `did.json` + `did.jsonl` artifacts. All DID creation/rotation/verification goes through this trait. Users only see `did:web` — the trait is the backend abstraction that makes webvh → webs swappable later. | 1-2 weeks |
 | **A-S2** | Tauri ↔ Relay sync commands | New commands: `relay_connect`, `relay_push_blob`, `relay_pull_pending`, `relay_register_push_token`, `relay_sync_status`. Edge client pushes/pulls encrypted blobs to/from relay. | 1-2 weeks |
 | **A-S3** | PDS account provisioning | Tauri command `provision_pds_account` — creates account on Bytescape PDS via XRPC, stores credentials in keychain, updates `did:plc` if needed. | 3-5 days |
 | **A-S4** | AP actor provisioning | Tauri command `provision_ap_actor` — creates account on GoToSocial via API, links to `did:web`, stores credentials. | 3-5 days |
@@ -656,16 +543,6 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 | **I-SH2** | Admin CLI | `bytescape-admin` CLI for account management, invite codes, relay status, backup/restore. | 1-2 weeks |
 | **I-SH3** | Backup/restore | Automated backup of Postgres, Iroh blob store, and config to local path or S3. Restore from backup. | 1 week |
 
-#### DID Verifiability Upgrade (Phase 6+ — Track A)
-
-| ID | Task | Description | Effort |
-|----|------|-------------|--------|
-| **A-DV1** | did:webvh witnesses | Add optional witness infrastructure — third-party services that countersign did:webvh log entries. Evaluate hosted witness services or deploy custom witness nodes. | 1-2 weeks |
-| **A-DV2** | did:webvh pre-rotation | Enable pre-rotation key commitment in the did:webvh log. Adds post-quantum resistance to key rotation. | 3-5 days |
-| **A-DV3** | `WebsVerifier` implementation | Implement `IdentityVerifier` trait using KERI stack (when Rust did:webs resolver matures). Generates `did.json` + `keri.cesr` artifacts. | 4-8 weeks |
-| **A-DV4** | Parallel publishing | Run both `WebvhVerifier` and `WebsVerifier` simultaneously — publish `did.jsonl` AND `keri.cesr` during transition period. Zero user-facing changes. | 1 week |
-| **A-DV5** | Retire did:webvh | Once all verifiers support did:webs, stop publishing `did.jsonl`. Remove `WebvhVerifier`. | 2-3 days |
-
 ---
 
 ## 10. What This Replaces in the Current Roadmap
@@ -689,9 +566,8 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 
 **Phase 4.5 scope:**
 1. **A-S1 (Identity migration):** Remove `generate_platform_plc()` from `keychain_encrypted.rs`. Migrate all `LinkedAccount.identifier` values from fabricated `did:plc` to platform-native identifiers (`acct:user@instance` for Mastodon, actor URL for AP). Simplify `get_owner_did()` to 3-level hierarchy. Add migration function that runs on startup, converts existing data. Write tests.
-2. **A-S1b (IdentityVerifier + WebvhVerifier):** Implement the `IdentityVerifier` trait as defined in §2. First implementation uses `didwebvh-rs` crate. This is the **abstraction boundary** that prevents technical debt — all DID verifiability operations go through this trait, so swapping from did:webvh to did:webs later requires only a new trait implementation, no changes to callers. **Critical UX rule: no user-facing surface ever displays `did:webvh` or `did:webs` identifiers.** Users see only `did:web` (in advanced UI) or their handle (everywhere else).
-3. **A-S2 (Relay sync commands):** Implement Tauri commands for pushing/pulling encrypted blobs to the Iroh relay. The relay protocol should use the existing `bytescape/1.0` ALPN with new message types for relay operations.
-4. **A-S3/A-S4 (Account provisioning):** Implement XRPC client calls to provision accounts on the hosted PDS and API calls to provision actors on the custom AP server. Store returned credentials in keychain.
+2. **A-S2 (Relay sync commands):** Implement Tauri commands for pushing/pulling encrypted blobs to the Iroh relay. The relay protocol should use the existing `bytescape/1.0` ALPN with new message types for relay operations.
+3. **A-S3/A-S4 (Account provisioning):** Implement XRPC client calls to provision accounts on the hosted PDS and API calls to provision actors on GoToSocial. Store returned credentials in keychain.
 
 **Important constraints:**
 - Do not modify frontend files (`src/`). Coordinate with Frontend via PM.
@@ -708,7 +584,6 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
 **Important constraints:**
 - Do not modify Rust files (`src-tauri/`). Coordinate with Backend via PM.
 - The DataProvider refactor must be backwards-compatible — existing screens must work identically with `TauriDataProvider`.
-- **DID display rule:** No UI surface ever shows `did:webvh:...` or `did:webs:...` identifiers. Users see their **handle** (`alice.bytescape.social`) in all normal UI. An optional "Advanced" or "Developer" section in Settings may show `did:web:bytescape.social:alice` for power users. The verifiable DID layer is invisible to end users.
 
 ### For Infrastructure Agent (NEW)
 
@@ -735,7 +610,6 @@ Phase 4 tracks        • Identity resolver     • Station Protocol      email
    - ActivityPub: WebFinger delegation — user's domain `/.well-known/webfinger` redirects or proxies to `bytescape.social`'s WebFinger endpoint
    - DID Document: `did:web:{user-domain}` can be user-controlled, with `alsoKnownAs` linking to their `bytescape.social` identities
    - UI: Settings screen section for custom domain setup with DNS verification wizard
-6. **DID verifiability: did:webvh first, did:webs later.** Users only ever see `did:web` identifiers (or their handle). Behind the scenes, `did:webvh` (DIF, v1.0, Rust library available) provides verifiable history, hash-chained logs, and SCID-based portability starting in Phase 4.5. A Rust `IdentityVerifier` trait abstracts all verifiable DID operations, enabling a future swap to `did:webs` (ToIP/GLEIF, KERI-based) when enterprise features (multisig, delegation, ACDC credentials) are needed and a Rust implementation matures. Both methods publish a standard `did:web` document in parallel, so AT Protocol, ActivityPub, and all existing resolvers work unchanged at every phase. The transition from webvh to webs requires only a new trait implementation — zero frontend changes, zero user-facing changes, zero protocol changes.
 
 ---
 

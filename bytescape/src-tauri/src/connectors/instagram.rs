@@ -1,3 +1,34 @@
+//! # connectors/instagram.rs — Instagram Archive Import
+//!
+//! Parses Instagram data export ZIP archives into Bytescape's universal format.
+//! Instagram exports use JSON format exclusively (unlike Facebook which has both
+//! HTML and JSON). This module handles posts, reels, stories, profile photos,
+//! and DM conversations.
+//!
+//! ## How It Works
+//!
+//! 1. User provides an Instagram export ZIP (downloaded from instagram.com settings)
+//! 2. `parse_instagram_zip()` opens the ZIP and scans for media JSON files:
+//!    - `media/posts/posts_*.json` — Regular posts (may be split across files)
+//!    - `media/reels/reels.json` — Short-form video posts
+//!    - `media/stories/stories.json` — Ephemeral story posts
+//!    - `media/other/profile_photos.json` — Profile photo history
+//! 3. Posts are normalized into `ParsedPost` (shared with the Facebook connector)
+//! 4. Media files referenced in posts are extracted from the ZIP and stored
+//!    via Iroh blobs or filesystem fallback
+//! 5. DM conversations are parsed from `messages/inbox/*/message_*.json`
+//!
+//! ## Shared Types
+//!
+//! This module reuses `ParsedPost` from `connectors/facebook.rs` and returns
+//! `ParseResult` from `commands/import.rs` — the same pipeline used for
+//! Facebook imports. This keeps the import flow unified.
+//!
+//! ## Related Files
+//! - `connectors/facebook.rs` — Provides `ParsedPost` type
+//! - `commands/import.rs` — Provides `ParseResult`, orchestrates import pipeline
+//! - `connectors/mod.rs` — `Source::Instagram` enum variant
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -10,6 +41,13 @@ use crate::commands::import::ParseResult;
 
 use crate::connectors::facebook::ParsedPost;
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: ZIP UTILITIES
+// Helpers for normalizing media URIs and detecting the archive's
+// top-level folder prefix.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Normalize a media URI from Instagram JSON — strips leading `./` and `/`, converts backslashes.
 fn normalize_zip_media_uri(uri: &str) -> String {
     let mut s = uri.trim().replace('\\', "/");
     while s.starts_with("./") {
@@ -18,6 +56,7 @@ fn normalize_zip_media_uri(uri: &str) -> String {
     s.trim_start_matches('/').to_string()
 }
 
+/// Detect the top-level folder prefix in the ZIP (e.g. "instagram-username-date/").
 fn detect_top_level_prefix(file_names: &[String]) -> Option<String> {
     let first = file_names.first()?;
     let prefix = if let Some(slash_pos) = first.find('/') {
@@ -34,6 +73,7 @@ fn detect_top_level_prefix(file_names: &[String]) -> Option<String> {
     }
 }
 
+/// Check if a filename matches Instagram's numbered posts pattern (posts_1.json, posts_2.json, etc.).
 fn is_numbered_posts_file(basename: &str) -> bool {
     if !basename.starts_with("posts_") || !basename.ends_with(".json") {
         return false;
@@ -42,6 +82,7 @@ fn is_numbered_posts_file(basename: &str) -> bool {
     !number_part.is_empty() && number_part.chars().all(|c| c.is_ascii_digit())
 }
 
+/// Convert a single Instagram media entry into a ParsedPost.
 fn post_from_single_media(media: InstagramMedia) -> InstagramPost {
     InstagramPost {
         title: media.title.clone(),
@@ -50,6 +91,12 @@ fn post_from_single_media(media: InstagramMedia) -> InstagramPost {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: MEDIA FILE PARSING
+// Dispatches to format-specific parsers based on the JSON filename.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Parse a single Instagram media JSON file into posts. Dispatches based on filename (posts, reels, stories, profile_photos).
 fn parse_instagram_media_file(file_name: &str, raw_json: &str) -> Result<Vec<InstagramPost>, String> {
     let basename = PathBuf::from(file_name)
         .file_name()
@@ -116,10 +163,12 @@ fn parse_instagram_media_file(file_name: &str, raw_json: &str) -> Result<Vec<Ins
     Ok(Vec::new())
 }
 
-/// =============================================================
-/// Instagram Export JSON Schema Structs
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: INSTAGRAM JSON SCHEMAS
+// Structs mirroring the JSON shapes inside Instagram export ZIPs.
+// ═══════════════════════════════════════════════════════════════════
 
+/// A post entry from Instagram's media JSON files.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InstagramPost {
     #[serde(default)]
@@ -130,6 +179,7 @@ pub struct InstagramPost {
     pub media: Vec<InstagramMedia>,
 }
 
+/// A single media attachment within an Instagram post.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InstagramMedia {
     pub uri: Option<String>,
@@ -137,11 +187,13 @@ pub struct InstagramMedia {
     pub title: Option<String>,
 }
 
+/// A participant in an Instagram DM conversation.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InstagramMessageParticipant {
     pub name: Option<String>,
 }
 
+/// A single message within an Instagram DM conversation.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InstagramMessage {
     pub sender_name: Option<String>,
@@ -150,6 +202,7 @@ pub struct InstagramMessage {
     // Ignore media/reactions for basic chat coverage
 }
 
+/// An Instagram DM conversation thread.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InstagramConversation {
     pub participants: Option<Vec<InstagramMessageParticipant>>,
@@ -158,10 +211,7 @@ pub struct InstagramConversation {
     pub thread_type: Option<String>,
 }
 
-/// =============================================================
-/// Parsed Output Structs
-/// =============================================================
-
+/// Intermediate parsed Instagram post before conversion to ParsedPost.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParsedInstagramPost {
     pub id: String,
@@ -170,10 +220,12 @@ pub struct ParsedInstagramPost {
     pub media_paths: Vec<String>,
 }
 
-/// =============================================================
-/// Main Parser Function
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: MESSAGE PARSING
+// Parses Instagram DM conversations from the messages/inbox/ directory.
+// ═══════════════════════════════════════════════════════════════════
 
+/// Parse Instagram DM conversation JSON into `VaultMessage` entries.
 fn parse_instagram_messages_json(
     raw_json: &str,
     file_name: &str,
@@ -212,6 +264,18 @@ fn parse_instagram_messages_json(
     Ok(messages)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: MAIN ENTRY POINT
+// ═══════════════════════════════════════════════════════════════════
+
+/// Parse an Instagram data export ZIP archive into posts and messages.
+///
+/// This is the main entry point for Instagram archive imports. It:
+/// 1. Opens the ZIP and detects the top-level folder prefix
+/// 2. Finds media JSON files (posts, reels, stories, profile photos)
+/// 3. Parses each media file and extracts referenced media from the ZIP
+/// 4. Finds and parses DM conversation JSON files
+/// 5. Returns a unified `ParseResult` with posts and messages
 pub fn parse_instagram_zip(
     zip_path: PathBuf,
     media_dir: PathBuf,

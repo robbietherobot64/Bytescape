@@ -10,7 +10,6 @@ import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
-import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 
 export type MediaFilter = 'all' | 'images' | 'video' | 'short' | 'long' | 'articles';
 
@@ -52,32 +51,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     activeTabRef.current = activeTab;
     const PULL_THRESHOLD = 80;
     const triggerRefreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
-
-    // Force-release all video pipelines when the media filter changes.
-    // Without this, toggling the "Video" filter causes mass unmount/remount
-    // of VideoPlayer components, and WebKitGTK's async GStreamer teardown
-    // can't keep up — leading to pipeline pile-up and memory leak.
-    // By releasing all pipelines synchronously before the filter change
-    // takes effect, we give WebKitGTK a clean slate.
-    const prevMediaFilterRef = useRef(mediaFilter);
-    useEffect(() => {
-        if (prevMediaFilterRef.current !== mediaFilter) {
-            VideoPlaybackManager.releaseAll();
-            prevMediaFilterRef.current = mediaFilter;
-        }
-    }, [mediaFilter]);
-
-    // Also release all video pipelines on tab switch — prevents zombie
-    // GStreamer pipelines from the previous tab's videos from lingering
-    // (each consuming 100–500 MB of native memory invisible to JS heap).
-    const prevTabRef = useRef(activeTab);
-    useEffect(() => {
-        if (prevTabRef.current !== activeTab) {
-            VideoPlaybackManager.releaseAll();
-            prevTabRef.current = activeTab;
-        }
-    }, [activeTab]);
-
     // === Data Hook ===
     const {
         feedEntries,
@@ -345,7 +318,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
                     <div className="tabs">
-                        {(['all', 'following', 'subscribed', 'groups', 'you'] as FeedTab[]).map(tab => (
+                        {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
                             <button
                                 key={tab}
                                 className={`tab ${activeTab === tab ? 'active' : ''}`}
@@ -483,7 +456,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             </div>
                         )}
 
-                        {!isLoading && feedEntries.length === 0 && !feedError && activeTab === 'groups' && (
+                        {activeTab === 'groups' && (
                             <div className="empty-state">
                                 <div className="empty-icon">📋</div>
                                 <div className="empty-title">No group subscriptions yet</div>
@@ -499,10 +472,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
                                 scrollContainerRef={scrollContainerRef}
-                                groupBadge={activeTab === 'groups' ? () => (
-                                    <div className="group-feed-badge">📋 Group post</div>
-                                ) : undefined}
-                                overscan={mediaFilter === 'video' ? 2 : undefined}
                             />
                         )}
 

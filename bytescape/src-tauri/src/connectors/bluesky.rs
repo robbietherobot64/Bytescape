@@ -1,3 +1,47 @@
+//! # connectors/bluesky.rs — Bluesky / AT Protocol Integration
+//!
+//! This is Bytescape's bridge to the Bluesky social network. It handles everything
+//! needed to read from and write to Bluesky: fetching timelines, importing posts,
+//! downloading media, searching, and managing the social graph (follows/followers).
+//!
+//! ## How It Works
+//!
+//! Bluesky uses the "AT Protocol" (atproto) — a federated social networking protocol
+//! where each user's data lives on a Personal Data Server (PDS). This module talks
+//! to those servers via XRPC (HTTP + JSON) endpoints:
+//!
+//! 1. **Timeline & feeds**: `getTimeline`, `getAuthorFeed`, `getFeed`, `searchPosts`
+//! 2. **Social graph**: `getFollows`, `getFollowers`, `getActorLikes`
+//! 3. **Saved feeds**: `getPreferences` → extract feed URIs → `getFeedGenerators`
+//! 4. **Publishing**: `createRecord`, `uploadBlob` (via `BlueskyClient`)
+//!
+//! Every post fetched from Bluesky is parsed into a `BlueskyImportedPost` — an
+//! intermediate format that the import pipeline (`commands/import.rs`) then converts
+//! into Bytescape's universal `BytescapeItem` for storage in the local vault.
+//!
+//! ## Authentication Modes
+//!
+//! Two auth paths are supported (see `auth.rs` and `oauth.rs` for details):
+//! - **App-password**: Bearer token against `bsky.social/xrpc` (simple, legacy)
+//! - **OAuth (DPoP/PKCE)**: Token against the user's own PDS URL (modern, secure)
+//!
+//! The `authenticated_xrpc_candidates()` function handles endpoint fallback —
+//! it tries the user's PDS first, then falls back to `bsky.social`.
+//!
+//! ## Media Pipeline
+//!
+//! Images and videos from Bluesky posts are downloaded and stored in Iroh blobs
+//! (content-addressed P2P storage) when available, with filesystem fallback.
+//! Thumbnails are generated automatically via `SyncManager::store_media_with_thumbnail`.
+//!
+//! ## Related Files
+//! - `auth.rs` — Session management (login, token refresh)
+//! - `oauth.rs` — OAuth2 (DPoP/PKCE/PAR) flow
+//! - `commands/import.rs` — Converts `BlueskyImportedPost` → `BytescapeItem`
+//! - `commands/posting.rs` — Publishing posts TO Bluesky
+//! - `commands/syndicate.rs` — Cross-posting vault items to Bluesky
+//! - `connectors/mod.rs` — `Source::Bluesky` enum variant
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -6,6 +50,10 @@ use std::sync::Arc;
 
 use crate::connectors::Source;
 use crate::sync::SyncManager;
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: SHARED HTTP CLIENT & API CONSTANTS
+// ═══════════════════════════════════════════════════════════════════
 
 /// Module-level shared HTTP client.
 ///
@@ -35,6 +83,10 @@ const PUBLIC_XRPC: &str = "https://public.api.bsky.app/xrpc";
 /// should use the user's PDS URL (via `OAuthManager::get_pds_url()`) instead.
 const AUTH_XRPC: &str = "https://bsky.social/xrpc";
 const PLC_DIRECTORY: &str = "https://plc.directory";
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: JWT & ENDPOINT RESOLUTION
+// ═══════════════════════════════════════════════════════════════════
 
 fn decode_base64url_json(input: &str) -> Option<serde_json::Value> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -79,7 +131,13 @@ pub fn authenticated_xrpc_candidates(access_jwt: &str, prefer_private: bool) -> 
     urls
 }
 
-// === Bluesky Feed API Response Types ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: AT PROTOCOL API RESPONSE TYPES
+// These structs mirror the JSON shapes returned by Bluesky's XRPC API.
+// They're used only for deserialization — the data is then converted
+// into `BlueskyImportedPost` (our intermediate format) before being
+// normalized into `BytescapeItem` (the universal vault format).
+// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Deserialize)]
 struct AuthorFeedResponse {
@@ -249,7 +307,9 @@ struct EmbedExternal {
     description: Option<String>,
 }
 
-// === Progress Event ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: PROGRESS EVENTS & INTERMEDIATE FORMAT
+// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ImportProgress {
@@ -260,8 +320,12 @@ pub struct ImportProgress {
     pub current_item: String,
 }
 
-// === Parsed Post (used by lib.rs to create BytescapeItem) ===
-
+/// Intermediate representation of a Bluesky post.
+///
+/// This is the "halfway house" between the raw AT Protocol API response and
+/// Bytescape's universal `BytescapeItem`. Every post fetched from any Bluesky
+/// endpoint (timeline, author feed, search, likes) is first parsed into this
+/// struct, then converted to `BytescapeItem` by `commands/import.rs`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlueskyImportedPost {
     pub uri: String,
@@ -297,7 +361,9 @@ pub struct BlueskyImportedPost {
     pub viewer_repost: Option<String>,
 }
 
-// === Social Graph & Feeds ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: SOCIAL GRAPH & FEED DISCOVERY TYPES
+// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Deserialize)]
 struct GetFollowsResponse {
@@ -346,7 +412,9 @@ pub struct GeneratorView {
     pub avatar: Option<String>,
 }
 
-// === DID Document (for PDS resolution) ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6: DID RESOLUTION
+// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Deserialize)]
 struct DidDocument {
@@ -361,7 +429,13 @@ struct DidService {
     service_endpoint: String,
 }
 
-// === Shared Feed Item Parser ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7: FEED PARSING
+// The canonical parser that converts raw Bluesky API responses into
+// `BlueskyImportedPost`. All feed-fetching functions route through
+// `parse_feed_item()` to ensure consistent handling of regular posts,
+// reposts, quote posts, and reply context.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Parse a single FeedItem from the Bluesky API into a BlueskyImportedPost.
 ///
@@ -485,7 +559,16 @@ fn parse_feed_item(item: FeedItem) -> BlueskyImportedPost {
     }
 }
 
-// === Timeline Import (Following Feed) ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8: FEED FETCHING
+// Functions that call Bluesky API endpoints to fetch posts:
+// - import_bluesky_timeline: Home timeline ("Following" feed)
+// - import_bluesky_feed: A specific user's posts (author feed)
+// - search_posts: Full-text search with optional hashtag filtering
+// - get_custom_feed: Posts from a custom feed generator
+// - get_actor_likes: Posts the user has liked
+// - get_unified_feed: Merged view of hashtags + custom feeds
+// ═══════════════════════════════════════════════════════════════════
 
 /// Fetch the authenticated user's home timeline (getTimeline).
 /// Each FeedItem is parsed through `parse_feed_item` which handles
@@ -783,6 +866,10 @@ pub async fn import_bluesky_feed(
 
     Ok(all_posts)
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 9: MEDIA DOWNLOAD & EMBED EXTRACTION
+// ═══════════════════════════════════════════════════════════════════
 
 #[allow(dead_code)]
 async fn download_media_from_embed(
@@ -1159,6 +1246,9 @@ pub async fn search_posts(
     Ok((posts, search_response.cursor))
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 10: SOCIAL GRAPH OPERATIONS
+// ═══════════════════════════════════════════════════════════════════
 
 /// Fetch list of users the actor follows.
 pub async fn get_follows(
@@ -1466,6 +1556,10 @@ pub async fn get_actor_likes(
     Ok((posts, feed_response.cursor))
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 11: UNIFIED FEED (HASHTAGS + CUSTOM FEEDS)
+// ═══════════════════════════════════════════════════════════════════
+
 /// Fetch a unified feed of followed hashtags AND saved feeds.
 /// Approaches:
 /// 1. Fetch Hashtag Search (limit N)
@@ -1679,6 +1773,10 @@ pub async fn get_unified_feed(
 
     Ok((all_posts, next_cursor_str))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 12: BULK IMPORT
+// ═══════════════════════════════════════════════════════════════════
 
 /// Import all likes for the actor.
 pub async fn import_bluesky_likes(
@@ -1995,7 +2093,9 @@ pub async fn import_bluesky_follows_as_contacts(
     Ok(count)
 }
 
-// === BlueskyClient: Authenticated HTTP helper for PDS interactions ===
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 13: BLUESKY CLIENT (AUTHENTICATED HTTP WRAPPER)
+// ═══════════════════════════════════════════════════════════════════
 
 /// A lightweight authenticated client for Bluesky PDS operations.
 /// Wraps `reqwest::Client` with the user's access JWT for blob uploads and record creation.

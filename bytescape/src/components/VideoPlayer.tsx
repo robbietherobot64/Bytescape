@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 import { getMediaPort } from '../utils/mediaServer';
 import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
-import { useTabActive } from '../contexts/TabActiveContext';
 
 interface VideoPlayerProps {
     src: string;
@@ -14,57 +13,27 @@ interface VideoPlayerProps {
     autoPlay?: boolean;
 }
 
-const VIDEO_URL_CACHE_MAX = 50;
 const videoUrlCache = new Map<string, string>();
 
-/** Cache a resolved video URL with LRU eviction. */
-function cacheVideoUrl(src: string, url: string) {
-    if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
-        const firstKey = videoUrlCache.keys().next().value;
-        if (firstKey !== undefined) videoUrlCache.delete(firstKey);
-    }
-    videoUrlCache.set(src, url);
-}
-
-/** Force WebKitGTK to release a video element's decoder buffers. */
-function releaseVideoResources(el: HTMLVideoElement) {
-    try {
-        el.pause();
-        el.removeAttribute('src');
-        el.load();
-    } catch (_) { /* ignore */ }
-}
-
 /**
- * Click-to-play VideoPlayer for Bytescape.
- *
- * ARCHITECTURE: Zero GStreamer pipelines until the user explicitly clicks play.
- * - Default state: poster thumbnail + play button overlay. No <video> element.
- * - User clicks play: resolve blob URL → mount <video> → set src → pipeline starts.
- * - Scrolls out of view: tear down pipeline → back to poster.
- * - Tab switches: tear down pipeline → back to poster.
- *
- * This means a feed with 100 video posts uses ZERO native memory for video
- * until the user interacts. Only the lightweight poster <img> tags exist.
+ * Standard, native VideoPlayer component for Bytescape.
+ * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict drop-dead media restrictions.
  */
-export function VideoPlayer({ src, poster, className, style }: VideoPlayerProps) {
-    // activated = user has clicked the play button on THIS video
-    const [activated, setActivated] = useState(false);
+export function VideoPlayer({ src, poster, className, style, autoPlay = false }: VideoPlayerProps) {
     const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
-    const isTabActive = useTabActive();
 
-    // Resolve poster blob:hash → displayable URL (lightweight, no video pipeline)
+    // Smoothly resolve the poster if it's a blob:hash
     const [, resolvedPoster] = useLazyBlobUrl(poster);
 
     // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
-        if (videoRef.current && videoRef.current !== el) {
-            releaseVideoResources(videoRef.current);
+        // Unregister previous element
+        if (videoRef.current) {
             VideoPlaybackManager.unregister(videoRef.current);
         }
         videoRef.current = el;
@@ -77,9 +46,7 @@ export function VideoPlayer({ src, poster, className, style }: VideoPlayerProps)
     useEffect(() => {
         return () => {
             if (videoRef.current) {
-                releaseVideoResources(videoRef.current);
                 VideoPlaybackManager.unregister(videoRef.current);
-                videoRef.current = null;
             }
         };
     }, []);
@@ -90,48 +57,33 @@ export function VideoPlayer({ src, poster, className, style }: VideoPlayerProps)
         }
     };
 
-    // IntersectionObserver — only used for CLEANUP (tearing down pipeline
-    // when user scrolls away from an activated video). Does NOT trigger loading.
+    // Intersection observer for lazy loading metadata bounds
     useEffect(() => {
         const observer = new IntersectionObserver(
             ([entry]) => {
-                setIsVisible(entry.isIntersecting);
+                if (entry.isIntersecting) {
+                    setIsVisible(true);
+                    observer.disconnect();
+                }
             },
-            { rootMargin: '100px' }
+            { rootMargin: '200px' }
         );
-        if (containerRef.current) observer.observe(containerRef.current);
+
+        if (containerRef.current) {
+            observer.observe(containerRef.current);
+        }
+
         return () => observer.disconnect();
     }, []);
 
-    // Deactivate (tear down pipeline) when scrolled away or tab switches.
-    // User must click play again to restart — this is intentional.
-    // Each GStreamer pipeline costs 100-500MB of native memory.
     useEffect(() => {
-        if (activated && (!isVisible || !isTabActive)) {
-            setActivated(false);
-            setResolvedUrl(null);
-            if (videoRef.current) {
-                releaseVideoResources(videoRef.current);
-            }
-        }
-    }, [activated, isVisible, isTabActive]);
-
-    // Reset when src changes (different video)
-    useEffect(() => {
-        setActivated(false);
-        setResolvedUrl(null);
-        setError(null);
-    }, [src]);
-
-    // Load the actual video pipeline — only runs when user clicks play
-    useEffect(() => {
-        if (!activated || !src) return;
+        if (!src || !isVisible) return;
 
         let cancelled = false;
 
         async function loadVideo() {
             if (videoUrlCache.has(src)) {
-                if (!cancelled) setResolvedUrl(videoUrlCache.get(src)!);
+                setResolvedUrl(videoUrlCache.get(src)!);
                 return;
             }
 
@@ -139,39 +91,50 @@ export function VideoPlayer({ src, poster, className, style }: VideoPlayerProps)
             setError(null);
 
             try {
+                // 1. Handle HLS Bluesky Videos (which are m3u8 playlists)
                 if (src.includes('.m3u8')) {
+                    console.log(`[VideoPlayer] Resolving native file for HLS: ${src}`);
+                    // Backend efficiently downloads the segments and creates a single local .ts file
                     const filePath = await invoke<string>('resolve_hls_video', { playlistUrl: src });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
                         if (filename) {
                             const port = await getMediaPort();
-                            const url = `http://127.0.0.1:${port}/${filename}`;
-                            cacheVideoUrl(src, url);
-                            setResolvedUrl(url);
+                            const assetUrl = `http://127.0.0.1:${port}/${filename}`;
+                            videoUrlCache.set(src, assetUrl);
+                            setResolvedUrl(assetUrl);
                         }
                     }
                 }
+                // 2. Handle Vault Encrypted Blobs
                 else if (src.startsWith('blob:') && !src.startsWith('blob:http') && !src.startsWith('blob:tauri')) {
                     const hash = src.replace(/^blob:/, '').trim();
+                    console.log(`[VideoPlayer] Decoding Blob to native file path: ${hash}`);
+                    // Backend streams out the decrypted file to a cache and returns the path
                     const filePath = await invoke<string>('get_media_blob', { hashStr: hash });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
                         if (filename) {
                             const port = await getMediaPort();
-                            const url = `http://127.0.0.1:${port}/${filename}`;
-                            cacheVideoUrl(src, url);
-                            setResolvedUrl(url);
+                            const assetUrl = `http://127.0.0.1:${port}/${filename}`;
+                            videoUrlCache.set(src, assetUrl);
+                            setResolvedUrl(assetUrl);
                         }
                     }
                 }
+                // 3. Handle direct ready-to-play URLs (HTTP, Object URL, standard Tauri Asset URL)
                 else {
-                    if (!cancelled) setResolvedUrl(src);
+                    setResolvedUrl(src);
                 }
             } catch (err) {
-                console.error("[VideoPlayer] load failed:", err);
-                if (!cancelled) setError('Failed to load video');
+                console.error("[VideoPlayer] native architecture load failed:", err);
+                if (!cancelled) {
+                    setError('Failed to load video');
+                }
             } finally {
-                if (!cancelled) setIsLoading(false);
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         }
 
@@ -179,99 +142,62 @@ export function VideoPlayer({ src, poster, className, style }: VideoPlayerProps)
 
         return () => {
             cancelled = true;
+            // Cancel in-progress video resolve when scrolling away (P8)
+            // Prevents CPU thrashing from multiple concurrent FFmpeg processes
             if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
                 invoke('cancel_video_resolve', { url: src }).catch(() => {});
             }
         };
-    }, [activated, src]);
-
-    // User clicks the play button overlay → activate this video
-    const handleActivate = () => {
-        if (!activated && !isLoading) {
-            setActivated(true);
-        }
-    };
+    }, [src, isVisible]);
 
     return (
-        <div
-            ref={containerRef}
-            className={className}
-            style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}
-        >
+        <div ref={containerRef} className={className} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
             {error && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center', zIndex: 2 }}>
                     <span style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {error}</span>
                 </div>
             )}
 
-            {isLoading && (
+            {/* Loading indicator — overlaid on poster, not replacing it */}
+            {isLoading && !resolvedUrl && (
                 <div style={{
-                    position: 'absolute', bottom: 8, right: 8,
-                    background: 'rgba(0,0,0,0.6)', borderRadius: 6,
-                    padding: '4px 10px', zIndex: 2,
+                    position: 'absolute',
+                    bottom: 8,
+                    right: 8,
+                    background: 'rgba(0,0,0,0.6)',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    zIndex: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
                 }}>
                     <span style={{ color: '#aaa', fontSize: '0.75rem' }}>Loading…</span>
                 </div>
             )}
 
             {/*
-               Two states:
-               1. ACTIVATED + resolvedUrl → mount <video> with src (GStreamer pipeline runs)
-               2. Everything else → poster image + play button (zero native memory)
+               Progressive playback: render the video element immediately
+               with the poster so the user sees a frame right away.
+               Once resolvedUrl is ready, it becomes the src and playback begins.
             */}
-            {activated && resolvedUrl ? (
-                <video
-                    ref={videoRefCallback}
-                    src={resolvedUrl}
-                    poster={resolvedPoster || undefined}
-                    controls
-                    autoPlay
-                    playsInline
-                    preload="none"
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                    onPlay={handlePlay}
-                    onError={(e) => {
-                        console.error("[VideoPlayer] WebKit error:", e.currentTarget.error);
-                    }}
-                />
-            ) : (
-                /* Poster + play button — zero GStreamer cost */
-                <div
-                    onClick={handleActivate}
-                    style={{
-                        width: '100%', height: '100%', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        position: 'relative', minHeight: 120,
-                    }}
-                >
-                    {resolvedPoster ? (
-                        <img
-                            src={resolvedPoster}
-                            alt=""
-                            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                        />
-                    ) : (
-                        <div style={{ width: '100%', height: '100%', minHeight: 120, background: '#111' }} />
-                    )}
-                    {/* Play button overlay */}
-                    {!isLoading && (
-                        <div style={{
-                            position: 'absolute', inset: 0,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: 'rgba(0,0,0,0.3)',
-                        }}>
-                            <div style={{
-                                width: 56, height: 56, borderRadius: '50%',
-                                background: 'rgba(0,0,0,0.6)', display: 'flex',
-                                alignItems: 'center', justifyContent: 'center',
-                                backdropFilter: 'blur(4px)',
-                            }}>
-                                <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
+            <video
+                ref={videoRefCallback}
+                src={resolvedUrl || undefined}
+                poster={resolvedPoster || undefined}
+                controls={!!resolvedUrl}
+                autoPlay={autoPlay && !!resolvedUrl}
+                loop
+                playsInline
+                preload="metadata"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                onPlay={handlePlay}
+                onError={(e) => {
+                    if (resolvedUrl) {
+                        console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
+                    }
+                }}
+            />
         </div>
     );
 }

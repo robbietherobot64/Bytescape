@@ -1,3 +1,36 @@
+//! # connectors/facebook.rs — Facebook Archive Import
+//!
+//! Parses Facebook data export ZIP archives into Bytescape's universal format.
+//! Facebook exports come in two flavors — **HTML** and **JSON** — and this module
+//! handles both transparently. It also detects off-Facebook activity trackers,
+//! extracts media (photos/videos), and parses Messenger conversations.
+//!
+//! ## How It Works
+//!
+//! 1. User provides a Facebook export ZIP (downloaded from facebook.com/dyi)
+//! 2. `parse_facebook_zip()` opens the ZIP and auto-detects the format:
+//!    - **JSON format**: Parses `posts/*.json` files with `serde_json`
+//!    - **HTML format**: Parses `posts/*.html` files with CSS selectors (`scraper`)
+//! 3. Posts are normalized into `ParsedPost` — an intermediate struct shared
+//!    with the Instagram connector (they have similar export structures)
+//! 4. Media files (photos/videos) referenced in posts are extracted from the ZIP
+//!    and stored via Iroh blobs (content-addressed P2P storage) or filesystem
+//! 5. Off-Facebook activity data is parsed into `TrackerEntry` records for
+//!    the privacy dashboard
+//! 6. Messenger conversations are parsed into `VaultMessage` records
+//!
+//! ## Facebook's Encoding Quirk
+//!
+//! Facebook JSON exports encode non-ASCII text as escaped UTF-8 byte sequences
+//! (e.g. `\u00c3\u00a9` instead of `é`). The `decode_facebook_text()` function
+//! fixes this by treating the escape sequences as raw bytes and re-decoding.
+//!
+//! ## Related Files
+//! - `commands/import.rs` — Orchestrates the import pipeline, converts `ParsedPost` → `BytescapeItem`
+//! - `connectors/instagram.rs` — Reuses `ParsedPost` for Instagram archive imports
+//! - `connectors/mod.rs` — `Source::Facebook` enum variant
+//! - `models.rs` — `VaultMessage`, `BytescapeItem` schemas
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -7,6 +40,12 @@ use tauri::{AppHandle, Emitter};
 use scraper::{Html, Selector};
 
 use crate::sync::SyncManager;
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: MEDIA URI UTILITIES
+// Helpers for normalizing, detecting, and collecting media file
+// references from both HTML attributes and JSON values.
+// ═══════════════════════════════════════════════════════════════════
 
 fn normalize_zip_media_uri(uri: &str) -> String {
     let mut s = uri.trim().replace('\\', "/");
@@ -162,9 +201,11 @@ fn collect_facebook_json_media_posts(value: &serde_json::Value, out: &mut Vec<Pa
     }
 }
 
-/// =============================================================
-/// Facebook Export JSON Schema Structs
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: FACEBOOK DATA SCHEMAS
+// Structs that mirror the JSON shapes inside Facebook export ZIPs.
+// These are used for serde deserialization of `posts/*.json` files.
+// ═══════════════════════════════════════════════════════════════════
 
 /// A single post from `posts/your_posts_1.json`
 /// Facebook exports posts as either a flat array `[...]` or wrapped in `{"status_updates": [...]}`
@@ -253,6 +294,12 @@ pub struct FacebookPostsWrapper {
     pub posts: Option<Vec<FacebookPost>>,
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: OFF-FACEBOOK ACTIVITY & TRACKER DETECTION
+// Parses the "Your Off-Facebook Activity" data that shows which
+// third-party apps/websites shared your activity with Facebook.
+// ═══════════════════════════════════════════════════════════════════
+
 /// Off-Facebook Activity (surveillance data)
 /// Found in `apps_and_websites_off_of_facebook/your_off-facebook_activity.json`
 /// or `ads_and_businesses/your_off-facebook_activity/*.json`
@@ -278,9 +325,12 @@ pub struct OffFacebookEvent {
     pub timestamp: Option<i64>,
 }
 
-/// =============================================================
-/// Parse Result Types (sent to frontend)
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: SHARED OUTPUT TYPES
+// `ParsedPost` and `ParseResult` are the intermediate formats shared
+// with the Instagram connector. They hold parsed post data before
+// conversion to `BytescapeItem`.
+// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParseProgress {
@@ -379,9 +429,10 @@ pub use crate::models::PostLocation;
 /// A person tagged in a post — re-exported from models.
 pub use crate::models::TaggedPerson;
 
-/// =============================================================
-/// Parser Implementation
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: TEXT DECODING & CONTENT FILTERING
+// Facebook's broken UTF-8 encoding fix and noise content detection.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Decode Facebook's broken UTF-8 encoding.
 /// Facebook exports encode non-ASCII text as escaped UTF-8 byte sequences,
@@ -704,6 +755,30 @@ pub fn detect_photo_change_label(content: &str, title: Option<&str>) -> Option<S
     None
 }
 
+/// Parse a Facebook data export ZIP archive into posts, trackers, and messages.
+///
+/// This is the main entry point for Facebook archive imports. It:
+///
+/// 1. Opens the ZIP and detects the format (HTML vs JSON) by checking
+///    whether post files have `.html` or `.json` extensions
+/// 2. Identifies the top-level folder prefix (e.g. `facebook-username/`)
+/// 3. Finds all post files, excluding non-post paths (settings, ads, etc.)
+/// 4. Parses each post file according to its format
+/// 5. Extracts media (photos/videos) from the ZIP, storing them via
+///    Iroh blobs or filesystem fallback
+/// 6. Parses off-Facebook activity data into tracker entries
+/// 7. Parses Messenger conversations into VaultMessage records
+/// 8. Deduplicates posts by content hash
+///
+/// ## Parameters
+/// - `zip_path`: Path to the Facebook export ZIP file
+/// - `media_dir`: Directory to extract media files into
+/// - `app_handle`: Tauri app handle for emitting progress events
+/// - `sync_manager`: Optional Iroh sync manager for blob storage
+/// - `rt_handle`: Tokio runtime handle for async operations within sync context
+///
+/// ## Returns
+/// A `ParseResult` containing parsed posts, tracker entries, and messages.
 pub fn parse_facebook_zip(
     zip_path: PathBuf,
     media_dir: PathBuf,
@@ -1520,9 +1595,11 @@ fn store_media_data(
     }
 }
 
-/// =============================================================
-/// HTML Format Parsing
-/// =============================================================
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6: HTML FORMAT PARSING
+// CSS selector-based parsing for Facebook's HTML export format.
+// ═══════════════════════════════════════════════════════════════════
+
 /// Facebook HTML exports use a structure like:
 ///   <div class="...">
 ///     <div class="...">Post text content</div>
@@ -2150,6 +2227,12 @@ fn parse_header_author_action(header: &str) -> (Option<String>, Option<String>) 
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7: TIMESTAMP & TEXT EXTRACTION UTILITIES
+// Helpers for extracting dates, text content, and locations from
+// both HTML DOM nodes and JSON objects.
+// ═══════════════════════════════════════════════════════════════════
+
 /// Enhanced timestamp extraction: scan for "Updated Mon DD, YYYY H:MM:SS am/pm"
 /// or any substring that looks like a Facebook date, even within a single long line.
 fn extract_timestamp_from_text_enhanced(text: &str) -> Option<i64> {
@@ -2361,6 +2444,12 @@ fn try_parse_fb_date(text: &str) -> Option<i64> {
     
     None
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8: TRACKER & MESSAGE PARSING (HTML FORMAT)
+// Extracts off-Facebook activity trackers and Messenger conversations
+// from the HTML format export files.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Parse off-Facebook activity tracker entries from an HTML file.
 ///

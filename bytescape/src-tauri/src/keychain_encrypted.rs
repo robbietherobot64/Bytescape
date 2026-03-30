@@ -1,55 +1,14 @@
-//! # keychain_encrypted.rs — Encrypted Credential & Identity Vault
+//! Encrypted Keychain Module
 //!
-//! This module is Bytescape's secure storage for all sensitive data: session tokens,
-//! cryptographic keys, DIDs (decentralized identifiers), linked accounts, and recovery
-//! escrow bundles. Everything is encrypted on disk using ChaCha20-Poly1305 authenticated
-//! encryption with Argon2id key derivation — the same level of security used by
-//! password managers like Bitwarden.
+//! Provides secure storage for sensitive credentials using ChaCha20-Poly1305
+//! authenticated encryption. The encryption key is derived from a master
+//! password using Argon2id.
 //!
-//! ## How It Works
-//! 1. On first launch, `lib.rs` generates a random 32-byte master key (or reads one
-//!    from the environment / a persisted file)
-//! 2. An `EncryptedKeychain` is created with this master key and a file path
-//! 3. When credentials need to be stored, the `AuthData` struct is:
-//!    a. Serialized to JSON
-//!    b. Encrypted with ChaCha20-Poly1305 (random salt + nonce per write)
-//!    c. Base64-encoded and written to `keychain.json`
-//! 4. On read, the process reverses: file → base64 decode → decrypt → parse JSON
-//! 5. A Mutex-guarded in-memory cache avoids repeated disk I/O for frequent reads
-//!
-//! ## Identity System (5 DID Types)
-//! Bytescape uses a layered identity system where users accumulate DIDs over time:
-//!
-//! | DID Type | Example | When Created | Purpose |
-//! |----------|---------|-------------|---------|
-//! | `did:key` | `did:key:z6Mk...` | First P2P setup | Offline/P2P identity (from Ed25519 key) |
-//! | `did:plc` | `did:plc:abc123` | Bluesky login | Bluesky permanent identity |
-//! | `did:web` | `did:web:bytescape.social:alice` | Username chosen | Master Bytescape identity |
-//! | `acct:` URI | `acct:alice@mastodon.social` | Mastodon linked | Fediverse identity |
-//! | Actor URL | `https://mastodon.social/@alice` | Mastodon linked | ActivityPub actor |
-//!
-//! `get_owner_did()` returns the highest-priority DID: web > plc > key.
-//! `all_owner_dids()` returns ALL known identifiers for inclusive matching.
-//!
-//! ## Recovery Escrow
-//! When a user sets up identity recovery, their Iroh secret key is encrypted with
-//! a 6-digit code derived via Argon2id and stored as a `RecoveryEscrowBundle`. This
-//! bundle can be transferred to a new device and unlocked with the code, restoring
-//! the user's P2P identity without a central server.
-//!
-//! ## Security Features
+//! # Security Features
 //! - ChaCha20-Poly1305 authenticated encryption (256-bit key)
 //! - Argon2id key derivation (memory-hard, resistant to GPU attacks)
-//! - Random salt per encryption (no two writes produce the same ciphertext)
-//! - Random nonce per encryption (12 bytes, unique per operation)
-//! - File permissions restricted to owner-only on Unix (mode 0o600 for master key)
-//!
-//! ## Related Files
-//! - `lib.rs` — Initializes the keychain in `run()` with the master password
-//! - `oauth.rs` — Has its own `FileSessionStore` with similar encryption (for
-//!   atrium-oauth's session persistence)
-//! - `auth.rs` — Session tokens from app-password login are stored here
-//! - `commands/auth.rs` — Tauri commands that call keychain methods
+//! - Random salt per encryption
+//! - Nonce stored with ciphertext
 
 use argon2::Argon2;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -60,49 +19,19 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::BytescapeError;
 
-// ═══════════════════════════════════════════════════════════════════
-// ENCRYPTION CONSTANTS
-// Parameters for the ChaCha20-Poly1305 + Argon2id encryption scheme.
-// These are fixed — changing them would break existing keychain files.
-// ═══════════════════════════════════════════════════════════════════
-
-/// Salt length for Argon2id key derivation (stored in plaintext alongside ciphertext).
+/// Salt for key derivation (stored in plaintext with encrypted data)
 const SALT_LEN: usize = 16;
-/// Nonce length for ChaCha20-Poly1305 (unique per encryption operation).
+/// Nonce for ChaCha20-Poly1305 (unique per encryption)
 const NONCE_LEN: usize = 12;
-/// Version tag for recovery escrow bundle format (for future-proofing).
 const RECOVERY_VERSION: u8 = 1;
 
-// ═══════════════════════════════════════════════════════════════════
-// DATA STRUCTURES
-// The AuthData struct is the "vault" — it holds everything sensitive
-// about the user's identity. LinkedAccount represents one connected
-// platform. Recovery types support the escrow recovery flow.
-// ═══════════════════════════════════════════════════════════════════
-
-/// The complete set of decrypted authentication and identity data.
-///
-/// This struct is what gets encrypted and written to `keychain.json`. It contains
-/// every piece of sensitive data Bytescape manages: AT Protocol tokens, Iroh keys,
-/// DIDs, recovery escrow state, Mastodon sessions, and linked accounts.
-///
-/// All fields are `Option` because they accumulate over time — a fresh install
-/// has nothing, then the user links Bluesky (adds DID + tokens), then sets a
-/// username (adds web_did), then links Mastodon (adds mastodon_session_json), etc.
+/// Decrypted authentication data
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AuthData {
-    /// The Iroh Ed25519 secret key (hex-encoded). This is the user's P2P identity.
-    /// All P2P operations (document sync, blob transfer, gossip) use this key.
     pub iroh_secret_key: Option<String>,
-    /// The Bluesky DID (e.g., "did:plc:abc123...") from the AT Protocol session.
     pub did: Option<String>,
-    /// The Bluesky handle (e.g., "alice.bsky.social").
     pub handle: Option<String>,
-    /// Short-lived Bluesky access JWT (~2 hour lifetime).
-    /// For OAuth sessions, this holds the sentinel value "oauth_session".
     pub access_jwt: Option<String>,
-    /// Long-lived Bluesky refresh JWT (~90 day lifetime).
-    /// For OAuth sessions, this holds the sentinel value "oauth_session".
     pub refresh_jwt: Option<String>,
     /// Timestamp when tokens were last refreshed
     pub last_refresh: Option<u64>,
@@ -168,56 +97,33 @@ pub struct LinkedAccount {
     pub active: bool,
 }
 
-/// An encrypted bundle containing the user's Iroh secret key for recovery.
-///
-/// When a user initializes identity recovery, their Iroh secret key is encrypted
-/// with a key derived from a 6-digit recovery code. The bundle can be saved
-/// externally (e.g., printed, stored in a password manager) and used to restore
-/// identity on a new device by entering the code.
-///
-/// Wire format: version + metadata + encrypted payload (ChaCha20-Poly1305).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RecoveryEscrowBundle {
-    /// Format version (currently 1) for forward-compatible deserialization.
     pub version: u8,
-    /// Unix timestamp when the bundle was created.
     pub created_at: u64,
-    /// The DID this bundle recovers (did:key:z6Mk...).
     pub did: String,
-    /// The Ed25519 public key (hex) corresponding to the escrowed secret.
     pub public_key: String,
-    /// Base64-encoded Argon2id salt used to derive the encryption key from the recovery code.
     pub salt_b64: String,
-    /// Base64-encoded ChaCha20-Poly1305 nonce.
     pub nonce_b64: String,
-    /// Base64-encoded ciphertext (encrypted `RecoveryEscrowPayload`).
     pub ciphertext_b64: String,
-    /// MD5 integrity hash for quick validation before attempting decryption.
     pub integrity_md5: String,
 }
 
-/// The plaintext payload inside a `RecoveryEscrowBundle` (after decryption).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct RecoveryEscrowPayload {
     version: u8,
     did: String,
     public_key: String,
-    /// The Iroh Ed25519 secret key in hex — the actual secret being protected.
     iroh_secret_hex: String,
 }
 
-/// Result of initializing a fresh identity with recovery escrow.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdentityInitResult {
-    /// The newly generated DID (did:key:z6Mk...).
     pub did: String,
-    /// The Ed25519 public key (hex).
     pub public_key: String,
-    /// The serialized recovery escrow bundle (JSON string).
     pub escrow_bundle: String,
 }
 
-/// Status snapshot of the user's identity and recovery state.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdentityRecoveryStatus {
     pub has_local_identity: bool,
@@ -229,73 +135,39 @@ pub struct IdentityRecoveryStatus {
     pub last_recovered_at: Option<u64>,
 }
 
-/// Result of starting a recovery process from an escrow bundle.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdentityRecoveryStartResult {
-    /// Challenge ID for the recovery session (opaque identifier).
     pub challenge_id: String,
-    /// The DID embedded in the bundle (hint for the user to verify).
     pub did_hint: String,
 }
 
-/// Result of verifying the recovery code against the escrow bundle.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdentityRecoveryVerifyResult {
-    /// Whether the code successfully decrypted the bundle.
     pub verified: bool,
-    /// The DID that was recovered.
     pub did: String,
-    /// The Ed25519 public key that was recovered.
     pub public_key: String,
 }
 
-/// Result of finalizing recovery (committing the restored identity).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdentityRecoveryFinalizeResult {
-    /// Whether the identity was successfully restored.
     pub restored: bool,
-    /// The DID now active on this device.
     pub did: String,
-    /// The Ed25519 public key now active on this device.
     pub public_key: String,
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ENCRYPTED KEYCHAIN
-// The main struct that ties everything together — file I/O, encryption,
-// caching, and all the identity/session management operations.
-// ═══════════════════════════════════════════════════════════════════
-
-/// Encrypted keychain for secure credential storage.
-///
-/// All sensitive data (tokens, keys, DIDs) passes through this struct.
-/// It maintains a Mutex-guarded in-memory cache to avoid repeated disk
-/// reads, and flushes to the encrypted file on every mutation.
-///
-/// ## Usage Pattern
-/// ```text
-/// Read:  cache.lock() → if Some → return clone → else load_encrypted() → update cache → return
-/// Write: cache.lock() → mutate → save_encrypted() → update cache
-/// ```
+/// Encrypted keychain for secure credential storage
 pub struct EncryptedKeychain {
-    /// Path to the encrypted keychain file (typically `~/.local/share/.../keychain.json`).
     file_path: PathBuf,
-    /// In-memory cache of the decrypted `AuthData`. Avoids disk I/O on every
-    /// `get_access_jwt()` or `get_owner_did()` call.
     cache: Arc<Mutex<Option<AuthData>>>,
-    /// Master password (or machine-generated key) used for Argon2id key derivation.
     master_password: String,
 }
 
 impl EncryptedKeychain {
-    /// Create a new encrypted keychain pointed at the given file path.
-    ///
-    /// Does NOT read from disk immediately — the cache starts empty and is
-    /// populated lazily on the first read operation (e.g., `load_session()`).
-    ///
+    /// Create a new encrypted keychain
+    /// 
     /// # Arguments
-    /// * `path` — Path to the keychain file (e.g., `app_data_dir/keychain.json`)
-    /// * `master_password` — Password (or machine-generated key) for encryption
+    /// * `path` - Path to the keychain file
+    /// * `master_password` - Password used for encryption/decryption
     pub fn new(path: PathBuf, master_password: String) -> Self {
         println!("EncryptedKeychain: Using encrypted storage at {:?}", path);
         
@@ -306,12 +178,7 @@ impl EncryptedKeychain {
         }
     }
 
-    // ─── Core Cryptographic Operations ─────────────────────────────────
-
-    /// Derive a 256-bit encryption key from the master password + salt using Argon2id.
-    ///
-    /// Argon2id is a memory-hard KDF that resists GPU/ASIC brute-force attacks.
-    /// Each call produces a unique key because the salt is random per encryption.
+    /// Derive encryption key from master password and salt
     fn derive_key(&self, salt: &[u8]) -> Result<[u8; 32], BytescapeError> {
         // Use Argon2id to derive a 256-bit key
         let argon2 = Argon2::default();
@@ -326,7 +193,7 @@ impl EncryptedKeychain {
         Ok(key_material)
     }
 
-    /// Generate a cryptographically random salt (16 bytes).
+    /// Generate a new random salt
     fn generate_salt() -> Vec<u8> {
         use rand::RngCore;
         let mut salt = vec![0u8; SALT_LEN];
@@ -334,14 +201,7 @@ impl EncryptedKeychain {
         salt
     }
 
-    /// Encrypt the `AuthData` struct and write it to the keychain file.
-    ///
-    /// Each write uses a fresh random salt and nonce, so the ciphertext is
-    /// different every time even if the data hasn't changed. The wire format
-    /// is: `base64(salt || nonce || ciphertext)` wrapped in a JSON object.
-    ///
-    /// # Side Effects
-    /// * Writes to the keychain file on disk (atomic overwrite)
+    /// Encrypt and save auth data
     fn save_encrypted(&self, data: &AuthData) -> Result<(), BytescapeError> {
         use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
         use chacha20poly1305::aead::Aead;
@@ -429,7 +289,7 @@ impl EncryptedKeychain {
         Ok(Some(data))
     }
 
-    /// Generate a cryptographically random 12-byte nonce for ChaCha20-Poly1305.
+    /// Generate a new random nonce bytes
     fn generate_nonce_bytes() -> [u8; NONCE_LEN] {
         use rand::RngCore;
         let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -437,7 +297,6 @@ impl EncryptedKeychain {
         nonce_bytes
     }
 
-    /// Get the current Unix timestamp in seconds.
     fn now_unix() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -445,8 +304,6 @@ impl EncryptedKeychain {
             .as_secs()
     }
 
-    /// Derive a 256-bit key from a recovery code + salt using Argon2id.
-    /// Used for encrypting/decrypting recovery escrow bundles.
     fn derive_recovery_key(recovery_code: &str, salt: &[u8]) -> Result<[u8; 32], BytescapeError> {
         let argon2 = Argon2::default();
         let mut key_material = [0u8; 32];
@@ -457,8 +314,6 @@ impl EncryptedKeychain {
         ).map_err(|e| BytescapeError::Keychain(format!("Recovery key derivation failed: {}", e)))?;
         Ok(key_material)
     }
-
-    // ─── DID Generation & Management ───────────────────────────────────
 
     /// Generate a `did:key:z6Mk...` from raw Ed25519 public key bytes (32 bytes).
     ///
@@ -578,17 +433,6 @@ impl EncryptedKeychain {
         format!("did:key:z{}", public_key.to_lowercase())
     }
 
-    // ─── Recovery Escrow System ────────────────────────────────────────
-    // These methods implement a "paper key" recovery system:
-    // 1. User initializes recovery → their Iroh secret key is encrypted
-    //    with a code they choose and stored as an escrow bundle
-    // 2. On a new device, they paste the bundle and enter the code
-    // 3. The code decrypts the bundle, restoring their P2P identity
-
-    /// Parse and validate a serialized recovery escrow bundle (JSON string).
-    ///
-    /// Checks the format version and runs an integrity check (BLAKE3 or legacy MD5)
-    /// on the ciphertext to detect corruption before attempting decryption.
     fn parse_escrow_bundle(bundle_json: &str) -> Result<RecoveryEscrowBundle, BytescapeError> {
         let bundle: RecoveryEscrowBundle = serde_json::from_str(bundle_json)
             .map_err(|e| BytescapeError::InvalidInput(format!("Invalid escrow bundle JSON: {}", e)))?;
@@ -621,13 +465,6 @@ impl EncryptedKeychain {
         Ok(bundle)
     }
 
-    /// Decrypt a recovery escrow bundle using the recovery code.
-    ///
-    /// Derives an encryption key from the code + salt via Argon2id, then decrypts
-    /// the ChaCha20-Poly1305 ciphertext to recover the `RecoveryEscrowPayload`.
-    ///
-    /// # Errors
-    /// Returns `InvalidCredentials` if the code is wrong (decryption fails).
     fn decrypt_escrow_bundle(bundle: &RecoveryEscrowBundle, recovery_code: &str) -> Result<RecoveryEscrowPayload, BytescapeError> {
         use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
         use chacha20poly1305::aead::Aead;
@@ -879,12 +716,7 @@ impl EncryptedKeychain {
         })
     }
 
-    // ─── Username & Local Identity ───────────────────────────────────
-
-    /// Get the user's Bytescape-local username (e.g., "alice").
-    ///
-    /// This is the username chosen during onboarding, used to derive the
-    /// `did:web:bytescape.social:{username}` master identity.
+    /// Get the user's Bytescape-local username.
     pub fn get_local_username(&self) -> Result<Option<String>, BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -911,15 +743,7 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    // ─── Iroh P2P Key Management ────────────────────────────────────
-
-    /// Save the Iroh Ed25519 secret key to the encrypted keychain.
-    ///
-    /// The key is hex-encoded before storage. This key is the user's P2P identity —
-    /// it's used for all Iroh operations (document sync, blob transfer, gossip).
-    ///
-    /// # Side Effects
-    /// * Writes to the encrypted keychain file
+    /// Save Iroh secret key
     pub fn save_iroh_secret(&self, secret_key: &iroh::SecretKey) -> Result<(), BytescapeError> {
         let secret_hex = hex::encode(secret_key.to_bytes());
         
@@ -936,10 +760,7 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    /// Load the Iroh Ed25519 secret key from the encrypted keychain.
-    ///
-    /// Hex-decodes the stored string and constructs an `iroh::SecretKey`.
-    /// Returns `None` if no key has been saved yet (P2P not set up).
+    /// Load Iroh secret key
     pub fn load_iroh_secret(&self) -> Result<Option<iroh::SecretKey>, BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -973,18 +794,7 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    // ─── Bluesky Session Token Management ──────────────────────────────
-    // Store, retrieve, and delete AT Protocol session tokens.
-    // For OAuth sessions, the JWT fields hold the sentinel "oauth_session"
-    // and real API calls go through OAuthManager instead.
-
-    /// Save Bluesky session tokens (DID, handle, access JWT, refresh JWT).
-    ///
-    /// For app-password auth, stores real JWT tokens. For OAuth, stores the
-    /// sentinel value `"oauth_session"` — actual tokens are managed by
-    /// `OAuthManager` in `oauth.rs`.
-    ///
-    /// Also auto-generates the `master_did` (did:key) and `web_did` if possible.
+    /// Save session tokens
     pub fn save_session(
         &self,
         did: String,
@@ -1055,10 +865,7 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    /// Load the current session as a (DID, handle) tuple.
-    ///
-    /// Returns `None` if no session has been saved (user not logged in).
-    /// The DID and handle are always available regardless of auth mode.
+    /// Load session
     pub fn load_session(&self) -> Result<Option<(String, String)>, BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -1084,11 +891,7 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the current Bluesky access JWT.
-    ///
-    /// For app-password sessions, this is a real JWT used as a Bearer token.
-    /// For OAuth sessions, this returns the sentinel `"oauth_session"` —
-    /// callers should check `is_oauth_session()` before using this value.
+    /// Get access JWT
     pub fn get_access_jwt(&self) -> Result<Option<String>, BytescapeError> {
         let cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -1100,10 +903,7 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the current Bluesky refresh JWT.
-    ///
-    /// Used by `get_fresh_access_jwt()` in `lib.rs` to refresh expired access tokens.
-    /// For OAuth sessions, this returns the sentinel value (unused).
+    /// Get refresh JWT
     pub fn get_refresh_jwt(&self) -> Result<Option<String>, BytescapeError> {
         let cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -1115,11 +915,7 @@ impl EncryptedKeychain {
         Ok(None)
     }
 
-    /// Get the Bluesky session DID (did:plc:... from AT Protocol login).
-    ///
-    /// This is specifically the DID from Bluesky authentication, not the
-    /// master identity. For the best available DID across all identity types,
-    /// use `get_owner_did()` instead.
+    /// Get DID (Bluesky session DID only)
     pub fn get_did(&self) -> Result<Option<String>, BytescapeError> {
         let cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -1130,10 +926,6 @@ impl EncryptedKeychain {
         
         Ok(None)
     }
-
-    // ─── Identity Migration ──────────────────────────────────────────
-    // Data format migrations that fix legacy identifier formats.
-    // Run once at startup (see lib.rs setup closure).
 
     /// Migrate fabricated `did:plc:` identifiers in `LinkedAccount` entries
     /// to platform-native identifiers.
@@ -1205,10 +997,6 @@ impl EncryptedKeychain {
 
         Ok(migrated)
     }
-
-    // ─── DID Resolution & Identity Queries ─────────────────────────────
-    // These methods answer "who am I?" in different contexts. The user may
-    // have 5+ different identifiers, so choosing the right one matters.
 
     /// Get the owner DID — 3-level fallback hierarchy:
     ///
@@ -1370,14 +1158,7 @@ impl EncryptedKeychain {
         Ok(true) // No refresh timestamp, needs refresh
     }
 
-    // ─── Mastodon Session Management ────────────────────────────────
-    // Mastodon auth state is stored as an opaque JSON blob (application
-    // credentials + access token). Managed by connectors/mastodon.rs.
-
     /// Save a serialized Mastodon session JSON blob.
-    ///
-    /// The blob contains the instance URL, client ID/secret, and access token.
-    /// It's treated as opaque here — `connectors/mastodon.rs` handles parsing.
     pub fn set_mastodon_session(&self, json: &str) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;
@@ -1418,14 +1199,8 @@ impl EncryptedKeychain {
         Ok(())
     }
 
-    // ─── Linked Account Management ─────────────────────────────────
-    // CRUD operations for platform accounts (Bluesky, Mastodon, etc.)
-    // that are linked to the user's master identity.
-
-    /// Add or update a linked account. If an account with the same protocol
-    /// already exists, it is updated in place (upsert); otherwise appended.
-    ///
-    /// Only one account per protocol is supported (e.g., one Bluesky, one Mastodon).
+    /// Add or update a linked account. If an account with the same protocol + identifier
+    /// already exists, it is updated in place; otherwise a new entry is appended.
     pub fn add_linked_account(&self, account: LinkedAccount) -> Result<(), BytescapeError> {
         let mut cache = self.cache.lock()
             .map_err(|e| BytescapeError::Keychain(format!("Lock poisoned: {}", e)))?;

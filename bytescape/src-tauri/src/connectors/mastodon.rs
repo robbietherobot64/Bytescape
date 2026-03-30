@@ -1,8 +1,40 @@
-//! Mastodon Connector — A1.2 Mastodon/Lemmy C2S Client
+//! # connectors/mastodon.rs — Mastodon / ActivityPub C2S Client
 //!
-//! Implements OAuth2 registration, authentication, timeline fetching,
-//! direct messages, follow/unfollow, and account lookup against any
-//! Mastodon-compatible API (Mastodon, Pleroma, Akkoma, GoToSocial, Lemmy).
+//! Implements the client-to-server (C2S) portion of the Mastodon API, enabling
+//! Bytescape to interact with any Mastodon-compatible fediverse instance
+//! (Mastodon, Pleroma, Akkoma, GoToSocial, Lemmy, Misskey partial).
+//!
+//! ## How It Works
+//!
+//! 1. **OAuth2 Registration**: `register_app()` registers Bytescape as an OAuth2
+//!    client with the target instance, storing the client ID/secret
+//! 2. **Authentication**: `complete_auth()` exchanges the authorization code for
+//!    access/refresh tokens, then `verify_credentials()` confirms the token works
+//! 3. **Timeline Fetching**: `get_home_timeline()`, `get_hashtag_timeline()`,
+//!    `get_account_statuses()` — all return data in Bluesky-compatible format
+//!    for unified feed rendering
+//! 4. **Actions**: Post, follow/unfollow, favourite/unfavourite, reblog/unreblog,
+//!    follow/unfollow hashtags
+//! 5. **DMs**: `get_conversations()` fetches direct message threads
+//! 6. **Account Lookup**: `lookup_account()`, `get_following()`, `get_followers()`
+//!
+//! ## Bluesky-Compatible Output
+//!
+//! To avoid duplicating the entire feed rendering pipeline, Mastodon posts are
+//! converted into `BlueskyImportedPost` via `status_to_bsky_post()`. This lets
+//! the unified feed system treat Mastodon and Bluesky posts identically. For
+//! vault storage, `status_to_bytescape_item()` converts directly to `BytescapeItem`.
+//!
+//! ## Rate Limiting
+//!
+//! All API calls go through `rate_limit_request()` which enforces a configurable
+//! delay between requests to avoid hitting instance rate limits.
+//!
+//! ## Related Files
+//! - `commands/mastodon.rs` — Tauri commands that wrap these functions
+//! - `connectors/bluesky.rs` — `BlueskyImportedPost` type used for unified feeds
+//! - `models.rs` — `BytescapeItem`, `VaultMessage` schemas
+//! - `connectors/mod.rs` — `Source::Mastodon` enum variant
 
 use serde::{Deserialize, Serialize};
 
@@ -18,9 +50,10 @@ pub const REDIRECT_URI: &str = "http://127.0.0.1:28461/mastodon/callback";
 /// Default OAuth2 scopes requested by Bytescape.
 pub const SCOPES: &str = "read write push";
 
-// ──────────────────────────────────────────────────
-// Types
-// ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: MASTODON API TYPES
+// Request/response types mirroring the Mastodon REST API schemas.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Registered OAuth2 application credentials.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,9 +154,10 @@ pub struct MastodonConversation {
     pub last_status: Option<MastodonStatus>,
 }
 
-// ──────────────────────────────────────────────────
-// OAuth2 Registration & Authentication
-// ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: OAUTH2 AUTHENTICATION
+// App registration, authorization code exchange, and credential verification.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Register Bytescape as an OAuth2 application on the given instance.
 ///
@@ -247,9 +281,11 @@ pub async fn verify_credentials(
         .map_err(|e| format!("Invalid account response: {}", e))
 }
 
-// ──────────────────────────────────────────────────
-// Timeline
-// ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: TIMELINE & FEED FETCHING
+// Home timeline, account statuses, and hashtag timelines.
+// Results are returned in Bluesky-compatible format for unified rendering.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Fetch the home timeline of the authenticated user.
 pub async fn get_home_timeline(
@@ -429,9 +465,9 @@ pub async fn get_hashtag_timeline_as_bsky(
         .collect())
 }
 
-// ──────────────────────────────────────────────────
-// Direct Messages
-// ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: DIRECT MESSAGES
+// ═══════════════════════════════════════════════════════════════════
 
 /// Fetch DM conversations.
 pub async fn get_conversations(
@@ -461,6 +497,12 @@ pub async fn get_conversations(
     resp.json().await
         .map_err(|e| format!("Invalid conversations response: {}", e))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: ACTIONS (POST, FOLLOW, ENGAGE)
+// Creating posts, following/unfollowing accounts, favouriting,
+// reblogging, and managing hashtag subscriptions.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Post a new status with the given visibility.
 ///
@@ -692,6 +734,11 @@ pub async fn unfollow_hashtag(
         .map_err(|e| format!("Invalid hashtag unfollow response: {}", e))
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6: ACCOUNT LOOKUP & SOCIAL GRAPH
+// Finding accounts and listing follows/followers.
+// ═══════════════════════════════════════════════════════════════════
+
 /// Look up a Mastodon account by `acct` string (e.g., `user@instance.social`).
 pub async fn lookup_account(
     http_client: &reqwest::Client,
@@ -808,9 +855,11 @@ pub async fn get_followers_list(
         .map_err(|e| format!("Invalid followers list response: {}", e))
 }
 
-// ──────────────────────────────────────────────────
-// Normalization Helpers
-// ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7: UTILITIES & FORMAT CONVERSION
+// Instance URL normalization, Mastodon→Bluesky format adapters,
+// Mastodon→BytescapeItem converters, and rate limiting.
+// ═══════════════════════════════════════════════════════════════════
 
 /// Normalize an instance URL (ensure https:// prefix, strip trailing slash).
 pub fn normalize_instance(instance: &str) -> String {
@@ -1197,6 +1246,10 @@ pub fn strip_html(html: &str) -> String {
 
     output.trim().to_string()
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8: TESTS
+// ═══════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
