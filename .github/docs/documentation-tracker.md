@@ -13,7 +13,7 @@
 | Batch | Layer | Files | Lines | Status |
 |-------|-------|-------|-------|--------|
 | 1 | Core Types & Models | 6 | 1,911 | ✅ Complete |
-| 2 | Database Layer | 6 | 2,312 | ⬜ Not started |
+| 2 | Database Layer | 6 | 2,312 | ✅ Complete |
 | 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ⬜ Not started |
 | 4 | Platform Connectors | 4 | 6,662 | ⬜ Not started |
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ⬜ Not started |
@@ -55,12 +55,12 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/db/mod.rs` | 437 | ⬜ | Database manager, table definitions, core operations |
-| `src-tauri/src/db/groups.rs` | 940 | ⬜ | Group CRUD, membership, invites |
-| `src-tauri/src/db/vault.rs` | 615 | ⬜ | Personal vault storage operations |
-| `src-tauri/src/db/chat.rs` | 193 | ⬜ | Chat message storage |
-| `src-tauri/src/db/peers.rs` | 82 | ⬜ | Peer identity tracking |
-| `src-tauri/src/db/contacts.rs` | 45 | ⬜ | Contact/friend storage |
+| `src-tauri/src/db/mod.rs` | 437 | ✅ | File header explaining redb, table constants documented, DbManager docs, section dividers |
+| `src-tauri/src/db/groups.rs` | 940 | ✅ | Module header with hierarchy diagram, composite key patterns, 25+ method docs |
+| `src-tauri/src/db/vault.rs` | 615 | ✅ | Module header (dedup, cache, parity), section dividers, 20+ method docs |
+| `src-tauri/src/db/chat.rs` | 193 | ✅ | Module header (Messages vs Vault Messages, multi-DID), section dividers |
+| `src-tauri/src/db/peers.rs` | 82 | ✅ | Module header with P2P peer tracking explanation |
+| `src-tauri/src/db/contacts.rs` | 45 | ✅ | Module header, all 3 methods documented |
 
 **Subtotal**: 6 files · 2,312 lines
 
