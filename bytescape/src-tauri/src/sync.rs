@@ -1,3 +1,34 @@
+//! # sync.rs — P2P Sync Engine & Media Vault
+//!
+//! This module is the backbone of Bytescape's local-first, peer-to-peer architecture.
+//! It manages all data synchronization between peers and provides the "vault" — a
+//! content-addressed file storage system where every piece of media (photos, videos,
+//! documents) is stored as an immutable blob identified by its hash.
+//!
+//! ## How It Works
+//!
+//! 1. **Blob Storage** (iroh-blobs): Raw media bytes are stored in a content-addressed
+//!    blob store on disk. Each blob is identified by its BLAKE3 hash, so identical files
+//!    are automatically deduplicated. Blobs are never modified — only added or garbage-collected.
+//!
+//! 2. **Document Sync** (iroh-docs): Metadata (who uploaded what, file names, timestamps)
+//!    is stored in "documents" — CRDT-based key-value namespaces that sync automatically
+//!    between peers. When two peers connect, their documents merge conflict-free.
+//!
+//! 3. **Gossip Presence** (iroh-gossip): Online/offline status is broadcast via a
+//!    pub-sub gossip layer so peers know who's available without polling.
+//!
+//! 4. **Vault File Manager**: A higher-level API on top of blobs + docs that handles
+//!    file uploads, thumbnail generation, deduplication, deletion (via tombstones),
+//!    and garbage collection.
+//!
+//! ## Related Files
+//! - `protocol.rs` — Handles the custom `bytescape/1.0` protocol messages over QUIC
+//! - `blob_hash.rs` — Centralized blob hash parsing (normalizes all hash string formats)
+//! - `media_server.rs` — Local HTTP server that serves cached blobs to the WebView
+//! - `db/vault.rs` — Database-side vault operations (blob cache paths, parity tracking)
+//! - `lib.rs` — Wires SyncManager into the Tauri app state and protocol router
+
 use iroh::Endpoint;
 pub use iroh_docs::engine::Engine as DocsEngine;
 pub use iroh_docs::store::Store as DocStore;
@@ -15,8 +46,9 @@ use bytes::Bytes;
 use uuid::Uuid;
 use image::ImageFormat;
 
-// === Vault File Types (stored in Iroh docs, not redb) ===
+// ─── Vault File Types ───
 
+/// Classification of files stored in the vault based on MIME type.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum VaultFileKind {
     Image,
@@ -50,6 +82,12 @@ impl VaultFileKind {
     }
 }
 
+/// Metadata record for a file stored in the vault.
+///
+/// Each vault file has its raw bytes stored as an immutable blob (identified by
+/// `blob_hash`) and its metadata stored as a JSON entry in the vault's Iroh document
+/// namespace. The metadata includes the file's name, MIME type, size, source
+/// (which platform it was imported from), and optional tags.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VaultFile {
     pub id: String,
@@ -70,6 +108,7 @@ pub struct VaultFile {
     pub tags: Vec<String>,
 }
 
+/// Aggregate statistics for all files currently in the vault.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VaultFileStats {
     pub total_files: usize,
@@ -78,6 +117,14 @@ pub struct VaultFileStats {
     pub by_source: HashMap<String, usize>,
 }
 
+// ─── Sync Manager ───
+
+/// Central coordinator for Bytescape's P2P data layer.
+///
+/// Owns the Iroh endpoint (QUIC transport), blob store (content-addressed media),
+/// document engine (CRDT key-value sync), and gossip layer (presence). All P2P
+/// operations — file storage, document sync, presence broadcast — go through this
+/// struct.
 pub struct SyncManager {
     endpoint: Endpoint,
     engine: Arc<DocsEngine>,
@@ -91,6 +138,8 @@ pub struct SyncManager {
     /// Dedicated namespace for vault file metadata
     vault_namespace: NamespaceId,
 }
+
+// ─── Initialization ───
 
 impl SyncManager {
     pub async fn new(endpoint: Endpoint, storage_path: PathBuf) -> Result<Self, String> {
@@ -162,6 +211,8 @@ impl SyncManager {
         })
     }
 
+    // ─── Document & Message Operations ───
+
     pub async fn create_doc(&self) -> Result<DocTicket, String> {
         let namespace_secret = NamespaceSecret::new(&mut rand::rng());
         let namespace = self.engine.sync.import_namespace(Capability::Write(namespace_secret.clone())).await.map_err(|e: anyhow::Error| e.to_string())?;
@@ -209,7 +260,8 @@ impl SyncManager {
         Ok(())
     }
 
-    // Gossip presence
+    // ─── Gossip Presence ───
+
     pub async fn broadcast_status(&self, topic_id: [u8; 32], status: String) -> Result<(), String> {
         let topic = iroh_gossip::proto::TopicId::from(topic_id);
         let mut sub = self.gossip.subscribe(topic, vec![]).await.map_err(|e: iroh_gossip::api::ApiError| e.to_string())?;
@@ -217,7 +269,7 @@ impl SyncManager {
         Ok(())
     }
 
-    // === Media Vault ===
+    // ─── Media Vault (Blob Storage) ───
 
     /// Store raw media bytes in Iroh blobs, returning the content hash.
     pub async fn store_media(&self, data: Bytes) -> Result<Hash, String> {
@@ -308,6 +360,8 @@ impl SyncManager {
         self.blobs.has(hash).await.unwrap_or(false)
     }
 
+    // ─── Blob Store Accessors ───
+
     /// Public accessor for the blob store (needed by lib.rs commit_memories).
     pub fn blobs(&self) -> &iroh_blobs::api::Store {
         &self.blobs
@@ -335,7 +389,7 @@ impl SyncManager {
         ).await.map_err(|e: anyhow::Error| e.to_string())
     }
 
-    // === Vault File Manager (Iroh Docs) ===
+    // ─── Vault File Manager ───
 
     async fn upsert_vault_file_metadata(&self, file: &VaultFile) -> Result<(), String> {
         let key = format!("vault/file/{}", file.id).into_bytes();
@@ -489,6 +543,8 @@ impl SyncManager {
     /// Tombstone marker written over deleted vault entries.
     const TOMBSTONE: &[u8] = b"DELETED";
 
+    // ─── Vault Maintenance ───
+
     /// Delete a vault file by overwriting with a tombstone blob.
     pub async fn vault_delete_file(&self, file_id: &str) -> Result<(), String> {
         let key = format!("vault/file/{}", file_id).into_bytes();
@@ -549,6 +605,8 @@ impl SyncManager {
         Ok(count)
     }
 
+    // ─── Vault Statistics ───
+
     /// Get aggregate vault stats.
     pub async fn vault_stats(&self) -> Result<VaultFileStats, String> {
         let files = self.vault_list_files().await?;
@@ -569,6 +627,8 @@ impl SyncManager {
             by_source,
         })
     }
+
+    // ─── Tombstone Garbage Collection ───
 
     /// Garbage-collect orphaned tombstone entries from the vault namespace.
     ///
@@ -628,6 +688,8 @@ impl SyncManager {
         println!("vault_gc: Purged {} tombstone entries", count);
         Ok(count)
     }
+
+    // ─── Diagnostics ───
 
     /// Read all entries from a given namespace (for P2P test/diagnostics).
     /// Returns a list of key-content-author triples.

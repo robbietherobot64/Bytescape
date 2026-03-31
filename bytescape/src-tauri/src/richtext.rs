@@ -1,9 +1,32 @@
-//! Rich Text Facet Detection & Generation for Bluesky AT Protocol
+//! # richtext.rs — Rich Text Facet Detection & Generation
 //!
 //! Detects @mentions, #hashtags, and hyperlinks in post text and produces
-//! `app.bsky.richtext.facet` arrays with correct UTF-8 byte offsets.
+//! `app.bsky.richtext.facet` arrays with correct UTF-8 byte offsets for the
+//! Bluesky AT Protocol.
 //!
-//! See: https://docs.bsky.app/docs/advanced-guides/post-richtext
+//! ## How It Works
+//!
+//! 1. **Detection Phase** (`detect_facets`): Regex-based scanning finds all @mentions,
+//!    #hashtags, and URLs in the text. Each match records its UTF-8 byte offsets
+//!    (not character offsets — this is critical for AT Protocol compatibility).
+//!
+//! 2. **Resolution Phase** (`resolve_mention_dids`): @mentions are resolved to DIDs
+//!    by calling Bluesky's `com.atproto.identity.resolveHandle` endpoint. Mentions
+//!    that fail to resolve are silently dropped (they appear as plain text).
+//!
+//! 3. **Output**: The resolved facets are serialized as `app.bsky.richtext.facet`
+//!    objects, ready to be included in `app.bsky.feed.post` createRecord payloads.
+//!
+//! ## Important: UTF-8 Byte Offsets
+//! Bluesky facets use **byte offsets**, not character offsets. An emoji like 🎉 is
+//! 4 bytes, a CJK character is 3 bytes. All offset calculations in this module
+//! operate on bytes to match the AT Protocol specification.
+//!
+//! ## Related Files
+//! - `connectors/bluesky.rs` — Calls `parse_facets_for_bluesky` when creating posts
+//! - `chat.rs` — Could use this for rich text in DMs (not yet integrated)
+//!
+//! See: <https://docs.bsky.app/docs/advanced-guides/post-richtext>
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -92,6 +115,8 @@ pub fn detect_facets(text: &str) -> Vec<DetectedFacet> {
 
     filtered
 }
+
+// ─── Detection Helpers (Private) ───
 
 /// Detect @mentions in text. Handles must look like valid domain names
 /// (e.g. `@alice.bsky.social`, `@bob.test`).

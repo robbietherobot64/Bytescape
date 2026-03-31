@@ -1,3 +1,28 @@
+//! # traffic.rs — Message Routing Controller
+//!
+//! Routes outgoing chat messages to the correct transport layer based on the
+//! conversation's current mode. Bytescape supports two messaging transports:
+//!
+//! - **Private (P2P)**: Messages go directly between peers via Iroh/QUIC —
+//!   no servers involved, fully encrypted end-to-end.
+//! - **Public (Bluesky)**: Messages go through Bluesky's chat API servers —
+//!   convenient but server-mediated.
+//!
+//! The TrafficController checks each conversation's mode and dispatches accordingly.
+//! Conversations can switch modes (e.g., from Public to Private once both peers
+//! have Bytescape installed), though this negotiation is not yet fully implemented.
+//!
+//! ## Status: Scaffolding
+//! This module is partially implemented. The routing logic works but the Bluesky
+//! path has a TODO for JWT handling, and mode-switching negotiation (SystemMessage)
+//! is defined but not yet wired up.
+//!
+//! ## Related Files
+//! - `chat.rs` — Bluesky DM client (the "Public" transport)
+//! - `protocol.rs` — P2P protocol handler (the "Private" transport)
+//! - `db/chat.rs` — Message and conversation persistence
+//! - `db.rs` — `Conversation`, `ConversationMode`, `TransportLayer` types
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::db::{DbManager, Message, Conversation, ConversationMode, TransportLayer};
@@ -5,6 +30,9 @@ use crate::chat::ChatClient;
 // Use explicit path to avoid conflict with iroh_docs::sync or core::sync
 pub type SyncManager = crate::sync::SyncManager;
 
+// ─── Mode Switching Protocol (Scaffold) ───
+
+/// Types of system messages used for transport mode negotiation between peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[allow(dead_code)]
 pub enum SystemMessageType {
@@ -13,6 +41,7 @@ pub enum SystemMessageType {
     ModeSwitchReject,
 }
 
+/// A system message for negotiating conversation mode switches.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[allow(dead_code)]
 pub struct SystemMessage {
@@ -20,7 +49,9 @@ pub struct SystemMessage {
     pub payload: Option<String>,
 }
 
+// ─── Traffic Controller ───
 
+/// Routes outgoing messages to the correct transport (P2P or Bluesky).
 pub struct TrafficController {
     db: Arc<tokio::sync::RwLock<Option<DbManager>>>,
     #[allow(dead_code)]
@@ -28,10 +59,14 @@ pub struct TrafficController {
 }
 
 impl TrafficController {
+    /// Creates a new TrafficController with database and chat client references.
     pub fn new(db: Arc<tokio::sync::RwLock<Option<DbManager>>>, chat: Arc<ChatClient>) -> Self {
         Self { db, chat }
     }
 
+    // ─── Message Routing ───
+
+    /// Routes an outgoing message to the correct transport based on conversation mode.
     pub async fn route_message(
         &self,
         peer_did: &str,
@@ -64,6 +99,9 @@ impl TrafficController {
         }
     }
 
+    // ─── Conversation Management ───
+
+    /// Gets an existing conversation or creates one with the default transport mode.
     pub async fn get_or_create_convo(&self, peer_did: &str) -> Result<Conversation, String> {
         let db_guard = self.db.read().await;
         let db = db_guard.as_ref().ok_or("Database not initialized")?;
@@ -89,6 +127,9 @@ impl TrafficController {
         }
     }
 
+    // ─── Message Persistence ───
+
+    /// Creates and persists a message record in the local database.
     pub async fn create_local_message(&self, peer_did: &str, content: String, sender_did: &str, transport: TransportLayer) -> Result<Message, String> {
         let msg = Message {
             id: uuid::Uuid::new_v4().to_string(),

@@ -10,6 +10,11 @@
 //! - The `apply_update` path merges incoming Yrs updates into the persisted state
 //! - `snapshot_to_item` extracts plain text from the Yjs XmlFragment and writes
 //!   it back to the linked BytescapeItem's `content` field
+//!
+//! ## Related Files
+//! - `db.rs` — Defines `COLLAB_DOCS_TABLE` and `ITEMS_TABLE` used for persistence
+//! - `models/mod.rs` — `BytescapeItem` type that collab docs can snapshot into
+//! - `lib.rs` — Exposes collab commands to the frontend (create, update, snapshot, delete)
 
 use serde::{Deserialize, Serialize};
 use yrs::{Doc, ReadTxn, Transact, updates::decoder::Decode, updates::encoder::Encode, Update, StateVector};
@@ -18,6 +23,8 @@ use redb::{ReadableDatabase, ReadableTable};
 
 use crate::db::DbManager;
 use crate::db::ITEMS_TABLE;
+
+// ─── Types ───
 
 /// Metadata for a collaborative document stored alongside the Yjs binary state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +98,8 @@ impl DbManager {
         Ok(meta)
     }
 
+    // ─── CRDT Update Application ───
+
     /// Apply a Yjs update (binary, base64-encoded) to an existing document.
     /// Merges the update into the persisted state and returns the new state vector.
     pub fn apply_collab_update(
@@ -159,6 +168,8 @@ impl DbManager {
         Ok(sv)
     }
 
+    // ─── State Retrieval ───
+
     /// Get the full Yjs state for a document (base64-encoded).
     /// Returns (state_b64, state_vector_b64, metadata).
     pub fn get_collab_state(
@@ -189,6 +200,8 @@ impl DbManager {
 
         Ok((record.state_b64, sv_b64, record.meta))
     }
+
+    // ─── Snapshot to BytescapeItem ───
 
     /// Snapshot content into the linked BytescapeItem.
     /// Accepts the rendered content from the frontend (since Tiptap uses
@@ -249,6 +262,8 @@ impl DbManager {
 
         Ok(item_id)
     }
+
+    // ─── Document Lifecycle ───
 
     /// Delete a collab document.
     pub fn delete_collab_doc(&self, doc_id: &str) -> Result<(), String> {

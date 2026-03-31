@@ -1,3 +1,33 @@
+//! # chat.rs — Bluesky DM (Direct Message) Client
+//!
+//! Provides a client for Bluesky's chat API (`chat.bsky.convo.*`) which handles
+//! direct messages between Bluesky users. This is separate from the P2P chat in
+//! `protocol.rs` — this module talks to Bluesky's servers via XRPC, while P2P
+//! chat goes directly between Bytescape nodes.
+//!
+//! ## How It Works
+//!
+//! 1. **PDS Resolution**: Before making chat API calls, we need the user's Personal
+//!    Data Server (PDS) URL. This is resolved from their DID document via the PLC
+//!    directory (`plc.directory`) and cached for the session.
+//!
+//! 2. **Chat Proxy Header**: Bluesky's chat API requires an `atproto-proxy` header
+//!    (`did:web:api.bsky.chat#bsky_chat`) that routes the request through Bluesky's
+//!    chat service. Without this header, chat endpoints return 401.
+//!
+//! 3. **Conversations**: Messages are organized into conversations (`BskyConvo`),
+//!    each with a set of members. Conversations are created on-demand when you
+//!    first message someone.
+//!
+//! 4. **Handle Resolution**: Bluesky handles (like `alice.bsky.social`) are resolved
+//!    to DIDs via the public XRPC API before creating conversations.
+//!
+//! ## Related Files
+//! - `protocol.rs` — P2P direct messaging (peer-to-peer, not via Bluesky servers)
+//! - `connectors/bluesky.rs` — Bluesky feed/post operations (separate from chat)
+//! - `db/chat.rs` — Local storage for chat messages (both Bluesky and P2P)
+//! - `traffic.rs` — Message routing controller (decides Bluesky vs P2P transport)
+
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
 use tokio::sync::Mutex;
@@ -7,7 +37,7 @@ const PUBLIC_XRPC: &str = "https://public.api.bsky.app/xrpc";
 const CHAT_PROXY: &str = "did:web:api.bsky.chat#bsky_chat";
 const PLC_DIRECTORY: &str = "https://plc.directory";
 
-// ── Public types ──
+// ─── Public Types (Bluesky Chat API Responses) ───
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BskyConvo {
@@ -46,7 +76,7 @@ pub struct BskyMessage {
     pub rev: Option<String>,
 }
 
-// ── Private request/response types ──
+// ─── Private Request/Response Types ───
 
 #[derive(Debug, Deserialize)]
 struct GetConvoForMembersResponse {
@@ -113,6 +143,8 @@ struct MessageInput {
     text: String,
 }
 
+// ─── DID Resolution Types ───
+
 #[derive(Debug, Deserialize)]
 struct DidDocument {
     service: Vec<DidService>,
@@ -126,7 +158,7 @@ struct DidService {
     service_endpoint: String,
 }
 
-// ── ChatClient ──
+// ─── ChatClient ───
 
 pub struct ChatClient {
     client: Client,
@@ -135,12 +167,15 @@ pub struct ChatClient {
 }
 
 impl ChatClient {
+    /// Creates a new Bluesky chat client with its own HTTP connection pool.
     pub fn new() -> Self {
         Self {
             client: Client::new(),
             pds_url: Mutex::new(None),
         }
     }
+
+    // ─── PDS & Handle Resolution ───
 
     /// Get the user's PDS URL, resolving from their DID document if needed.
     pub(crate) async fn get_pds_url(&self, user_did: &str) -> Result<String, String> {
@@ -217,6 +252,9 @@ impl ChatClient {
         Ok(parsed.did)
     }
 
+    // ─── Social Graph Queries ───
+
+    /// Fetch the list of accounts the user follows on Bluesky (first page only).
     pub async fn get_follows(&self, user_did: &str) -> Result<Vec<BskyMember>, String> {
         let url = format!("{}/app.bsky.graph.getFollows?actor={}", PUBLIC_XRPC, user_did);
         let response = self.client.get(&url)
@@ -232,6 +270,7 @@ impl ChatClient {
         Ok(parsed.follows.unwrap_or_default())
     }
 
+    /// Fetch the list of accounts following the user on Bluesky (first page only).
     pub async fn get_followers(&self, user_did: &str) -> Result<Vec<BskyMember>, String> {
         let url = format!("{}/app.bsky.graph.getFollowers?actor={}", PUBLIC_XRPC, user_did);
         let response = self.client.get(&url)
@@ -246,6 +285,8 @@ impl ChatClient {
         let parsed: BskyGraphResponse = response.json().await.map_err(|e| e.to_string())?;
         Ok(parsed.followers.unwrap_or_default())
     }
+
+    // ─── Conversation Management ───
 
     /// Get or create a conversation with another user by their DID.
     pub async fn get_or_create_convo(&self, access_jwt: &str, user_did: &str, member_did: &str) -> Result<BskyConvo, String> {
@@ -305,6 +346,8 @@ impl ChatClient {
 
         Ok(msg)
     }
+
+    // ─── Message Operations ───
 
     /// List all conversations for the authenticated user.
     pub async fn list_convos(&self, access_jwt: &str, user_did: &str) -> Result<Vec<BskyConvo>, String> {
@@ -369,6 +412,8 @@ impl ChatClient {
 
         Ok((messages, parsed.cursor))
     }
+
+    // ─── Profile Record Operations ───
 
     /// Get the user's profile record (app.bsky.actor.profile)
     pub async fn get_profile_record(&self, access_jwt: &str, user_did: &str) -> Result<(ProfileRecord, String), String> {

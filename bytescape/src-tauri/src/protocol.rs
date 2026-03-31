@@ -1,7 +1,42 @@
-//! Bytescape P2P Protocol Handlers
+//! # protocol.rs — P2P Protocol Message Handlers
 //!
-//! Implements [`ProtocolHandler`] for the custom Bytescape protocol
-//! and a thin wrapper for forwarding iroh-docs connections.
+//! Implements the custom `bytescape/1.0` protocol that runs over QUIC connections
+//! between Bytescape peers. When two nodes connect, they exchange messages using
+//! this protocol to share profiles, chat messages, and feed content.
+//!
+//! ## How It Works
+//!
+//! 1. **Connection Acceptance**: When a peer connects, the QUIC endpoint routes the
+//!    connection here based on the ALPN identifier (`bytescape/1.0`). The handler
+//!    first checks rate limits (max 3 concurrent connections per peer, 60 requests
+//!    per minute) before processing.
+//!
+//! 2. **Request Parsing**: Each connection carries a single JSON-encoded request
+//!    (max 64 KiB). The request type determines the handler:
+//!    - `PING` → responds with `PONG` (connectivity check)
+//!    - `PROFILE_EXCHANGE` → both peers share their identity (DID, username, handles)
+//!    - `CHAT_MESSAGE` → delivers a direct message between peers
+//!    - `FEED_REQUEST` → serves a page of the user's posts from the local vault
+//!
+//! 3. **Profile Resolution**: The handler always reads the LIVE DID from the keychain
+//!    (not the cached profile from node startup) so profile exchanges reflect the
+//!    current authenticated identity.
+//!
+//! 4. **Peer Tracking**: Every incoming connection updates the peer's `last_seen`
+//!    timestamp and profile info in the database, and emits a `peer-connected` event
+//!    to the frontend for live UI updates.
+//!
+//! ## Security (CRIT-4)
+//! - Per-peer connection limits prevent resource exhaustion
+//! - Per-peer request rate limiting (sliding window) prevents spam
+//! - 64 KiB payload size cap prevents memory bombs
+//! - Stale peer entries are evicted every 5 minutes
+//!
+//! ## Related Files
+//! - `sync.rs` — The SyncManager that owns the Iroh endpoint and blob/doc stores
+//! - `lib.rs` — Registers this protocol handler on the Iroh router
+//! - `db/peers.rs` — Peer database operations (save_peer, get_peer)
+//! - `contacts.rs` — Higher-level peer discovery and management
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -203,9 +238,7 @@ pub struct ChatMessagePayload {
     pub sent_at: String,
 }
 
-// ---------------------------------------------------------------------------
-// BytescapeProtocol — handles incoming `bytescape/1.0` connections
-// ---------------------------------------------------------------------------
+// ─── Protocol Handler ───
 
 /// Protocol handler for the Bytescape custom protocol (`bytescape/1.0`).
 ///
@@ -256,6 +289,8 @@ impl BytescapeProtocol {
     }
 }
 
+// ─── Connection Acceptance ───
+
 impl ProtocolHandler for BytescapeProtocol {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         let remote_id = connection.remote_id();
@@ -276,6 +311,8 @@ impl ProtocolHandler for BytescapeProtocol {
         result
     }
 }
+
+// ─── Request Dispatch ───
 
 impl BytescapeProtocol {
     /// Inner handler called after connection-level rate limiting passes.
@@ -431,6 +468,8 @@ impl BytescapeProtocol {
         Ok(())
     }
 
+    // ─── Profile Resolution ───
+
     /// Get a fresh profile with the live DID from the keychain.
     ///
     /// The protocol's `my_profile` is frozen at node init time, which may
@@ -474,6 +513,8 @@ impl BytescapeProtocol {
             .unwrap_or(None)
             .unwrap_or_else(|| self.my_profile.did.clone())
     }
+
+    // ─── Feed Serving ───
 
     /// Serve our vault feed to a requesting peer.
     ///
@@ -523,6 +564,8 @@ impl BytescapeProtocol {
             total_count,
         }
     }
+
+    // ─── Peer Record Management ───
 
     /// Update the peer record in the database from an incoming connection.
     /// If the remote sent their profile, save their username/DID.
@@ -591,6 +634,8 @@ impl BytescapeProtocol {
         // Notify frontend that a peer connected to us
         let _ = self.app_handle.emit("peer-connected", event_payload);
     }
+
+    // ─── P2P Chat Message Storage ───
 
     /// Save an incoming chat message from a remote peer as a VaultMessage.
     /// Also emits a `p2p-message` event so the frontend can update in real-time.

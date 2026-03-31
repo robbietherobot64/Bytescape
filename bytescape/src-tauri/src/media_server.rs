@@ -1,3 +1,34 @@
+//! # media_server.rs — Local Media Server for WebView
+//!
+//! Starts a localhost HTTP server (using Warp) that serves cached media files
+//! (images, videos, audio) to the frontend WebView. This is necessary because
+//! Tauri's WebView cannot directly access files on the filesystem — it needs
+//! an HTTP URL to load media.
+//!
+//! ## How It Works
+//!
+//! 1. A Warp server binds to `127.0.0.1` on a random available port
+//! 2. It serves files from the `blob_cache/` directory inside the app data folder
+//! 3. The frontend loads media via `http://127.0.0.1:{port}/filename`
+//! 4. CORS headers restrict access to Tauri origins only (CRIT-5 security)
+//!
+//! ## Cache Strategy
+//! - **Videos**: `no-store` — prevents GStreamer double-buffering (each pipeline +
+//!   HTTP cache = 2× memory). Re-request cost is zero since it's localhost.
+//! - **Images**: `max-age=300, immutable` — WebKitGTK caches the decoded bitmap
+//!   across virtualizer remount cycles, preventing multi-GB RSS spikes from
+//!   re-decoding full-res images during scroll.
+//!
+//! ## Security (CRIT-5)
+//! CORS is locked to Tauri origins (`tauri://localhost`, `https://tauri.localhost`,
+//! `http://localhost:1420` for dev). This prevents arbitrary browser tabs or
+//! extensions from reading cached media via the localhost server.
+//!
+//! ## Related Files
+//! - `sync.rs` — The blob store that populates the `blob_cache/` directory
+//! - `lib.rs` — Starts this server during app initialization, stores the port in AppState
+//! - `blob_hash.rs` — Parses blob hash strings used as filenames in the cache
+
 use warp::Filter;
 use warp::Reply;
 use std::path::PathBuf;

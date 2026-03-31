@@ -10,9 +10,17 @@
 //! - With thumbhash suffix: `"HASH:thumbhash"`
 //! - Base32 encoded (uppercase or lowercase, with optional CIDv1 prefix)
 //! - Whitespace-padded: `"  HASH  "`
+//!
+//! ## Related Files
+//! - `sync.rs` — Uses blob hashes for content-addressed media storage (store_media, get_media)
+//! - `connectors/bluesky.rs` — Receives blob hashes from Bluesky CDN URLs
+//! - `db/vault.rs` — Stores blob hash references in the database
+//! - `lib.rs` — Calls `parse_blob_hash` when resolving blob references from the frontend
 
 use data_encoding::BASE32_NOPAD;
 use crate::sync::Hash;
+
+// ─── Normalization ───
 
 /// Normalize a blob hash string by stripping all known prefixes and suffixes.
 ///
@@ -34,6 +42,8 @@ pub fn normalize_blob_ref(input: &str) -> String {
     }
     s
 }
+
+// ─── Canonical Parsing ───
 
 /// Parse a blob hash from any format used in the codebase.
 ///

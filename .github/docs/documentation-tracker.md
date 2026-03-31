@@ -16,7 +16,7 @@
 | 2 | Database Layer | 6 | 2,312 | ✅ Complete |
 | 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ✅ Complete |
 | 4 | Platform Connectors | 4 | 6,662 | ✅ Complete |
-| 5 | P2P, Sync & Real-time | 8 | 3,393 | ⬜ Not started |
+| 5 | P2P, Sync & Real-time | 8 | 3,393 | ✅ Complete |
 | 6 | ActivityPub Federation | 9 | 2,866 | ⬜ Not started |
 | 7 | Tauri Commands (Backend API) | 20 | 9,824 | ⬜ Not started |
 | 8 | Frontend Foundation | 8 | 2,581 | ⬜ Not started |
@@ -104,14 +104,14 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/sync.rs` | 668 | ⬜ | Iroh Docs/Blobs/Gossip sync engine |
-| `src-tauri/src/protocol.rs` | 702 | ⬜ | P2P protocol message handling |
-| `src-tauri/src/chat.rs` | 419 | ⬜ | P2P chat implementation |
-| `src-tauri/src/collab.rs` | 305 | ⬜ | Collaborative editing (CRDT) |
-| `src-tauri/src/blob_hash.rs` | 265 | ⬜ | Content-addressed blob hashing |
-| `src-tauri/src/richtext.rs` | 650 | ⬜ | Rich text facet parsing (AT Protocol) |
-| `src-tauri/src/media_server.rs` | 77 | ⬜ | Local media serving for WebView |
-| `src-tauri/src/traffic.rs` | 107 | ⬜ | Network traffic monitoring |
+| `src-tauri/src/sync.rs` | 668 | ✅ | 32-line module header (4 subsystems), 12 section dividers, 4 type docs, enhanced function docs |
+| `src-tauri/src/protocol.rs` | 702 | ✅ | Module header expanded 4→40 lines (CRIT-4 security docs), 8 section dividers |
+| `src-tauri/src/chat.rs` | 419 | ✅ | 30-line module header (4-step flow), 9 section dividers, 4 function docs |
+| `src-tauri/src/collab.rs` | 305 | ✅ | Related Files added to header, 5 section dividers |
+| `src-tauri/src/blob_hash.rs` | 265 | ✅ | Related Files section added to existing header, 2 section dividers |
+| `src-tauri/src/richtext.rs` | 650 | ✅ | Header expanded 6→29 lines (pipeline, UTF-8 byte offsets caveat), 1 section divider |
+| `src-tauri/src/media_server.rs` | 77 | ✅ | Full 31-line module header (cache strategy, CRIT-5 security, related files) |
+| `src-tauri/src/traffic.rs` | 107 | ✅ | 25-line module header (scaffolding status noted), 5 section dividers, 7 doc comments |
 
 **Subtotal**: 8 files · 3,193 lines
 
