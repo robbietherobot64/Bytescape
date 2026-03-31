@@ -1,8 +1,33 @@
 //! WebFinger — acct: resource resolution for AP actor discovery (RFC 7033).
+//!
+//! Implements the WebFinger protocol for actor discovery in the fediverse.
+//! When a remote server needs to find a Bytescape user's ActivityPub profile,
+//! it queries the WebFinger endpoint with an `acct:` URI.
+//!
+//! # How It Works
+//!
+//! 1. When someone searches for @alice@bytescape.social, the remote server
+//!    queries `/.well-known/webfinger?resource=acct:alice@bytescape.social`
+//! 2. `generate_webfinger()` builds the JRD (JSON Resource Descriptor) response
+//!    pointing to the actor's AP profile URL
+//! 3. For outbound discovery, `resolve_webfinger()` queries a remote server's
+//!    WebFinger endpoint to find actor URLs
+//! 4. `parse_acct_resource()` extracts the username and domain from the
+//!    `acct:` URI format
+//!
+//! # Related Files
+//!
+//! - `actor.rs` — `AP_DOMAIN` constant used for URL construction; actor profiles
+//!   resolved via WebFinger
+//! - `lib.rs` — serves the `/.well-known/webfinger` endpoint
 
 use serde::{Deserialize, Serialize};
 use super::actor::AP_DOMAIN;
 
+/// JRD (JSON Resource Descriptor) response returned by the WebFinger endpoint.
+///
+/// Contains the subject (`acct:` URI), optional aliases, and a list of links
+/// pointing to the actor's profile and ActivityPub endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFingerResponse {
     pub subject: String,
@@ -11,6 +36,11 @@ pub struct WebFingerResponse {
     pub links: Vec<WebFingerLink>,
 }
 
+/// A single link entry in a WebFinger JRD response.
+///
+/// The `rel` field indicates the relationship type (e.g., `"self"` for the
+/// canonical AP actor URL, `"http://webfinger.net/rel/profile-page"` for
+/// the human-readable profile).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFingerLink {
     pub rel: String,

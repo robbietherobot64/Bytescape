@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-03-31
-> **Scope**: Batches 1–5 (30 source files · ~15,800 lines · Rust + TypeScript)
+> **Scope**: Batches 1–6 (39 source files · ~18,700 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 5 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync) uncovered **99 issues** across 30 files:
+A systematic audit of the first 6 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation) uncovered **131 issues** across 39 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 22 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 48 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 29 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 28 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 62 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 41 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -320,6 +320,59 @@ Foundational issues that affect all layers:
 
 ---
 
+## Batch 6 — ActivityPub Federation
+
+> **Files**: `activitypub/mod.rs`, `activitypub/inbox.rs`, `activitypub/outbox.rs`, `activitypub/actor.rs`, `activitypub/activities.rs`, `activitypub/signatures.rs`, `activitypub/webfinger.rs`, `activitypub/group_actor.rs`, `activitypub/lemmy.rs`
+> **Lines**: ~2,867
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 6.1 | `actor.rs` | **`secret_key_hex` on `#[derive(Serialize)]` struct** — `ApActor` derives Serialize, so `serde_json::to_value(&actor)` would leak the Ed25519 private key. Only `to_activitystreams()` manually excludes it. | Any accidental serialization (e.g., debug logging, error response, Tauri command return) leaks the private key |
+| 6.2 | `inbox.rs` | **SSRF in `fetch_actor_public_key`** — fetches arbitrary URLs from untrusted Signature header `keyId` field. No URL allowlist, no private-IP check, no timeout. | Attacker can probe internal services (localhost, metadata endpoints) by sending crafted activities with `keyId` pointing to internal URLs |
+| 6.3 | `inbox.rs` | **No Digest verification** — `process_inbox` receives the `digest_header` but never verifies it matches the actual body hash. An attacker could replace the body after signing. | Body substitution attack: signature covers headers (including Digest), but if Digest isn't checked against body, a MITM could swap the body |
+| 6.4 | `signatures.rs` | **Hand-rolled SHA-256** — 120+ lines of custom SHA-256 implementation instead of using the `sha2` crate. No fuzzing, no test vectors beyond one known-answer test. | Correctness risk in cryptographic code; not auditable; maintenance burden |
+| 6.5 | `signatures.rs` | **No clock skew check on Date header** — inbound signature verification doesn't validate that the Date header is within a reasonable window (e.g., ±5 minutes). | Replay attacks: a captured signed request can be replayed indefinitely |
+| 6.6 | `activities.rs` | **`bytescape_item_to_note()` drops all media attachments** — images, videos, and audio on posts are silently lost when federating to the fediverse | Users' media posts appear as text-only on Mastodon/Lemmy |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 6.7 | `actor.rs` | **`AP_DOMAIN` hardcoded as `"bytescape.social"`** — not configurable for self-hosting or development | Self-hosters can't federate under their own domain; dev/staging environments share production domain |
+| 6.8 | `inbox.rs` | **All activity parsing uses `serde_json::Value`** — completely untyped dispatch. The `ApActivity` and `ApObject` typed structs in types.rs are unused by the inbox. | No compile-time checks on AP message structure; field name typos silently produce None/empty |
+| 6.9 | `inbox.rs` | **`from_name` in DM handler uses `attributedTo` URL as name** — `attributedTo` is an actor URL (e.g., "https://mastodon.social/@alice"), not a human-readable name | DM sender shown as a URL instead of a display name in the chat UI |
+| 6.10 | `inbox.rs` | **Activity handlers don't persist state** — handle_follow, handle_like, etc. return InboxResult but don't actually store anything. The caller must handle persistence. | Easily forgotten; if the caller doesn't persist, follows/likes are silently lost |
+| 6.11 | `outbox.rs` | **No retry logic in `deliver_activity()`** — single attempt, fail permanently. No backoff, no queue, no dead-letter log. | Transient network errors cause permanent delivery failure; federation unreliable |
+| 6.12 | `outbox.rs` | **No shared inbox optimization** — delivers individually to each follower's inbox, even if many followers are on the same instance | N followers on instance X = N requests instead of 1 to sharedInbox |
+| 6.13 | `outbox.rs` | **`fetch_remote_actor()` has no timeout** — uses default reqwest timeout (potentially infinite) | Hung connections block the async runtime |
+| 6.14 | `activities.rs` | **No `@context` field in constructed activities** — only `actor.to_activitystreams()` includes it. Activity constructors (create_note, follow, like, etc.) omit it. | Invalid ActivityPub JSON-LD; some servers may reject or misparse context-less activities |
+| 6.15 | `signatures.rs` | **`algorithm="ed25519"` in Signature header** — the HTTP Signatures spec expects `"hs2019"` for modern algorithms. Some implementations may reject `"ed25519"` as non-standard. | Potential federation failures with strict implementations |
+| 6.16 | `lemmy.rs` | **`original_timestamp` stored as i64 (seconds) but `imported_at` as u64 (milliseconds)** — different timestamp units in the same struct | Sorting/display bugs when mixing Lemmy-imported items with other sources |
+| 6.17 | `lemmy.rs` | **`author_did` and `author_handle` both set to the actor URL** — Lemmy's `attributedTo` is a URL, not a DID or a handle | Frontend displays raw URLs instead of usernames for Lemmy post authors |
+| 6.18 | `lemmy.rs` | **`discover_communities()` only validates Lemmy instances** — returns error for PieFed, Mbin, and other Lemmy-API-compatible software | Unnecessarily restrictive; blocks compatible instances |
+| 6.19 | `group_actor.rs` | **`create_note_for_group()` uses `imported_at` for `published` timestamp** — should use `original_timestamp` | Posts appear with import time instead of original creation time |
+| 6.20 | `webfinger.rs` | **`resolve_webfinger()` has no timeout** — uses default reqwest timeout | Hung connections when resolving remote WebFinger |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 6.21 | `actor.rs` | **`owner_did` initialized as empty string** — set by caller later, but no validation | Potential for empty `owner_did` in actor records if caller forgets |
+| 6.22 | `inbox.rs` | **DM detection misses single-string `to`/`cc`** — checks `.as_array()` only; some implementations send `"to": "https://..."` as a string, not array | DMs from non-conforming servers treated as public posts |
+| 6.23 | `inbox.rs` | **`handle_reject` returns `Ignored` instead of a specific variant** — caller can't distinguish between unsupported activity and active rejection | Reject and Ignore are conflated in inbox processing |
+| 6.24 | `activities.rs` | **`AP_PUBLIC` duplicates `types::AS_CONTEXT` pattern** — the public addressing constant should be in types.rs alongside other AP constants | Constants scattered across modules |
+| 6.25 | `signatures.rs` | **`parse_signature_header` fragile comma splitting** — fails if any value contains an escaped comma (unlikely but spec-possible) | Edge case parsing failure |
+| 6.26 | `signatures.rs` | **`pem_to_ed25519_pubkey` accepts raw 32-byte keys** — falls back to treating raw bytes as a key if DER parsing fails | Could misinterpret non-Ed25519 data as a valid key |
+| 6.27 | `webfinger.rs` | **No validation that resolved links point to the expected domain** — a malicious WebFinger response could redirect to a phishing domain | Trust-on-first-use vulnerability |
+| 6.28 | `group_actor.rs` | **`group_to_ap_actor()` omits `published` field** — AP spec recommends including creation timestamp | Minor spec non-compliance |
+| 6.29 | `group_actor.rs` | **No pagination on group outbox/followers** — returns all items in a single response | Fails for groups with thousands of posts or followers |
+| 6.30 | `lemmy.rs` | **`strip_html_tags()` is a naive char-by-char parser** — fails on edge cases like `<script>`, HTML entities (`&amp;`), unclosed tags | Incomplete HTML stripping; XSS risk if output is rendered as HTML elsewhere |
+| 6.31 | `lemmy.rs` | **Duplicate `strip_html_tags` implementation** — `connectors/mastodon.rs` has its own `strip_html()` | Code duplication across modules |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -354,4 +407,13 @@ Foundational issues that affect all layers:
 | `richtext.rs` | 0 | 1 | 0 | 1 |
 | `media_server.rs` | 0 | 0 | 1 | 1 |
 | `traffic.rs` | 0 | 1 | 0 | 1 |
-| **TOTAL** | **22** | **48** | **29** | **99** |
+| `activitypub/mod.rs` | 0 | 0 | 0 | 0 |
+| `activitypub/inbox.rs` | 2 | 3 | 3 | 8 |
+| `activitypub/outbox.rs` | 0 | 3 | 0 | 3 |
+| `activitypub/actor.rs` | 1 | 1 | 1 | 3 |
+| `activitypub/activities.rs` | 1 | 1 | 1 | 3 |
+| `activitypub/signatures.rs` | 2 | 1 | 2 | 5 |
+| `activitypub/webfinger.rs` | 0 | 1 | 1 | 2 |
+| `activitypub/group_actor.rs` | 0 | 1 | 2 | 3 |
+| `activitypub/lemmy.rs` | 0 | 3 | 2 | 5 |
+| **TOTAL** | **28** | **62** | **41** | **131** |

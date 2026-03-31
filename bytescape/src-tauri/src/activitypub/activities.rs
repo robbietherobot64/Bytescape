@@ -1,10 +1,46 @@
-//! Activity constructors for standard ActivityPub activity types.
+//! Builder functions for constructing ActivityPub activities as JSON-LD values.
+//!
+//! Each function constructs a complete `ApActivity` with proper addressing (to/cc
+//! with `as:Public`) from minimal parameters (actor ID, target ID, etc.).
+//!
+//! # How It Works
+//!
+//! 1. Each function takes minimal parameters (actor ID, target ID) and constructs
+//!    a complete activity with proper addressing (to/cc with `as:Public`).
+//! 2. Activities are returned as typed `ApActivity` structs which serialize to
+//!    JSON-LD for federation delivery.
+//! 3. `bytescape_item_to_note` converts Bytescape's internal post format to an
+//!    AP Note for syndication — this is the main bridge between local content
+//!    and the fediverse.
+//! 4. The constructed activities are then delivered by `outbox.rs` or returned
+//!    as responses by `inbox.rs`.
+//!
+//! # Related Files
+//!
+//! - `outbox.rs` — delivers these activities to remote inboxes
+//! - `inbox.rs` — uses `accept`/`reject` for Follow responses
+//! - `types.rs` — defines `ApActivity` and `ApObject` structs used here
+//! - `actor.rs` — `ApActor` identity referenced by actor IDs
 
 use super::types::{ApObject, ApActivity};
 use crate::models::BytescapeItem;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The ActivityStreams Public addressing constant.
+/// Adding this to the `to` field makes an activity visible to anyone.
 pub const AP_PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTIVITY CONSTRUCTORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Wrap an `ApObject` (Note) in a Create activity for initial publication.
+///
+/// Copies addressing (to/cc) and published timestamp from the inner note.
+/// → Delivered by `outbox.rs::deliver_to_followers`.
 pub fn create_note(
     actor_id: &str,
     note: &ApObject,
@@ -21,6 +57,10 @@ pub fn create_note(
     }
 }
 
+/// Construct a Follow activity targeting another actor.
+///
+/// Addressed only to the target (not public). The remote server should
+/// respond with Accept or Reject.
 pub fn follow(actor_id: &str, target_id: &str) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -33,6 +73,9 @@ pub fn follow(actor_id: &str, target_id: &str) -> ApActivity {
     }
 }
 
+/// Accept an incoming Follow request. Wraps the original Follow activity
+/// as the object so the requester can correlate the response.
+/// → Called from `inbox.rs` when processing Follow activities.
 pub fn accept(actor_id: &str, original_activity: &serde_json::Value) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -45,6 +88,8 @@ pub fn accept(actor_id: &str, original_activity: &serde_json::Value) -> ApActivi
     }
 }
 
+/// Reject an incoming Follow request. Same structure as Accept but signals denial.
+/// → Called from `inbox.rs` when the user declines a Follow.
 pub fn reject(actor_id: &str, original_activity: &serde_json::Value) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -57,6 +102,7 @@ pub fn reject(actor_id: &str, original_activity: &serde_json::Value) -> ApActivi
     }
 }
 
+/// Like a remote object. Addressed publicly so the like count is visible.
 pub fn like(actor_id: &str, object_id: &str) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -69,6 +115,8 @@ pub fn like(actor_id: &str, object_id: &str) -> ApActivity {
     }
 }
 
+/// Announce (boost/reblog) a remote object. Addressed to Public with
+/// the actor's followers collection in `cc` for proper distribution.
 pub fn announce(actor_id: &str, object_id: &str, followers_collection: &str) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -81,6 +129,8 @@ pub fn announce(actor_id: &str, object_id: &str, followers_collection: &str) -> 
     }
 }
 
+/// Delete a previously published object. Creates a Tombstone as the object
+/// per AP spec, signaling to remote servers that the content was removed.
 pub fn delete(actor_id: &str, object_id: &str) -> ApActivity {
     let tombstone = serde_json::json!({
         "id": object_id,
@@ -97,6 +147,8 @@ pub fn delete(actor_id: &str, object_id: &str) -> ApActivity {
     }
 }
 
+/// Undo a previous activity (e.g., Undo(Follow) to unfollow, Undo(Like) to unlike).
+/// Wraps the original activity as the object.
 pub fn undo(actor_id: &str, original_activity: &ApActivity) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -109,6 +161,8 @@ pub fn undo(actor_id: &str, original_activity: &ApActivity) -> ApActivity {
     }
 }
 
+/// Update a previously published object with new content.
+/// Copies addressing from the updated object.
 pub fn update(actor_id: &str, object: &ApObject) -> ApActivity {
     ApActivity {
         id: format!("{}/activities/{}", actor_id, uuid::Uuid::new_v4()),
@@ -121,7 +175,21 @@ pub fn update(actor_id: &str, object: &ApObject) -> ApActivity {
     }
 }
 
-/// Convert a BytescapeItem into an AP Note object.
+// ═══════════════════════════════════════════════════════════════════════════════
+// BYTESCAPE → AP CONVERSION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Convert a `BytescapeItem` into an AP Note object for federation.
+///
+/// This is the primary bridge between Bytescape's internal content model and
+/// the ActivityPub protocol. Maps fields as follows:
+/// - `item.id` → Note ID (under the actor's namespace)
+/// - `item.content` → Note content (HTML)
+/// - `item.original_timestamp` → `published` (RFC 3339)
+///
+/// **NOTE**: Media attachments are not yet mapped — images/videos from the
+/// BytescapeItem are silently dropped. This needs to be implemented for
+/// full media federation support.
 pub fn bytescape_item_to_note(item: &BytescapeItem, actor_id: &str) -> ApObject {
     let note_id = format!("{}/notes/{}", actor_id, item.id);
     ApObject {
@@ -143,6 +211,10 @@ pub fn bytescape_item_to_note(item: &BytescapeItem, actor_id: &str) -> ApObject 
         expires_at: None,
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

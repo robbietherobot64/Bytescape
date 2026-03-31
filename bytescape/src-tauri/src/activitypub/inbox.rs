@@ -1,6 +1,43 @@
-//! Inbox POST handler for incoming ActivityPub messages.
+//! # ActivityPub Inbox — Incoming Message Handler
+//!
+//! Handles incoming ActivityPub messages from remote fediverse servers (Mastodon,
+//! Lemmy, etc.) delivered via HTTP POST to the local inbox endpoint.
+//!
+//! ## HOW IT WORKS
+//!
+//! 1. A remote server sends an HTTP POST to our inbox with a JSON-LD body and an
+//!    HTTP `Signature` header (draft-cavage-http-signatures).
+//! 2. `process_inbox()` parses the `Signature` header, fetches the sender's public
+//!    key from their actor document, and verifies the cryptographic signature.
+//! 3. If the signature is valid, the activity body is parsed and dispatched by type
+//!    (`Follow`, `Create`, `Like`, `Undo`, `Announce`, `Update`, `Delete`, `Accept`,
+//!    `Reject`).
+//! 4. DMs are detected by checking whether `to`/`cc` lack the `as:Public` address
+//!    (Mastodon convention — a Note addressed only to specific actors is a DM).
+//! 5. Group-targeted activities are detected via `extract_group_id()` and handled
+//!    separately with database operations for membership management.
+//!
+//! ## RELATED FILES
+//!
+//! - `signatures.rs` — HTTP signature parsing and verification
+//! - `actor.rs` — local actor identity (`AP_DOMAIN` constant)
+//! - `activities.rs` — constructs `Accept`/`Reject` response activities
+//! - `group_actor.rs` — group actor federation and `Announce` relay
+//! - `db/groups.rs` — group membership persistence (`DbManager`)
+//! - `connectors/mastodon.rs` — `strip_html()` used for DM content sanitization
+//!
+//! ## SECURITY
+//!
+//! `fetch_actor_public_key()` fetches arbitrary URLs derived from untrusted
+//! `Signature` headers with no allowlist — this is a potential SSRF vector.
+//! A production deployment should restrict outbound fetches to known-good domains
+//! or at minimum block private/loopback ranges.
 
 use super::signatures::{parse_signature_header, verify_ed25519_signature};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INBOX RESULT TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Result of processing an inbox activity.
 #[derive(Debug)]
@@ -18,6 +55,10 @@ pub enum InboxResult {
     Undone { activity_type: String },
     Ignored,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN INBOX PROCESSOR
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Process an incoming inbox POST.
 ///
@@ -90,6 +131,15 @@ pub async fn process_inbox(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNATURE VERIFICATION HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Construct the HTTP signature verification string from declared headers.
+///
+/// Reassembles the `(request-target)`, `host`, `date`, `digest`, and
+/// `content-type` pseudo-headers into the canonical signing string that the
+/// sender should have signed.
 fn build_inbox_signing_string(
     headers: &[String],
     request_path: &str,
@@ -113,7 +163,17 @@ fn build_inbox_signing_string(
     parts.join("\n")
 }
 
-/// Fetch a remote actor document and extract the publicKeyPem.
+/// Fetch a remote actor document and extract the `publicKeyPem`.
+///
+/// Dereferences the `key_id` URL (stripping the `#fragment`) to retrieve the
+/// actor document, then extracts `publicKey.publicKeyPem`.
+///
+/// # Security
+///
+/// This function fetches an arbitrary URL derived from the untrusted `Signature`
+/// header. There is currently no allowlist or private-range block — **SSRF risk**.
+///
+/// → Cross-system call: outbound HTTP GET to any URL the sender specifies.
 pub async fn fetch_actor_public_key(
     http_client: &reqwest::Client,
     key_id: &str,
@@ -144,6 +204,10 @@ pub async fn fetch_actor_public_key(
         .map(|s| s.to_string())
         .ok_or_else(|| "Actor document missing publicKey.publicKeyPem".to_string())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTIVITY HANDLERS — Person-to-Person
+// ═══════════════════════════════════════════════════════════════════════════════
 
 async fn handle_follow(activity: &serde_json::Value) -> Result<InboxResult, String> {
     let from = activity.get("actor")
@@ -307,11 +371,13 @@ async fn handle_reject(_activity: &serde_json::Value) -> Result<InboxResult, Str
     Ok(InboxResult::Ignored)
 }
 
-// ─── Group Inbox Handlers (Sprint v13 P3) ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUP INBOX HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════
 //
 // These handlers process activities targeting local Group actors.
 // They require database access to manage group membership and posts.
-// Call `is_group_activity()` first to detect group-targeted activities,
+// Call `extract_group_id()` first to detect group-targeted activities,
 // then dispatch to the appropriate handler.
 
 use crate::db::DbManager;
@@ -558,6 +624,10 @@ fn now_ms() -> u64 {
         .unwrap()
         .as_millis() as u64
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

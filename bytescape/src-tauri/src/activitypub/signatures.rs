@@ -1,11 +1,52 @@
 //! HTTP Signatures for ActivityPub federation (draft-cavage-http-signatures-12).
+//!
+//! Implements the authentication mechanism used across the fediverse: every
+//! outbound request is signed with the local actor's Ed25519 key, and every
+//! inbound request's signature is verified against the sender's public key.
+//!
+//! # How It Works
+//!
+//! 1. **Outbound POST** — `sign_post_request()` computes a SHA-256 digest of
+//!    the body, builds a canonical signing string from the request headers,
+//!    signs it with the local actor's Ed25519 key, and attaches the result as
+//!    a `Signature` header.
+//! 2. **Outbound GET** — `sign_get_request()` does the same for fetch requests
+//!    (some servers like Mastodon require signed fetches to return actor data).
+//! 3. **Inbound** — `parse_signature_header()` extracts components from an
+//!    incoming `Signature` header, then `verify_ed25519_signature()` checks
+//!    the signature against the sender's public key PEM.
+//! 4. The SHA-256 digest is computed with a hand-rolled implementation to avoid
+//!    adding a crate dependency.
+//!
+//! # Related Files
+//!
+//! - `inbox.rs` — uses `parse_signature_header` + `verify_ed25519_signature`
+//!   for incoming activity authentication
+//! - `outbox.rs` — uses `sign_post_request` and `sign_get_request` for delivery
+//! - `actor.rs` — provides the secret key and public key PEM for signing
+//!
+//! # Note
+//!
+//! Contains a hand-rolled SHA-256 implementation (~120 lines) rather than using
+//! the `sha2` crate — consider replacing with a dependency for auditability.
 
 use base64::Engine;
 use chrono::Utc;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Headers included in the signature for outbound POST requests (inbox delivery).
 const SIGNED_HEADERS_POST: &[&str] = &["(request-target)", "host", "date", "digest", "content-type"];
+/// Headers included in the signature for outbound GET requests (actor fetches).
 const SIGNED_HEADERS_GET: &[&str] = &["(request-target)", "host", "date", "accept"];
 
+/// Parsed components of an HTTP Signature header.
+///
+/// Extracted from an incoming request's `Signature` header by
+/// `parse_signature_header()`. The `key_id` is used to fetch the sender's
+/// public key for verification.
 #[derive(Debug, Clone)]
 pub struct HttpSignature {
     pub key_id: String,
@@ -14,7 +55,18 @@ pub struct HttpSignature {
     pub signature: Vec<u8>,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// OUTBOUND SIGNING
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Sign an outbound HTTP POST request for inbox delivery.
+///
+/// Computes a SHA-256 digest of the body, builds a canonical signing string
+/// from the request headers, signs it with the actor's Ed25519 secret key,
+/// and returns the headers to attach to the request (Date, Digest, Signature,
+/// Content-Type).
+///
+/// → Called by `outbox.rs` when delivering activities to remote inboxes.
 pub fn sign_post_request(
     key_id: &str,
     secret_key: &iroh::SecretKey,
@@ -60,6 +112,11 @@ pub fn sign_post_request(
 }
 
 /// Sign an outbound HTTP GET request (e.g., fetching remote actors).
+///
+/// Some servers (notably Mastodon) require signed fetches to return actor
+/// profiles. Returns headers to attach: Date, Signature, Accept.
+///
+/// → Called by `actor.rs` when resolving remote actor profiles.
 pub fn sign_get_request(
     key_id: &str,
     secret_key: &iroh::SecretKey,
@@ -100,7 +157,16 @@ pub fn sign_get_request(
     ])
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INBOUND VERIFICATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Parse an HTTP Signature header into its components.
+///
+/// Extracts `keyId`, `algorithm`, `headers`, and `signature` from a
+/// comma-separated Signature header value per draft-cavage-http-signatures-12.
+///
+/// → Called by `inbox.rs` to authenticate incoming ActivityPub requests.
 pub fn parse_signature_header(header: &str) -> Result<HttpSignature, String> {
     let mut key_id = String::new();
     let mut algorithm = String::new();
@@ -136,7 +202,13 @@ pub fn parse_signature_header(header: &str) -> Result<HttpSignature, String> {
     })
 }
 
-/// Verify an ed25519 signature against a public key PEM and signing string.
+/// Verify an Ed25519 signature against a public key PEM and signing string.
+///
+/// Extracts the 32-byte public key from the PEM, then delegates to the
+/// raw verification function. Returns `Ok(true)` if valid, `Ok(false)` if
+/// the signature doesn't match, or `Err` if the key is malformed.
+///
+/// → Called by `inbox.rs` after parsing the Signature header.
 pub fn verify_ed25519_signature(
     pem: &str,
     signing_string: &[u8],
@@ -146,6 +218,16 @@ pub fn verify_ed25519_signature(
     verify_ed25519_raw(&pubkey_bytes, signing_string, signature)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNING STRING CONSTRUCTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Build the canonical signing string from request components.
+///
+/// Constructs a newline-separated string of `header: value` pairs in the
+/// order specified by `headers`. This is the byte sequence that gets signed
+/// or verified. The `(request-target)` pseudo-header is synthesized from
+/// the HTTP method and path.
 pub fn build_signing_string(
     headers: &[&str],
     method: &str,
@@ -172,11 +254,18 @@ pub fn build_signing_string(
     parts.join("\n")
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CRYPTOGRAPHIC PRIMITIVES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Sign data with an Ed25519 secret key. Returns the 64-byte signature.
 fn sign_ed25519(secret_key: &iroh::SecretKey, data: &[u8]) -> Vec<u8> {
     let sig = secret_key.sign(data);
     sig.to_bytes().to_vec()
 }
 
+/// Verify an Ed25519 signature against raw 32-byte public key bytes.
+/// Returns `Ok(true)` if valid, `Ok(false)` if invalid, `Err` if malformed.
 fn verify_ed25519_raw(
     pubkey_bytes: &[u8; 32],
     data: &[u8],
@@ -226,13 +315,23 @@ pub fn pem_to_ed25519_pubkey(pem: &str) -> Result<[u8; 32], String> {
     }
 }
 
-// Minimal SHA-256 implementation to avoid adding a new dependency.
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHA-256 IMPLEMENTATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Hand-rolled SHA-256 to avoid adding the `sha2` crate as a dependency.
+// Consider replacing with `sha2::Sha256` for auditability if the dependency
+// budget allows it.
+
+/// Compute SHA-256 hash of the input data.
 fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize()
 }
 
+/// Minimal SHA-256 hasher. Processes data in 64-byte blocks and produces
+/// a 32-byte digest. Implements the FIPS 180-4 algorithm.
 struct Sha256 {
     state: [u32; 8],
     buffer: [u8; 64],
@@ -240,6 +339,7 @@ struct Sha256 {
     total_len: u64,
 }
 
+/// Round constants for SHA-256 (first 32 bits of fractional parts of cube roots of first 64 primes).
 const SHA256_K: [u32; 64] = [
     0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
     0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -354,6 +454,10 @@ impl Sha256 {
         self.state[7] = self.state[7].wrapping_add(h);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

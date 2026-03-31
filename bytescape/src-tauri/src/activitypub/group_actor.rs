@@ -8,6 +8,28 @@
 //! - `manuallyApprovesFollowers` derived from group visibility
 //! - `discoverable` false for Private groups
 //! - Posts are relayed as `Announce` activities (Lemmy pattern)
+//!
+//! # How It Works
+//!
+//! 1. Each Bytescape group gets an AP Group actor identity with its own keypair,
+//!    inbox, and outbox
+//! 2. `group_to_ap_actor()` generates the JSON-LD profile document served to
+//!    remote servers — it maps group visibility to AP's `manuallyApprovesFollowers`
+//!    flag
+//! 3. When group members post, `create_note_for_group()` wraps the `BytescapeItem`
+//!    as a Create/Note with the group as audience
+//! 4. The group actor relays posts to followers via `announce_to_followers()` (the
+//!    Lemmy community relay pattern)
+//! 5. Remote servers discover groups via their outbox (`group_outbox`) and followers
+//!    (`group_followers`) collections
+//!
+//! # Related Files
+//!
+//! - `inbox.rs` — `handle_group_follow`, `handle_group_create` for incoming group
+//!   activities
+//! - `lemmy.rs` — Lemmy community compatibility
+//! - `models/groups.rs` — `LocalGroup`, `GroupPost` data types
+//! - `db/groups.rs` — group membership persistence
 
 use serde_json::json;
 use crate::models::groups::{LocalGroup, GroupVisibility, GroupPost};
@@ -15,6 +37,10 @@ use crate::models::BytescapeItem;
 use super::types::{ap_context, ApPublicKey};
 use super::actor::{AP_DOMAIN, ed25519_public_key_to_pem};
 use super::activities::AP_PUBLIC;
+
+// ═══════════════════════════════════════════════════════════════════
+// GROUP ACTOR DOCUMENT
+// ═══════════════════════════════════════════════════════════════════
 
 /// Generate an AP Group actor JSON-LD document for a local group.
 ///
@@ -68,6 +94,10 @@ pub fn group_to_ap_actor(group: &LocalGroup, public_key: Option<&ApPublicKey>) -
     doc
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// OUTBOX & FOLLOWERS COLLECTIONS
+// ═══════════════════════════════════════════════════════════════════
+
 /// Generate the Group's outbox as an OrderedCollection.
 ///
 /// Contains recent posts wrapped as `Create/Note` activities, which Lemmy
@@ -117,6 +147,10 @@ pub fn group_followers(
         "orderedItems": follower_actor_ids,
     })
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// ACTIVITY CONSTRUCTION
+// ═══════════════════════════════════════════════════════════════════
 
 /// Wrap a BytescapeItem posted to a group as a Create/Note activity
 /// with `audience` pointing to the group actor.
@@ -201,6 +235,10 @@ pub fn announce_to_followers(
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// KEY MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════
+
 /// Generate an ed25519 keypair for a group and return (public_key, secret_key_hex).
 ///
 /// Each group needs its own signing keypair for AP HTTP signatures.
@@ -227,7 +265,9 @@ pub fn group_actor_id(group_id: &str) -> String {
     format!("https://{}/group/{}", AP_DOMAIN, group_id)
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

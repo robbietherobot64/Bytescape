@@ -17,7 +17,7 @@
 | 3 | Backend Core (Auth, Keys, App State) | 6 | 3,731 | ✅ Complete |
 | 4 | Platform Connectors | 4 | 6,662 | ✅ Complete |
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ✅ Complete |
-| 6 | ActivityPub Federation | 9 | 2,866 | ⬜ Not started |
+| 6 | ActivityPub Federation | 9 | 2,866 | ✅ Complete |
 | 7 | Tauri Commands (Backend API) | 20 | 9,824 | ⬜ Not started |
 | 8 | Frontend Foundation | 8 | 2,581 | ⬜ Not started |
 | 9 | Frontend Hooks | 7 | 2,349 | ⬜ Not started |
@@ -123,15 +123,15 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/activitypub/mod.rs` | 14 | ⬜ | Module declarations |
-| `src-tauri/src/activitypub/inbox.rs` | 849 | ⬜ | Incoming federated message handling |
-| `src-tauri/src/activitypub/outbox.rs` | 146 | ⬜ | Outgoing federated message publishing |
-| `src-tauri/src/activitypub/actor.rs` | 170 | ⬜ | ActivityPub actor representation |
-| `src-tauri/src/activitypub/activities.rs` | 211 | ⬜ | Activity type builders (Create, Like, etc.) |
-| `src-tauri/src/activitypub/signatures.rs` | 404 | ⬜ | HTTP signatures for federation auth |
-| `src-tauri/src/activitypub/webfinger.rs` | 117 | ⬜ | WebFinger discovery protocol |
-| `src-tauri/src/activitypub/group_actor.rs` | 425 | ⬜ | Group federation actor |
-| `src-tauri/src/activitypub/lemmy.rs` | 531 | ⬜ | Lemmy-specific federation compat |
+| `src-tauri/src/activitypub/mod.rs` | 14 | ✅ | Expanded module header with 6-step HOW IT WORKS, RELATED FILES |
+| `src-tauri/src/activitypub/inbox.rs` | 849 | ✅ | 34-line module header, 6 section dividers, enhanced function docs |
+| `src-tauri/src/activitypub/outbox.rs` | 146 | ✅ | 23-line module header, enhanced function docs |
+| `src-tauri/src/activitypub/actor.rs` | 170 | ✅ | 39-line header (security note), 5 section dividers, all method docs |
+| `src-tauri/src/activitypub/activities.rs` | 211 | ✅ | Expanded header, 4 section dividers, 12 function docs |
+| `src-tauri/src/activitypub/signatures.rs` | 404 | ✅ | Expanded header (SHA-256 note), 7 section dividers, 11 function docs |
+| `src-tauri/src/activitypub/webfinger.rs` | 117 | ✅ | 22-line header, struct docs |
+| `src-tauri/src/activitypub/group_actor.rs` | 425 | ✅ | Expanded header (HOW IT WORKS, RELATED FILES), 5 section dividers |
+| `src-tauri/src/activitypub/lemmy.rs` | 531 | ✅ | Expanded header, 4 section dividers (═══ style) |
 
 **Subtotal**: 9 files · 2,867 lines
 

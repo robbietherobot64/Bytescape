@@ -4,11 +4,33 @@
 //! - Page-based post format (Lemmy sends Create/Page instead of Create/Note)
 //! - Community discovery via nodeinfo + Lemmy API
 //! - Remote community follow (local state + activity construction)
+//!
+//! # How It Works
+//!
+//! 1. Lemmy sends posts as Create/Page (not Create/Note like Mastodon) —
+//!    `lemmy_page_to_bytescape_item()` handles this conversion, mapping
+//!    `Page.name` to title, `Page.content` to HTML body, and `Page.url` to link
+//! 2. Community discovery uses a 2-step process: first nodeinfo to confirm it's
+//!    Lemmy, then the Lemmy API v3 `/community/list` endpoint
+//! 3. Following a remote community: fetch the Group actor, build a Follow
+//!    activity, deliver it (actual delivery requires the relay infrastructure),
+//!    and create a local placeholder group for the UI
+//! 4. `remote_community_to_local_group()` maps AP Group actors to Bytescape's
+//!    `LocalGroup` format
+//!
+//! # Related Files
+//!
+//! - `inbox.rs` — processes incoming activities from followed communities
+//! - `group_actor.rs` — local group AP representation
+//! - `models/groups.rs` — `LocalGroup` type
+//! - `db/groups.rs` — group persistence
 
 use serde_json::Value;
 use crate::models::{BytescapeItem, BytescapeType, SyndicationStatus, Audience};
 
-// ─── P4.1: Page → BytescapeItem Converter ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// PAGE → BYTESCAPE CONVERSION
+// ═══════════════════════════════════════════════════════════════════
 
 /// Convert a Lemmy `Page` AP object into a `BytescapeItem`.
 ///
@@ -126,7 +148,9 @@ fn strip_html_tags(html: &str) -> String {
     result.trim().to_string()
 }
 
-// ─── P4.2: Community Discovery ─────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// COMMUNITY DISCOVERY
+// ═══════════════════════════════════════════════════════════════════
 
 /// Summary of a remote Lemmy community for display in ForumScreen.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -252,7 +276,9 @@ pub async fn discover_communities(
     Ok(results)
 }
 
-// ─── P4.3: Follow Remote Community ─────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// REMOTE COMMUNITY FOLLOW
+// ═══════════════════════════════════════════════════════════════════
 
 /// Fetch a remote community's AP actor document and extract key info.
 pub async fn fetch_community_actor(
@@ -372,7 +398,9 @@ pub fn remote_community_to_local_group(
     })
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

@@ -1,10 +1,36 @@
-//! Outbox — ordered collection of the user's activities + delivery.
+//! # ActivityPub Outbox — Collection Serving & Activity Delivery
+//!
+//! Handles outbound ActivityPub delivery — both serving the local outbox collection
+//! to remote servers and delivering activities to remote inboxes.
+//!
+//! ## HOW IT WORKS
+//!
+//! 1. When a remote server GETs our outbox URL, `build_outbox_collection()` returns
+//!    an `OrderedCollection` root document; `build_outbox_page()` returns individual
+//!    paginated pages of activities.
+//! 2. When we need to send an activity (new post, follow, like), `deliver_activity()`
+//!    serializes the activity, signs the HTTP request via
+//!    `signatures::sign_post_request()`, and POSTs it to the target inbox.
+//! 3. `fetch_remote_actor()` retrieves a remote actor document, optionally with a
+//!    signed GET request (some servers like Mastodon require signed fetches for
+//!    non-public profiles).
+//!
+//! ## RELATED FILES
+//!
+//! - `signatures.rs` — HTTP signature creation (`sign_post_request`, `sign_get_request`)
+//! - `actor.rs` — `ApActor` used as the signing identity
+//! - `activities.rs` — builds the `Activity` objects passed to `deliver_activity()`
+//! - `types.rs` — `ApActivity` type definition
 
 use super::types::{ApActivity, ap_context};
 use super::actor::ApActor;
 use super::signatures;
 
-/// Build the outbox OrderedCollection root document.
+/// Build the outbox `OrderedCollection` root document.
+///
+/// Returns a JSON-LD document with the collection metadata and a link to the
+/// first page. Remote servers use this as the entry point when fetching a
+/// user's published activities.
 pub fn build_outbox_collection(
     actor_id: &str,
     total_items: u64,
@@ -18,7 +44,10 @@ pub fn build_outbox_collection(
     })
 }
 
-/// Build a single outbox page.
+/// Build a single paginated `OrderedCollectionPage` for the outbox.
+///
+/// Each page contains a slice of the user's activities as `orderedItems`.
+/// If `has_next` is true, a `next` link to the subsequent page is included.
 pub fn build_outbox_page(
     actor_id: &str,
     page: u64,
