@@ -1,15 +1,47 @@
 //! Tauri commands for Topics, Groups, Membership, and Group Feeds.
 //!
-//! Sprint v12 — hierarchical forum system. Local operations only;
-//! AP federation with Lemmy/PieFed deferred to sprint v13.
+//! Sprint v12 — hierarchical forum system with nested topic trees, group
+//! CRUD, membership management, moderation tools, and aggregated group feeds.
+//! Sprint v13 added Lemmy/PieFed compatibility stubs.
+//!
+//! ## HOW IT WORKS
+//!
+//! 1. **Topic Tree** — Topics form an N-ary tree (parent_id links). The frontend
+//!    calls `get_topic_tree` which loads *all* topics into memory and recursively
+//!    builds `TopicNode` structs (tech debt: no cycle detection, loads entire table).
+//! 2. **Groups** — Each group belongs to exactly one topic via `topic_id`. Groups
+//!    have three visibility levels: Public (open join), Closed (requires approval),
+//!    and Private (invite-only). CRUD operations enforce owner/mod authorization.
+//! 3. **Membership** — `join_group` handles the Public/Closed/Private flow;
+//!    `invite_member` + `accept_invite` handle the Private path. Banned members
+//!    are blocked from re-joining. Owner/Moderator roles gate moderation actions.
+//! 4. **Group Feeds** — `post_to_group` / `share_to_group` link `BytescapeItem`
+//!    records into groups. `get_groups_feed` aggregates across direct memberships
+//!    *and* topic subscriptions (BFS-expanding sub-topics).
+//! 5. **Lemmy Compatibility** — `discover_lemmy_communities` and
+//!    `follow_remote_community` fetch remote AP actors and create local placeholder
+//!    groups. Signed HTTP delivery is deferred until relay deployment.
+//!
+//! ## RELATED FILES
+//!
+//! - `src-tauri/src/models/groups.rs` — struct definitions: Topic, LocalGroup,
+//!   GroupMember, GroupPost, TopicNode, GroupSummary, enums
+//! - `src-tauri/src/db/groups.rs` — redb persistence layer for all group tables
+//! - `src-tauri/src/activitypub/lemmy.rs` — Lemmy AP fetching and Follow building
+//! - `src-tauri/src/lib.rs` — command registration in `invoke_handler`
+//! - `src/screens/GroupsScreen.tsx` — primary frontend consumer of these commands
 
 use tauri::State;
 use crate::AppState;
 use crate::models::groups::*;
 use crate::db::DbManager;
 
-// ─── Helpers ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════
 
+/// Returns the current wall-clock time as milliseconds since the Unix epoch.
+/// Used to stamp `created_at`, `updated_at`, `joined_at`, and `posted_at` fields.
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -17,6 +49,8 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Extracts the `DbManager` from shared app state, failing with a user-facing
+/// error if the database has not been initialized yet.
 async fn require_db(state: &State<'_, AppState>) -> Result<DbManager, String> {
     state
         .db_manager
@@ -26,6 +60,8 @@ async fn require_db(state: &State<'_, AppState>) -> Result<DbManager, String> {
         .ok_or_else(|| "Database not initialized".to_string())
 }
 
+/// Retrieves the current vault owner's DID from the keychain.
+/// Returns an error if no identity is configured (user must log in first).
 async fn current_user_did(state: &State<'_, AppState>) -> Result<String, String> {
     state
         .keychain
@@ -34,8 +70,26 @@ async fn current_user_did(state: &State<'_, AppState>) -> Result<String, String>
         .ok_or_else(|| "No identity — log in or create a local vault first".to_string())
 }
 
-// ─── P3: Topic Tree Commands ───────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Topics — Tree CRUD
+// ═══════════════════════════════════════════════════════════════════
 
+/// Creates a new topic node in the hierarchical topic tree.
+///
+/// # IPC
+/// Tauri command `create_topic` — called from topic management UI.
+///
+/// # Params
+/// - `name` — human-readable display name (e.g. "Programming")
+/// - `slug` — URL-safe identifier (e.g. "programming")
+/// - `parent_id` — if `Some`, the new topic becomes a child of this parent;
+///   `None` creates a root-level topic. The parent must exist.
+/// - `description` — short blurb shown in the topic tree sidebar
+/// - `icon` — optional emoji or icon identifier
+/// - `sort_order` — integer controlling display order among siblings
+///
+/// # Returns
+/// The newly created `Topic` with a generated UUID.
 #[tauri::command]
 pub async fn create_topic(
     state: State<'_, AppState>,
@@ -72,6 +126,21 @@ pub async fn create_topic(
     Ok(topic)
 }
 
+/// Updates an existing topic's metadata (name, description, icon, sort order,
+/// or parent). Supports reparenting: `parent_id = Some(Some(id))` moves the
+/// topic, `Some(None)` promotes it to root, `None` leaves it unchanged.
+///
+/// # IPC
+/// Tauri command `update_topic`.
+///
+/// # Errors
+/// - Topic not found
+/// - Parent topic not found (if reparenting)
+/// - Self-parenting (`parent_id == topic_id`)
+///
+/// # Tech Debt
+/// No cycle detection — reparenting A→B when B is already under A creates a
+/// cycle that `get_topic_tree` will silently skip (orphaned subtree).
 #[tauri::command]
 pub async fn update_topic(
     state: State<'_, AppState>,
@@ -118,6 +187,18 @@ pub async fn update_topic(
     Ok(topic)
 }
 
+/// Deletes a leaf topic from the tree.
+///
+/// # IPC
+/// Tauri command `delete_topic_cmd`.
+///
+/// # Constraints
+/// - Refuses to delete a topic that has child topics (delete children first).
+/// - Refuses to delete a topic that has groups assigned to it (move/delete groups first).
+///
+/// # Tech Debt
+/// Loads *all* topics via `get_all_topics()` to check for children — could use a
+/// targeted query like `get_children_of(topic_id)` instead.
 #[tauri::command]
 pub async fn delete_topic_cmd(
     state: State<'_, AppState>,
@@ -144,6 +225,25 @@ pub async fn delete_topic_cmd(
     Ok(())
 }
 
+/// Builds and returns the full topic tree with nested groups and subscription flags.
+///
+/// # IPC
+/// Tauri command `get_topic_tree` — primary data source for the Groups sidebar.
+///
+/// # Algorithm
+/// 1. Loads **all** topics and **all** groups into memory.
+/// 2. Filters private groups the current user is not a member of.
+/// 3. Builds a `HashMap<topic_id, Vec<GroupSummary>>` index.
+/// 4. Recursively constructs `TopicNode` trees starting from root topics
+///    (`parent_id == None`), sorted by `sort_order`.
+///
+/// # Returns
+/// A `Vec<TopicNode>` representing root-level topics, each with nested
+/// `children` and attached `groups`.
+///
+/// # Tech Debt
+/// Loads the entire topics and groups tables into memory on every call.
+/// Fine for hundreds of topics, but will need pagination or caching at scale.
 #[tauri::command]
 pub async fn get_topic_tree(
     state: State<'_, AppState>,
@@ -233,6 +333,18 @@ pub async fn get_topic_tree(
     Ok(tree)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Topics — Subscriptions
+// ═══════════════════════════════════════════════════════════════════
+
+/// Subscribes the current user to a topic, so its groups appear in
+/// the aggregated groups feed (`get_groups_feed`).
+///
+/// # IPC
+/// Tauri command `subscribe_topic`.
+///
+/// # Errors
+/// Returns an error if the topic does not exist.
 #[tauri::command]
 pub async fn subscribe_topic(
     state: State<'_, AppState>,
@@ -255,6 +367,10 @@ pub async fn subscribe_topic(
     Ok(())
 }
 
+/// Removes the current user's subscription to a topic.
+///
+/// # IPC
+/// Tauri command `unsubscribe_topic`.
 #[tauri::command]
 pub async fn unsubscribe_topic(
     state: State<'_, AppState>,
@@ -266,6 +382,10 @@ pub async fn unsubscribe_topic(
     Ok(())
 }
 
+/// Returns the list of topic IDs the current user is subscribed to.
+///
+/// # IPC
+/// Tauri command `get_subscribed_topics`.
 #[tauri::command]
 pub async fn get_subscribed_topics(
     state: State<'_, AppState>,
@@ -276,8 +396,26 @@ pub async fn get_subscribed_topics(
     Ok(subs.into_iter().map(|s| s.topic_id).collect())
 }
 
-// ─── P4: Group CRUD & Search Commands ──────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Groups — CRUD
+// ═══════════════════════════════════════════════════════════════════
 
+/// Creates a new group under the specified topic.
+///
+/// # IPC
+/// Tauri command `create_group` — called from the "New Group" dialog.
+///
+/// # Params
+/// - `visibility` — `Public` (anyone can join), `Closed` (join requires approval),
+///   or `Private` (invite-only; hidden from non-members in topic tree).
+/// - `topic_id` — must reference an existing topic.
+/// - `rules` — optional markdown string displayed on the group info page.
+/// - `icon_blob` / `banner_blob` — optional blob references for group branding.
+///
+/// # Side Effects
+/// - Generates a UUID for `group_id`.
+/// - Auto-creates a `GroupMember` record with `Owner` role for the calling user.
+/// - Sets initial `member_count = 1`.
 #[tauri::command]
 pub async fn create_group(
     state: State<'_, AppState>,
@@ -331,6 +469,22 @@ pub async fn create_group(
     Ok(group)
 }
 
+/// Updates a group's settings. Only the group `Owner` or a `Moderator` can
+/// perform this operation.
+///
+/// # IPC
+/// Tauri command `update_group`.
+///
+/// # Params
+/// All fields are optional — only provided fields are updated.
+/// - `icon_blob` / `banner_blob` — use `Some(None)` to clear, `Some(Some(url))`
+///   to set, `None` to leave unchanged (same triple-option pattern as `update_topic`).
+/// - `posting_restricted_to_mods` — when `true`, only Owner/Moderator can post.
+///
+/// # Errors
+/// - Group not found
+/// - Caller is not Owner or Moderator
+/// - New `topic_id` does not exist
 #[tauri::command]
 pub async fn update_group(
     state: State<'_, AppState>,
@@ -392,6 +546,15 @@ pub async fn update_group(
     Ok(group)
 }
 
+/// Permanently deletes a group and all associated data (members, posts).
+/// Only the group owner can perform this action.
+///
+/// # IPC
+/// Tauri command `delete_group_cmd`.
+///
+/// # Side Effects
+/// Cascading delete: removes all `GroupMember` and `GroupPost` records
+/// for this group before deleting the group record itself.
 #[tauri::command]
 pub async fn delete_group_cmd(
     state: State<'_, AppState>,
@@ -418,6 +581,11 @@ pub async fn delete_group_cmd(
     Ok(())
 }
 
+/// Retrieves a single group by ID. Returns `None` for private groups if the
+/// caller is not a member (prevents information leakage).
+///
+/// # IPC
+/// Tauri command `get_group_cmd`.
 #[tauri::command]
 pub async fn get_group_cmd(
     state: State<'_, AppState>,
@@ -439,6 +607,13 @@ pub async fn get_group_cmd(
     Ok(group)
 }
 
+/// Lists all groups under a specific topic.
+///
+/// # IPC
+/// Tauri command `list_groups_by_topic`.
+///
+/// Note: Does not filter private groups — the caller may need to check
+/// visibility or membership on the frontend side.
 #[tauri::command]
 pub async fn list_groups_by_topic(
     state: State<'_, AppState>,
@@ -448,6 +623,19 @@ pub async fn list_groups_by_topic(
     db.get_groups_by_topic(&topic_id).await
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Groups — Search
+// ═══════════════════════════════════════════════════════════════════
+
+/// Searches groups by name/description substring match.
+///
+/// # IPC
+/// Tauri command `search_groups_cmd`.
+///
+/// # Tech Debt
+/// Delegates to `DbManager::search_groups` which performs a full table scan
+/// with case-insensitive `contains()` — acceptable for local-first use but
+/// will need an index or FTS if group counts grow significantly.
 #[tauri::command]
 pub async fn search_groups_cmd(
     state: State<'_, AppState>,
@@ -457,8 +645,30 @@ pub async fn search_groups_cmd(
     db.search_groups(&query).await
 }
 
-// ─── P5: Membership & Group Feed Commands ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Membership — Join / Leave / Approve / Reject / Invite / Ban / Role
+// ═══════════════════════════════════════════════════════════════════
 
+/// Requests to join a group. Behavior varies by group visibility:
+///
+/// | Visibility | Result |
+/// |------------|--------|
+/// | `Public`   | Immediately `Active`, `member_count` incremented |
+/// | `Closed`   | `Pending` — awaits `approve_member` by a mod |
+/// | `Private`  | Rejected — private groups are invite-only |
+///
+/// If the user was previously `Invited`, calling `join_group` accepts the
+/// invitation and promotes to `Active`.
+///
+/// # IPC
+/// Tauri command `join_group`.
+///
+/// # Returns
+/// The resulting `MemberStatus` (`Active` or `Pending`).
+///
+/// # Errors
+/// - Already a member / already pending / banned
+/// - Group is private (must use `invite_member` + `accept_invite`)
 #[tauri::command]
 pub async fn join_group(
     state: State<'_, AppState>,
@@ -514,6 +724,14 @@ pub async fn join_group(
     Ok(status)
 }
 
+/// Removes the current user from a group. The group owner cannot leave —
+/// they must transfer ownership or delete the group.
+///
+/// # IPC
+/// Tauri command `leave_group`.
+///
+/// # Side Effects
+/// Decrements `member_count` if the departing member was `Active`.
 #[tauri::command]
 pub async fn leave_group(
     state: State<'_, AppState>,
@@ -545,6 +763,15 @@ pub async fn leave_group(
     Ok(())
 }
 
+/// Returns the members of a group, optionally filtered by status.
+///
+/// # IPC
+/// Tauri command `get_group_members_cmd`.
+///
+/// # Authorization
+/// - Owner/Moderator: can see all statuses (Active, Pending, Invited, Banned).
+/// - Regular user: only sees `Active` members (Pending/Invited are hidden).
+/// - The `status_filter` param is applied *after* the authorization filter.
 #[tauri::command]
 pub async fn get_group_members_cmd(
     state: State<'_, AppState>,
@@ -573,6 +800,11 @@ pub async fn get_group_members_cmd(
     Ok(members)
 }
 
+/// Returns all groups the current user is a member of (any status).
+/// Used to populate the "My Groups" sidebar section.
+///
+/// # IPC
+/// Tauri command `get_user_group_memberships`.
 #[tauri::command]
 pub async fn get_user_group_memberships(
     state: State<'_, AppState>,
@@ -590,6 +822,23 @@ pub async fn get_user_group_memberships(
     Ok(groups)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Group Feeds — Post, Share, Read
+// ═══════════════════════════════════════════════════════════════════
+
+/// Posts an existing `BytescapeItem` into a group's feed.
+///
+/// # IPC
+/// Tauri command `post_to_group`.
+///
+/// # Authorization
+/// - Caller must be an `Active` member.
+/// - If `posting_restricted_to_mods` is enabled, caller must be Owner or Moderator.
+///
+/// # Errors
+/// - Group or item not found
+/// - Not a member, or membership not active
+/// - Posting restricted and caller lacks mod/owner role
 #[tauri::command]
 pub async fn post_to_group(
     state: State<'_, AppState>,
@@ -638,6 +887,12 @@ pub async fn post_to_group(
     Ok(())
 }
 
+/// Shares (cross-posts) an item to a different group, recording the sharer's DID.
+/// Same authorization rules as `post_to_group`, but sets `shared_by` on the
+/// `GroupPost` record so the UI can display "shared by @user".
+///
+/// # IPC
+/// Tauri command `share_to_group`.
 #[tauri::command]
 pub async fn share_to_group(
     state: State<'_, AppState>,
@@ -685,6 +940,15 @@ pub async fn share_to_group(
     Ok(())
 }
 
+/// Returns the paginated feed for a single group, hydrated with full
+/// `BytescapeItem` records.
+///
+/// # IPC
+/// Tauri command `get_group_feed`.
+///
+/// # Params
+/// - `limit` — maximum number of items to return.
+/// - `cursor` — opaque pagination cursor (timestamp string from a previous page).
 #[tauri::command]
 pub async fn get_group_feed(
     state: State<'_, AppState>,
@@ -706,6 +970,27 @@ pub async fn get_group_feed(
     Ok(items)
 }
 
+/// Returns an aggregated feed across **all** groups the user is connected to,
+/// combining direct group memberships with groups under subscribed topics
+/// (recursively expanding sub-topics via BFS).
+///
+/// # IPC
+/// Tauri command `get_groups_feed` — powers the "Groups" tab in the main feed.
+///
+/// # Algorithm
+/// 1. Collect group IDs from the user's direct memberships.
+/// 2. Collect subscribed topic IDs, then BFS-expand to include all sub-topics.
+/// 3. Collect all groups under the expanded topic set.
+/// 4. Union the two group sets.
+/// 5. Fetch recent `GroupPost` entries from each group (up to `limit * 2` per group).
+/// 6. Merge, sort by `posted_at` descending, truncate to `limit`, hydrate items.
+///
+/// # Tech Debt
+/// - BFS iterates the full `all_topics` array on each frontier pop — O(topics × depth).
+/// - Fetches `limit * 2` posts per group then merges — could over-fetch significantly
+///   with many groups. A proper merge-sort with per-group cursors would be more efficient.
+/// - No cycle detection in BFS (safe because tree structure prevents cycles, but
+///   a malformed `parent_id` loop would cause infinite expansion).
 #[tauri::command]
 pub async fn get_groups_feed(
     state: State<'_, AppState>,
@@ -797,9 +1082,17 @@ pub async fn get_groups_feed(
     Ok(items)
 }
 
-// ─── P1 (Sprint v13): Moderation Commands ─────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Moderation — Approve / Reject / Invite / Ban / Roles / Pin / Remove
+// ═══════════════════════════════════════════════════════════════════
 
 /// Approve a pending member (Closed groups). Owner or Moderator only.
+///
+/// # IPC
+/// Tauri command `approve_member`.
+///
+/// # Side Effects
+/// Flips member status from `Pending` → `Active` and increments `member_count`.
 #[tauri::command]
 pub async fn approve_member(
     state: State<'_, AppState>,
@@ -831,6 +1124,12 @@ pub async fn approve_member(
 }
 
 /// Reject a pending member (deletes the record). Owner or Moderator only.
+///
+/// # IPC
+/// Tauri command `reject_member`.
+///
+/// # Errors
+/// Returns an error if the member is not `Pending` — use `ban_member` for active members.
 #[tauri::command]
 pub async fn reject_member(
     state: State<'_, AppState>,
@@ -859,6 +1158,13 @@ pub async fn reject_member(
 
 /// Invite a member to a group. Owner or Moderator only.
 /// For Private groups, this is the only way to add members.
+///
+/// # IPC
+/// Tauri command `invite_member`.
+///
+/// # Side Effects
+/// Creates a `GroupMember` record with `Invited` status. The invitee must
+/// call `accept_invite` to become `Active`.
 #[tauri::command]
 pub async fn invite_member(
     state: State<'_, AppState>,
@@ -891,6 +1197,12 @@ pub async fn invite_member(
 }
 
 /// Accept an invitation. Current user must have status Invited.
+///
+/// # IPC
+/// Tauri command `accept_invite`.
+///
+/// # Side Effects
+/// Promotes status from `Invited` → `Active` and increments `member_count`.
 #[tauri::command]
 pub async fn accept_invite(
     state: State<'_, AppState>,
@@ -915,6 +1227,13 @@ pub async fn accept_invite(
 
 /// Ban a member from a group. Owner only. Cannot ban the Owner.
 /// Banned members cannot re-join (enforced in join_group).
+///
+/// # IPC
+/// Tauri command `ban_member`.
+///
+/// # Side Effects
+/// Sets status to `Banned` and decrements `member_count` if the member was `Active`.
+/// The ban is enforced on subsequent `join_group` calls (early return with error).
 #[tauri::command]
 pub async fn ban_member(
     state: State<'_, AppState>,
@@ -948,6 +1267,17 @@ pub async fn ban_member(
 }
 
 /// Change a member's role. Owner only. Cannot change own role.
+///
+/// # IPC
+/// Tauri command `set_member_role`.
+///
+/// # Params
+/// - `role` — the new `MemberRole` (Member, Moderator, or Owner).
+///
+/// # Constraints
+/// - Only the Owner can change roles.
+/// - Cannot change your own role (use a transfer_ownership flow instead).
+/// - Target member must be `Active`.
 #[tauri::command]
 pub async fn set_member_role(
     state: State<'_, AppState>,
@@ -981,6 +1311,9 @@ pub async fn set_member_role(
 }
 
 /// Pin a post in a group. Owner or Moderator only.
+///
+/// # IPC
+/// Tauri command `pin_group_post`.
 #[tauri::command]
 pub async fn pin_group_post(
     state: State<'_, AppState>,
@@ -1000,6 +1333,9 @@ pub async fn pin_group_post(
 }
 
 /// Unpin a post in a group. Owner or Moderator only.
+///
+/// # IPC
+/// Tauri command `unpin_group_post`.
 #[tauri::command]
 pub async fn unpin_group_post(
     state: State<'_, AppState>,
@@ -1020,6 +1356,14 @@ pub async fn unpin_group_post(
 
 /// Remove a post from a group. Owner/Moderator can remove any post.
 /// Regular members can remove their own posts.
+///
+/// # IPC
+/// Tauri command `remove_group_post`.
+///
+/// # Authorization
+/// - Owner/Moderator: can remove any post in the group.
+/// - Member: can only remove posts whose underlying `BytescapeItem.author_did`
+///   matches the caller's DID.
 #[tauri::command]
 pub async fn remove_group_post(
     state: State<'_, AppState>,
@@ -1048,6 +1392,13 @@ pub async fn remove_group_post(
 }
 
 /// Get all pending members for a group. Owner or Moderator only.
+///
+/// # IPC
+/// Tauri command `get_pending_members`.
+///
+/// # Returns
+/// A filtered `Vec<GroupMember>` containing only members with `Pending` status.
+/// Used by the moderation panel to show the approval queue.
 #[tauri::command]
 pub async fn get_pending_members(
     state: State<'_, AppState>,
@@ -1066,9 +1417,28 @@ pub async fn get_pending_members(
     Ok(members.into_iter().filter(|m| m.status == MemberStatus::Pending).collect())
 }
 
-// ─── P6: Seed Default Topic Tree ───────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Seed Defaults
+// ═══════════════════════════════════════════════════════════════════
 
-/// Seed the default topic hierarchy on first launch (when TOPICS_TABLE is empty).
+/// Seeds the default topic hierarchy on first launch (when `TOPICS_TABLE` is empty).
+///
+/// Creates a three-level tree: root categories (Fediverse, Technology, …),
+/// sub-categories (Bytescape, Lemmy, Programming, …), and leaf topics
+/// (Announcements, Feature Requests, Bug Reports, …).
+///
+/// Topic IDs are deterministic (`topic:{slug}`) so that seed data is idempotent
+/// on a fresh database. However, if topics are manually deleted and this function
+/// runs again, it will re-create them.
+///
+/// # Tech Debt
+/// No deduplication check beyond `topics_count() > 0` — if a single custom topic
+/// exists, the seed is skipped entirely, even if the defaults are missing.
+/// Conversely, calling this on a wiped-then-partially-repopulated DB could
+/// create duplicates if a manual topic already has a matching slug.
+///
+/// # Called From
+/// `lib.rs` startup sequence (not a Tauri command — called directly).
 pub async fn seed_default_topics(db: &DbManager) -> Result<(), String> {
     // Only seed if the table is empty
     if db.topics_count().await? > 0 {
@@ -1126,8 +1496,21 @@ pub async fn seed_default_topics(db: &DbManager) -> Result<(), String> {
     Ok(())
 }
 
-// ─── Sprint v13 P4: Lemmy Compatibility Commands ───────────────────
+// ═══════════════════════════════════════════════════════════════════
+// Lemmy Integration — AP Community Discovery & Follow
+// ═══════════════════════════════════════════════════════════════════
 
+/// Fetches the list of communities from a remote Lemmy instance.
+///
+/// # IPC
+/// Tauri command `discover_lemmy_communities`.
+///
+/// # Params
+/// - `instance_url` — base URL of the Lemmy instance (e.g. `https://lemmy.ml`).
+///
+/// # Returns
+/// A `Vec<RemoteCommunity>` with name, description, subscriber count, etc.
+/// The frontend displays these in a discovery dialog for the user to follow.
 #[tauri::command]
 pub async fn discover_lemmy_communities(
     state: State<'_, AppState>,
@@ -1139,6 +1522,24 @@ pub async fn discover_lemmy_communities(
     ).await
 }
 
+/// Follows a remote Lemmy community by its ActivityPub actor URL.
+///
+/// # IPC
+/// Tauri command `follow_remote_community`.
+///
+/// # Algorithm
+/// 1. Fetches the remote community's AP actor document.
+/// 2. Creates a local `LocalGroup` placeholder mirroring the community.
+/// 3. Auto-joins the current user as Owner of the local placeholder.
+/// 4. Builds a signed `Follow` activity (delivery deferred until relay deployment).
+///
+/// # Side Effects
+/// - Persists a new `LocalGroup` and `GroupMember` record.
+/// - Logs the Follow activity to stderr (not yet delivered over HTTP).
+///
+/// # Limitations
+/// Signed HTTP delivery is not implemented — the Follow activity is built but
+/// not sent. Federation requires the Bytescape relay to be deployed first.
 #[tauri::command]
 pub async fn follow_remote_community(
     state: State<'_, AppState>,

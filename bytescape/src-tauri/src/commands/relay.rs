@@ -8,11 +8,19 @@
 //!
 //! Until the server is deployed, all commands return descriptive errors
 //! explaining what they will do and what infrastructure is required.
+//!
+//! ## RELATED FILES
+//! - `sync.rs` — Iroh P2P sync manager (relay connects through this)
+//! - `commands/node.rs` — Iroh node setup (endpoint used by relay)
+//! - `keychain.rs` — DID/keypair storage (relay authenticates via `did:key`)
+//! - `protocol.rs` — Bytescape custom P2P protocol (relay extends this)
 
 use tauri::State;
 use crate::AppState;
 
-// ─── Relay Sync (A-S2) ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Relay Sync (A-S2)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Connect to a Bytescape relay server for encrypted store-and-forward sync.
 ///
@@ -103,7 +111,9 @@ pub async fn relay_sync_status(
     }).to_string())
 }
 
-// ─── PDS Account Provisioning (A-S3) ───────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// PDS Account Provisioning (A-S3)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Provision an account on the Bytescape AT Protocol PDS.
 ///
@@ -127,7 +137,9 @@ pub async fn provision_pds_account(
          Bluesky federation from your Bytescape account.".to_string())
 }
 
-// ─── AP Actor Provisioning (A-S4) ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// AP Actor Provisioning (A-S4)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Provision an ActivityPub actor on the Bytescape AP instance.
 ///

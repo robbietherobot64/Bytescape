@@ -18,7 +18,7 @@
 | 4 | Platform Connectors | 4 | 6,662 | ✅ Complete |
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ✅ Complete |
 | 6 | ActivityPub Federation | 9 | 2,866 | ✅ Complete |
-| 7 | Tauri Commands (Backend API) | 20 | 9,824 | ⬜ Not started |
+| 7 | Tauri Commands (Backend API) | 21 | 10,220 | ✅ Complete |
 | 8 | Frontend Foundation | 8 | 2,581 | ⬜ Not started |
 | 9 | Frontend Hooks | 7 | 2,349 | ⬜ Not started |
 | 10 | Frontend Utils | 12 | 1,429 | ⬜ Not started |
@@ -143,29 +143,29 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src-tauri/src/commands/mod.rs` | 44 | ⬜ | Command module declarations |
-| `src-tauri/src/commands/auth.rs` | 541 | ⬜ | Login, logout, session refresh commands |
-| `src-tauri/src/commands/import.rs` | 2,910 | ⬜ | Archive import pipeline (largest file!) |
-| `src-tauri/src/commands/media.rs` | 1,671 | ⬜ | Media blob operations |
-| `src-tauri/src/commands/groups.rs` | 1,189 | ⬜ | Group management commands |
-| `src-tauri/src/commands/mastodon.rs` | 1,088 | ⬜ | Mastodon-specific API commands |
-| `src-tauri/src/commands/peers.rs` | 685 | ⬜ | P2P peer management commands |
-| `src-tauri/src/commands/vault.rs` | 660 | ⬜ | Personal vault file operations |
-| `src-tauri/src/commands/posting.rs` | 519 | ⬜ | Content creation & cross-posting |
-| `src-tauri/src/commands/browser.rs` | 504 | ⬜ | In-app browser/WebView commands |
-| `src-tauri/src/commands/feed_aggregation.rs` | 493 | ⬜ | Feed fetching & merging pipeline |
-| `src-tauri/src/commands/profile.rs` | 250 | ⬜ | User profile management |
-| `src-tauri/src/commands/interactions.rs` | 334 | ⬜ | Likes, reposts, bookmarks |
-| `src-tauri/src/commands/syndicate.rs` | 257 | ⬜ | Cross-platform syndication |
-| `src-tauri/src/commands/node.rs` | 254 | ⬜ | Iroh node management |
-| `src-tauri/src/commands/export.rs` | 183 | ⬜ | Data export commands |
-| `src-tauri/src/commands/unfurl.rs` | 166 | ⬜ | URL preview/unfurl commands |
-| `src-tauri/src/commands/relay.rs` | 152 | ⬜ | Relay server commands |
-| `src-tauri/src/commands/ap.rs` | 150 | ⬜ | ActivityPub-related commands |
-| `src-tauri/src/commands/collab.rs` | 96 | ⬜ | Collaborative document commands |
-| `src-tauri/src/commands/classify.rs` | 74 | ⬜ | Content classification commands |
+| `src-tauri/src/commands/mod.rs` | 44 | ✅ | Expanded header with 20-module submodule map, 4 section dividers by domain |
+| `src-tauri/src/commands/auth.rs` | 541 | ✅ | 40-line header (3-tier auth, HOW IT WORKS), 7 section dividers, 15 function docs |
+| `src-tauri/src/commands/import.rs` | 2,910 | ✅ | 49-line header (God file + tech debt), 10 section dividers, 19 command docs, 12 helper docs |
+| `src-tauri/src/commands/media.rs` | 1,402 | ✅ | 36-line header (5-step HOW IT WORKS), 8 section dividers, 10 IPC-annotated command docs |
+| `src-tauri/src/commands/groups.rs` | 1,190 | ✅ | Expanded header, 8 section dividers, all public functions documented |
+| `src-tauri/src/commands/mastodon.rs` | 1,089 | ✅ | Expanded header (OAuth, DM paths), 8 section dividers, 35 function docs, C2S/S2S annotations |
+| `src-tauri/src/commands/peers.rs` | 686 | ✅ | 41-line header (tech debt), 5 section dividers, all commands with IPC annotations |
+| `src-tauri/src/commands/vault.rs` | 660 | ✅ | 39-line header (tech debt), 8 section dividers, all commands with IPC annotations |
+| `src-tauri/src/commands/posting.rs` | 520 | ✅ | 39-line header (multi-dest routing, tech debt), 3 section dividers, all function docs |
+| `src-tauri/src/commands/browser.rs` | 505 | ✅ | RELATED FILES added, 4 section dividers, GTK cross-system annotations |
+| `src-tauri/src/commands/feed_aggregation.rs` | 493 | ✅ | 36-line header (3-source merge, tech debt), 3 section dividers, struct + command docs |
+| `src-tauri/src/commands/profile.rs` | 251 | ✅ | Expanded header (5-step HOW IT WORKS), 5 section dividers, 10 function docs |
+| `src-tauri/src/commands/interactions.rs` | 335 | ✅ | Full header (Bluesky-only noted), ═══ dividers (converted from ───), 6 function docs |
+| `src-tauri/src/commands/syndicate.rs` | 258 | ✅ | Full header (Bluesky-only, 4-image limit), 2 section dividers, all function docs |
+| `src-tauri/src/commands/node.rs` | 255 | ✅ | Expanded header (HOW IT WORKS), 3 section dividers, IPC annotations |
+| `src-tauri/src/commands/export.rs` | 184 | ✅ | Full header (memory concern noted), struct + function docs |
+| `src-tauri/src/commands/unfurl.rs` | 167 | ✅ | Full header (SSRF security note), LinkCard struct doc, SSRF inline warning |
+| `src-tauri/src/commands/relay.rs` | 153 | ✅ | RELATED FILES added, ═══ section dividers, stub function docs |
+| `src-tauri/src/commands/ap.rs` | 151 | ✅ | 34-line header (tech debt: double-deser), 5 function docs with IPC annotations |
+| `src-tauri/src/commands/collab.rs` | 97 | ✅ | Expanded header (HOW IT WORKS, RELATED FILES), 6 function docs preserved |
+| `src-tauri/src/commands/classify.rs` | 75 | ✅ | 27-line header (tech debt: O(n) scan), struct + function docs |
 
-**Subtotal**: 20 files · 10,220 lines
+**Subtotal**: 21 files · ~10,220 lines
 
 ---
 

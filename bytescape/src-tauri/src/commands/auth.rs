@@ -1,6 +1,42 @@
 //! Authentication Commands
 //!
-//! Commands for user authentication, session management, and keychain operations.
+//! User authentication lifecycle: login, session validation, local identity,
+//! OAuth, logout/deletion, recovery, and linked-account management.
+//!
+//! # How It Works
+//!
+//! 1. **Session check (`check_auth_status`)** runs a 3-tier probe on app start:
+//!    Bluesky session → local identity (with confirmed username) → Mastodon session.
+//!    The first tier that succeeds becomes the active `AuthStatus`.
+//! 2. **Login** can happen via AT Protocol credentials (`login`), Bluesky OAuth
+//!    (`start_bluesky_oauth` → callback → `oauth-complete` event), or a fresh
+//!    local identity (`create_local_identity` + `set_local_username`).
+//! 3. **Identity layer** — every user gets a local Ed25519 keypair (auto-generated
+//!    on first Bluesky/Mastodon login or explicitly via `create_local_identity`).
+//!    A `did:web:bytescape.social:{username}` is minted once a username is confirmed.
+//! 4. **Linked accounts** map the master identity to platform-specific sessions
+//!    (Bluesky `did:plc`, Mastodon `acct:` URI). `unlink_account` removes tokens
+//!    and flushes the feed cache.
+//! 5. **Recovery** uses an escrow bundle + recovery code to restore the keypair
+//!    on a new device (init → start → verify → finalize).
+//!
+//! # Tech Debt
+//!
+//! - **`logout` and `delete_account` are ~90% duplicated** — both clear vault,
+//!   sync, pending imports, OAuth, Mastodon, and keychain. Should extract a shared
+//!   `wipe_all_user_data` helper and have `logout`/`delete_account` call it.
+//! - **DID generation uses `thread_rng`** (via `identity_init_full_recovery`) — fine
+//!   for local use, but if the keypair ever signs federated proofs, consider a
+//!   CSPRNG with explicit entropy source.
+//!
+//! # Related Files
+//!
+//! - [`keychain_encrypted.rs`] — identity storage, escrow, linked accounts
+//! - [`auth.rs`] (crate root) — AT Protocol session management (`AuthManager`)
+//! - [`oauth.rs`] — Bluesky OAuth PKCE + DPoP flow
+//! - [`commands/mastodon.rs`] — Mastodon session helpers, `clear_mastodon_memory`
+//! - [`error.rs`] — `BytescapeError` variants used for auth failures
+//! - [`lib.rs`] — command registration, background session restore
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
@@ -16,7 +52,15 @@ use crate::keychain_encrypted::{
 };
 use crate::AppState;
 
-/// Authentication status response
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Authentication status response returned to the frontend.
+///
+/// Encapsulates the resolved identity regardless of how the user authenticated
+/// (Bluesky, local, or Mastodon). The `source` field tells the UI which
+/// login path was taken.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AuthStatus {
     pub handle: String,
@@ -37,10 +81,31 @@ pub struct AuthStatus {
 
 fn default_source() -> String { "bluesky".to_string() }
 
-/// Check if the user has an active authenticated session.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Auth Status
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Check if the user has an active authenticated session (3-tier probe).
 ///
-/// Returns the user's handle and DID if logged in via Bluesky,
-/// or if a local-only identity exists.
+/// Probes in order: **Bluesky → Local identity → Mastodon**. Returns the first
+/// tier that succeeds as an `AuthStatus`, or `None` if no session exists.
+///
+/// For Bluesky OAuth sessions, eagerly restores the token so that subsequent
+/// API calls (`getTimeline`, etc.) work immediately without waiting for the
+/// background restore task.
+///
+/// # Returns
+/// - `Some(AuthStatus)` — user is logged in; includes handle, DID, source, and web_did.
+/// - `None` — no active session found; frontend should show the login screen.
+///
+/// # Side Effects
+/// - May trigger OAuth token restore (once per app lifetime).
+/// - May mint a `did:web` if one doesn't exist yet.
+/// - For Mastodon-only users, may auto-initialize local identity infrastructure.
+///
+/// # IPC
+/// Tauri command — called by the frontend `AuthProvider` on mount via
+/// `invoke('check_auth_status')`.
 #[tauri::command]
 pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Result<Option<AuthStatus>, String> {
     // 1. Check for Bluesky session first
@@ -179,10 +244,31 @@ pub async fn check_auth_status(state: State<'_, AppState>) -> std::result::Resul
     Ok(None)
 }
 
-/// Log in with credentials and store the session.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Login
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Log in with AT Protocol credentials (handle + app password).
 ///
-/// Authenticates with the AT Protocol server and stores the session
-/// tokens in the keychain for future use.
+/// Authenticates against the user's PDS, stores session tokens in the keychain,
+/// registers a `LinkedAccount` for the Bluesky connection, and auto-generates a
+/// local identity keypair if one doesn't exist yet.
+///
+/// # Parameters
+/// - `identifier` — Bluesky handle (e.g. `alice.bsky.social`) or DID
+/// - `password` — App password (not the main account password)
+///
+/// # Returns
+/// `AuthStatus` with the Bluesky handle, DID, and identity readiness.
+///
+/// # Side Effects
+/// - Saves session tokens to the OS keychain
+/// - Creates a `LinkedAccount` entry for Bluesky
+/// - Auto-generates local Ed25519 keypair if missing
+///
+/// # IPC
+/// Tauri command — called from the login screen via
+/// `invoke('login', { identifier, password })`.
 #[tauri::command]
 pub async fn login(
     identifier: String,
@@ -243,10 +329,25 @@ pub async fn login(
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Local Identity
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Create a local-only identity without any external service.
 ///
-/// Generates an Iroh keypair and a local DID. The user can set their
-/// username in the subsequent identity setup step.
+/// Generates an Ed25519 keypair and a `did:key` identifier via the escrow
+/// recovery system. The user can claim a username in the subsequent
+/// `set_local_username` step, which mints their `did:web`.
+///
+/// # Returns
+/// `AuthStatus` with `source: "local"` and `identity_ready: false` (username not yet set).
+///
+/// # Side Effects
+/// - Generates and stores a keypair + escrow bundle in the keychain.
+///
+/// # IPC
+/// Tauri command — called from the onboarding screen via
+/// `invoke('create_local_identity')`.
 #[tauri::command]
 pub async fn create_local_identity(
     state: State<'_, AppState>,
@@ -271,7 +372,20 @@ pub async fn create_local_identity(
 
 /// Set or update the user's local Bytescape username.
 ///
-/// This is the universal overarching identity handle used across the app.
+/// Validates the username (2–32 chars, alphanumeric + hyphens/underscores),
+/// persists it in the keychain, and returns the updated `AuthStatus`.
+/// This is the universal overarching identity handle displayed across the app
+/// and used to mint the `did:web:bytescape.social:{username}`.
+///
+/// # Parameters
+/// - `username` — Desired username (will be lowercased and trimmed)
+///
+/// # Returns
+/// Updated `AuthStatus` with `identity_ready: true` and the new `web_did`.
+///
+/// # IPC
+/// Tauri command — called from the identity setup screen via
+/// `invoke('set_local_username', { username })`.
 #[tauri::command]
 pub async fn set_local_username(
     state: State<'_, AppState>,
@@ -306,10 +420,28 @@ pub async fn set_local_username(
     }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Logout / Delete
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Log out and clear the stored session.
 ///
-/// Wipes all user data: vault, sessions, identity, linked accounts.
-/// After logout, the user must go through the full onboarding flow again.
+/// Performs a full wipe: vault DB, sync files, pending imports, OAuth/Mastodon
+/// sessions, and all keychain identity data. After logout the user must go
+/// through the complete onboarding flow again.
+///
+/// # Tech Debt
+/// Nearly identical to `delete_account` — both should call a shared
+/// `wipe_all_user_data()` helper to avoid duplication.
+///
+/// # Side Effects
+/// - Clears all `BytescapeItem` records from the vault DB
+/// - Removes all Iroh blob/sync files
+/// - Stops the OAuth callback server
+/// - Deletes all keychain entries (DIDs, sessions, linked accounts)
+///
+/// # IPC
+/// Tauri command — called from the settings screen via `invoke('logout')`.
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), String> {
     {
@@ -355,6 +487,12 @@ pub async fn logout(state: State<'_, AppState>) -> std::result::Result<(), Strin
 /// - Pending imports
 ///
 /// After this, the user is as if they freshly installed the app.
+///
+/// # Tech Debt
+/// ~90% identical to `logout` — should share a `wipe_all_user_data()` helper.
+///
+/// # IPC
+/// Tauri command — called from the settings screen via `invoke('delete_account')`.
 #[tauri::command]
 pub async fn delete_account(state: State<'_, AppState>) -> std::result::Result<(), String> {
     // 1. Clear all vault data from the database
@@ -396,7 +534,24 @@ pub async fn delete_account(state: State<'_, AppState>) -> std::result::Result<(
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Recovery
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Initialize full local identity + escrow recovery flow.
+///
+/// Generates an Ed25519 keypair and creates an escrow bundle encrypted with
+/// the provided recovery code. This is the first step of identity creation.
+///
+/// # Parameters
+/// - `recovery_code` — User-chosen passphrase to encrypt the escrow bundle
+///
+/// # Returns
+/// `IdentityInitResult` containing the new DID and public key.
+///
+/// # IPC
+/// Tauri command — called from the identity setup screen via
+/// `invoke('identity_init_full_recovery', { recoveryCode })`.
 #[tauri::command]
 pub async fn identity_init_full_recovery(
     state: State<'_, AppState>,
@@ -409,6 +564,16 @@ pub async fn identity_init_full_recovery(
 }
 
 /// Get local identity and recovery lifecycle status.
+///
+/// Returns flags indicating whether a local identity exists, whether an escrow
+/// bundle is stored, and the current state of any in-progress recovery.
+///
+/// # Returns
+/// `IdentityRecoveryStatus` with booleans for each lifecycle stage.
+///
+/// # IPC
+/// Tauri command — called from the settings/recovery screen via
+/// `invoke('identity_get_recovery_status')`.
 #[tauri::command]
 pub async fn identity_get_recovery_status(
     state: State<'_, AppState>,
@@ -420,6 +585,19 @@ pub async fn identity_get_recovery_status(
 }
 
 /// Start a recovery session from an escrow bundle.
+///
+/// Parses the escrow bundle and prepares a recovery session. The user must
+/// then call `identity_verify_recovery` with the correct recovery code.
+///
+/// # Parameters
+/// - `escrow_bundle` — Base64-encoded escrow data (exported from original device)
+///
+/// # Returns
+/// `IdentityRecoveryStartResult` indicating the recovery session is ready.
+///
+/// # IPC
+/// Tauri command — called from the recovery screen via
+/// `invoke('identity_start_recovery', { escrowBundle })`.
 #[tauri::command]
 pub async fn identity_start_recovery(
     state: State<'_, AppState>,
@@ -432,6 +610,19 @@ pub async fn identity_start_recovery(
 }
 
 /// Verify a recovery code against the current pending recovery session.
+///
+/// Decrypts the escrow bundle with the provided code. If correct, the
+/// recovery session advances to `verified_pending_finalize` state.
+///
+/// # Parameters
+/// - `recovery_code` — The passphrase used during `identity_init_full_recovery`
+///
+/// # Returns
+/// `IdentityRecoveryVerifyResult` indicating success or failure.
+///
+/// # IPC
+/// Tauri command — called from the recovery screen via
+/// `invoke('identity_verify_recovery', { recoveryCode })`.
 #[tauri::command]
 pub async fn identity_verify_recovery(
     state: State<'_, AppState>,
@@ -444,6 +635,16 @@ pub async fn identity_verify_recovery(
 }
 
 /// Finalize a verified recovery and promote it to active identity.
+///
+/// Takes the decrypted keypair from the verified recovery session and
+/// installs it as the active local identity, replacing any existing one.
+///
+/// # Returns
+/// `IdentityRecoveryFinalizeResult` confirming the restored DID.
+///
+/// # IPC
+/// Tauri command — called from the recovery screen via
+/// `invoke('identity_finalize_recovery')`.
 #[tauri::command]
 pub async fn identity_finalize_recovery(
     state: State<'_, AppState>,
@@ -454,6 +655,10 @@ pub async fn identity_finalize_recovery(
         .map_err(|e| e.to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// OAuth
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Start the Bluesky OAuth login flow.
 ///
 /// Resolves the user's handle, initiates PKCE + DPoP authorization,
@@ -462,6 +667,16 @@ pub async fn identity_finalize_recovery(
 ///
 /// The callback server handles the token exchange and emits an
 /// `oauth-complete` event when authentication succeeds.
+///
+/// # Parameters
+/// - `handle` — The user's Bluesky handle (e.g. `alice.bsky.social`)
+///
+/// # Returns
+/// The authorization URL to open in the system browser.
+///
+/// # IPC
+/// Tauri command — called from the login screen via
+/// `invoke('start_bluesky_oauth', { handle })`.
 #[tauri::command]
 pub async fn start_bluesky_oauth(
     handle: String,
@@ -482,6 +697,9 @@ pub async fn start_bluesky_oauth(
 ///
 /// Stops the callback server if it's running. Safe to call even if
 /// no OAuth flow is in progress.
+///
+/// # IPC
+/// Tauri command — called from the login screen via `invoke('cancel_bluesky_oauth')`.
 #[tauri::command]
 pub async fn cancel_bluesky_oauth(
     state: State<'_, AppState>,
@@ -490,7 +708,17 @@ pub async fn cancel_bluesky_oauth(
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Linked Accounts
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// List all platform accounts linked to the user's master identity.
+///
+/// # Returns
+/// Vec of `LinkedAccount` entries (Bluesky, Mastodon, etc.) with connection metadata.
+///
+/// # IPC
+/// Tauri command — called from the settings screen via `invoke('list_linked_accounts')`.
 #[tauri::command]
 pub async fn list_linked_accounts(
     state: State<'_, AppState>,
@@ -499,7 +727,27 @@ pub async fn list_linked_accounts(
         .map_err(|e| format!("Failed to list linked accounts: {}", e))
 }
 
-/// Unlink a platform account: remove LinkedAccount entry + clear session tokens + flush caches.
+/// Unlink a platform account from the user's master identity.
+///
+/// Removes the `LinkedAccount` entry, clears protocol-specific session tokens
+/// (Mastodon keychain + memory, or Bluesky OAuth + keychain), flushes the
+/// entire feed cache, and emits an `account-unlinked` event to the frontend.
+///
+/// # Parameters
+/// - `protocol` — `"mastodon"` or `"bluesky"`
+/// - `identifier` — The platform identifier (DID for Bluesky, `acct:` URI for Mastodon)
+///
+/// # Returns
+/// The updated list of remaining `LinkedAccount` entries.
+///
+/// # Side Effects
+/// - Clears session tokens from keychain and memory
+/// - Flushes all feed cache entries
+/// - Emits `account-unlinked` Tauri event
+///
+/// # IPC
+/// Tauri command — called from the settings screen via
+/// `invoke('unlink_account', { protocol, identifier })`.
 #[tauri::command]
 pub async fn unlink_account(
     state: State<'_, AppState>,

@@ -1,7 +1,44 @@
 //! P2P Peer Discovery & Following Commands
 //!
-//! Commands for managing the local peer directory — adding, listing,
-//! removing, and checking the connectivity of known P2P peers.
+//! Tauri IPC commands for the local peer directory — adding, listing,
+//! removing, and checking the connectivity of known P2P peers — plus
+//! P2P chat messaging, conversation listing, and remote feed requests.
+//!
+//! # How It Works
+//!
+//! 1. **Discovery** — `add_peer` validates an Iroh Node ID and persists a
+//!    `PeerInfo` row. `list_peers` returns all known peers regardless of
+//!    online status.
+//! 2. **Connectivity** — `check_peer_connectivity` opens a QUIC connection
+//!    using Iroh's mDNS (LAN) or Pkarr DHT (internet) resolution, exchanges
+//!    `PeerProfile` payloads, and updates `last_seen` / display name / DID.
+//! 3. **Conversations** — `list_p2p_conversations` builds sidebar entries
+//!    from `PeerInfo` rows, counting messages per `convo_id` prefix.
+//! 4. **Chat** — `send_p2p_chat_message` serializes a `CHAT_MESSAGE`
+//!    `ProtocolRequest`, delivers it over a bi-directional QUIC stream, and
+//!    saves a local copy as a `VaultMessage` regardless of delivery outcome.
+//! 5. **Feeds** — `request_peer_feed` sends a `FEED_REQUEST` and parses the
+//!    peer's `FeedResponse` (profile + paginated `BytescapeItem`s). Falls back
+//!    to a cached profile on timeout.
+//!
+//! # Related Files
+//!
+//! - `crate::protocol` — `ProtocolRequest`, `PeerProfile`, `ChatMessagePayload`,
+//!   `BYTESCAPE_ALPN` definitions
+//! - `crate::db::peers` — `PeerInfo` schema and CRUD operations
+//! - `crate::db` — `VaultMessage` storage for chat persistence
+//! - `crate::connectors::mastodon` — `get_session_from_keychain` for `also_known_as`
+//! - `crate::commands::vault` — vault-side message storage (`list_vault_messages`)
+//!
+//! # Tech Debt
+//!
+//! - **`also_known_as` duplication**: the Bluesky-DID / handle / Mastodon-acct
+//!   assembly block is copy-pasted 4 times (`get_my_peer_info`,
+//!   `check_peer_connectivity`, `send_p2p_chat_message`, `request_peer_feed`).
+//!   Extract to `fn build_also_known_as(keychain: &Keychain) -> Vec<String>`.
+//! - **Full message scan**: `list_p2p_conversations` loads ALL `VaultMessage`
+//!   rows to count per-conversation totals. Replace with a grouped DB query
+//!   or cached counter.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -9,6 +46,10 @@ use tauri::State;
 use crate::db::peers::PeerInfo;
 use crate::protocol::{PeerProfile, ProtocolRequest, ChatMessagePayload, BYTESCAPE_ALPN};
 use crate::AppState;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Peer Discovery
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Summary of the local user's P2P identity, returned to the frontend.
 #[derive(Serialize)]
@@ -22,6 +63,12 @@ pub struct MyPeerInfo {
 /// Return the current user's P2P identity (node ID, username, DID).
 ///
 /// Requires the Iroh node to be initialised via `setup_iroh_node`.
+/// Builds `also_known_as` from linked Bluesky and Mastodon identities.
+///
+/// **Tech debt:** the `also_known_as` assembly is duplicated 4 times
+/// across this file. Extract to a shared helper.
+///
+/// → IPC: `get_my_peer_info` (frontend `SettingsScreen`, P2P identity card)
 #[tauri::command]
 pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, String> {
     let username = Some(state.keychain.get_display_name());
@@ -65,7 +112,10 @@ pub async fn get_my_peer_info(state: State<'_, AppState>) -> Result<MyPeerInfo, 
 /// Add (or update) a peer by their Iroh Node ID.
 ///
 /// The `display_name` is an optional human-readable label the user
-/// assigns to this peer (e.g. "Alice's laptop").
+/// assigns to this peer (e.g. "Alice's laptop"). Validates the node ID
+/// format, prevents self-follow, and upserts into the local peer table.
+///
+/// → IPC: `add_peer` (frontend Peers → "Add peer" dialog)
 #[tauri::command]
 pub async fn add_peer(
     node_id: String,
@@ -126,6 +176,10 @@ pub async fn add_peer(
 }
 
 /// List all known peers from the local database.
+///
+/// Returns every `PeerInfo` row regardless of online status.
+///
+/// → IPC: `list_peers` (frontend Peers sidebar)
 #[tauri::command]
 pub async fn list_peers(state: State<'_, AppState>) -> Result<Vec<PeerInfo>, String> {
     let db_guard = state.db_manager.read().await;
@@ -133,13 +187,21 @@ pub async fn list_peers(state: State<'_, AppState>) -> Result<Vec<PeerInfo>, Str
     db.list_peers().await
 }
 
-/// Remove a peer from the local directory.
+/// Remove a peer from the local directory by node ID.
+///
+/// Deletes the `PeerInfo` row; does not notify the remote peer.
+///
+/// → IPC: `remove_peer` (frontend Peers → context menu → Unfollow)
 #[tauri::command]
 pub async fn remove_peer(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     db.remove_peer(&node_id).await
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Connectivity
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Result of a peer connectivity check, including the remote peer's profile
 /// if the connection succeeded.
@@ -156,6 +218,11 @@ pub struct PeerConnectResult {
 /// sends a PROFILE_EXCHANGE with our own profile, reads the remote's
 /// profile, and updates the peer's display name, DID, and last_seen
 /// timestamp in the local database.
+///
+/// Falls back to `last_seen` recency (< 60 s) to report a peer as online
+/// even when the outbound connection times out (e.g. asymmetric NAT).
+///
+/// → IPC: `check_peer_connectivity` (frontend peer-list refresh loop)
 #[tauri::command]
 pub async fn check_peer_connectivity(
     node_id: String,
@@ -304,6 +371,10 @@ pub async fn check_peer_connectivity(
     Ok(result)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Conversations
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// A P2P conversation entry for the frontend chat sidebar.
 #[derive(Serialize, Clone, Debug)]
 pub struct P2pConversation {
@@ -325,6 +396,11 @@ pub struct P2pConversation {
 ///
 /// Returns a list of P2P conversation entries that the chat sidebar
 /// can display. Each peer gets a deterministic `convo_id` of `p2p:{node_id}`.
+///
+/// **Tech debt:** loads ALL `VaultMessage` rows to count per-conversation
+/// messages. Replace with a grouped DB query or a cached counter.
+///
+/// → IPC: `list_p2p_conversations` (frontend `ChatScreen` P2P tab)
 #[tauri::command]
 pub async fn list_p2p_conversations(
     state: State<'_, AppState>,
@@ -367,12 +443,21 @@ pub async fn list_p2p_conversations(
     Ok(conversations)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Chat Messages
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Send a P2P chat message to a peer.
 ///
 /// 1. Connects to the peer via the Bytescape protocol
 /// 2. Sends a CHAT_MESSAGE with the text
-/// 3. Saves a copy locally as a VaultMessage (source: "p2p")
-/// 4. Returns the message ID on success
+/// 3. Saves a copy locally as a `VaultMessage` (source: `"p2p"`)
+/// 4. Returns `{ id, convo_id, delivered, sent_at }` JSON
+///
+/// The message is always persisted locally even if delivery fails, so the
+/// user sees their own message and it can be retried later.
+///
+/// → IPC: `send_p2p_chat_message` (frontend `ChatScreen` compose box)
 #[tauri::command]
 pub async fn send_p2p_chat_message(
     node_id: String,
@@ -511,10 +596,24 @@ pub async fn send_p2p_chat_message(
     }))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Peer Feeds
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Request a peer's feed (posts/profile) over P2P.
 ///
-/// Connects to the peer's Iroh node, sends a FEED_REQUEST, and returns
-/// their profile + a page of BytescapeItems.
+/// Connects to the peer's Iroh node, sends a `FEED_REQUEST`, and returns
+/// their profile + a page of `BytescapeItem`s. Retries once on timeout
+/// (first attempt allows 20 s for NAT traversal, retry allows 15 s).
+/// If the peer is unreachable but we have a cached profile, returns it
+/// with an empty item list so the UI can still render the peer's name.
+///
+/// # Parameters
+/// - `node_id` — the peer's Iroh public key (base32)
+/// - `limit` / `offset` — pagination (defaults: 20 / 0)
+/// - `source_filter` — optional source name to filter the peer's feed
+///
+/// → IPC: `request_peer_feed` (frontend `PeerProfileScreen`)
 #[tauri::command]
 pub async fn request_peer_feed(
     node_id: String,

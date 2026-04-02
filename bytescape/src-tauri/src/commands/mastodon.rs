@@ -1,11 +1,48 @@
-//! Mastodon & AP Tauri Commands (Sprint v7 — A1.2)
+//! Mastodon & ActivityPub Tauri Commands (Sprint v7 — A1.2)
 //!
-//! P1: Mastodon OAuth2 (register, complete, session, disconnect)
-//! P2: Mastodon Home Feed
-//! P3: AP DMs (send via Mastodon C2S + AP S2S)
-//! P4: Unified send_message
-//! P5: Follow/Unfollow (Mastodon C2S + AP S2S)
-//! P6: Unified resolve_profile
+//! Implements the full Mastodon integration surface: OAuth2 authentication,
+//! home timeline, direct messages (both C2S and S2S paths), follow/unfollow,
+//! hashtag subscriptions, post interactions (favourite/reblog/reply), and a
+//! unified profile resolver that auto-detects Mastodon vs Bluesky handles.
+//!
+//! ## HOW IT WORKS
+//!
+//! 1. **OAuth2 registration** — `mastodon_register_app` registers Bytescape on
+//!    the user's Mastodon instance, spins up a local HTTP callback server on
+//!    port 28461, and returns the auth URL for the browser.
+//! 2. **Token exchange** — the callback server (or `mastodon_complete_auth`)
+//!    captures the authorization code, exchanges it for an access token via
+//!    `connectors::mastodon::complete_auth`, persists the session to the
+//!    encrypted keychain, and emits `mastodon-auth-complete` to the frontend.
+//! 3. **Session lifecycle** — `MastodonSession` is cached in a global
+//!    `OnceLock<Mutex<…>>`. Subsequent commands call `get_active_session()`
+//!    which checks memory first, then falls back to keychain restore.
+//! 4. **Dual DM paths** — Direct messages can be sent via Mastodon C2S API
+//!    (`send_mastodon_dm`, visibility: "direct") or via AP S2S signed HTTP
+//!    delivery (`send_ap_dm`). The unified `send_message` command dispatches
+//!    to the correct protocol based on a `protocol` discriminator string.
+//! 5. **Profile resolution** — `resolve_profile` auto-detects protocol from
+//!    handle format (`user@instance` → AP/WebFinger, `did:plc:…` → Bluesky)
+//!    and returns a normalized JSON profile object for the frontend.
+//!
+//! ## RELATED FILES
+//!
+//! - `connectors/mastodon.rs` — low-level HTTP calls to Mastodon REST API
+//! - `activitypub/outbox.rs` — signed HTTP delivery for S2S activities
+//! - `activitypub/activities.rs` — AS2 activity constructors (Create, Follow, Undo)
+//! - `activitypub/webfinger.rs` — WebFinger resolution for AP handles
+//! - `activitypub/types.rs` — `ApObject`, `ApActor` struct definitions
+//! - `keychain_encrypted.rs` — session persistence and `LinkedAccount` storage
+//! - `models.rs` — `VaultMessage` struct for local DM storage
+//! - `commands/bluesky.rs` — sibling module for Bluesky-specific commands
+//!
+//! ## TECH DEBT
+//!
+//! - Hand-rolled TCP callback server for OAuth (should use axum or `tauri-plugin-oauth`)
+//! - `LinkedAccount` creation is duplicated between `handle_mastodon_callback` and
+//!   `mastodon_complete_auth` (extract to shared helper)
+//! - Most commands return ad-hoc `serde_json::Value` instead of typed response structs
+//! - AP S2S DM path (`send_ap_dm`) constructs `ApObject` inline; should use a builder
 
 use tauri::{State, Emitter, Manager};
 use crate::AppState;
@@ -19,6 +56,7 @@ const MASTODON_CALLBACK_PORT: u16 = 28461;
 /// In-memory storage for pending Mastodon app registrations (pre-auth).
 static PENDING_APP: std::sync::OnceLock<tokio::sync::Mutex<Option<MastodonApp>>> = std::sync::OnceLock::new();
 
+/// Returns a reference to the global pending-app mutex, initializing it on first access.
 fn pending_app() -> &'static tokio::sync::Mutex<Option<MastodonApp>> {
     PENDING_APP.get_or_init(|| tokio::sync::Mutex::new(None))
 }
@@ -26,6 +64,7 @@ fn pending_app() -> &'static tokio::sync::Mutex<Option<MastodonApp>> {
 /// In-memory Mastodon session (loaded from keychain on restore, updated on auth).
 static MASTODON_SESSION: std::sync::OnceLock<tokio::sync::Mutex<Option<MastodonSession>>> = std::sync::OnceLock::new();
 
+/// Returns a reference to the global Mastodon session mutex, initializing it on first access.
 fn masto_session_lock() -> &'static tokio::sync::Mutex<Option<MastodonSession>> {
     MASTODON_SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
 }
@@ -33,6 +72,7 @@ fn masto_session_lock() -> &'static tokio::sync::Mutex<Option<MastodonSession>> 
 /// Shutdown sender for the Mastodon callback server.
 static MASTODON_CALLBACK_SHUTDOWN: std::sync::OnceLock<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>> = std::sync::OnceLock::new();
 
+/// Returns a reference to the global shutdown-sender mutex for the OAuth callback server.
 fn mastodon_shutdown_lock() -> &'static tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>> {
     MASTODON_CALLBACK_SHUTDOWN.get_or_init(|| tokio::sync::Mutex::new(None))
 }
@@ -46,6 +86,25 @@ fn mastodon_shutdown_lock() -> &'static tokio::sync::Mutex<Option<tokio::sync::o
 /// Spawns a local callback server on port 28461 to catch the OAuth redirect.
 /// Returns the OAuth authorization URL as a plain string for `openUrl()`.
 /// When the callback is received, emits `mastodon-auth-complete` with AuthStatus.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_register_app', { instance })`
+///
+/// # Parameters
+/// - `instance` — Mastodon instance domain (e.g. `"mastodon.social"`)
+///
+/// # Returns
+/// The OAuth authorization URL the frontend should open in the user's browser.
+///
+/// # Side Effects
+/// - Stops any previously running callback server
+/// - Stores the `MastodonApp` registration in `PENDING_APP`
+/// - Spawns a background TCP listener that will emit `mastodon-auth-complete`
+///   or `mastodon-auth-error` when the browser redirects back
+///
+/// # Tech Debt
+/// The callback server is a hand-rolled TCP listener with manual HTTP parsing.
+/// Should be replaced with `tauri-plugin-oauth` or an axum one-shot server.
 #[tauri::command]
 pub async fn mastodon_register_app(
     state: State<'_, AppState>,
@@ -83,6 +142,14 @@ pub async fn mastodon_register_app(
 ///
 /// Listens for the browser redirect to `/mastodon/callback?code=...`,
 /// exchanges the code for tokens, and emits `mastodon-auth-complete`.
+///
+/// This is a hand-rolled HTTP/1.1 server using raw `TcpListener` + manual
+/// request parsing. It shuts itself down after handling one successful callback
+/// or when the `shutdown_rx` signal fires (e.g. when the user re-triggers auth).
+///
+/// # Tech Debt
+/// Replace with a proper HTTP framework (axum one-shot) to avoid manual
+/// `HTTP/1.1 200 OK\r\n…` construction and fragile path matching.
 async fn run_mastodon_callback_server(
     listener: tokio::net::TcpListener,
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
@@ -167,6 +234,16 @@ async fn run_mastodon_callback_server(
 }
 
 /// Handle the Mastodon OAuth callback: exchange code → session → emit event.
+///
+/// Exchanges the authorization code for an access token, persists the session
+/// to the encrypted keychain, ensures local identity infrastructure exists
+/// (for Mastodon-only users who have no Bluesky DID), creates a `LinkedAccount`,
+/// and emits `mastodon-auth-complete` with an AuthStatus JSON payload.
+///
+/// # Tech Debt
+/// The `LinkedAccount` creation logic here is nearly identical to the one in
+/// `mastodon_complete_auth`. Both paths should be refactored to share a single
+/// `finalize_mastodon_auth(session, app) -> Result<AuthStatus>` helper.
 async fn handle_mastodon_callback(
     http_client: &reqwest::Client,
     app: &MastodonApp,
@@ -250,6 +327,7 @@ async fn handle_mastodon_callback(
     }
 }
 
+/// Returns an HTML page shown in the browser after a successful Mastodon OAuth callback.
 fn mastodon_success_html() -> String {
     r#"<!DOCTYPE html>
 <html><body style="background:#1a1a2e;color:#e0e0e0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
@@ -260,6 +338,7 @@ fn mastodon_success_html() -> String {
 </div></body></html>"#.to_string()
 }
 
+/// Returns an HTML error page shown in the browser when Mastodon OAuth fails.
 fn mastodon_error_html(message: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -275,6 +354,30 @@ fn mastodon_error_html(message: &str) -> String {
 }
 
 /// Complete Mastodon OAuth2 by exchanging the auth code for an access token.
+///
+/// This is the **manual fallback** path — normally the callback server handles
+/// the exchange automatically. The frontend calls this if it captured the auth
+/// code itself (e.g. via deep-link or manual paste).
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_complete_auth', { instance, authCode })`
+///
+/// # Parameters
+/// - `instance` — the Mastodon instance domain
+/// - `auth_code` — the OAuth2 authorization code from the redirect
+///
+/// # Returns
+/// An AuthStatus JSON object matching the shape the frontend expects.
+///
+/// # Side Effects
+/// - Persists session + app to encrypted keychain
+/// - Bootstraps local identity if this is a Mastodon-only user
+/// - Creates a `LinkedAccount` in the keychain
+/// - Stores the `MastodonSession` in the global in-memory lock
+///
+/// # Tech Debt
+/// The `LinkedAccount` creation block is duplicated from `handle_mastodon_callback`.
+/// The return type is an ad-hoc `serde_json::Value` — should be a typed `AuthStatus` struct.
 #[tauri::command]
 pub async fn mastodon_complete_auth(
     state: State<'_, AppState>,
@@ -362,6 +465,13 @@ pub async fn mastodon_complete_auth(
 }
 
 /// Get current Mastodon session (from memory or restore from keychain).
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_session')`
+///
+/// # Returns
+/// `Some(session_json)` if a Mastodon session exists (in memory or keychain),
+/// `None` if the user has never authenticated with Mastodon.
 #[tauri::command]
 pub async fn mastodon_get_session(
     state: State<'_, AppState>,
@@ -385,6 +495,13 @@ pub async fn mastodon_get_session(
 }
 
 /// Disconnect Mastodon session (clear from memory + keychain).
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_disconnect')`
+///
+/// # Side Effects
+/// - Clears the in-memory `MastodonSession` and `MastodonApp`
+/// - Removes the persisted session from the encrypted keychain
 #[tauri::command]
 pub async fn mastodon_disconnect(
     state: State<'_, AppState>,
@@ -407,6 +524,20 @@ pub async fn clear_mastodon_memory() {
 // ═══════════════════════════════════════════════════
 
 /// Fetch the authenticated user's Mastodon home timeline.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_timeline', { limit?, maxId? })`
+///
+/// # Parameters
+/// - `limit` — max number of statuses to return (default 20)
+/// - `max_id` — pagination cursor; fetch statuses older than this ID
+///
+/// # Returns
+/// A JSON array of Mastodon status objects (serialized from `MastodonStatus`).
+///
+/// # Caching
+/// Results are cached in `AppState::feed_cache` with a 30-second TTL,
+/// keyed by `limit` + `max_id` to avoid redundant API calls during scroll.
 #[tauri::command]
 pub async fn mastodon_get_timeline(
     state: State<'_, AppState>,
@@ -443,7 +574,30 @@ pub async fn mastodon_get_timeline(
 // P3: AP Direct Messages
 // ═══════════════════════════════════════════════════
 
-/// Send a DM via Mastodon C2S API (visibility: "direct").
+/// Send a DM via Mastodon **C2S** API (visibility: `"direct"`).
+///
+/// Uses the standard Mastodon REST API `POST /api/v1/statuses` with
+/// `visibility=direct`. The recipient is addressed by prepending `@acct`
+/// to the status text. This is the path used by `send_message(protocol="mastodon")`.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('send_mastodon_dm', { recipientAcct, text })`
+///
+/// # Parameters
+/// - `recipient_acct` — the recipient's Mastodon acct (e.g. `"user@instance.social"`)
+/// - `text` — the message body
+///
+/// # Returns
+/// The resulting `VaultMessage` as JSON.
+///
+/// # Side Effects
+/// - Posts a direct-visibility status on the user's Mastodon instance
+/// - Saves the message locally as a `VaultMessage` in the vault DB
+///
+/// # Note: C2S vs S2S
+/// This is the **C2S (Client-to-Server)** DM path — it goes through the user's
+/// Mastodon instance which then federates. For direct AP S2S delivery (bypassing
+/// the instance), see `send_ap_dm`.
 #[tauri::command]
 pub async fn send_mastodon_dm(
     state: State<'_, AppState>,
@@ -467,7 +621,31 @@ pub async fn send_mastodon_dm(
     serde_json::to_value(&msg).map_err(|e| format!("Serialize error: {}", e))
 }
 
-/// Send a DM via AP S2S (signed Create(Note) to recipient inbox only).
+/// Send a DM via AP **S2S** (signed `Create(Note)` to recipient inbox only).
+///
+/// Bypasses the user's Mastodon instance entirely — constructs an AS2 Note
+/// addressed only to the recipient (not `as:Public`), wraps it in a `Create`
+/// activity, and delivers it directly to the remote actor's inbox using
+/// HTTP Signatures. Requires a local AP actor in the vault DB.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('send_ap_dm', { recipientActorUrl, text })`
+///
+/// # Parameters
+/// - `recipient_actor_url` — the full AP actor URL (e.g. `"https://instance.social/users/alice"`)
+/// - `text` — the message body
+///
+/// # Returns
+/// The resulting `VaultMessage` as JSON.
+///
+/// # Side Effects
+/// - Delivers a signed HTTP POST to the remote actor's inbox
+/// - Saves the message locally as a `VaultMessage` in the vault DB
+///
+/// # Note: C2S vs S2S
+/// This is the **S2S (Server-to-Server)** DM path — Bytescape acts as its own
+/// AP server and delivers directly. For the simpler C2S path that goes through
+/// the user's Mastodon instance, see `send_mastodon_dm`.
 #[tauri::command]
 pub async fn send_ap_dm(
     state: State<'_, AppState>,
@@ -545,13 +723,33 @@ pub async fn send_ap_dm(
 // P4: Unified send_message
 // ═══════════════════════════════════════════════════
 
-/// Protocol-agnostic message sender.
+/// Protocol-agnostic message sender — the frontend's single entry point for DMs.
 ///
-/// Dispatches to the correct protocol handler:
-/// - `"bluesky"` → Bluesky chat DM (convo_id = Bluesky convo ID)
-/// - `"mastodon"` → Mastodon C2S DM (convo_id = recipient acct)
-/// - `"activitypub"` → AP S2S DM (convo_id = recipient actor URL)
-/// - `"p2p"` → Iroh P2P message (convo_id = namespace ID)
+/// Dispatches to the correct protocol handler based on the `protocol` string:
+/// - `"bluesky"` → Bluesky chat DM via XRPC (`convo_id` = Bluesky convo ID)
+/// - `"mastodon"` → Mastodon C2S DM via REST API (`convo_id` = recipient acct)
+/// - `"activitypub"` → AP S2S DM via signed HTTP delivery (`convo_id` = recipient actor URL)
+/// - `"p2p"` → Iroh P2P message via CRDT doc (`convo_id` = namespace ID)
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('send_message', { protocol, convoId, text })`
+///
+/// # Parameters
+/// - `protocol` — one of `"bluesky"`, `"mastodon"`, `"activitypub"`, `"p2p"`
+/// - `convo_id` — protocol-specific conversation identifier (see above)
+/// - `text` — the message body
+///
+/// # Returns
+/// A JSON object whose shape depends on the protocol (ad-hoc `serde_json::Value`).
+///
+/// # Side Effects
+/// All protocol paths persist the sent message as a `VaultMessage` in the vault DB
+/// (except P2P which returns `{"sent": true}`).
+///
+/// # Tech Debt
+/// The Mastodon and AP branches inline the full send logic instead of delegating
+/// to `send_mastodon_dm` / `send_ap_dm`. This duplicates the Note construction
+/// and VaultMessage persistence. Should refactor to share implementation.
 #[tauri::command]
 pub async fn send_message(
     state: State<'_, AppState>,
@@ -651,6 +849,15 @@ pub async fn send_message(
 // ═══════════════════════════════════════════════════
 
 /// Follow a Mastodon account via C2S API.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_follow', { accountId })`
+///
+/// # Parameters
+/// - `account_id` — the Mastodon numeric account ID to follow
+///
+/// # Returns
+/// The Mastodon relationship object as JSON (contains `following`, `followed_by`, etc.).
 #[tauri::command]
 pub async fn mastodon_follow(
     state: State<'_, AppState>,
@@ -662,6 +869,15 @@ pub async fn mastodon_follow(
 }
 
 /// Unfollow a Mastodon account via C2S API.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_unfollow', { accountId })`
+///
+/// # Parameters
+/// - `account_id` — the Mastodon numeric account ID to unfollow
+///
+/// # Returns
+/// The updated Mastodon relationship object as JSON.
 #[tauri::command]
 pub async fn mastodon_unfollow(
     state: State<'_, AppState>,
@@ -673,6 +889,13 @@ pub async fn mastodon_unfollow(
 }
 
 /// Get the list of accounts the authenticated user follows.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_following')`
+///
+/// # Returns
+/// A `Vec<ProfileView>` — Mastodon accounts are converted to the Bluesky
+/// `ProfileView` shape via `account_to_profile_view` for frontend uniformity.
 #[tauri::command]
 pub async fn mastodon_get_following(
     state: State<'_, AppState>,
@@ -683,6 +906,13 @@ pub async fn mastodon_get_following(
 }
 
 /// Get the list of accounts that follow the authenticated user.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_followers')`
+///
+/// # Returns
+/// A `Vec<ProfileView>` — Mastodon accounts are converted to the Bluesky
+/// `ProfileView` shape via `account_to_profile_view` for frontend uniformity.
 #[tauri::command]
 pub async fn mastodon_get_followers(
     state: State<'_, AppState>,
@@ -692,7 +922,19 @@ pub async fn mastodon_get_followers(
     Ok(accounts.iter().map(|a| mastodon::account_to_profile_view(&session.instance, a)).collect())
 }
 
-/// Follow a remote actor via AP S2S (signed Follow activity).
+/// Follow a remote actor via AP S2S (signed `Follow` activity).
+///
+/// Resolves the remote actor document, extracts their inbox URL, constructs
+/// an AS2 `Follow` activity, and delivers it with HTTP Signatures.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('send_ap_follow', { targetActorUrl })`
+///
+/// # Parameters
+/// - `target_actor_url` — the full AP actor URL to follow
+///
+/// # Returns
+/// The HTTP status code from the remote inbox delivery (e.g. `202`).
 #[tauri::command]
 pub async fn send_ap_follow(
     state: State<'_, AppState>,
@@ -709,7 +951,19 @@ pub async fn send_ap_follow(
     crate::activitypub::outbox::deliver_activity(&actor, &activity, inbox).await
 }
 
-/// Unfollow a remote actor via AP S2S (signed Undo(Follow) activity).
+/// Unfollow a remote actor via AP S2S (signed `Undo(Follow)` activity).
+///
+/// Constructs an `Undo` wrapping the original `Follow` activity and delivers
+/// it to the remote actor's inbox with HTTP Signatures.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('send_ap_unfollow', { targetActorUrl })`
+///
+/// # Parameters
+/// - `target_actor_url` — the full AP actor URL to unfollow
+///
+/// # Returns
+/// The HTTP status code from the remote inbox delivery.
 #[tauri::command]
 pub async fn send_ap_unfollow(
     state: State<'_, AppState>,
@@ -732,6 +986,16 @@ pub async fn send_ap_unfollow(
 // ═══════════════════════════════════════════════════
 
 /// Follow a hashtag on Mastodon. Silently no-ops if no Mastodon session.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_follow_hashtag', { hashtag })`
+///
+/// # Parameters
+/// - `hashtag` — the hashtag name without the `#` prefix (e.g. `"rust"`)
+///
+/// # Side Effects
+/// Subscribes to the hashtag on the user's Mastodon instance so posts using
+/// that tag appear in their home timeline. No-ops gracefully if not connected.
 #[tauri::command]
 pub async fn mastodon_follow_hashtag(
     state: State<'_, AppState>,
@@ -747,6 +1011,12 @@ pub async fn mastodon_follow_hashtag(
 }
 
 /// Unfollow a hashtag on Mastodon. Silently no-ops if no Mastodon session.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_unfollow_hashtag', { hashtag })`
+///
+/// # Parameters
+/// - `hashtag` — the hashtag name without the `#` prefix
 #[tauri::command]
 pub async fn mastodon_unfollow_hashtag(
     state: State<'_, AppState>,
@@ -766,6 +1036,12 @@ pub async fn mastodon_unfollow_hashtag(
 // ═══════════════════════════════════════════════════
 
 /// Favourite (like) a Mastodon status by its numeric ID.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_favourite', { statusId })`
+///
+/// # Returns
+/// `{ "status_id": "…" }` — ad-hoc JSON confirming which status was favourited.
 #[tauri::command]
 pub async fn mastodon_favourite(
     state: State<'_, AppState>,
@@ -777,6 +1053,12 @@ pub async fn mastodon_favourite(
 }
 
 /// Unfavourite (unlike) a Mastodon status by its numeric ID.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_unfavourite', { statusId })`
+///
+/// # Returns
+/// `{ "status_id": "…" }` — ad-hoc JSON confirming which status was unfavourited.
 #[tauri::command]
 pub async fn mastodon_unfavourite(
     state: State<'_, AppState>,
@@ -788,6 +1070,12 @@ pub async fn mastodon_unfavourite(
 }
 
 /// Reblog (repost) a Mastodon status by its numeric ID.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_reblog', { statusId })`
+///
+/// # Returns
+/// `{ "status_id": "…" }` — ad-hoc JSON confirming which status was reblogged.
 #[tauri::command]
 pub async fn mastodon_reblog(
     state: State<'_, AppState>,
@@ -799,6 +1087,12 @@ pub async fn mastodon_reblog(
 }
 
 /// Unreblog (undo repost) a Mastodon status by its numeric ID.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_unreblog', { statusId })`
+///
+/// # Returns
+/// `{ "status_id": "…" }` — ad-hoc JSON confirming which status was unreblogged.
 #[tauri::command]
 pub async fn mastodon_unreblog(
     state: State<'_, AppState>,
@@ -810,6 +1104,18 @@ pub async fn mastodon_unreblog(
 }
 
 /// Reply to a Mastodon status.
+///
+/// Posts a new status with `in_reply_to_id` set to the target status.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_reply', { statusId, content })`
+///
+/// # Parameters
+/// - `status_id` — the numeric ID of the status to reply to
+/// - `content` — the reply text
+///
+/// # Returns
+/// `{ "id": "…", "url": "…" }` — ad-hoc JSON with the new status ID and URL.
 #[tauri::command]
 pub async fn mastodon_reply(
     state: State<'_, AppState>,
@@ -833,8 +1139,26 @@ pub async fn mastodon_reply(
 
 /// Resolve a profile by handle — auto-detects protocol.
 ///
-/// - `user@instance.social` → Mastodon / AP WebFinger
-/// - `did:plc:...` or `user.bsky.social` → Bluesky public API
+/// - `user@instance.social` → Mastodon / AP WebFinger → `resolve_ap_profile`
+/// - `did:plc:...` or `user.bsky.social` → Bluesky public API → `resolve_bluesky_profile`
+///
+/// The `protocol` parameter can override auto-detection.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('resolve_profile', { handle, protocol? })`
+///
+/// # Parameters
+/// - `handle` — the user handle or DID to resolve
+/// - `protocol` — optional override: `"activitypub"`, `"mastodon"`, `"bluesky"`, `"atproto"`
+///
+/// # Returns
+/// A normalized profile JSON object with fields: `protocol`, `did`/`actor_url`,
+/// `handle`, `display_name`, `description`, `avatar`, `banner`, `followers_count`,
+/// `following_count`, `posts_count`.
+///
+/// # Tech Debt
+/// Return type is ad-hoc `serde_json::Value` — should be a typed `ResolvedProfile` struct
+/// shared with the frontend via `types/index.ts`.
 #[tauri::command]
 pub async fn resolve_profile(
     state: State<'_, AppState>,
@@ -886,6 +1210,17 @@ fn restore_from_keychain(state: &AppState) -> Result<Option<MastodonSession>, St
 }
 
 /// Get the local AP actor from DB.
+///
+/// Derives the owner DID from the Iroh node's Ed25519 public key, then
+/// looks up the corresponding `ApActor` in the vault database. This actor
+/// is used as the `attributedTo` for outgoing AP S2S activities.
+///
+/// # Returns
+/// A tuple of `(ApActor, owner_did)` on success.
+///
+/// # Errors
+/// Returns an error if the Iroh node is not initialized or no AP actor
+/// has been created (user must call `create_ap_actor` first).
 async fn get_local_ap_actor(state: &AppState) -> Result<(crate::activitypub::ApActor, String), String> {
     let endpoint_guard = state.endpoint.lock().await;
     let endpoint = endpoint_guard.as_ref()
@@ -903,6 +1238,12 @@ async fn get_local_ap_actor(state: &AppState) -> Result<(crate::activitypub::ApA
 }
 
 /// Detect protocol from handle format.
+///
+/// Heuristic rules:
+/// - Starts with `did:` → Bluesky (AT Protocol DID)
+/// - Ends with `.bsky.social` → Bluesky
+/// - Contains no `@` → Bluesky (bare handle)
+/// - Contains `@` → ActivityPub / Mastodon (e.g. `user@instance.social`)
 fn detect_protocol(handle: &str) -> String {
     if handle.starts_with("did:") || handle.ends_with(".bsky.social") || !handle.contains('@') {
         "bluesky".to_string()
@@ -911,10 +1252,18 @@ fn detect_protocol(handle: &str) -> String {
     }
 }
 
-/// Internal Bluesky DM sender for the unified send_message command.
+/// Internal Bluesky DM sender for the unified `send_message` command.
 ///
-/// Duplicates the essential logic of send_bsky_dm to avoid needing a
-/// Tauri `State<'_>` re-extraction.
+/// Duplicates the essential logic of `send_bsky_dm` (in `commands/bluesky.rs`)
+/// because `send_message` receives `&AppState` rather than `State<'_, AppState>`,
+/// and Tauri's `State` extractor can't be manually constructed.
+///
+/// Handles two auth paths:
+/// - **OAuth session** — uses `xrpc_chat_post` for proxy-authenticated XRPC
+/// - **App-password session** — uses `ChatClient::send_dm` with a fresh JWT
+///
+/// # Side Effects
+/// Persists the sent message as a `VaultMessage` in the vault DB.
 async fn send_bluesky_dm_internal(
     state: &AppState,
     convo_id: &str,
@@ -985,6 +1334,16 @@ async fn send_bluesky_dm_internal(
 }
 
 /// Resolve an ActivityPub/Mastodon profile.
+///
+/// Uses a two-tier strategy:
+/// 1. **C2S lookup** — if a Mastodon session exists, uses the instance's
+///    `GET /api/v2/search?q=handle&type=accounts` for rich profile data.
+/// 2. **WebFinger fallback** — resolves `acct:user@host` via RFC 7033, then
+///    fetches the AS2 actor document directly for basic profile fields.
+///
+/// # Returns
+/// A normalized profile JSON object. The C2S path includes `account_id`
+/// (for follow/unfollow); the WebFinger fallback does not.
 async fn resolve_ap_profile(
     state: &AppState,
     handle: &str,
@@ -1048,6 +1407,12 @@ async fn resolve_ap_profile(
 }
 
 /// Resolve a Bluesky profile via public API.
+///
+/// Calls the unauthenticated `app.bsky.actor.getProfile` XRPC endpoint on
+/// `public.api.bsky.app`. Does not require a Bluesky session.
+///
+/// # Returns
+/// A normalized profile JSON object with the `"bluesky"` protocol tag.
 async fn resolve_bluesky_profile(
     state: &AppState,
     handle: &str,

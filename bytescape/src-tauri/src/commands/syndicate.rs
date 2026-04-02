@@ -1,3 +1,33 @@
+//! Syndication Engine — Cross-Post Vault Items to External Platforms
+//!
+//! Publishes local vault items to connected social platforms and verifies
+//! that syndicated posts still exist upstream. Currently **Bluesky-only**
+//! despite the generic naming — future connectors (Mastodon, Nostr) will
+//! plug in here.
+//!
+//! ## How It Works
+//!
+//! 1. **Load & validate** — Fetches the `BytescapeItem` from redb by ID,
+//!    checks it hasn't already been syndicated to the target platform.
+//! 2. **Upload media** — Iterates `media_blobs`, fetches each from Iroh via
+//!    `SyncManager::get_media`, uploads to the Bluesky PDS as blobs.
+//!    Silently caps at **4 images** (Bluesky embed limit).
+//! 3. **Compose record** — Builds an `app.bsky.feed.post` JSON record with
+//!    rich-text facets (mentions, hashtags, links) parsed by `richtext.rs`.
+//! 4. **Publish** — Calls `com.atproto.repo.createRecord` via authenticated
+//!    XRPC to the user's PDS.
+//! 5. **Persist** — Updates the item's `syndication_status`, `syndicated_uri`,
+//!    and `share_history` in redb so the UI reflects the syndication.
+//!
+//! ## Related Files
+//!
+//! - `connectors/bluesky.rs` — `BlueskyClient`, PDS resolution, blob upload
+//! - `richtext.rs` — Facet parsing (mentions → DID, hashtags, URLs)
+//! - `models.rs` — `SyndicationStatus`, `SyndicationEvent`, `Audience`
+//! - `sync.rs` — `SyncManager::get_media` for Iroh blob retrieval
+//! - `db.rs` — `upsert_item` persists syndication metadata
+//! - Frontend: `src/screens/ComposeBox.tsx` invokes `syndicate_vault_item`
+
 use tauri::State;
 
 use serde_json::json;
@@ -7,6 +37,40 @@ use crate::connectors::bluesky::{BlueskyClient, authenticated_xrpc_candidates};
 use crate::richtext;
 use crate::blob_hash;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Syndication
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Cross-post a vault item to Bluesky.
+///
+/// Takes a local `BytescapeItem` by ID, uploads its media blobs to the user's
+/// Bluesky PDS, composes an `app.bsky.feed.post` record with rich-text facets,
+/// and publishes it. On success the item's syndication metadata is persisted
+/// back to redb.
+///
+/// # Parameters
+/// - `item_id` — The redb key of the vault item to syndicate.
+/// - `state` — Tauri managed state (database, keychain, sync manager).
+///
+/// # Returns
+/// The AT URI of the newly created Bluesky post (`at://did:plc:.../app.bsky.feed.post/...`).
+///
+/// # Errors
+/// - Item not found or already syndicated to Bluesky.
+/// - Not authenticated (no session in keychain).
+/// - Blob upload or record creation fails on the PDS.
+///
+/// # Side Effects
+/// - Uploads image blobs to the user's Bluesky PDS.
+/// - Writes updated `BytescapeItem` to redb (`syndication_status`, `syndicated_uri`,
+///   `audiences`, `share_history`).
+///
+/// # Notes
+/// - Currently **Bluesky-only** despite the generic function name.
+/// - Silently caps at **4 images** per post (Bluesky embed limit); extras are dropped.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('syndicate_vault_item', { itemId })`
 #[tauri::command]
 pub async fn syndicate_vault_item(
     item_id: String,
@@ -158,11 +222,44 @@ pub async fn syndicate_vault_item(
     Ok(uri)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Verification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Response shape for `app.bsky.feed.getPosts` — used internally for verification.
 #[derive(serde::Deserialize)]
 struct GetPostsResponse {
     posts: Vec<serde_json::Value>,
 }
 
+/// Verify that previously syndicated posts still exist on Bluesky.
+///
+/// Checks each active `SyndicationEvent` in the item's `share_history` against
+/// the Bluesky public API (`app.bsky.feed.getPosts`). If a post is no longer
+/// found upstream (deleted by user, moderation takedown, etc.), its `active`
+/// flag is set to `false` so the UI can reflect the broken syndication.
+///
+/// Also migrates legacy syndication fields (`syndicated_uris`, `syndicated_at`,
+/// `syndicated_uri`) into the modern `share_history` array on first call.
+///
+/// # Parameters
+/// - `item_id` — The redb key of the vault item to verify.
+/// - `state` — Tauri managed state (database, keychain).
+///
+/// # Returns
+/// `true` if any syndication events were updated (rolled back), `false` if
+/// everything is still in sync.
+///
+/// # Errors
+/// - Item not found in database.
+/// - Bluesky public API request fails.
+///
+/// # Side Effects
+/// - May set `share_history` entries to `active: false` in redb.
+/// - May migrate legacy syndication fields into `share_history`.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('verify_syndications', { itemId })`
 #[tauri::command]
 pub async fn verify_syndications(
     item_id: String,

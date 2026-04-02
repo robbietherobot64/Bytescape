@@ -1,7 +1,36 @@
+//! Link unfurling and Open Graph metadata extraction.
+//!
+//! Fetches user-provided URLs and extracts rich link preview metadata using
+//! Open Graph (`og:*`) and Twitter Card (`twitter:*`) meta tags, with fallbacks
+//! to standard HTML `<meta>` and `<title>` tags.
+//!
+//! ## HOW IT WORKS
+//! 1. Frontend calls `unfurl_link` via Tauri IPC with a URL from the compose box
+//! 2. The URL is validated (http/https only) and fetched with a 5s timeout / 3-redirect cap
+//! 3. HTML response is parsed with `scraper`, extracting OG → Twitter Card → HTML fallbacks
+//! 4. Relative URLs (images, favicons) are resolved against the page's base URL
+//! 5. Result is returned as a `LinkCard` struct for inline preview rendering
+//!
+//! ## RELATED FILES
+//! - `src/components/ComposeBox/` — frontend compose UI that triggers unfurling
+//! - `commands/bluesky.rs` — `publish_post_v2` uses `LinkCard` for `app.bsky.embed.external`
+//! - `types/index.ts` — TypeScript `LinkCard` interface mirrors this Rust struct
+//!
+//! ## SECURITY NOTE
+//! ⚠ No private-IP / SSRF filtering is applied to user-provided URLs.
+//! A malicious URL like `http://169.254.169.254/...` (cloud metadata endpoint) or
+//! `http://localhost:8080/admin` would be fetched from the user's machine.
+//! This is acceptable for a local-first desktop app (the user controls their own
+//! network), but MUST be addressed before any server-side unfurling is added.
+
 use tauri::State;
 use serde::Serialize;
 use crate::AppState;
 
+/// Rich link preview card extracted from a URL's HTML metadata.
+///
+/// Fields are populated in priority order: Open Graph → Twitter Card → HTML fallback.
+/// All text fields are trimmed and capped at 500 characters.
 #[derive(Debug, Clone, Serialize)]
 pub struct LinkCard {
     pub url: String,
@@ -23,6 +52,7 @@ pub async fn unfurl_link(
     _state: State<'_, AppState>,
 ) -> Result<LinkCard, String> {
     // Validate URL
+    // SSRF NOTE: No private-IP filtering — see module-level security note above.
     let parsed = reqwest::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {

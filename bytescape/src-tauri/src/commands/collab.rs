@@ -1,6 +1,26 @@
 //! Tauri Commands for Collaborative Editing (C6.1)
 //!
 //! Exposes the CRDT storage layer to the frontend via Tauri invoke commands.
+//! Each command is a thin IPC wrapper — validation and Yjs merge logic live
+//! in the `collab` module and the `db` persistence layer.
+//!
+//! ## HOW IT WORKS
+//!
+//! 1. The frontend creates or opens a collab document (`create_collab_doc`).
+//! 2. As the user edits, Tiptap emits Yjs binary updates which the frontend
+//!    base64-encodes and sends via `apply_collab_update`.
+//! 3. The backend merges updates into the stored Yjs document (redb) and
+//!    returns the new state vector.
+//! 4. `snapshot_collab_to_item` renders the current CRDT state into a
+//!    BytescapeItem body (Markdown/HTML), linking the collab doc to the
+//!    vault's content-addressed storage.
+//! 5. `list_collab_docs` / `delete_collab_doc` handle housekeeping.
+//!
+//! ## RELATED FILES
+//!
+//! - `collab/mod.rs`      — `CollabDocMeta`, Yjs merge helpers
+//! - `db/collab.rs`       — redb persistence for collab documents
+//! - `commands/vault.rs`  — BytescapeItem CRUD (target of snapshots)
 
 use tauri::State;
 use serde::{Deserialize, Serialize};

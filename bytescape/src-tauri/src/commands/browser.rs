@@ -22,8 +22,18 @@
 //! browser_show_at → show()+position+size in one IPC round-trip
 //! browser_close   → webview destroyed permanently
 //! ```
+//!
+//! ## Related Files
+//!
+//! - `src/components/BrowserView.tsx` — React component that calls these commands
+//! - `src/components/Omnibar.tsx` — URL bar driving `browser_navigate` / `browser_eval`
+//! - `commands/mod.rs` — command registration in the Tauri invoke handler
 
 use tauri::{AppHandle, Manager, WebviewUrl, LogicalPosition, LogicalSize, Emitter};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Linux GTK Overlay — platform-specific widget tree surgery
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Linux GTK Overlay — fixes the split-screen bug
@@ -51,6 +61,11 @@ mod gtk_overlay {
     /// The GtkFixed has `pass_through=true` so mouse events on areas not covered
     /// by a browser webview pass through to the React main webview below.
     /// Browser webviews receive events via their own GDK/X11 windows.
+    ///
+    /// # Cross-System: GTK Interop
+    /// Uses `Webview::with_webview()` to access the native WebKitGTK widget, then
+    /// walks the GTK widget tree to restructure it. An `mpsc::channel` synchronizes
+    /// the GTK main-thread closure back to the async Tauri command.
     pub fn ensure_overlay(app: &AppHandle) -> Result<(), String> {
         if SETUP_DONE.load(Ordering::Acquire) {
             return Ok(());
@@ -117,6 +132,10 @@ mod gtk_overlay {
 
     /// After `add_child` puts a browser webview into the GtkBox, move it
     /// into the GtkFixed inside the overlay for absolute positioning.
+    ///
+    /// # Cross-System: GTK Interop
+    /// Accesses the native GtkBox → GtkOverlay → GtkFixed widget chain via
+    /// `with_webview()`. Blocks on an `mpsc::channel` until the GTK reparent completes.
     pub fn reparent_to_fixed(
         webview: &tauri::Webview<tauri::Wry>,
         x: i32,
@@ -171,6 +190,11 @@ mod gtk_overlay {
 
     /// Reposition + resize a browser webview within the GtkFixed.
     /// Fire-and-forget (no blocking wait).
+    ///
+    /// # Cross-System: GTK Interop
+    /// Uses `with_webview()` to call `GtkFixed::move_()` and `set_size_request()`
+    /// on the native widget. Unlike `ensure_overlay`/`reparent_to_fixed`, this is
+    /// fire-and-forget — errors are silently ignored for performance.
     pub fn set_bounds(
         webview: &tauri::Webview<tauri::Wry>,
         x: i32,
@@ -192,7 +216,15 @@ mod gtk_overlay {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Security & Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// JavaScript injected into every external webview before any page scripts run.
+///
+/// Removes `__TAURI__` and `__TAURI_INTERNALS__` from the global scope so that
+/// external pages loaded in browser tabs cannot invoke Tauri IPC commands.
+/// This is the primary sandbox boundary for untrusted web content.
 const EXTERNAL_WEBVIEW_INIT_SCRIPT: &str = r#"
 (function() {
     if (window.location.protocol !== 'http:' || window.location.hostname !== 'tauri.localhost') {
@@ -204,14 +236,27 @@ const EXTERNAL_WEBVIEW_INIT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Check whether a URL is safe for browser webview navigation.
+///
+/// Only `http:` and `https:` schemes are allowed — this blocks `file:`,
+/// `javascript:`, `data:`, and custom Tauri schemes from being loaded
+/// in external webviews.
 fn is_allowed_navigation(url: &url::Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
 
+/// Returns the isolated data directory for browser webview storage.
+///
+/// Each browser session stores cookies, cache, and local storage in
+/// `{app_data_dir}/browser_data/`, separate from the main Tauri webview.
 fn browser_data_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|p| p.join("browser_data"))
 }
 
+/// Resolve the main application window, with a fallback to any available window.
+///
+/// The primary lookup uses the `"main"` label. If that fails (can happen during
+/// window recreation), falls back to the first window in the manager's list.
 fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
     app.get_window("main")
         .or_else(|| {
@@ -224,12 +269,25 @@ fn get_main_window(app: &AppHandle) -> Result<tauri::Window, String> {
         })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tauri IPC Commands — browser tab lifecycle
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Create a native browser webview within the main window.
 ///
 /// The webview is positioned at (x, y) with the given dimensions,
 /// overlaying the React content area for that tab. If a webview with the
 /// same label already exists (e.g. React StrictMode double-mount), it is
 /// repositioned and shown instead of creating a duplicate.
+///
+/// # Cross-System: Tauri Webview + GTK (Linux)
+/// On Linux, this command triggers GTK widget tree surgery: `ensure_overlay()`
+/// restructures the GtkBox, then `reparent_to_fixed()` moves the new webview
+/// into a GtkFixed for absolute positioning. On other platforms, Tauri's
+/// built-in `set_position`/`set_size` is used directly.
+///
+/// # IPC
+/// Exposed as Tauri command `browser_create` — called from `BrowserView.tsx`.
 #[tauri::command]
 pub async fn browser_create(
     app: AppHandle,
@@ -438,7 +496,17 @@ pub async fn browser_show_at(
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tauri IPC Commands — browser navigation & utilities
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Navigate an existing browser webview to a new URL.
+///
+/// Validates the URL scheme before navigating — only `http:` and `https:` are
+/// allowed. Returns an error if the webview doesn't exist or the URL is blocked.
+///
+/// # IPC
+/// Exposed as Tauri command `browser_navigate` — called from `Omnibar.tsx`.
 #[tauri::command]
 pub async fn browser_navigate(
     app: AppHandle,

@@ -1,7 +1,42 @@
 //! Vault File Management Commands
-//! 
-//! Commands for managing the personal media vault - uploading, listing,
-//! and retrieving files stored in Iroh Docs/Blobs.
+//!
+//! Tauri IPC commands for the personal media vault — uploading, listing,
+//! deleting, and retrieving files stored in Iroh Docs/Blobs, plus hashtag
+//! CRUD, paginated post queries, contact merging, and vault-level admin
+//! (clear, dedup, GC).
+//!
+//! # How It Works
+//!
+//! 1. **Upload** — file bytes arrive via IPC (`vault_upload_file`) or are read
+//!    from disk paths (`vault_upload_files_from_paths`). Both delegate to
+//!    `SyncManager::vault_add_file`, which stores the blob in Iroh and writes
+//!    metadata to the vault Iroh Doc.
+//! 2. **Read** — `vault_get_file_data` / `vault_get_thumbnail` resolve blob
+//!    hashes from the vault doc and stream content back through IPC.
+//! 3. **Query** — `list_vault_posts_paged` hits the redb `BytescapeItem` table
+//!    with cursor-based pagination; `get_vault_stats` aggregates counts.
+//! 4. **Contacts** — `list_contacts_unified` merges local DB contacts with
+//!    Bluesky follows/followers into a single deduped list.
+//! 5. **Admin** — `clear_vault` wipes both DB items and Iroh Doc entries;
+//!    `vault_gc_tombstones` reclaims metadata from deleted entries.
+//!
+//! # Related Files
+//!
+//! - `crate::sync` — `SyncManager` owns the Iroh Doc/Blob operations
+//! - `crate::db` — redb tables (`BytescapeItem`, `VaultMessage`, `Contact`)
+//! - `crate::connectors::bluesky` — follow/follower fetching for contacts
+//! - `crate::commands::peers` — P2P message sending (peer-side counterpart)
+//!
+//! # Tech Debt
+//!
+//! - **Two stats commands**: `vault_get_stats` (Iroh-level) and `get_vault_stats`
+//!   (redb-level) return different shapes — unify into one.
+//! - **Duplicated MIME detection**: `detect_mime_type` here duplicates logic in
+//!   the import pipeline; extract to a shared utility.
+//! - **Contacts list duplication**: `list_contacts` and `list_contacts_unified`
+//!   share ~80 % of their logic; refactor into one with a format parameter.
+//! - **Post-load pagination**: `list_vault_posts_paged` loads all rows then
+//!   slices in Rust; push limit/offset into the redb query.
 
 use bytes::Bytes;
 use tauri::State;
@@ -10,10 +45,16 @@ use crate::error::BytescapeError;
 use crate::sync::{VaultFile, VaultFileStats, Hash, NamespaceId};
 use crate::AppState;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// File Upload
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Upload a file to the vault.
-/// 
+///
 /// Stores the file content in Iroh Blobs and metadata in Iroh Docs.
 /// For images, automatically generates a WebP thumbnail.
+///
+/// → IPC: `vault_upload_file` (frontend drag-and-drop / file picker)
 #[tauri::command]
 pub async fn vault_upload_file(
     name: String,
@@ -93,7 +134,10 @@ pub async fn vault_upload_files_from_paths(
     Ok(results)
 }
 
-/// Detect MIME type from file extension
+/// Detect MIME type from file extension.
+///
+/// **Tech debt:** duplicates logic in the import pipeline (`connectors/facebook.rs`,
+/// `connectors/instagram.rs`). Extract to a shared `utils::mime` module.
 fn detect_mime_type(path: &std::path::Path) -> String {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
         Some(ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg".to_string(),
@@ -120,9 +164,15 @@ fn detect_mime_type(path: &std::path::Path) -> String {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Blob Management
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// List all files in the vault.
-/// 
+///
 /// Returns files sorted by added_at (newest first).
+///
+/// → IPC: `vault_list_files` (frontend `VaultScreen`)
 #[tauri::command]
 pub async fn vault_list_files(state: State<'_, AppState>) -> std::result::Result<Vec<VaultFile>, String> {
     let sync_guard = state.sync_manager.lock().await;
@@ -229,9 +279,15 @@ pub async fn vault_get_thumbnail(file_id: String, state: State<'_, AppState>) ->
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Messages
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Send a message to a P2P sync document.
-/// 
+///
 /// Stores the message content in Iroh Blobs and creates a doc entry.
+///
+/// → IPC: `send_p2p_message` (frontend `ChatScreen`)
 #[tauri::command]
 pub async fn send_p2p_message(
     namespace_id: String,
@@ -251,7 +307,19 @@ pub async fn send_p2p_message(
         .map_err(|e| e.to_string())
 }
 
-/// Get vault statistics (alias for vault_get_stats for frontend compatibility)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Vault Stats
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get vault statistics from the redb database.
+///
+/// Returns item count, total size, and per-source breakdowns.
+/// This reads from the redb `BytescapeItem` table, **not** the Iroh Doc
+/// (`vault_get_stats` above is the Iroh-level counterpart).
+///
+/// **Tech debt:** two stats commands return different shapes — unify into one.
+///
+/// → IPC: `get_vault_stats` (frontend `VaultScreen` stats panel)
 #[tauri::command]
 pub async fn get_vault_stats(state: State<'_, AppState>) -> std::result::Result<crate::db::VaultStats, String> {
     let db_guard = state.db_manager.read().await;
@@ -266,7 +334,11 @@ pub async fn get_vault_stats(state: State<'_, AppState>) -> std::result::Result<
         .map_err(|e| e.to_string())
 }
 
-/// List unique sources in the vault
+/// List unique source identifiers present in the vault.
+///
+/// Returns e.g. `["bluesky", "facebook", "upload"]` for the filter dropdown.
+///
+/// → IPC: `list_vault_sources` (frontend source-filter chips)
 #[tauri::command]
 pub async fn list_vault_sources(state: State<'_, AppState>) -> std::result::Result<Vec<String>, String> {
     let db_guard = state.db_manager.read().await;
@@ -281,7 +353,24 @@ pub async fn list_vault_sources(state: State<'_, AppState>) -> std::result::Resu
         .map_err(|e| e.to_string())
 }
 
-/// List vault posts with pagination
+// ═══════════════════════════════════════════════════════════════════════════════
+// Paginated Posts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// List vault posts with cursor-based pagination.
+///
+/// Supports three query strategies (tried in priority order):
+/// 1. **path_prefix** — Willow-style path reads (`/bluesky/...`)
+/// 2. **source** — legacy source-filter, auto-migrated to path-prefix when
+///    rows exist under the `/{source}/` prefix
+/// 3. **unfiltered** — all items for the current owner DID
+///
+/// Returns `{ items: [...], total: N }` as a JSON value.
+///
+/// **Tech debt:** pagination is applied after the full query; push
+/// limit/offset into the redb read transaction for large vaults.
+///
+/// → IPC: `list_vault_posts_paged` (frontend `FeedScreen`, `VaultScreen`)
 #[tauri::command]
 pub async fn list_vault_posts_paged(
     state: State<'_, AppState>,
@@ -334,7 +423,13 @@ pub async fn list_vault_posts_paged(
     }))
 }
 
-/// Save a followed hashtag
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hashtags
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Save a followed hashtag to the local database.
+///
+/// → IPC: `save_hashtag` (frontend hashtag manager)
 #[tauri::command]
 pub async fn save_hashtag(state: State<'_, AppState>, tag: String) -> std::result::Result<(), String> {
     let db_guard = state.db_manager.read().await;
@@ -345,7 +440,9 @@ pub async fn save_hashtag(state: State<'_, AppState>, tag: String) -> std::resul
         .map_err(|e| e.to_string())
 }
 
-/// Delete a followed hashtag
+/// Delete a followed hashtag from the local database.
+///
+/// → IPC: `delete_hashtag` (frontend hashtag manager)
 #[tauri::command]
 pub async fn delete_hashtag(state: State<'_, AppState>, tag: String) -> std::result::Result<(), String> {
     let db_guard = state.db_manager.read().await;
@@ -356,7 +453,9 @@ pub async fn delete_hashtag(state: State<'_, AppState>, tag: String) -> std::res
         .map_err(|e| e.to_string())
 }
 
-/// List followed hashtags
+/// List all followed hashtags from the local database.
+///
+/// → IPC: `list_followed_hashtags` (frontend hashtag sidebar)
 #[tauri::command]
 pub async fn list_followed_hashtags(state: State<'_, AppState>) -> std::result::Result<Vec<String>, String> {
     let db_guard = state.db_manager.read().await;
@@ -404,7 +503,21 @@ pub async fn remove_followed_hashtag(state: State<'_, AppState>, hashtag: String
         .map_err(|e| e.to_string())
 }
 
-/// Clear all items from the vault
+// ═══════════════════════════════════════════════════════════════════════════════
+// Vault Admin
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Clear all items from the vault (destructive).
+///
+/// Performs a two-phase wipe:
+/// 1. `db.clear_all_user_data()` — removes all `BytescapeItem`, `VaultMessage`,
+///    and `Contact` rows from redb.
+/// 2. `sync.vault_clear_all_files()` — tombstones every entry in the Iroh Doc
+///    so the deletion propagates to synced peers.
+///
+/// Returns the total number of items + files removed.
+///
+/// → IPC: `clear_vault` (frontend Settings → Danger Zone)
 #[tauri::command]
 pub async fn clear_vault(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let cleared_db = {
@@ -458,7 +571,13 @@ pub async fn list_vault_messages(state: State<'_, AppState>) -> std::result::Res
     Ok(msgs)
 }
 
-/// Legacy archive post count used by fallback UI.
+/// Legacy archive post count used by the fallback UI.
+///
+/// Counts rows in the `BytescapeItem` table that originated from an archive
+/// import (Facebook, Instagram). Kept for backwards compatibility; prefer
+/// `get_vault_stats` for new code.
+///
+/// → IPC: `count_archive_posts` (frontend import summary)
 #[tauri::command]
 pub async fn count_archive_posts(state: State<'_, AppState>) -> std::result::Result<u64, String> {
     let db_guard = state.db_manager.read().await;
@@ -469,9 +588,18 @@ pub async fn count_archive_posts(state: State<'_, AppState>) -> std::result::Res
         .map_err(|e| e.to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Contacts
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// List contacts — merges DB contacts with Bluesky follows so the chat
 /// friends panel shows everyone the user can potentially chat with,
 /// not just people they've already chatted with.
+///
+/// **Tech debt:** shares ~80 % of its logic with `list_contacts_unified`;
+/// refactor into one function with a format parameter.
+///
+/// → IPC: `list_contacts` (frontend `ChatScreen` sidebar)
 #[tauri::command]
 pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Vec<crate::db::Contact>, String> {
     let mut contacts: std::collections::HashMap<String, crate::db::Contact> = std::collections::HashMap::new();
@@ -540,6 +668,10 @@ pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Ve
 ///
 /// Returns a combined, deduplicated contact list sorted so P2P-capable
 /// contacts appear first, then alphabetically by display name / handle.
+///
+/// **Tech debt:** shares ~80 % of logic with `list_contacts`; unify.
+///
+/// → IPC: `list_contacts_unified` (frontend `ContactsScreen`)
 #[tauri::command]
 pub async fn list_contacts_unified(
     state: State<'_, AppState>,
@@ -642,9 +774,11 @@ pub async fn list_contacts_unified(
 }
 
 /// Garbage-collect orphaned tombstone entries from the Iroh vault namespace.
-/// 
+///
 /// Tombstones accumulate as files are deleted. This reclaims namespace metadata weight.
 /// Returns the number of tombstone entries purged.
+///
+/// → IPC: `vault_gc_tombstones` (frontend Settings → Storage → "Clean up")
 #[tauri::command]
 pub async fn vault_gc_tombstones(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let sync_guard = state.sync_manager.lock().await;

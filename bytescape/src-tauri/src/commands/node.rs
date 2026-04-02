@@ -1,6 +1,21 @@
 //! Node & P2P Sync Commands
-//! 
-//! Commands for initializing the Iroh node and managing P2P sync documents.
+//!
+//! Initializes the Iroh P2P node, sets up multi-protocol routing, and exposes
+//! Tauri commands for creating/joining sync documents and P2P diagnostics.
+//!
+//! ## HOW IT WORKS
+//! 1. `setup_iroh_node` loads (or generates) an Ed25519 keypair from the keychain
+//! 2. An Iroh `Endpoint` is bound and the `did:key` master identity is derived
+//! 3. A `SyncManager` is initialized (docs engine, blob store, gossip)
+//! 4. A protocol `Router` is spawned with 4 ALPN handlers: docs, gossip, blobs, bytescape
+//! 5. Other commands (`create_sync_doc`, `join_sync_doc`, etc.) operate on the running node
+//!
+//! ## RELATED FILES
+//! - `sync.rs` — `SyncManager` (docs engine, blob store, gossip layer)
+//! - `protocol.rs` — `BytescapeProtocol`, `DocsHandler`, `PeerProfile`, `BYTESCAPE_ALPN`
+//! - `keychain.rs` — keypair persistence, `did:key` derivation, display name
+//! - `error.rs` — `BytescapeError` variants used throughout these commands
+//! - `commands/relay.rs` — relay stubs (Phase 4.5 extension of this P2P node)
 
 use serde::{Deserialize, Serialize};
 use tauri::{State, Manager};
@@ -20,15 +35,23 @@ pub struct DocTicketInfo {
     pub namespace_id: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Node Initialization
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Initialize the Iroh P2P node and sync manager.
-/// 
+///
 /// This command:
 /// 1. Loads or generates Iroh secret key from keychain
 /// 2. Creates and binds the Iroh endpoint
 /// 3. Initializes the SyncManager for docs/blobs
 /// 4. Spawns background P2P listener for incoming connections
-/// 
+///
 /// Returns the node's public key (node ID).
+///
+/// # Tauri IPC
+/// Called from the frontend `P2PScreen` on mount or user action.
+/// Stores endpoint, sync manager, and router in `AppState`.
 #[tauri::command]
 pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<String, String> {
     let mut endpoint_guard = state.endpoint.lock().await;
@@ -121,10 +144,17 @@ pub async fn setup_iroh_node(state: State<'_, AppState>) -> std::result::Result<
     Ok(node_id.to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sync Document Management
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Create a new sync document and return a ticket for sharing.
-/// 
+///
 /// The ticket can be shared with other nodes to grant them access
 /// to the sync document.
+///
+/// # Returns
+/// A `DocTicketInfo` containing the serialized ticket string and namespace ID.
 #[tauri::command]
 pub async fn create_sync_doc(state: State<'_, AppState>) -> std::result::Result<DocTicketInfo, String> {
     let sync_guard = state.sync_manager.lock().await;
@@ -146,9 +176,15 @@ pub async fn create_sync_doc(state: State<'_, AppState>) -> std::result::Result<
 }
 
 /// Join an existing sync document using a ticket.
-/// 
-/// The ticket contains the namespace ID and capability needed
-/// to participate in the sync document.
+///
+/// The ticket contains the namespace ID and capability (read or write)
+/// needed to participate in the sync document.
+///
+/// # Parameters
+/// - `ticket_str` — serialized `DocTicket` obtained from the document creator
+///
+/// # Returns
+/// The namespace ID of the joined document as a string.
 #[tauri::command]
 pub async fn join_sync_doc(ticket_str: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
     let sync_guard = state.sync_manager.lock().await;
@@ -165,7 +201,14 @@ pub async fn join_sync_doc(ticket_str: String, state: State<'_, AppState>) -> st
     Ok(namespace_id.to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Diagnostics & Testing
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Entry from a P2P test/diagnostic document.
+///
+/// Used by the P2P diagnostic UI to display entries read from a shared
+/// Iroh doc during connectivity testing.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TestDocEntry {
     pub key: String,

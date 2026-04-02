@@ -1,6 +1,51 @@
-//! Data Import Commands
-//! 
-//! Commands for importing data from external sources (Facebook, Bluesky).
+//! Data Import Commands — Tauri IPC command handlers for all import and feed workflows.
+//!
+//! This is the largest command module in Bytescape and acts as the primary gateway
+//! between the React frontend and every data-ingestion / feed-retrieval flow.
+//!
+//! # HOW IT WORKS
+//!
+//! 1. **Archive Import** — The frontend sends a filesystem path to a ZIP export
+//!    (Facebook, Instagram, or DTP-generic). The appropriate parser extracts posts
+//!    and media into a `ParseResult` held in `state.pending_import`. A second call
+//!    to `commit_memories` persists everything into the redb vault.
+//!
+//! 2. **Bluesky Feed Import** — Uses either OAuth (DPoP) or app-password auth to
+//!    paginate through `getAuthorFeed`, download media from CDN URLs, and save
+//!    posts as `BytescapeItem` records.
+//!
+//! 3. **Timeline & Feed Aggregation** — Merges Bluesky and Mastodon timelines,
+//!    hashtag search results, and custom feed generators into unified streams
+//!    sorted by timestamp. Results are cached for 30s–5min depending on the query.
+//!
+//! 4. **Direct Messages** — Imports Bluesky DM conversations (OAuth + app-password),
+//!    archive chat threads (Facebook/Instagram ZIP), and supports sending DMs.
+//!
+//! 5. **Publishing** — Routes new posts to local vault, Bluesky, and/or
+//!    ActivityPub (placeholder) based on an explicit destination parameter.
+//!
+//! # RELATED FILES
+//!
+//! - `connectors/bluesky.rs` — AT Protocol API calls, feed parsing, media download
+//! - `connectors/facebook.rs` — Facebook ZIP parser (`parse_facebook_zip`)
+//! - `connectors/instagram.rs` — Instagram ZIP parser
+//! - `connectors/mastodon.rs` — Mastodon API integration
+//! - `db.rs` / `db/vault.rs` — `BytescapeItem`, `VaultMessage`, redb persistence
+//! - `commands/posting.rs` — `publish_post_v2` (newer publishing pipeline)
+//! - `commands/feed_aggregation.rs` — Alternate unified feed implementation
+//! - `sync.rs` — Iroh blob storage for imported media
+//!
+//! # TECH DEBT
+//!
+//! This is a **God file** (~2900 lines) that should be split into 5-6 submodules:
+//! `archive_import`, `bluesky_feed`, `timeline`, `messages`, `feed_aggregation`,
+//! `publishing`. Additionally:
+//! - `publish_post` duplicates `posting.rs::publish_post_v2`
+//! - `get_unified_feed` duplicates `feed_aggregation.rs`
+//! - OAuth vs app-password branching is repeated 6+ times — extract a shared
+//!   XRPC dispatch helper
+//! - `send_bsky_dm` returns `Ok(...)` even when the API call fails under some
+//!   conditions
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State, Emitter, Manager};
@@ -28,6 +73,10 @@ use crate::connectors::{Source, facebook};
 use crate::sync::{Hash, SyncManager};
 use crate::AppState;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types & Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Response from parsing a Facebook ZIP export
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ParseResult {
@@ -42,6 +91,10 @@ pub struct ParseResult {
     pub source: String,
 }
 
+/// Result of a multi-destination publish operation.
+///
+/// Each boolean flag indicates whether publishing to that destination succeeded.
+/// Failed destinations are described in `errors`.
 #[derive(Serialize)]
 pub struct PublishResult {
     pub local: bool,
@@ -52,6 +105,7 @@ pub struct PublishResult {
     pub errors: Vec<String>,
 }
 
+/// Map a `BytescapeType` to its Willow path component string.
 fn willow_item_kind(item_type: BytescapeType) -> &'static str {
     match item_type {
         BytescapeType::Status => "status",
@@ -62,6 +116,18 @@ fn willow_item_kind(item_type: BytescapeType) -> &'static str {
     }
 }
 
+/// Build a Willow-25 compliant hierarchical path for a vault item.
+///
+/// Path format: `/<source>/<kind>/<YYYY>/<MM>/<id>`
+///
+/// Each component is normalized to lowercase ASCII alphanumerics, hyphens, and
+/// underscores, then truncated to respect Willow-25 limits (MCL25/MCC25/MPL25).
+///
+/// # Arguments
+/// * `source` — origin platform (e.g. "facebook", "bluesky", "manual")
+/// * `item_type` — content classification for the kind segment
+/// * `timestamp` — Unix epoch seconds used for year/month segments
+/// * `id` — unique item identifier (typically a UUID or CID)
 pub fn willow_path_for_item(source: &str, item_type: BytescapeType, timestamp: i64, id: &str) -> String {
     fn normalize_component(raw: &str) -> String {
         let cleaned = raw
@@ -102,13 +168,22 @@ pub fn willow_path_for_item(source: &str, item_type: BytescapeType, timestamp: i
     path
 }
 
+/// Result of the `migrate_willow_paths` backfill operation.
 #[derive(Serialize)]
 pub struct WillowMigrationResult {
+    /// Total number of items scanned in the vault.
     pub scanned: usize,
+    /// Number of items that had empty paths and were assigned new Willow paths.
     pub migrated: usize,
 }
 
-/// Backfill Willow-style paths for existing items and normalize missing paths.
+/// Backfill Willow-style paths for existing items that predate the Willow-25 schema.
+///
+/// Scans every item in the vault; for each item with an empty `path`, generates
+/// a hierarchical Willow path via `willow_path_for_item` and persists it.
+///
+/// # IPC
+/// Frontend: `invoke<WillowMigrationResult>('migrate_willow_paths')`
 #[tauri::command]
 pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Result<WillowMigrationResult, String> {
     let db_guard = state.db_manager.read().await;
@@ -152,10 +227,18 @@ pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Re
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Archive Import (Facebook / Instagram / DTP)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Import a Facebook ZIP archive and parse its contents.
-/// 
-/// The parsed data is held in memory until `commit_memories` is called.
-/// This allows the user to review before committing.
+///
+/// The parsed data is held in memory (`state.pending_import`) until
+/// `commit_memories` is called, allowing the user to review before committing.
+/// Parsing runs in `spawn_blocking` because the ZIP library is synchronous.
+///
+/// # IPC
+/// Frontend: `invoke<ParseResult>('import_facebook_zip', { path })`
 #[tauri::command]
 pub async fn import_facebook_zip(
     path: String,
@@ -196,8 +279,13 @@ pub async fn import_facebook_zip(
 }
 
 /// Import an Instagram ZIP archive and parse its contents.
-/// 
-/// The parsed data is held in memory until `commit_memories` is called.
+///
+/// The parsed data is held in memory (`state.pending_import`) until
+/// `commit_memories` is called. Uses the Instagram-specific parser from
+/// `connectors::instagram`.
+///
+/// # IPC
+/// Frontend: `invoke<ParseResult>('import_instagram_zip', { path })`
 #[tauri::command]
 pub async fn import_instagram_zip(
     path: String,
@@ -237,6 +325,14 @@ pub async fn import_instagram_zip(
     Ok(parsed_result)
 }
 
+/// Detect the platform source of a ZIP archive by inspecting entry names.
+///
+/// Scans the ZIP directory for marker paths unique to each platform:
+/// - Instagram: `your_instagram_activity/`, `posts_1.json`
+/// - Facebook: `your_facebook_activity/`, `/messages/inbox/`
+/// - DTP: JSON files containing `transfer`, `dtp`, `generic`, or `social`
+///
+/// Returns `"instagram"`, `"facebook"`, `"dtp"`, or `"unknown"`.
 fn detect_archive_source(path: &Path) -> Result<String, String> {
     let file = std::fs::File::open(path)
         .map_err(|e| format!("Failed to open ZIP: {}", e))?;
@@ -294,6 +390,9 @@ fn detect_archive_source(path: &Path) -> Result<String, String> {
     Ok("unknown".to_string())
 }
 
+/// Extract a Unix timestamp from a DTP `published` field.
+///
+/// Handles i64, u64, and f64 JSON number representations gracefully.
 fn timestamp_from_dtp_published(v: &serde_json::Value) -> i64 {
     if let Some(n) = v.as_i64() {
         return n;
@@ -307,6 +406,10 @@ fn timestamp_from_dtp_published(v: &serde_json::Value) -> i64 {
     0
 }
 
+/// Recursively walk a DTP JSON payload and extract social activity posts.
+///
+/// Looks for `activity` objects with `content`, `title`, or `attachments` and
+/// converts them to `ParsedPost`. Deduplicates by `timestamp|title|content`.
 fn collect_dtp_social_posts(value: &serde_json::Value, out: &mut Vec<facebook::ParsedPost>, seen: &mut HashSet<String>) {
     if let Some(obj) = value.as_object() {
         let activity = obj
@@ -380,6 +483,11 @@ fn collect_dtp_social_posts(value: &serde_json::Value, out: &mut Vec<facebook::P
     }
 }
 
+/// Parse a DTP-generic ZIP archive, extracting social posts from JSON files.
+///
+/// Iterates all `.json` entries (skipping files > 8 MiB for responsiveness),
+/// deserializes each, and recursively collects social posts via
+/// `collect_dtp_social_posts`. Photo/video counts are inferred from media URIs.
 fn parse_dtp_generic_zip(path: &Path) -> Result<ParseResult, String> {
     let file = std::fs::File::open(path)
         .map_err(|e| format!("Failed to open ZIP: {}", e))?;
@@ -439,7 +547,14 @@ fn parse_dtp_generic_zip(path: &Path) -> Result<ParseResult, String> {
     })
 }
 
-/// Import an archive ZIP with source auto-detection, including DTP-generic JSON payloads.
+/// Import an archive ZIP with automatic source detection.
+///
+/// Delegates to `detect_archive_source` to identify the platform, then routes
+/// to the appropriate parser (Facebook, Instagram, or DTP-generic). Falls back
+/// to DTP-generic parsing for unrecognized archives.
+///
+/// # IPC
+/// Frontend: `invoke<ParseResult>('import_archive_auto', { path, sourceHint? })`
 #[tauri::command]
 pub async fn import_archive_auto(
     path: String,
@@ -487,9 +602,12 @@ pub async fn import_archive_auto(
 }
 
 /// Debug: list the contents of a ZIP archive.
-/// 
-/// Useful for diagnosing import issues by showing the directory structure
-/// and file types contained in the export.
+///
+/// Useful for diagnosing import issues by showing the directory structure,
+/// file type breakdown, and content files (JSON/HTML) contained in the export.
+///
+/// # IPC
+/// Frontend: `invoke<string[]>('debug_zip_contents', { path })`
 #[tauri::command]
 pub async fn debug_zip_contents(path: String) -> std::result::Result<Vec<String>, String> {
     let zip_path = std::path::PathBuf::from(path);
@@ -555,10 +673,22 @@ pub async fn debug_zip_contents(path: String) -> std::result::Result<Vec<String>
     Ok(results)
 }
 
-/// Commit pending Facebook import to the database.
-/// 
-/// Converts parsed Facebook posts into BytescapeItems and saves them.
-/// Returns the count of new items saved.
+/// Commit the pending import to the local vault database.
+///
+/// Converts parsed posts (from any source — Facebook, Instagram, DTP) stored
+/// in `state.pending_import` into `BytescapeItem` records. For each post:
+/// 1. Generates a stable content-hash ID for deduplication across re-imports
+/// 2. Imports media files into the vault via `import_item_media_into_vault`
+/// 3. Classifies content type (Status/Gallery/Article/Link/Video)
+/// 4. Assigns a Willow path and persists to redb
+///
+/// Also saves any pending `VaultMessage` records (from archive chat imports).
+///
+/// # IPC
+/// Frontend: `invoke<number>('commit_memories')`
+///
+/// # Returns
+/// Count of newly saved items (duplicates are skipped by `save_item`).
 #[tauri::command]
 pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let pending_guard = state.pending_import.lock().await;
@@ -714,6 +844,10 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
     Ok(saved_count)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Bluesky Feed Import
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Import a user's Bluesky feed via OAuth (DPoP-authenticated).
 ///
 /// Uses `OAuthManager::xrpc_get()` for proper DPoP auth so followers-only
@@ -825,10 +959,17 @@ async fn import_bluesky_feed_oauth(
     Ok(all_posts)
 }
 
-/// Import Bluesky posts from the authenticated user's feed.
-/// 
-/// Fetches the user's feed and downloads embedded media.
-/// Returns the count of new posts imported.
+/// Import the authenticated user's own Bluesky feed into the local vault.
+///
+/// Routes through either `import_bluesky_feed_oauth` (DPoP) or the app-password
+/// `import_bluesky_feed` helper, downloads embedded media, and persists each
+/// post as a `BytescapeItem` via `save_posts`.
+///
+/// # IPC
+/// Frontend: `invoke<number>('import_bluesky_posts')`
+///
+/// # Returns
+/// Count of newly saved posts (existing posts are skipped via `known_uris`).
 #[tauri::command]
 pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let session = state.keychain.load_session()
@@ -907,7 +1048,14 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
     Ok(saved_posts)
 }
 
-/// Save Bluesky posts to the database
+/// Save an array of Bluesky imported posts to the local vault database.
+///
+/// For each post, imports media into the vault via `import_item_media_into_vault`,
+/// classifies the content type, and persists as a `BytescapeItem`. Posts already
+/// present in `known_uris` (by AT URI or CID) are skipped to avoid duplicates
+/// from re-import or syndication round-trips.
+///
+/// Returns the number of newly saved items.
 async fn save_posts(
     _feed_name: &str,
     db: &DbManager,
@@ -1005,6 +1153,9 @@ async fn save_posts(
     saved
 }
 
+/// Infer a MIME type from a file extension.
+///
+/// Returns `"application/octet-stream"` for unrecognized extensions.
 fn mime_from_path(path: &Path) -> String {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) {
         Some(ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg".to_string(),
@@ -1025,10 +1176,16 @@ fn mime_from_path(path: &Path) -> String {
     }
 }
 
+/// Infer a MIME type from magic bytes at the start of a file.
+///
+/// Delegates to `media::mime_from_magic_bytes` for content-based detection.
 fn mime_from_bytes(data: &[u8]) -> String {
     super::media::mime_from_magic_bytes(data)
 }
 
+/// Try to parse a `"blob:<hash>"` or raw-hash media path into an Iroh `Hash`.
+///
+/// Returns `None` if the string is not a valid blob reference.
 fn parse_blob_hash_path(media_path: &str) -> Option<Hash> {
     blob_hash::parse_blob_hash(media_path).ok()
 }
@@ -1146,7 +1303,22 @@ async fn import_item_media_into_vault(
     imported_blobs
 }
 
-/// Get the merged timeline (Bluesky + Mastodon following feeds)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Timeline
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Fetch the merged home timeline from all connected platforms.
+///
+/// Queries Bluesky `getTimeline` and Mastodon `timelines/home` in parallel,
+/// merges results, sorts by timestamp descending, and truncates to `limit`.
+/// Gracefully degrades if one platform is unavailable — returns whatever the
+/// other provides.
+///
+/// # IPC
+/// Frontend: `invoke<[BlueskyImportedPost[], string | null]>('get_timeline', { limit?, cursor? })`
+///
+/// # Returns
+/// Tuple of `(posts, next_cursor)` for pagination.
 #[tauri::command]
 pub async fn get_timeline(
     state: State<'_, AppState>,
@@ -1245,7 +1417,14 @@ pub async fn get_timeline(
     Ok((all_posts, next_cursor))
 }
 
-/// Get the current user's own posts (Bluesky author feed + Mastodon statuses)
+/// Fetch the current user's own posts across all connected platforms.
+///
+/// Queries Bluesky `getAuthorFeed` (with `posts_and_author_threads` filter)
+/// and Mastodon account statuses (up to 10 pages / ~400 posts), merges and
+/// sorts by timestamp descending.
+///
+/// # IPC
+/// Frontend: `invoke<[BlueskyImportedPost[], string | null]>('get_author_feed', { limit?, cursor? })`
 #[tauri::command]
 pub async fn get_author_feed(
     state: State<'_, AppState>,
@@ -1365,7 +1544,23 @@ pub async fn get_author_feed(
     Ok((all_posts, next_cursor))
 }
 
-/// Import Bluesky DM messages
+// ═══════════════════════════════════════════════════════════════════════════════
+// Direct Messages
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Import all Bluesky DM conversations and messages into the local vault.
+///
+/// Paginates through `chat.bsky.convo.listConvos` → `getMessages` for each
+/// conversation, saving each message as a `VaultMessage`. Supports both OAuth
+/// (DPoP + atproto-proxy) and app-password auth paths.
+///
+/// # IPC
+/// Frontend: `invoke<{ new: number, convos: number }>('import_vault_messages')`
+///
+/// # Side Effects
+/// - Writes messages to the vault database keyed by owner DID.
+/// - Returns a special `chat_scope_missing` error payload (not an Err) when
+///   the OAuth session lacks chat permissions.
 #[tauri::command]
 pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::Result<serde_json::Value, String> {
     use crate::db::VaultMessage;
@@ -1634,6 +1829,11 @@ pub async fn import_vault_messages(state: State<'_, AppState>) -> std::result::R
     }))
 }
 
+/// Extract display text from an archive message JSON value.
+///
+/// Falls back to placeholder strings like `"[2 photos]"` or `"[sticker]"`
+/// when the message has no text content but contains media attachments.
+/// Returns `None` if neither text nor media is present.
 fn archive_message_placeholder(msg: &serde_json::Value) -> Option<String> {
     if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
         let trimmed = content.trim();
@@ -1672,6 +1872,10 @@ fn archive_message_placeholder(msg: &serde_json::Value) -> Option<String> {
     None
 }
 
+/// Parse a Facebook HTML export timestamp string into RFC 3339 format.
+///
+/// Handles non-breaking spaces (U+202F, U+00A0) and multiple date formats
+/// used across different Facebook export vintages.
 fn parse_facebook_html_timestamp_to_rfc3339(raw: &str) -> Option<String> {
     let value = raw
         .replace('\u{202f}', " ")
@@ -1696,6 +1900,10 @@ fn parse_facebook_html_timestamp_to_rfc3339(raw: &str) -> Option<String> {
     None
 }
 
+/// Parse message blocks from a Facebook HTML-format chat export.
+///
+/// Uses CSS selectors to extract sender name, message text, and raw timestamp
+/// from each `._a6-g` message block. Returns `Vec<(sender, text, timestamp)>`.
 fn parse_facebook_html_messages(html_text: &str) -> Vec<(String, String, String)> {
     use scraper::{Html, Selector};
 
@@ -1738,6 +1946,18 @@ fn parse_facebook_html_messages(html_text: &str) -> Vec<(String, String, String)
 }
 
 /// Import archived chat threads from a Facebook/Instagram ZIP export into vault messages.
+///
+/// Scans the ZIP for `/messages/inbox/` and `/archived_threads/` JSON/HTML files,
+/// parses each thread, and saves individual messages as `VaultMessage` records.
+/// Supports both Meta JSON format (with `timestamp_ms`) and HTML format
+/// (Facebook only, parsed via `parse_facebook_html_messages`).
+///
+/// # IPC
+/// Frontend: `invoke<{ source, threads, parsed, new }>('import_archive_messages', { path, source? })`
+///
+/// # Arguments
+/// * `path` — filesystem path to the ZIP archive
+/// * `source` — optional hint (`"facebook"` / `"instagram"`); auto-detected from path if omitted
 #[tauri::command]
 pub async fn import_archive_messages(
     state: State<'_, AppState>,
@@ -1928,7 +2148,21 @@ pub async fn import_archive_messages(
     }))
 }
 
-/// Send a Bluesky DM
+// ═══════════════════════════════════════════════════════════════════════════════
+// Conversations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Send a direct message in a Bluesky conversation.
+///
+/// Sends via `chat.bsky.convo.sendMessage` and saves a local copy in the vault
+/// database. Supports both OAuth (DPoP + atproto-proxy) and app-password auth.
+///
+/// # IPC
+/// Frontend: `invoke<{ id, convo_id, sent }>('send_bsky_dm', { convoId, recipientDid?, content })`
+///
+/// # Tech Debt
+/// Returns `Ok(...)` even on partial failure — the `sent: true` flag in the
+/// response is the real success indicator. The local DB save is fire-and-forget.
 #[tauri::command]
 pub async fn send_bsky_dm(
     state: State<'_, AppState>,
@@ -2080,7 +2314,10 @@ pub async fn get_or_create_bsky_convo(
     }
 }
 
-/// Inner implementation without timeout/retry wrappers.
+/// Inner implementation of `get_or_create_bsky_convo` without timeout/retry wrappers.
+///
+/// Routes to either OAuth (`xrpc_chat_get`) or app-password (`ChatClient`)
+/// depending on session type.
 async fn get_or_create_bsky_convo_inner(
     state: &AppState,
     member_did: &str,
@@ -2119,7 +2356,17 @@ async fn get_or_create_bsky_convo_inner(
     }
 }
 
-/// List saved Bluesky custom feeds (cached for 5 minutes).
+// ═══════════════════════════════════════════════════════════════════════════════
+// Saved Feeds
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// List the user's saved Bluesky custom feed generators.
+///
+/// Results are cached for 5 minutes since saved feeds rarely change.
+/// Falls back to OAuth or app-password auth depending on session type.
+///
+/// # IPC
+/// Frontend: `invoke<GeneratorView[]>('list_saved_feeds')`
 #[tauri::command]
 pub async fn list_saved_feeds(state: State<'_, AppState>) -> std::result::Result<Vec<crate::connectors::bluesky::GeneratorView>, String> {
     use std::time::Duration;
@@ -2249,7 +2496,18 @@ async fn list_saved_feeds_oauth(state: &AppState) -> std::result::Result<Vec<cra
     Ok(resolved_feeds)
 }
 
-/// List profiles this actor follows (Bluesky + Mastodon merged).
+// ═══════════════════════════════════════════════════════════════════════════════
+// Follows / Followers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// List profiles this actor follows, merging Bluesky and Mastodon connections.
+///
+/// Queries Bluesky `graph.getFollows` (via OAuth or app-password) and Mastodon
+/// `/api/v1/accounts/.../following`, then merges both lists. Gracefully skips
+/// either platform if not connected.
+///
+/// # IPC
+/// Frontend: `invoke<ProfileView[]>('list_follows', { actor })`
 #[tauri::command]
 pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
     let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
@@ -2319,7 +2577,13 @@ pub async fn list_follows(state: State<'_, AppState>, actor: String) -> std::res
     Ok(profiles)
 }
 
-/// List profiles following this actor (Bluesky + Mastodon merged).
+/// List profiles following this actor, merging Bluesky and Mastodon connections.
+///
+/// Queries Bluesky followers via `ChatClient` and Mastodon
+/// `/api/v1/accounts/.../followers`, then merges both lists.
+///
+/// # IPC
+/// Frontend: `invoke<ProfileView[]>('list_followers', { actor })`
 #[tauri::command]
 pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::result::Result<Vec<crate::connectors::bluesky::ProfileView>, String> {
     let mut profiles: Vec<crate::connectors::bluesky::ProfileView> = Vec::new();
@@ -2368,7 +2632,22 @@ pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::r
     Ok(profiles)
 }
 
-/// Build a merged feed from followed hashtags and saved feeds.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Feed Aggregation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Build a merged feed from followed hashtags and saved custom feeds.
+///
+/// Aggregates Bluesky hashtag search results, custom feed posts, and Mastodon
+/// hashtag timelines into a single chronological stream. First-page results
+/// are cached for 30 seconds. Pagination uses a compound `UnifiedCursor`.
+///
+/// # IPC
+/// Frontend: `invoke<[BlueskyImportedPost[], string | null]>('get_unified_feed', { tags, feedUris, limit, cursor? })`
+///
+/// # Tech Debt
+/// Duplicates logic in `feed_aggregation.rs` — should be consolidated into a
+/// single feed-merge pipeline shared between both entry points.
 #[tauri::command]
 pub async fn get_unified_feed(
     state: State<'_, AppState>,
@@ -2711,7 +2990,16 @@ fn parse_search_post_json(post_val: &serde_json::Value) -> Option<crate::connect
     })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Publishing
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Publish a new post with explicit destination routing.
+///
+/// # Tech Debt
+/// This duplicates `posting.rs::publish_post_v2` — the two should be merged.
+/// The Bluesky publish path also duplicates OAuth/app-password branching that
+/// appears 6+ times across this file; extract into a shared XRPC helper.
 ///
 /// Supported destinations:
 /// - "local": save locally in Bytescape vault (P2P/local-first)

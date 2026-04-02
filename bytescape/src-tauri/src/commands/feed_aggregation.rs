@@ -1,8 +1,49 @@
+//! Feed aggregation — merges multiple content sources into one unified timeline.
+//!
+//! This module implements the "All" tab in Bytescape's feed view. It provides
+//! the Tauri command `get_timeline_unified` which merges posts from three
+//! distinct sources into a single, chronologically-sorted, deduplicated feed.
+//!
+//! ## How It Works
+//!
+//! 1. **Parallel fetch** — Three async futures run concurrently via `tokio::join!`:
+//!    the live Bluesky following-timeline, any subscribed custom/algorithm feeds,
+//!    and the local vault (redb) for imported/archived items.
+//! 2. **Normalization** — Each source returns its own type (`BlueskyImportedPost`,
+//!    `BytescapeItem`); `From` impls convert everything into `FeedEntry`, the
+//!    universal frontend container.
+//! 3. **Vault dedup** — Before merging, live posts that already exist in the vault
+//!    are removed so the vault's richer metadata (audiences, share_history) wins.
+//! 4. **Post-merge filter** — An optional `source_filter` prunes the combined list
+//!    to a single platform (e.g., only Facebook imports).
+//! 5. **Sort + global dedup** — The merged feed is sorted newest-first, then
+//!    deduplicated using composite keys that distinguish reposts from originals.
+//!
+//! ## Tech Debt
+//!
+//! - Vault dedup logic is duplicated in the `has_custom` and `!has_custom` branches;
+//!   should be extracted into a helper function.
+//! - Source detection heuristic in `From<BlueskyImportedPost>` (checking URI for
+//!   "/statuses/" or "acct:" prefix) is fragile — should use an explicit source field.
+//! - Pagination is inconsistent: Bluesky uses cursor-based, vault uses offset-based,
+//!   custom feeds have no pagination at all in this path.
+//!
+//! ## Related Files
+//!
+//! - `commands/import.rs` — `get_timeline()` and `get_unified_feed()` network calls
+//! - `models/mod.rs` — `FeedEntry`, `BytescapeItem`, `Audience`, classification logic
+//! - `connectors/bluesky.rs` — `BlueskyImportedPost` intermediate type
+//! - `db/vault.rs` — `list_my_items_paged()` vault query used by the vault future
+
 use tauri::State;
 use crate::AppState;
 use crate::models::{FeedEntry, BytescapeItem, Audience, audiences_from_legacy, classify_feed_entry};
 use crate::connectors::bluesky::BlueskyImportedPost;
 use serde::{Serialize, Deserialize};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Type Conversions — Source-specific types → universal FeedEntry
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // === BlueskyImportedPost → FeedEntry ===
 //
@@ -102,6 +143,11 @@ impl From<BlueskyImportedPost> for FeedEntry {
 }
 
 // === BytescapeItem → FeedEntry ===
+//
+// Converts a local vault item into the universal FeedEntry container.
+// Media blobs are resolved to `blob:{hash}` URIs for the frontend asset protocol.
+// Media kinds are inferred from MIME types, with a fallback for HLS videos that
+// lack a stored MIME (see the Video-type guard below).
 
 impl From<BytescapeItem> for FeedEntry {
     fn from(item: BytescapeItem) -> Self {
@@ -187,16 +233,28 @@ impl From<BytescapeItem> for FeedEntry {
     }
 }
 
-// === Unified Feed Response ===
+// ═══════════════════════════════════════════════════════════════════════════════
+// Response Types
+// ═══════════════════════════════════════════════════════════════════════════════
 
+/// Response payload for the `get_timeline_unified` Tauri command.
+///
+/// Contains the merged, deduplicated, sorted list of feed items and an optional
+/// cursor for Bluesky-style cursor-based pagination of the live timeline.
+/// Note: vault pagination uses a separate `vault_offset` parameter on the request.
 #[derive(Serialize, Deserialize)]
 pub struct UnifiedFeedResponse {
+    /// The merged feed items, sorted newest-first and deduplicated.
     pub items: Vec<FeedEntry>,
+    /// Opaque cursor for fetching the next page of the Bluesky live timeline.
+    /// `None` when no more pages are available or when only vault items remain.
     pub next_cursor: Option<String>,
 }
 
-// === Unified Feed (All Tab) ===
-//
+// ═══════════════════════════════════════════════════════════════════════════════
+// Main Aggregation Command
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // Merges three sources into one chronological feed:
 //   1. Live Bluesky timeline (following feed)
 //   2. Custom/subscribed feeds
@@ -207,6 +265,34 @@ pub struct UnifiedFeedResponse {
 //   - The original post X           → key "X"
 //   - Two copies of the same post   → collapsed (same key)
 
+/// Fetches and merges posts from all configured sources into one unified feed.
+///
+/// This is the primary Tauri IPC command backing the "All" tab in the feed view.
+/// It runs three async fetches in parallel (live Bluesky timeline, custom/subscribed
+/// feeds, and the local vault), then deduplicates, filters, and sorts the results.
+///
+/// # Parameters
+///
+/// - `tags` — Tag filters for custom feed selection (empty = no custom feeds)
+/// - `feed_uris` — AT Protocol feed generator URIs to include
+/// - `limit` — Max items per network source (default varies by source)
+/// - `cursor` — Bluesky pagination cursor from a previous response
+/// - `vault_offset` — Offset-based pagination for local vault items
+/// - `source_filter` — Optional platform filter (e.g., "bluesky", "facebook")
+///
+/// # Returns
+///
+/// A `UnifiedFeedResponse` with the merged items and an optional next cursor.
+///
+/// # Side Effects
+///
+/// - Reads from the feed cache (30s TTL) to avoid redundant network calls
+/// - Populates the feed cache on cache miss
+/// - Reads from the local redb vault via `DbManager`
+///
+/// # IPC
+///
+/// Exposed as Tauri command `get_timeline_unified` — called from `useUnifiedFeed` hook.
 #[tauri::command]
 pub async fn get_timeline_unified(
     state: State<'_, AppState>,

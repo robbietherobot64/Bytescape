@@ -1,3 +1,41 @@
+//! Post Publishing & Autocomplete Commands
+//!
+//! Multi-destination post creation with media handling, rich text, and link cards,
+//! plus mention/hashtag autocomplete for the compose box.
+//!
+//! # How It Works
+//!
+//! 1. **Frontend calls `publish_post_v2`** with text, attachments, a destination string
+//!    (comma-separated: `"local"`, `"bluesky"`, `"mastodon"`, or `"all"`), and an
+//!    optional link card.
+//! 2. **Attachments are ingested into Iroh blobs** — either referencing existing vault
+//!    blob hashes or reading new files from disk and storing them via `sync.store_media`.
+//! 3. **Local vault publish** creates a `BytescapeItem` with automatic type detection
+//!    (Status / Gallery / Article), audience flags, and syndication status.
+//! 4. **Bluesky publish** uploads media blobs to the PDS, resolves rich-text facets
+//!    (mentions → DIDs, hashtags, links), builds the `app.bsky.feed.post` record with
+//!    embeds (images, video, or external link card), and creates it via XRPC.
+//! 5. **Mastodon publish** posts via the Mastodon API (text only — see tech debt below).
+//!    On success, the local vault item is updated with syndication metadata.
+//!
+//! # Tech Debt
+//!
+//! - **Mastodon path drops attachments silently** — media blobs are not uploaded to
+//!   Mastodon; only plain text is posted via `post_status`. Needs media upload support.
+//! - **Duplicates `publish_post`** in `import.rs` — the original single-destination
+//!   publish function still exists; should be consolidated into this v2 implementation.
+//! - **`search_mentions` has no debounce/cache** — every keystroke triggers a full DB
+//!   scan of contacts. Consider a short TTL cache or moving debounce to the frontend.
+//!
+//! # Related Files
+//!
+//! - [`commands/import.rs`] — original `publish_post`, `PublishResult`, `willow_path_for_item`
+//! - [`richtext.rs`] — facet parsing for Bluesky (mentions, hashtags, links)
+//! - [`connectors/bluesky.rs`] — `BlueskyClient`, XRPC helpers
+//! - [`connectors/mastodon.rs`] — `post_status`, session helpers
+//! - [`models.rs`] — `BytescapeItem`, `SyndicationStatus`, `Audience`
+//! - [`blob_hash.rs`] — blob hash parsing for vault media references
+
 use tauri::State;
 use serde::Deserialize;
 use serde_json::json;
@@ -10,6 +48,15 @@ use crate::blob_hash;
 use std::path::Path;
 use bytes::Bytes;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A media attachment for a new post.
+///
+/// Either references an existing vault blob (via `blob_hash`) or a new file
+/// on the local filesystem (via `path`). The publisher resolves these into
+/// Iroh blob hashes before writing the `BytescapeItem`.
 #[derive(Debug, Deserialize)]
 pub struct Attachment {
     pub path: Option<String>,
@@ -26,7 +73,40 @@ pub struct LinkCardInput {
     pub image_url: Option<String>,
 }
 
-/// Enhanced publish command supporting multiple media attachments and P2P/Bluesky routing.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Publishing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Publish a post to one or more destinations (local vault, Bluesky, Mastodon).
+///
+/// This is the primary compose-box publish command (v2). It handles:
+/// - Multi-destination routing via comma-separated `destination` string
+/// - Media attachment ingestion (local files → Iroh blobs, or existing blob refs)
+/// - Rich-text facet resolution for Bluesky (mentions → DIDs, hashtags, links)
+/// - Link card embeds (`app.bsky.embed.external`) with thumbnail upload
+/// - Syndication tracking (`share_history`, `syndicated_uri`, audience flags)
+///
+/// # Parameters
+/// - `text` — Post body (plain text; rich-text facets are resolved server-side)
+/// - `attachments` — Media files or blob references to attach
+/// - `destination` — Comma-separated targets: `"local"`, `"bluesky"`, `"mastodon"`, or `"all"`
+/// - `item_type` — Optional override: `"Article"`, `"Gallery"`, or auto-detected
+/// - `title` — Optional title (for Article type)
+/// - `link_card` — Optional unfurled link card metadata from the frontend
+///
+/// # Returns
+/// `PublishResult` with per-destination success flags and any error messages.
+///
+/// # Side Effects
+/// - Stores media blobs in Iroh via `sync.store_media`
+/// - Writes a `BytescapeItem` to the local vault DB
+/// - Creates an `app.bsky.feed.post` record on the user's Bluesky PDS
+/// - Posts a status to the user's Mastodon instance
+/// - Updates the local item with syndication metadata on remote success
+///
+/// # IPC
+/// Tauri command — called from the frontend ComposeBox via
+/// `invoke('publish_post_v2', ...)`.
 #[tauri::command]
 pub async fn publish_post_v2(
     text: String,
@@ -445,8 +525,13 @@ async fn download_and_upload_thumb(
         .ok_or_else(|| "Upload response missing blob ref".to_string())
 }
 
-// ── Autocomplete Commands ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Mentions & Autocomplete
+// ═══════════════════════════════════════════════════════════════════════════════
 
+/// A single mention suggestion returned by `search_mentions`.
+///
+/// Populated from local contacts stored in the vault DB.
 #[derive(serde::Serialize, Clone)]
 pub struct MentionSuggestion {
     pub handle: String,
@@ -455,7 +540,24 @@ pub struct MentionSuggestion {
     pub avatar_url: Option<String>,
 }
 
-/// Search for mention suggestions — queries local contacts + Bluesky follows.
+/// Search for @-mention suggestions while composing a post.
+///
+/// Queries local vault contacts whose handle contains the search string.
+/// Results are deduplicated by handle and capped at 10.
+///
+/// # Parameters
+/// - `query` — The partial handle text (without the leading `@`)
+///
+/// # Returns
+/// Up to 10 `MentionSuggestion` items sorted alphabetically by handle.
+///
+/// # Tech Debt
+/// - No debounce or result caching — every keystroke triggers a full DB scan.
+/// - Only searches local contacts; does not query Bluesky typeahead API.
+///
+/// # IPC
+/// Tauri command — called from the ComposeBox mention autocomplete via
+/// `invoke('search_mentions', { query })`.
 #[tauri::command]
 pub async fn search_mentions(
     query: String,
@@ -493,7 +595,20 @@ pub async fn search_mentions(
     Ok(results)
 }
 
-/// Search for hashtag suggestions from followed hashtags.
+/// Search for #hashtag suggestions while composing a post.
+///
+/// Queries the user's followed hashtags for matches containing the search
+/// string (case-insensitive, leading `#` stripped).
+///
+/// # Parameters
+/// - `query` — The partial hashtag text (with or without leading `#`)
+///
+/// # Returns
+/// Up to 10 matching hashtag strings.
+///
+/// # IPC
+/// Tauri command — called from the ComposeBox hashtag autocomplete via
+/// `invoke('search_hashtags_autocomplete', { query })`.
 #[tauri::command]
 pub async fn search_hashtags_autocomplete(
     query: String,

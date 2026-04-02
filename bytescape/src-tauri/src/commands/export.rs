@@ -1,8 +1,36 @@
+//! Vault data export to ZIP archive.
+//!
+//! Exports the user's entire vault — items, contacts, messages, and optionally
+//! cached media files — into a single portable ZIP file. This enables backup,
+//! migration, and data portability.
+//!
+//! ## HOW IT WORKS
+//! 1. Frontend invokes `export_vault_data` via Tauri IPC with an output path
+//! 2. All `BytescapeItem` records are loaded from redb (up to 100k hard limit)
+//! 3. Contacts and vault messages are collected from their respective tables
+//! 4. Data is serialized to pretty-printed JSON and written into a Deflate-compressed ZIP
+//! 5. If `include_media` is true, blob cache and local media files are added under `media/`
+//!
+//! ## RELATED FILES
+//! - `db.rs` / `db/vault.rs` — `list_my_items_paged`, `list_contacts`, `list_vault_messages`
+//! - `types/index.ts` — TypeScript `ExportResult` interface mirrors this struct
+//! - `src/screens/SettingsScreen.tsx` — UI that triggers export via file-save dialog
+//!
+//! ## KNOWN LIMITATIONS
+//! ⚠ Memory: ALL items are loaded into memory before ZIP creation
+//! (`list_my_items_paged` with limit 100,000). For vaults with tens of thousands
+//! of media-heavy items, this could cause significant memory pressure. A streaming
+//! serialization approach would be preferable for large vaults.
+
 use tauri::{State, Manager};
 use crate::AppState;
 use serde::{Serialize, Deserialize};
 use std::io::Write;
 
+/// Summary of a completed vault export operation.
+///
+/// Returned to the frontend after `export_vault_data` completes successfully,
+/// providing statistics about what was exported and the final archive size.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportResult {
     pub path: String,
@@ -35,6 +63,8 @@ pub async fn export_vault_data(
     };
 
     // ── 1. Collect items ──
+    // NOTE: Loads ALL items into memory at once. For large vaults this could be
+    // several hundred MB. Consider streaming serialization for future improvement.
     let (items, _total) = db.list_my_items_paged(&owner_did, None, 100_000, 0).await?;
     let item_count = items.len();
 

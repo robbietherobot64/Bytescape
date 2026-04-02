@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
-> **Date**: 2026-03-31
-> **Scope**: Batches 1–6 (39 source files · ~18,700 lines · Rust + TypeScript)
+> **Date**: 2026-04-01
+> **Scope**: Batches 1–7 (60 source files · ~28,920 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,21 +9,22 @@
 
 ## Executive Summary
 
-A systematic audit of the first 6 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation) uncovered **131 issues** across 39 files:
+A systematic audit of the first 7 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, **Tauri Commands**) uncovered **189 issues** across 60 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 28 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 62 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 41 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 40 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 90 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 59 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
 1. **Full table scans everywhere** — The `TableDefinition<&str, &str>` universal schema forces JSON deserialization on every query that isn't a direct key lookup. This affects ~15 methods across the database layer.
 2. **Security gaps in auth/keychain** — Master key stored as plaintext file, hardcoded recovery code, JWT refresh race condition, secrets never zeroized.
-3. **Duplicated logic** — Post parsing duplicated 4× in bluesky.rs, DID types duplicated across files, crypto boilerplate duplicated between keychain and oauth.
+3. **Duplicated logic** — Post parsing duplicated 4× in bluesky.rs, DID types duplicated across files, crypto boilerplate duplicated between keychain and oauth. **Batch 7 adds 5 more duplication patterns** across the commands layer (MIME detection ×4, also_known_as ×5, OAuth branching ×6+, VaultMessage ×5+, LinkedAccount ×3).
 4. **Missing pagination** — Follows/followers only return first page in both Bluesky and Mastodon connectors, unbounded loops in several API calls.
 5. **Memory pressure from large media** — Facebook, Instagram, and vault operations load entire media files into memory with no size guards.
+6. **God file problem** — `import.rs` at 2,900 lines is the largest file in the codebase and mixes 8+ unrelated concerns (archive import, timeline fetching, DM import, feed aggregation, publishing, social graph). Should be split into 5-6 submodules.
 
 ---
 
@@ -373,6 +374,119 @@ Foundational issues that affect all layers:
 
 ---
 
+## Batch 7 — Tauri Commands (Backend API Surface)
+
+**Scope:** 21 files · ~10,220 lines in `src-tauri/src/commands/`
+**Findings:** 58 issues (12 HIGH · 28 MEDIUM · 18 LOW)
+
+This is the **largest batch** and the most architecturally concerning. The commands layer is where Engine meets Lens — every `#[tauri::command]` function is a public API callable from the React frontend via Tauri IPC. The layer exhibits:
+
+- A **God file** (`import.rs` at 2,900 lines) that should be 5–6 submodules
+- **Pervasive duplication** across files — MIME detection (4+ copies), `also_known_as` identity building (5 copies), OAuth/app-password branching (6+ commands), VaultMessage construction (5+ places), LinkedAccount creation (3 copies)
+- **Silent data loss** — Mastodon publish drops attachments, syndicate silently limits to 4 images, several import paths swallow errors
+- **Unbounded memory loading** — classify, export, peers, and feed_aggregation all load entire datasets into memory
+
+### Proposed Refactoring: `import.rs` Split
+
+The 2,900-line `import.rs` should be split into focused submodules:
+
+```
+commands/import/
+  mod.rs              — re-exports + ParseResult, PublishResult types
+  archive.rs          — Facebook/Instagram/DTP ZIP parsing + commit_memories
+  bluesky_import.rs   — import_bluesky_posts, save_posts, import_bluesky_feed_oauth
+  timeline.rs         — get_timeline, get_author_feed, get_unified_feed
+  messages.rs         — import_vault_messages, import_archive_messages, send_bsky_dm
+  social.rs           — list_follows, list_followers, get_or_create_bsky_convo
+  feeds.rs            — list_saved_feeds, list_saved_feeds_oauth
+  publish.rs          — publish_post (merge with posting.rs::publish_post_v2)
+```
+
+### Top 5 Cross-Cutting Duplication Patterns
+
+| Pattern | Copies | Files |
+|---------|--------|-------|
+| MIME detection logic | 4+ | vault.rs, media.rs, import.rs, posting.rs |
+| `also_known_as` identity building | 5 | peers.rs (×4), mastodon.rs |
+| OAuth vs app-password branching | 6+ | import.rs, mastodon.rs, auth.rs |
+| VaultMessage construction | 5+ | vault.rs, peers.rs, import.rs, mastodon.rs |
+| LinkedAccount creation | 3 | auth.rs, mastodon.rs (×2) |
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 7.1 | `import.rs` | **God file at 2,900 lines** — contains Facebook/Instagram/DTP archive import, Bluesky feed import (OAuth + app-password), timeline fetching, DM import, archive message import, Bluesky DM send, convo management, saved feeds, follows/followers listing, unified feed aggregation, and publishing. Should be 5–6 submodules. | Unmaintainable; merge conflicts; impossible to review; violates single-responsibility principle |
+| 7.2 | `import.rs` | **`publish_post` duplicates `publish_post_v2` from posting.rs** — nearly identical multi-destination routing logic with diverged feature sets (import version lacks Mastodon attachments, posting version lacks some error handling) | Two publish paths that will drift further apart; bugs fixed in one won't be fixed in the other |
+| 7.3 | `media.rs` | **6 near-identical FFmpeg resolution strategies** — `try_ffprobe_json`, `try_ffprobe_stderr`, `try_ffprobe_show_streams`, `try_ffmpeg_input`, `try_file_binary`, `try_mediainfo` contain ~180 lines of duplicated spawn-parse-extract logic | Maintenance nightmare; each strategy has slightly different error handling; adding a new extraction method requires copying boilerplate |
+| 7.4 | `media.rs` | **`cancel_video_resolve` uses `kill` shell command** — `Command::new("kill").arg("-9")` is Linux-only; will fail on Windows and macOS `kill` behaves differently | Cross-platform breakage; video cancel non-functional on non-Linux |
+| 7.5 | `peers.rs` | **`list_p2p_conversations` loads ALL vault messages** — iterates every message in the vault table just to count messages per conversation | O(n) on total message count for every conversation list request; catastrophic at scale |
+| 7.6 | `mastodon.rs` | **Hand-rolled HTTP callback server** — `start_mastodon_oauth_callback_server` manually parses raw TCP bytes for OAuth callback instead of using a proper HTTP server (e.g., tiny_http, warp) | Fragile; doesn't handle chunked encoding, keep-alive, large headers, or TLS; security risk |
+| 7.7 | `classify.rs` | **`reclassify_vault_items` loads all items** — opens a read transaction and iterates up to 100,000 items to reclassify. No batching, no streaming. | Memory explosion on large vaults; blocks the database for the entire scan duration |
+| 7.8 | `export.rs` | **`export_vault_data` loads everything into memory** — collects all items, all blob data, and builds entire ZIP in memory before writing to disk | OOM crash on large vaults; no progress feedback to the user |
+| 7.9 | `feed_aggregation.rs` | **Vault dedup logic duplicated** — nearly identical dedup-by-URI code appears twice: once for `has_custom_feeds` path and once for `!has_custom_feeds` path | Divergent behavior between feed modes; bugs fixed in one path not fixed in the other |
+| 7.10 | `posting.rs` | **Mastodon publish silently drops attachments** — `publish_post_v2` Mastodon path publishes text only; attachment upload code exists for Bluesky but not Mastodon | Users think they posted images to Mastodon but only text appears; no error shown |
+| 7.11 | *Cross-cutting* | **MIME detection duplicated 4+ times** — `vault.rs`, `media.rs`, `import.rs`, and `posting.rs` each have their own MIME type detection logic with different fallback behavior | Inconsistent file type handling; some paths accept files others reject; maintenance burden |
+| 7.12 | *Cross-cutting* | **`also_known_as` identity building duplicated 5 times** — `peers.rs` (4 instances) and `mastodon.rs` (1 instance) each reconstruct the same DID/handle/Mastodon identity vector | Easy to miss when adding new identity providers; each copy has slightly different field sets |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 7.13 | `import.rs` | **OAuth vs app-password branching duplicated** — 6+ commands have identical `if has_access_token { oauth_path } else { app_password_path }` structure with no shared abstraction | Every new Bluesky command requires duplicating the branch; easy to forget one path |
+| 7.14 | `import.rs` | **`get_unified_feed` duplicates `get_timeline_unified` from feed_aggregation.rs** — two separate implementations of unified feed merging with different dedup strategies | Two divergent feed implementations; user sees different results depending on which code path is hit |
+| 7.15 | `import.rs` | **`import_bluesky_feed_oauth` hardcodes page size to 30** — no user control over import batch size | Slow for large feeds; no way to speed up initial import |
+| 7.16 | `import.rs` | **Archive message import creates placeholder contacts** — `import_archive_messages` generates contacts with handle/DID set to `"archive-{hash}"` — these never get resolved to real identities | Ghost contacts pollute the contacts list; no way to link archive people to real accounts |
+| 7.17 | `import.rs` | **`send_bluesky_dm` error path returns Ok** — catches errors and returns `Ok(json!({"success": false, ...}))` instead of `Err(...)` | Frontend can't distinguish success from failure using standard error handling; must parse JSON body |
+| 7.18 | `import.rs` | **`list_saved_feeds` and `list_saved_feeds_oauth` are 90% identical** — same logic, different auth path | Duplication; changes to feed listing logic must be made in two places |
+| 7.19 | `mastodon.rs` | **`complete_mastodon_auth` creates LinkedAccount** that duplicates logic in `auth.rs` login flow | Three places create LinkedAccount with slightly different field population |
+| 7.20 | `mastodon.rs` | **Mastodon DM implementation has two paths** — C2S (client-to-server) direct messages and AP S2S (server-to-server) inbox. The C2S path is used but S2S path is partially implemented. | Confusing; unclear which path is authoritative; S2S path may be dead code |
+| 7.21 | `mastodon.rs` | **`get_mastodon_timeline` ad-hoc JSON return type** — returns `serde_json::Value` instead of a typed struct | No compile-time guarantees on response shape; frontend must defensively parse |
+| 7.22 | `mastodon.rs` | **`unified_send_message` fallback chain opaque** — tries Bluesky DM → P2P → Mastodon with no visibility into which path was used | User doesn't know how their message was delivered; debugging delivery failures is difficult |
+| 7.23 | `auth.rs` | **`logout` and `delete_account` are 90% duplicated** — both clear sessions, credentials, and state in nearly identical sequences | Bug fixes to cleanup logic must be applied in two places |
+| 7.24 | `auth.rs` | **`check_auth_status` three-tier fallback** — Bluesky → local → Mastodon with implicit priority. No configuration for preferred auth provider. | Users with multiple accounts can't control which identity is "primary" |
+| 7.25 | `vault.rs` | **`get_vault_stats` and `get_storage_stats`** — two different stats commands returning overlapping but different data | Frontend must call both for complete stats; response shapes diverge |
+| 7.26 | `vault.rs` | **`list_contacts` merges vault contacts with Bluesky follows inline** — 60+ lines of merge logic that should be a separate function | Contacts list logic is tightly coupled to Bluesky; adding Mastodon follows requires modifying this function |
+| 7.27 | `vault.rs` | **`get_paginated_vault_posts` decodes ALL items then slices** — pagination is post-load, not query-level | Memory usage scales with total vault size regardless of page size |
+| 7.28 | `vault.rs` | **Duplicate MIME type detection in `upload_file`** — reimplements extension-based MIME detection that exists in media.rs | Fourth copy of MIME detection logic |
+| 7.29 | `groups.rs` | **`list_topics` and `get_topic_tree` load all topics** — iterate entire topics table to build tree in memory | O(n) memory on total topics; no incremental/cached tree |
+| 7.30 | `groups.rs` | **`search_groups` loads all groups then filters** — no index-based search; full scan with string contains matching | O(n) search time; unusable at scale |
+| 7.31 | `groups.rs` | **BFS in `get_subtopics` has no cycle detection** — if parent references form a cycle (data corruption), BFS loops forever | Infinite loop on corrupted topic tree |
+| 7.32 | `groups.rs` | **`seed_default_topics` unconditionally inserts** — no check for existing topics; will create duplicates on every app launch if called multiple times | Duplicate default topics accumulate on repeated calls |
+| 7.33 | `media.rs` | **`resolve_hls_video` spawns 6 sequential FFmpeg processes** — each strategy spawns a new process, waits for it, then tries the next | Slow video resolution; 6 process spawns for worst case; no parallelism |
+| 7.34 | `media.rs` | **`md5_hash` function actually computes SHA-256** — misleading function name | Developer confusion; callers expect MD5 but get SHA-256 |
+| 7.35 | `media.rs` | **`backfill_blob_mime_types` loads all blobs** — iterates entire blob table to check/update MIME types | Unbounded memory; should use cursor-based iteration |
+| 7.36 | `media.rs` | **No cache eviction strategy** — `get_cache_info` reports size but there's no automatic cleanup when cache exceeds a threshold | Cache grows unboundedly until disk full |
+| 7.37 | `posting.rs` | **`search_mentions` hits Bluesky API with no debounce/cache** — every keystroke triggers a network request | Poor UX; API rate limiting; unnecessary network traffic |
+| 7.38 | `posting.rs` | **`publish_post_v2` link card handling duplicated** — Bluesky link card creation code is nearly identical to the link card code in `import.rs::publish_post` | Two copies of link card logic that can diverge |
+| 7.39 | `unfurl.rs` | **No SSRF protection** — `unfurl_link` fetches any user-provided URL with no private IP / localhost / internal network checks | Server-Side Request Forgery; attacker can probe internal network via link preview |
+| 7.40 | `feed_aggregation.rs` | **Source detection uses fragile string heuristic** — `source` field detection checks for "custom_feed:" prefix and "mastodon" substring with case-sensitive matching | Misclassification if source strings change format; brittle coupling |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 7.41 | `vault.rs` | **`clear_vault` deletes blobs last** — if the process crashes between clearing items and clearing blobs, orphaned blobs remain | Minor storage leak on crash during vault clear |
+| 7.42 | `vault.rs` | **`list_hashtags` returns unsorted** — no guaranteed order of hashtag results | Inconsistent UX; list order changes between calls |
+| 7.43 | `peers.rs` | **`check_peer_connectivity` timeout hardcoded to 10s** — not configurable | May be too short for high-latency P2P connections; too long for quick checks |
+| 7.44 | `peers.rs` | **`get_peer_feed` builds `also_known_as` with redundant entries** — adds DID and handle even when they're the same value | Redundant entries in identity vector; wastes bytes in serialization |
+| 7.45 | `peers.rs` | **`send_chat_message` creates conversation as side effect** — calling send implicitly creates a conversation if one doesn't exist | Invisible state mutation; conversation list grows unexpectedly |
+| 7.46 | `mastodon.rs` | **`get_mastodon_profile` returns raw JSON** — `serde_json::Value` instead of a typed struct | No compile-time shape validation; frontend must defensively access fields |
+| 7.47 | `auth.rs` | **`create_local_identity` generates DID with `rand::random::<[u8; 16]>()`** — uses thread_rng which is adequate but not cryptographically explicit | Should use `OsRng` or document why thread_rng is sufficient for DID generation |
+| 7.48 | `auth.rs` | **`get_recovery_phrase` returns phrase in plain JSON** — no transport-level encryption beyond Tauri IPC | Recovery phrase visible in IPC logs if debug logging is enabled |
+| 7.49 | `groups.rs` | **`update_member_role` accepts any string as role** — no validation against a Role enum | Invalid roles silently stored; could cause frontend rendering errors |
+| 7.50 | `groups.rs` | **`invite_to_group` creates membership without notification** — the invited user has no way to know they were invited | Invisible invitations; users discover memberships by accident |
+| 7.51 | `groups.rs` | **`get_group_feed` sorts by `imported_at` instead of `original_timestamp`** — shows posts in import order, not chronological order | Posts appear out of order in group feeds |
+| 7.52 | `media.rs` | **`get_blob_data` returns raw bytes with hardcoded `application/octet-stream`** — ignores stored MIME type | Browser/frontend can't auto-detect content type for display |
+| 7.53 | `syndicate.rs` | **Bluesky-only syndication** — `syndicate_to_bluesky` hardcoded to single platform despite generic naming | No Mastodon/AP syndication; function name implies platform-agnostic but isn't |
+| 7.54 | `syndicate.rs` | **Silent 4-image limit** — Bluesky API limits embeds to 4 images; the code silently truncates without warning the user | Users lose images without knowing; should show warning |
+| 7.55 | `syndicate.rs` | **`verify_syndication` only checks Bluesky URI** — verification logic is platform-specific with no abstraction | Can't verify Mastodon syndication; verification is incomplete |
+| 7.56 | `interactions.rs` | **All interactions are Bluesky-only** — like, repost, reply commands hardcoded to Bluesky AT Protocol | No Mastodon interaction support; frontend must hide buttons for Mastodon posts |
+| 7.57 | `feed_aggregation.rs` | **`get_timeline_unified` merges three sources without consistent pagination** — live Bluesky uses cursor, custom feeds use cursor, vault uses timestamp; merged result has inconsistent page boundaries | Infinite scroll may skip or duplicate items at page boundaries |
+| 7.58 | `import.rs` | **`commit_memories` success count is approximate** — counts items before insert but doesn't verify all inserts succeeded | Reported count may not match actual persisted count |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -397,7 +511,7 @@ Foundational issues that affect all layers:
 | `main.rs` | 0 | 0 | 1 | 1 |
 | `bluesky.rs` | 3 | 6 | 2 | 11 |
 | `facebook.rs` | 2 | 4 | 3 | 9 |
-| `mastodon.rs` | 1 | 4 | 2 | 7 |
+| `mastodon.rs` (connector) | 1 | 4 | 2 | 7 |
 | `instagram.rs` | 0 | 4 | 2 | 6 |
 | `sync.rs` | 2 | 2 | 1 | 5 |
 | `protocol.rs` | 0 | 2 | 1 | 3 |
@@ -416,4 +530,26 @@ Foundational issues that affect all layers:
 | `activitypub/webfinger.rs` | 0 | 1 | 1 | 2 |
 | `activitypub/group_actor.rs` | 0 | 1 | 2 | 3 |
 | `activitypub/lemmy.rs` | 0 | 3 | 2 | 5 |
-| **TOTAL** | **28** | **62** | **41** | **131** |
+| `commands/mod.rs` | 0 | 0 | 0 | 0 |
+| `commands/classify.rs` | 1 | 0 | 0 | 1 |
+| `commands/collab.rs` | 0 | 0 | 0 | 0 |
+| `commands/ap.rs` | 0 | 0 | 0 | 0 |
+| `commands/relay.rs` | 0 | 0 | 0 | 0 |
+| `commands/unfurl.rs` | 0 | 1 | 0 | 1 |
+| `commands/export.rs` | 1 | 0 | 0 | 1 |
+| `commands/node.rs` | 0 | 0 | 0 | 0 |
+| `commands/syndicate.rs` | 0 | 0 | 3 | 3 |
+| `commands/interactions.rs` | 0 | 0 | 1 | 1 |
+| `commands/profile.rs` | 0 | 0 | 0 | 0 |
+| `commands/feed_aggregation.rs` | 1 | 2 | 1 | 4 |
+| `commands/browser.rs` | 0 | 0 | 0 | 0 |
+| `commands/posting.rs` | 1 | 2 | 0 | 3 |
+| `commands/auth.rs` | 0 | 2 | 2 | 4 |
+| `commands/vault.rs` | 0 | 4 | 2 | 6 |
+| `commands/peers.rs` | 1 | 0 | 3 | 4 |
+| `commands/mastodon.rs` | 1 | 4 | 1 | 6 |
+| `commands/groups.rs` | 0 | 4 | 3 | 7 |
+| `commands/media.rs` | 2 | 4 | 1 | 7 |
+| `commands/import.rs` | 2 | 6 | 1 | 9 |
+| *Cross-cutting (Batch 7)* | 2 | 0 | 0 | 2 |
+| **TOTAL** | **40** | **90** | **59** | **189** |

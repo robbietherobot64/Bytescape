@@ -1,6 +1,38 @@
 //! Media & Blob Commands
-//! 
-//! Commands for storing and retrieving media blobs in Iroh.
+//!
+//! Tauri IPC commands and helpers for all media operations: storing blobs in
+//! Iroh, retrieving them with disk-cache acceleration, downloading blobs from
+//! P2P peers, resolving HLS video streams into playable MP4 files, MIME-type
+//! detection/backfill, and batch URL resolution for the frontend feed renderer.
+//!
+//! # How It Works
+//!
+//! 1. **Ingest** — `store_media_blob` writes raw bytes into the Iroh blob store
+//!    and optionally generates a WebP thumbnail. The returned content-hash
+//!    becomes the permanent media reference stored in `BytescapeItem`.
+//! 2. **Retrieve** — `get_media_blob` / `get_media_blob_bytes` fetch blobs by
+//!    hash, exporting them to a local `blob_cache/` directory with a
+//!    magic-byte-detected extension. Subsequent requests are served from cache.
+//! 3. **Peer sync** — `download_peer_blob` creates an ephemeral `Downloader` to
+//!    pull a blob from a remote Iroh node (30 s timeout). Once downloaded, the
+//!    blob is available locally like any other.
+//! 4. **HLS → MP4** — `resolve_hls_video` resolves Bluesky HLS playlist URLs
+//!    into local MP4 files using a 6-tier FFmpeg strategy (stream copy → audio
+//!    re-encode → full re-encode, each tried for both native HLS and manual
+//!    segment download). Raw `.ts` fallback if FFmpeg is unavailable.
+//! 5. **URL resolution** — `resolve_media_url` and `resolve_blob_urls_batch`
+//!    normalise every media reference type (blob hash, http URL, absolute path,
+//!    relative path) into a frontend-ready URL, keeping all filesystem logic in
+//!    the Rust engine.
+//!
+//! # Related Files
+//!
+//! - `src-tauri/src/sync.rs` — Iroh blob store, `store_media`, `get_media`
+//! - `src-tauri/src/blob_hash.rs` — hash normalisation & parsing helpers
+//! - `src-tauri/src/db.rs` — `BytescapeItem` schema (`media_blobs`, `media_mimes`)
+//! - `src-tauri/src/commands/mod.rs` — command registration in the invoke handler
+//! - `src/components/VideoPlayer.tsx` — frontend consumer of HLS/media URLs
+//! - `src/hooks/useUnifiedFeed.ts` — calls `resolve_blob_urls_batch` for feeds
 
 use bytes::Bytes;
 use serde::Serialize;
@@ -11,6 +43,12 @@ use crate::sync::Hash;
 use crate::blob_hash;
 use crate::AppState;
 
+/// Diagnostic snapshot of media reference resolution.
+///
+/// Returned by [`diagnose_media_ref`] to help debug blob/hash/path issues
+/// when media appears in the UI but fails to load or play. Each field
+/// records one step of the resolution pipeline so the frontend can display
+/// a human-readable troubleshooting report.
 #[derive(Debug, Serialize)]
 pub struct MediaRefDiagnostic {
     pub input: String,
@@ -25,24 +63,35 @@ pub struct MediaRefDiagnostic {
     pub error: Option<String>,
 }
 
+/// Strip the `blob:` prefix (if present) and normalise a raw hash string
+/// into the canonical base32-lower form expected by the Iroh blob store.
 fn normalize_blob_hash_input(input: &str) -> String {
     blob_hash::normalize_blob_ref(input)
 }
 
+/// Attempt to decode a base32-encoded blob hash, returning `None` on failure.
+/// Used in non-critical paths where a missing hash is acceptable (e.g. MIME backfill).
 fn decode_base32_hash_like(input: &str) -> Option<Hash> {
     blob_hash::parse_blob_hash(input).ok()
 }
 
+/// Parse a blob hash string, returning a user-facing error message on failure.
+/// Preferred over [`decode_base32_hash_like`] when the caller must report
+/// the parse error back through Tauri IPC.
 fn parse_hash_safe(input: &str) -> std::result::Result<Hash, String> {
     blob_hash::parse_blob_hash(input)
 }
 
-
+// ═══════════════════════════════════════════════════════════════════════════════
+// Blob Storage & Retrieval
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Store media data as a blob in Iroh.
-/// 
+///
 /// Optionally generates a WebP thumbnail for images.
 /// Returns the content hash (and thumbnail hash if generated).
+///
+/// **IPC**: Frontend → `invoke('store_media_blob')`
 #[tauri::command]
 pub async fn store_media_blob(
     data: Vec<u8>,
@@ -66,6 +115,10 @@ pub async fn store_media_blob(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Peer Blob Download
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Download a media blob from a remote peer via the iroh-blobs protocol.
 ///
 /// Creates an ephemeral [`Downloader`] from the local blob store + endpoint,
@@ -74,6 +127,8 @@ pub async fn store_media_blob(
 /// [`get_media_blob`] as if it were a local blob.
 ///
 /// Returns `true` when the blob was successfully downloaded (or already present).
+///
+/// **IPC**: Frontend → `invoke('download_peer_blob')`
 #[tauri::command]
 pub async fn download_peer_blob(
     hash_str: String,
@@ -134,9 +189,15 @@ pub async fn download_peer_blob(
 }
 
 /// Retrieve a media blob by hash, caching it to disk.
-/// 
+///
 /// The blob is fetched from Iroh and written to the blob cache directory.
 /// Returns the cached file path for efficient subsequent access.
+///
+/// **IPC**: Frontend → `invoke('get_media_blob')`
+///
+/// # Tech debt
+/// No cache eviction strategy — `blob_cache/` grows without bound. A future
+/// LRU or size-cap policy should be added to prevent unbounded disk usage.
 #[tauri::command]
 pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -188,8 +249,11 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
 
 /// Retrieve media blob bytes directly for browser Object URL creation.
 ///
-/// Returns Vec<u8> via IPC. For vault videos (< 8MB), JSON overhead is acceptable.
-/// For large HLS videos, use resolve_hls_video which returns tauri::ipc::Response.
+/// Returns `Vec<u8>` via IPC. For vault videos (< 8 MB), JSON overhead is
+/// acceptable. For large HLS videos, use [`resolve_hls_video`] which returns
+/// `tauri::ipc::Response`.
+///
+/// **IPC**: Frontend → `invoke('get_media_blob_bytes')`
 #[tauri::command]
 pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) -> std::result::Result<tauri::ipc::Response, String> {
     let normalized_hash = normalize_blob_hash_input(&hash_str);
@@ -236,6 +300,8 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
 }
 
 /// Get the media directory path for storing imported files.
+///
+/// **IPC**: Frontend → `invoke('get_media_dir')`
 #[tauri::command]
 pub async fn get_media_dir(state: State<'_, AppState>) -> std::result::Result<String, String> {
     let app_data_dir = state.app_handle.path()
@@ -245,8 +311,17 @@ pub async fn get_media_dir(state: State<'_, AppState>) -> std::result::Result<St
     Ok(media_dir.to_string_lossy().to_string())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Diagnostics
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Diagnose media reference resolution and playback readiness.
+///
 /// Useful for debugging blob/hash/path issues when media appears but won't play.
+/// Walks the full resolution pipeline (URL → filesystem → blob cache → Iroh fetch)
+/// and records what happened at each step in a [`MediaRefDiagnostic`].
+///
+/// **IPC**: Frontend → `invoke('diagnose_media_ref')`
 #[tauri::command]
 pub async fn diagnose_media_ref(
     media_ref: String,
@@ -407,12 +482,23 @@ pub async fn diagnose_media_ref(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MIME Backfill
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Backfill `media_mimes` for existing BytescapeItems that have media_blobs
 /// but no MIME metadata yet (records created before `media_mimes` was added).
 ///
 /// Reads the first few bytes of each blob to detect its MIME type from magic
 /// bytes, then updates the item in the database.  Safe to run more than once:
 /// items that already have the correct `media_mimes` length are skipped.
+///
+/// **IPC**: Frontend → `invoke('backfill_media_mimes')`
+///
+/// # Tech debt
+/// Loads *all* item headers into memory via `list_all_item_headers`, then
+/// fetches full blobs for MIME sniffing. For vaults with thousands of items
+/// this is O(n) Iroh reads — a chunked/streaming approach would be better.
 #[tauri::command]
 pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let db_guard = state.db_manager.read().await;
@@ -578,10 +664,21 @@ pub fn mime_from_path_hint(path: &str) -> String {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Video Cancel
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Cancel an active video resolve operation by killing the FFmpeg process.
 ///
 /// Called by the frontend when a user scrolls past a video that's still converting.
 /// Prevents CPU thrashing from multiple concurrent FFmpeg processes.
+///
+/// **IPC**: Frontend → `invoke('cancel_video_resolve')`
+///
+/// # Tech debt
+/// Uses `kill` shell command which is Linux/macOS-only. On Windows this would
+/// need `taskkill /PID` or the `kill` equivalent. Consider using
+/// `std::process::Child::kill()` by storing the `Child` handle instead of the PID.
 #[tauri::command]
 pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<(), String> {
     let url_hash = format!("{:x}", {
@@ -610,6 +707,14 @@ pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, 
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// HLS Video Resolution
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tech debt: The 6 FFmpeg strategy functions below (3 for HLS URLs, 3 for local
+// .ts files) are near-identical (~180 lines of duplicated arg-building). A single
+// generic `run_ffmpeg(input, codecs, mp4_path)` helper would eliminate the
+// duplication and make flag changes (e.g. bumping analyseduration) a one-liner.
+
 /// Download an HLS video, returning a local MP4 file path.
 ///
 /// Tiered strategy (in order of speed):
@@ -619,6 +724,8 @@ pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, 
 /// 4. Manual segment download + tiered remux (A→B→C)
 /// 5. Full re-encode (Strategy C — 5-20s, last resort)
 /// 6. Raw `.ts` — if FFmpeg is entirely unavailable
+///
+/// **IPC**: Frontend → `invoke('resolve_hls_video')`
 #[tauri::command]
 pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
     use std::io::Write;
@@ -1180,7 +1287,12 @@ fn validate_mp4_with_ffprobe(mp4_path: &std::path::Path) -> bool {
     }
 }
 
-/// Simple hash for cache key generation
+/// Simple hash for cache key generation.
+///
+/// # Tech debt
+/// Despite the name `md5_hash`, this actually uses `DefaultHasher` (SipHash),
+/// **not** MD5 or SHA-256. The function should be renamed to `cache_key_hash`
+/// to avoid confusion. The output is a `u64`, not a 128-bit digest.
 fn md5_hash(input: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1188,9 +1300,16 @@ fn md5_hash(input: &str) -> u64 {
     hasher.finish()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cache Management
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tech debt: No cache eviction policy — `blob_cache/` grows without bound.
+// Consider an LRU strategy with a configurable size cap (e.g. 2 GB).
 
-
-/// Detect file extension from magic bytes
+/// Detect file extension from the first few magic bytes of a binary payload.
+///
+/// Supports JPEG, PNG, WebP, GIF, MP4/MOV (ISO BMFF `ftyp`), and WebM/Matroska
+/// (EBML header). Returns `"bin"` for unrecognised formats.
 fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
     if bytes.len() < 4 {
         return "bin";
@@ -1228,8 +1347,16 @@ fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
     "bin" // unknown
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Media URL Resolution
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /// Retrieve the dynamically assigned port of the native Warp localhost media server.
-/// VideoPlayer uses this to construct pure HTTP URLs that natively bypass WebKitGTK drop-dead bugs.
+///
+/// `VideoPlayer` uses this to construct pure HTTP URLs that natively bypass
+/// WebKitGTK playback bugs with `asset://` and `tauri://` schemes.
+///
+/// **IPC**: Frontend → `invoke('get_media_server_port')`
 #[tauri::command]
 pub async fn get_media_server_port(state: tauri::State<'_, AppState>) -> std::result::Result<u16, String> {
     Ok(state.media_port)
@@ -1238,13 +1365,15 @@ pub async fn get_media_server_port(state: tauri::State<'_, AppState>) -> std::re
 /// Resolve a media reference to a frontend-ready URL.
 ///
 /// Handles all reference types:
-/// - `blob:HASH` → exports to cache, returns asset:// URL
+/// - `blob:HASH` → exports to cache, returns `asset://` URL
 /// - `http://` / `https://` → passthrough
-/// - Absolute paths → asset:// URL via convertFileSrc equivalent
+/// - Absolute paths → `asset://` URL via `convertFileSrc` equivalent
 /// - Relative paths (`media/foo.jpg`) → resolved against app data dir
 ///
 /// This moves ALL path resolution logic to the Rust engine, so the
 /// frontend Lens never negotiates filesystem topology.
+///
+/// **IPC**: Frontend → `invoke('resolve_media_url')`
 #[tauri::command]
 pub async fn resolve_media_url(src: String, state: State<'_, AppState>) -> std::result::Result<String, String> {
     let trimmed = src.trim();
@@ -1306,6 +1435,8 @@ pub async fn resolve_media_url(src: String, state: State<'_, AppState>) -> std::
 /// for a feed page with N images — the single biggest feed render optimization.
 ///
 /// Entries that fail to resolve are omitted from the result (not fatal).
+///
+/// **IPC**: Frontend → `invoke('resolve_blob_urls_batch')`
 #[tauri::command]
 pub async fn resolve_blob_urls_batch(
     sources: Vec<String>,
