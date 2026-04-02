@@ -1,4 +1,26 @@
 /**
+ * PURPOSE:
+ * Process-wide playback coordinator for HTML video elements in the UI layer.
+ * Ensures only one video plays at a time and provides emergency global pause/
+ * release paths for heavy feed transitions.
+ *
+ * HOW IT WORKS:
+ * - Components register/unregister their `<video>` elements.
+ * - The active player notifies the manager on play.
+ * - Manager pauses competing players and can force release all pipelines.
+ *
+ * RELATED FILES:
+ * - src/components/** (video-bearing cards/players)
+ * - src/screens/FeedScreen.tsx (view transitions that may trigger cleanup)
+ * - src/hooks/useUnifiedFeed.ts (filter/view changes that affect media volume)
+ *
+ * CAVEAT (singleton lifecycle):
+ * This singleton is module-scoped and survives React remounts. If unregister
+ * is skipped during unmount, stale element references may persist until prune/
+ * release paths run.
+ */
+
+/**
  * VideoPlaybackManager — singleton that coordinates video playback
  * across the app. Ensures only one video plays at a time.
  *
@@ -10,6 +32,10 @@
  */
 class VideoPlaybackManagerClass {
     private videos = new Set<HTMLVideoElement>();
+
+    // -------------------------------------------------------------------------
+    // Registration Lifecycle
+    // -------------------------------------------------------------------------
 
     /** Maximum registered elements before forced pruning.
      * Lowered from 30 → 6 → 3 to aggressively reclaim GStreamer pipeline memory.
@@ -43,6 +69,10 @@ class VideoPlaybackManagerClass {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Playback Coordination
+    // -------------------------------------------------------------------------
+
     /** Notify that a video started playing — pause all others. */
     notifyPlay(active: HTMLVideoElement): void {
         for (const el of this.videos) {
@@ -60,6 +90,10 @@ class VideoPlaybackManagerClass {
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Diagnostics + Hard Cleanup
+    // -------------------------------------------------------------------------
 
     /** Number of currently registered video elements (for debugging). */
     get count(): number {
@@ -82,4 +116,11 @@ class VideoPlaybackManagerClass {
     }
 }
 
+/**
+ * Exported singleton instance used across UI components/hooks.
+ *
+ * Cross-system note:
+ * - No IPC/store writes occur here; this module coordinates browser media
+ *   elements only. Hook/store layers decide when lifecycle methods are called.
+ */
 export const VideoPlaybackManager = new VideoPlaybackManagerClass();

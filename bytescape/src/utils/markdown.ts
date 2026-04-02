@@ -1,15 +1,32 @@
 /**
- * Lightweight Markdown ↔ HTML converters.
+ * PURPOSE
+ * - Convert between Markdown and HTML for editor/view flows that use Tiptap-like
+ *   StarterKit semantics.
+ * - Provide small helper utilities for text metrics (`countWords`, `readingTime`).
  *
- * These handle the subset of Markdown that Tiptap's StarterKit supports:
- * headings, bold, italic, lists, blockquotes, code blocks, inline code,
- * horizontal rules, links, and paragraphs.
+ * HOW IT WORKS
+ * - `markdownToHtml()` performs a line-oriented parse with simple block handlers
+ *   (headings, lists, blockquotes, fenced code, hr, paragraph fallback).
+ * - Inline transforms are regex-based (`inlineMarkdown`) and intentionally scoped.
+ * - `htmlToMarkdown()` parses DOM and walks nodes to emit a compact Markdown
+ *   representation matching supported features.
  *
- * NOT a full CommonMark implementation — intentionally minimal.
+ * RELATED FILES
+ * - src/components/editor/* (rich text/editor integration)
+ * - src/screens/* (article/status rendering paths)
+ * - src/utils/richtext.ts (facet-level linkification for text/HTML overlays)
+ *
+ * CAVEAT (TECH-DEBT CONTEXT)
+ * - This is a partial Markdown implementation, not full CommonMark compliance.
+ *   It intentionally favors predictable app-specific behavior over exhaustive syntax.
  */
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Markdown → HTML
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /**
- * Convert a Markdown string to HTML suitable for Tiptap's StarterKit parser.
+ * Convert Markdown into HTML compatible with the app's StarterKit subset.
  */
 export function markdownToHtml(md: string): string {
     if (!md) return '';
@@ -116,7 +133,7 @@ export function markdownToHtml(md: string): string {
     return html;
 }
 
-/** Process inline markdown: bold, italic, code, links */
+/** Process supported inline markdown tokens: code, bold, italic, and links. */
 function inlineMarkdown(text: string): string {
     let result = escapeHtml(text);
 
@@ -144,9 +161,13 @@ function escapeHtml(text: string): string {
         .replace(/>/g, '&gt;');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// HTML → Markdown
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /**
- * Convert an HTML string (from Tiptap's getHTML()) back to Markdown.
- * Uses DOMParser for reliable conversion.
+ * Convert HTML (for example, from editor `getHTML()`) back to Markdown.
+ * Uses DOM parsing and a node-walk transform for deterministic output.
  */
 export function htmlToMarkdown(html: string): string {
     if (!html || html === '<p></p>') return '';
@@ -220,7 +241,7 @@ function nodeToMarkdown(node: Node): string {
     return result;
 }
 
-/** Convert inline elements to markdown: strong→**, em→*, code→`, a→[]() */
+/** Convert inline DOM elements to markdown tokens: strong/em/code/link. */
 function getInlineMarkdown(el: HTMLElement): string {
     let result = '';
 
@@ -261,12 +282,16 @@ function getInlineMarkdown(el: HTMLElement): string {
     return result;
 }
 
-/** Count words in plain text */
+// ═══════════════════════════════════════════════════════════════════════════════
+// Text Metrics
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Count words in plain text using whitespace tokenization. */
 export function countWords(text: string): number {
     return text.split(/\s+/).filter(Boolean).length;
 }
 
-/** Estimate reading time in minutes (200 wpm average) */
+/** Estimate reading time in minutes, assuming ~200 words per minute. */
 export function readingTime(wordCount: number): number {
     return Math.max(1, Math.ceil(wordCount / 200));
 }

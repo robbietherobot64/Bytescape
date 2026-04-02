@@ -1,15 +1,30 @@
 /**
- * Frontend Rich Text Facet Detection & Segmentation (C1.1b)
+ * PURPOSE
+ * - Provide lightweight rich-text affordances for plain-text content in the UI.
+ * - Detect @mentions, #hashtags, and http(s) links and convert them into
+ *   render-ready segments/facets.
  *
- * Detects @mentions, #hashtags, and hyperlinks in plain text and splits the
- * text into typed segments for rendering by the RichText component.
+ * HOW IT WORKS
+ * - Regex-based scanners detect mention/hashtag/link spans.
+ * - `detectFacets()` merges detections, sorts by position, and removes overlaps.
+ * - `segmentText()` converts the original string into typed segments that
+ *   presentation components can map to links/chips/highlights.
+ * - `linkifyFacetsInHtml()` performs a conservative text-node-only linkification
+ *   pass for already-sanitized HTML content.
  *
- * Mirrors the detection logic in `src-tauri/src/richtext.rs` but operates
- * on JavaScript character indices (not UTF-8 byte offsets) since this is
- * purely for frontend rendering.
+ * RELATED FILES
+ * - src/components/RichText* (rendering consumers)
+ * - src/screens/* (composer/feed usage)
+ * - src-tauri/src/richtext.rs (backend mirror logic; byte offsets there)
+ *
+ * CAVEAT (TECH-DEBT CONTEXT)
+ * - Detection is intentionally heuristic and regex-driven rather than parser-backed.
+ *   This keeps UI behavior fast/simple but may miss or over-match edge-case syntax.
  */
 
-// ─── Types ───
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export interface DetectedFacet {
     /** Character index (inclusive) */
@@ -30,7 +45,9 @@ export interface RichTextSegment {
     value?: string;
 }
 
-// ─── Facet Detection ───
+// ═══════════════════════════════════════════════════════════════════════════════
+// Facet Detection
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // Mention: @handle.domain (must contain at least one dot, domain-like)
 const MENTION_RE = /(?:^|[\s(])(@([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+))/g;
@@ -131,8 +148,10 @@ function detectLinks(text: string): DetectedFacet[] {
 }
 
 /**
- * Detect all @mentions, #hashtags, and URLs in text.
- * Returns facets sorted by position with overlaps removed.
+ * Detect all @mentions, #hashtags, and URLs in `text`.
+ *
+ * Returns facets sorted by ascending start index, then filtered so overlapping
+ * ranges do not produce duplicate interactive spans.
  */
 export function detectFacets(text: string): DetectedFacet[] {
     const facets = [
@@ -158,8 +177,10 @@ export function detectFacets(text: string): DetectedFacet[] {
 }
 
 /**
- * Split text into typed segments for rendering.
- * Each segment is either plain text, a mention, hashtag, or link.
+ * Split plain text into typed render segments.
+ *
+ * Output ordering always preserves the original source order.
+ * Each segment is either `text`, `mention`, `hashtag`, or `link`.
  */
 export function segmentText(text: string): RichTextSegment[] {
     if (!text) return [];
@@ -196,8 +217,9 @@ export function segmentText(text: string): RichTextSegment[] {
 }
 
 /**
- * Truncate a URL for display purposes.
- * Removes protocol, truncates path if too long.
+ * Create a compact display label for URLs.
+ *
+ * Removes protocol and truncates to `maxLen` for UI density.
  */
 export function truncateUrl(url: string, maxLen = 40): string {
     let display = url.replace(/^https?:\/\//, '');
@@ -208,9 +230,12 @@ export function truncateUrl(url: string, maxLen = 40): string {
 }
 
 /**
- * Linkify @mentions and #hashtags in an HTML string (for ArticleReader).
- * Operates on text nodes only — doesn't modify content inside existing tags.
- * Must be applied AFTER sanitization to avoid having tags stripped.
+ * Linkify @mentions and #hashtags inside an HTML string.
+ *
+ * Operates only on text fragments (never mutates existing tag structure), and
+ * skips text currently inside `<a>` tags to avoid nested anchors.
+ *
+ * IMPORTANT: run after sanitization so injected anchors are not stripped.
  */
 export function linkifyFacetsInHtml(html: string): string {
     // Split HTML into tag segments and text segments
@@ -259,7 +284,9 @@ function linkifyTextNode(text: string): string {
     return result;
 }
 
-// ─── Autocomplete Helpers ───
+// ═══════════════════════════════════════════════════════════════════════════════
+// Autocomplete Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export interface AutocompleteContext {
     type: 'mention' | 'hashtag' | null;
@@ -271,8 +298,10 @@ export interface AutocompleteContext {
 }
 
 /**
- * Determine if the cursor is in a position where autocomplete should activate.
- * Returns the autocomplete context (type + query) or null type if no trigger.
+ * Determine whether autocomplete should activate at `cursorPos`.
+ *
+ * Returns trigger metadata for mention/hashtag completion, or a null-type
+ * context when no valid trigger is active.
  */
 export function getAutocompleteContext(text: string, cursorPos: number): AutocompleteContext {
     const beforeCursor = text.substring(0, cursorPos);
@@ -297,8 +326,10 @@ export function getAutocompleteContext(text: string, cursorPos: number): Autocom
 }
 
 /**
- * Replace the autocomplete trigger+query in text with the selected value.
- * Returns the new text and the new cursor position.
+ * Apply an autocomplete choice into the source text.
+ *
+ * Replaces `[trigger + query]` with the selected token and returns both the
+ * updated text and the cursor position immediately after inserted content.
  */
 export function applyAutocompleteSelection(
     text: string,

@@ -1,5 +1,33 @@
+/**
+ * PURPOSE
+ * - Adapt backend/source-specific records into the frontend's unified `FeedEntry`
+ *   shape consumed by feed and profile surfaces.
+ * - Deduplicate mixed feed streams while preserving repost event semantics.
+ *
+ * HOW IT WORKS
+ * - `adaptBlueskyPost()` maps Rust-serialized Bluesky imports into `FeedEntry`.
+ * - `adaptBytescapeItem()` maps vault-native `BytescapeItem` records into
+ *   `FeedEntry`, including media/link normalization.
+ * - `deduplicateFeedEntries()` applies composite-key dedup rules so originals and
+ *   repost events are treated distinctly.
+ *
+ * RELATED FILES
+ * - src/types/index.ts (source and target type contracts)
+ * - src/hooks/useUnifiedFeed.ts (aggregation/ordering pipeline)
+ * - src/utils/content.ts (`inferContentKind`, `sanitizeVaultContent`)
+ * - src-tauri/src/connectors/* and lib.rs (upstream data production)
+ *
+ * CAVEAT (TECH-DEBT CONTEXT)
+ * - Content-kind detection includes heuristic fallbacks (URL/path inference) when
+ *   MIME metadata is missing. This is practical but not perfectly authoritative.
+ */
+
 import { BlueskyPost, BytescapeItem, FeedEntry, Audience } from '../types';
 import { inferContentKind, sanitizeVaultContent } from './content';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Feed Deduplication
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // === Feed Deduplication ===
 //
@@ -13,6 +41,12 @@ import { inferContentKind, sanitizeVaultContent } from './content';
 // When two entries collide, the one that appears first wins.
 // Callers should pre-sort if ordering matters.
 
+/**
+ * Remove duplicate feed entries using a composite key strategy.
+ *
+ * Originals and reposts intentionally use different keys so repost actions are
+ * retained as separate feed events.
+ */
 export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     if (entries.length === 0) return entries;
 
@@ -46,6 +80,10 @@ export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
     });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// BlueskyPost → FeedEntry
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // === BlueskyPost → FeedEntry ===
 //
 // Converts the Rust-serialized BlueskyImportedPost (received as BlueskyPost
@@ -59,6 +97,12 @@ export function deduplicateFeedEntries(entries: FeedEntry[]): FeedEntry[] {
 // For quote posts:
 //   - quoted_post is recursively converted
 
+/**
+ * Adapt a backend-originated `BlueskyPost` into unified `FeedEntry` format.
+ *
+ * Preserves repost/quote metadata so downstream UI can render attribution and
+ * nested quote cards without additional source-specific branching.
+ */
 export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
     const mediaUrls = post.video_url ? [post.video_url] : (post.image_urls || []);
     const mediaKinds = post.video_url
@@ -115,6 +159,10 @@ export function adaptBlueskyPost(post: BlueskyPost): FeedEntry {
     };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // === Blob Reference Normalizer ===
 
 function normalizeBlobRef(value: string): string {
@@ -125,8 +173,18 @@ function normalizeBlobRef(value: string): string {
     return `blob:${v}`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// BytescapeItem → FeedEntry
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // === BytescapeItem → FeedEntry ===
 
+/**
+ * Adapt a vault-native `BytescapeItem` into the unified `FeedEntry` model.
+ *
+ * Performs content sanitization, media/link projection, source normalization,
+ * and reply/repost metadata mapping used by feed/profile consumers.
+ */
 export function adaptBytescapeItem(item: BytescapeItem): FeedEntry {
     const { text, link } = sanitizeVaultContent(item.content || '');
 

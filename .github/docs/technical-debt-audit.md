@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–9 (75 source files · ~33,850 lines · Rust + TypeScript)
+> **Scope**: Batches 1–10 (88 source files · ~35,280 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 9 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, **Frontend Hooks**) uncovered **242 issues** across 75 files:
+A systematic audit of the first 10 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, **Frontend Utils**) uncovered **268 issues** across 88 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 50 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 117 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 75 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 55 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 130 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 83 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -27,6 +27,7 @@ The top systemic concerns are:
 6. **God file problem** — `import.rs` at 2,900 lines is the largest file in the codebase and mixes 8+ unrelated concerns (archive import, timeline fetching, DM import, feed aggregation, publishing, social graph). Should be split into 5-6 submodules.
 7. **Frontend foundation sprawl** — `store/index.ts` bundles 6 unrelated Zustand stores in one file, `App.tsx` has 40+ line duplicated chat-open callbacks, `DataProvider.ts` is a 100+ method monolithic interface with 6 untyped returns. The provider pattern requires 3-file changes for every new backend command.
 8. **Hooks doing orchestration work** — `useUnifiedFeed.ts` and `useGroupsData.ts` both perform heavy orchestration, fallback logic, and backend transport concerns that should live in service/provider layers. This blurs boundaries between view hooks and domain logic.
+9. **Utility layer contract drift** — frontend utility modules now mix pure helpers with transport-bound logic (`prefetchBlobUrls` -> `invoke`) and contradictory runtime flags (`openInApp`). This erodes the “utils are pure/reusable” boundary and causes coupling between presentation and backend internals.
 
 ---
 
@@ -599,6 +600,56 @@ This batch covers the core orchestration hooks used by feed, groups, navigation,
 
 ---
 
+## Batch 10 — Frontend Utils
+
+**Scope:** 13 files · ~1,432 lines in `src/utils/`
+**Findings:** 26 issues (5 HIGH · 13 MEDIUM · 8 LOW)
+
+Batch 10 includes the frontend utility layer: rich text parsing, markdown conversion, feed adapters/analytics, media resolution, sanitization, and test helpers. Structural/compositional concerns center on **boundary violations** (utils depending on runtime transport), **contract drift**, and **logic duplication**.
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 10.1 | `prefetchBlobUrls.ts` | **Broken import contract** — imports `cacheResolvedUrl` from `useBlobUrl`, but `useBlobUrl` exports no such symbol | TypeScript build fails (`TS2614`), blocking strict type-checking |
+| 10.2 | `adapters.ts` | **Hardcoded source inference for Mastodon in Bluesky adapter** — uses URI substring heuristics (`/statuses/`, `acct:`) to remap platform | Misclassification risk and cross-protocol coupling inside a low-level adapter |
+| 10.3 | `openInApp.ts` | **Configuration contradiction** — comments claim system-browser fallback is active while `USE_SYSTEM_BROWSER = false` keeps in-app path enabled | Operational confusion and fragile behavior toggling in production |
+| 10.4 | `VideoPlaybackManager.ts` | **Imperative `releaseAll()` mutates DOM media state outside React ownership** (`removeAttribute('src')`, `load()`) | Can fight React reconciliation and produce hard-to-debug playback regressions |
+| 10.5 | `richtext.ts` | **Regex-only facet detection used as parser** for mentions/hashtags/URLs with overlap pruning | Edge-case parsing bugs (nested punctuation/unicode boundaries) can silently break mentions/links |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 10.6 | `richtext.ts` | **Frontend facet rules mirror backend but are not shared** | Drift risk between Rust and TypeScript detection behavior |
+| 10.7 | `richtext.ts` | **`linkifyFacetsInHtml()` performs regex HTML rewriting after split-by-tags** | Fragile against malformed HTML and complex nested markup |
+| 10.8 | `markdown.ts` | **Custom markdown parser is intentionally partial and hand-rolled** | Feature gaps and inconsistent round-trip fidelity vs full markdown engines |
+| 10.9 | `markdown.ts` | **Inline replacement order can produce unexpected nesting behavior** (bold/italic/code/link transforms) | Incorrect formatting in edge-case text combinations |
+| 10.10 | `adapters.ts` | **Content-kind inference duplicated with util media helpers** (`inferContentKind` + additional fallback paths) | Behavior differences across components for same media input |
+| 10.11 | `openInApp.ts` | **Deep coupling to global stores from utility module** (`useNavStore`, `useAuthStore`) | Hard to test and reuse; utility behaves like navigation service |
+| 10.12 | `feedAnalytics.ts` | **Scoring model uses heuristic constants without central config** | Hard to tune; ranking shifts require code edits |
+| 10.13 | `VideoPlaybackManager.ts` | **Singleton with global mutable set and no lifecycle owner** | Hidden shared state and difficult deterministic testing |
+| 10.14 | `prefetchBlobUrls.ts` | **Utility invokes backend directly** (`invoke('resolve_blob_urls_batch')`) instead of going through provider abstraction | Breaks abstraction layering; harder to port frontend to non-Tauri runtime |
+| 10.15 | `media.ts` | **`resolveMediaPath` duplicates parts of `useBlobUrl`/`mediaServer` resolution flow** | Divergent URL resolution behavior and maintenance overhead |
+| 10.16 | `content.ts` | **`sanitizeVaultContent()` strips metadata via brittle regex list** | New source formats can leak noise or accidentally remove valid content |
+| 10.17 | `sanitize.ts` | **Allowlist config is fixed in module scope** with no caller-level policy variants | One-size policy may be too strict/too loose for different rendering contexts |
+| 10.18 | `mediaServer.ts` | **Global cached port has no invalidation** | Stale cache if media server restarts on a new port during session |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 10.19 | `richtext.ts` | **Regex constants and magic limits (`65`) are in-module literals** | Harder to audit/tune detection policy |
+| 10.20 | `markdown.ts` | **Utility names imply generic markdown support despite limited subset** | API expectation mismatch |
+| 10.21 | `adapters.ts` | **Normalization and adaptation concerns mixed in one file** | Reduced composability of adapter layer |
+| 10.22 | `openInApp.ts` | **Dead/disabled path comments are stale relative to runtime flag** | Documentation drift for maintainers |
+| 10.23 | `media.ts` | **Dual import style from same module** (`invoke`, `convertFileSrc`) | Minor stylistic inconsistency |
+| 10.24 | `content.ts` | **`safeHostname()` fallback returns original input** for invalid URLs | Potentially misleading display values |
+| 10.25 | `sanitize.ts` | **`formatFileSize` has fixed precision policy in util** | UI-specific formatting choices leaked into shared util |
+| 10.26 | `testUtils.tsx` | **Wrapper scaffold is minimal/no-op by default** | Easy to forget provider wiring in tests requiring context |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -679,4 +730,17 @@ This batch covers the core orchestration hooks used by feed, groups, navigation,
 | `src/hooks/useCollabDoc.ts` | 1 | 1 | 1 | 3 |
 | `src/hooks/useTheme.ts` | 0 | 2 | 1 | 3 |
 | `src/hooks/useCharacterCount.ts` | 0 | 1 | 0 | 1 |
-| **TOTAL** | **50** | **117** | **75** | **242** |
+| `src/utils/richtext.ts` | 1 | 2 | 1 | 4 |
+| `src/utils/markdown.ts` | 0 | 2 | 1 | 3 |
+| `src/utils/adapters.ts` | 1 | 2 | 1 | 4 |
+| `src/utils/openInApp.ts` | 1 | 1 | 1 | 3 |
+| `src/utils/feedAnalytics.ts` | 0 | 2 | 0 | 2 |
+| `src/utils/VideoPlaybackManager.ts` | 1 | 1 | 1 | 3 |
+| `src/utils/prefetchBlobUrls.ts` | 1 | 1 | 0 | 2 |
+| `src/utils/media.ts` | 0 | 1 | 1 | 2 |
+| `src/utils/content.ts` | 0 | 1 | 1 | 2 |
+| `src/utils/sanitize.ts` | 0 | 1 | 1 | 2 |
+| `src/utils/mediaServer.ts` | 0 | 1 | 0 | 1 |
+| `src/utils/testUtils.tsx` | 0 | 0 | 1 | 1 |
+| `src/utils/date.ts` | 0 | 0 | 0 | 0 |
+| **TOTAL** | **55** | **130** | **83** | **268** |

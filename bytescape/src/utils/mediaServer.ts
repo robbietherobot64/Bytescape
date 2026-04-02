@@ -1,6 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /**
+ * PURPOSE
+ * Resolves local media-server URLs for blob cache files in the Tauri app.
+ *
+ * HOW IT WORKS
+ * Fetches the backend-provided localhost port once, caches it in module state,
+ * then maps absolute blob-cache file paths to `http://127.0.0.1:{port}/{name}`.
+ *
+ * RELATED FILES
+ * - src-tauri/src/lib.rs (command: `get_media_server_port`)
+ * - src/components/media renderers that require browser-loadable URLs
+ */
+/**
  * Cached media server port.
  *
  * The Warp media server runs on localhost to serve blob_cache files via plain
@@ -11,6 +23,10 @@ let globalMediaPort: number | null = null;
 /**
  * Returns the port of the local Warp media server.
  * Caches the result after the first invocation.
+ *
+ * Caveat:
+ * Cache lifetime is process/module lifetime. If the backend port changes during
+ * runtime, callers must reload process state to observe a new value.
  */
 export async function getMediaPort(): Promise<number> {
     if (globalMediaPort) return globalMediaPort;
@@ -24,6 +40,10 @@ export async function getMediaPort(): Promise<number> {
  *
  * @param filePath - Absolute path to a file in blob_cache/
  * @returns HTTP URL like `http://127.0.0.1:{port}/{filename}`
+ *
+ * Caveat:
+ * URL identity is based on basename only; different directories with the same
+ * filename are indistinguishable to this URL shape.
  */
 export async function blobCacheUrl(filePath: string): Promise<string> {
     const filename = filePath.split(/[/\\]/).pop();

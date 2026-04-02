@@ -3,6 +3,31 @@ import { resolvedUrlCache, cacheResolvedUrl } from '../hooks/useBlobUrl';
 import { FeedEntry } from '../types';
 
 /**
+ * PURPOSE:
+ * Batch-pre-resolve vault blob references to display URLs so feed rendering can
+ * avoid per-item IPC latency spikes.
+ *
+ * HOW IT WORKS:
+ * 1) Scan feed entries for unresolved blob references.
+ * 2) Send one batched IPC request (`resolve_blob_urls_batch`).
+ * 3) Seed the shared in-memory cache consumed by `useBlobUrl`.
+ *
+ * RELATED FILES:
+ * - src/hooks/useBlobUrl.ts (cache owner + per-item fallback resolver)
+ * - src/hooks/useUnifiedFeed.ts (typical orchestration point)
+ * - src-tauri/src/lib.rs (Tauri command registration for blob resolution)
+ *
+ * CAVEAT (provider-boundary bypass):
+ * This utility writes directly to the hook module cache, bypassing React
+ * provider boundaries/state containers. That is intentional for performance,
+ * but it means cache state is process-global rather than tree-scoped.
+ */
+
+// -----------------------------------------------------------------------------
+// Blob Source Collection + Normalization
+// -----------------------------------------------------------------------------
+
+/**
  * Extract all blob references from a list of feed entries.
  * Returns de-duplicated sources that start with "blob:" but are NOT
  * browser Object URLs (blob:http://, blob:tauri://).
@@ -56,11 +81,20 @@ function normalizeBlobHash(url: string): string {
     return hash.trim();
 }
 
+// -----------------------------------------------------------------------------
+// Batch Prefetch Entry Point
+// -----------------------------------------------------------------------------
+
 /**
  * Pre-resolve all blob references from the given feed entries in a single
  * batch IPC call. Populates the in-memory `resolvedUrlCache` used by
  * `useBlobUrl` so that individual hook instances return instantly without
  * making their own IPC round-trips.
+ *
+ * Cross-system note:
+ * - IPC command: `resolve_blob_urls_batch` (Rust backend via Tauri `invoke`).
+ * - Hook/store interaction: primes `useBlobUrl` cache; consumers can render
+ *   without waiting for per-component async resolution.
  *
  * Safe to call multiple times — already-cached hashes are skipped.
  */

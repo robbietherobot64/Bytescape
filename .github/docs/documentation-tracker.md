@@ -21,7 +21,7 @@
 | 7 | Tauri Commands (Backend API) | 21 | 10,220 | ✅ Complete |
 | 8 | Frontend Foundation | 8 | 2,581 | ✅ Complete |
 | 9 | Frontend Hooks | 7 | 2,349 | ✅ Complete |
-| 10 | Frontend Utils | 12 | 1,429 | ⬜ Not started |
+| 10 | Frontend Utils | 13 | 1,432 | ✅ Complete |
 | 11 | Frontend Screens | 16 | 7,526 | ⬜ Not started |
 | 12 | Frontend Components (Large) | 13 | 5,694 | ⬜ Not started |
 | 13 | Frontend Components (Medium) | 13 | 2,164 | ⬜ Not started |
@@ -212,19 +212,19 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/utils/richtext.ts` | 315 | ⬜ | Rich text rendering helpers |
-| `src/utils/markdown.ts` | 272 | ⬜ | Markdown parsing/rendering |
-| `src/utils/adapters.ts` | 216 | ⬜ | Data format adapters |
-| `src/utils/openInApp.ts` | 151 | ⬜ | URL routing to in-app screens |
-| `src/utils/feedAnalytics.ts` | 90 | ⬜ | Feed usage analytics |
-| `src/utils/VideoPlaybackManager.ts` | 85 | ⬜ | Video element pooling/lifecycle |
-| `src/utils/prefetchBlobUrls.ts` | 85 | ⬜ | Preloading media blob URLs |
-| `src/utils/media.ts` | 55 | ⬜ | Media type detection helpers |
-| `src/utils/content.ts` | 50 | ⬜ | Content processing helpers |
-| `src/utils/sanitize.ts` | 48 | ⬜ | HTML sanitization |
-| `src/utils/mediaServer.ts` | 33 | ⬜ | Media server URL helpers |
-| `src/utils/testUtils.tsx` | 23 | ⬜ | Test setup utilities |
-| `src/utils/date.ts` | 9 | ⬜ | Date formatting |
+| `src/utils/richtext.ts` | 315 | ✅ | Expanded header, section dividers, facet/autocomplete API docs, caveat notes |
+| `src/utils/markdown.ts` | 272 | ✅ | Expanded header, parser/serializer section docs, exported helper docs |
+| `src/utils/adapters.ts` | 216 | ✅ | Header + adaptation flow docs, dedup and source-inference caveat annotations |
+| `src/utils/openInApp.ts` | 151 | ✅ | Header + routing flow docs, store/webview boundary notes, runtime-flag caveat |
+| `src/utils/feedAnalytics.ts` | 90 | ✅ | Header + scoring model docs, exported metric helper docs |
+| `src/utils/VideoPlaybackManager.ts` | 85 | ✅ | Header + singleton lifecycle docs, React ownership caveat notes |
+| `src/utils/prefetchBlobUrls.ts` | 85 | ✅ | Header + batch-resolution docs, IPC boundary notes and fallback behavior |
+| `src/utils/media.ts` | 55 | ✅ | Header + resolver docs, duplication caveat annotations |
+| `src/utils/content.ts` | 50 | ✅ | Header + content-kind/sanitization helper docs |
+| `src/utils/sanitize.ts` | 48 | ✅ | Header + policy/limits docs, fixed allowlist caveat note |
+| `src/utils/mediaServer.ts` | 33 | ✅ | Header + media-port cache docs, cache invalidation caveat note |
+| `src/utils/testUtils.tsx` | 23 | ✅ | Header + test render-wrapper docs |
+| `src/utils/date.ts` | 9 | ✅ | Header + timestamp formatting contract doc |
 
 **Subtotal**: 13 files · 1,432 lines
 

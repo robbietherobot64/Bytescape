@@ -1,5 +1,20 @@
+/**
+ * PURPOSE
+ * Utility helpers for classifying content URLs and cleaning imported vault text.
+ *
+ * HOW IT WORKS
+ * Uses lightweight extension/path heuristics and regex-based text cleanup to
+ * remove common archive noise and pull out a first embedded URL.
+ *
+ * RELATED FILES
+ * - src/utils/sanitize.ts (HTML sanitization for rendered/entered content)
+ * - src/screens/* (feed and detail renderers consuming normalized text/media)
+ */
 export type ContentKind = 'video' | 'audio' | 'pdf' | 'image' | 'unknown';
 
+/**
+ * Returns the hostname portion of a URL, or the original string if parsing fails.
+ */
 export function safeHostname(url: string): string {
   try {
     return new URL(url).hostname;
@@ -8,12 +23,18 @@ export function safeHostname(url: string): string {
   }
 }
 
+/**
+ * Heuristic detection for GIF-style links commonly hosted by GIF platforms.
+ */
 export function looksLikeGif(url?: string | null): boolean {
   if (!url) return false;
   const u = url.toLowerCase();
   return u.includes('tenor.com') || u.includes('giphy.com') || u.endsWith('.gif');
 }
 
+/**
+ * Infers a best-effort content kind from URL/file path text.
+ */
 export function inferContentKind(src: string): ContentKind {
   const clean = src.toLowerCase().split('?')[0];
   if (/\.(mp4|mov|webm|m4v|avi|mkv|m3u8)$/.test(clean)) return 'video';
@@ -26,7 +47,15 @@ export function inferContentKind(src: string): ContentKind {
   return 'unknown';
 }
 
-/** Clean archive/vault text of metadata noise and surface a primary link if embedded */
+/**
+ * Cleans archive/vault text of metadata noise and surfaces one primary link.
+ *
+ * Caveat:
+ * This is intentionally regex-based and tuned for known export artifacts
+ * (for example Facebook "Taken..." / "Upload IP address..."). Unexpected
+ * phrasing may survive cleanup, and similarly worded real content may be
+ * removed.
+ */
 export function sanitizeVaultContent(raw: string): { text: string; link?: string } {
   let text = raw || '';
 

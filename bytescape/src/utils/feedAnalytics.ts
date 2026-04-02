@@ -1,10 +1,47 @@
 import { FeedEntry } from '../types';
 
+/**
+ * PURPOSE:
+ * Utility scoring + de-duplication helpers for feed-level analytics decisions,
+ * currently focused on Facebook image-post duplicates.
+ *
+ * HOW IT WORKS:
+ * 1) Normalize media URLs into stable comparison keys.
+ * 2) Score post context richness from text + media signals.
+ * 3) Keep the strongest/newest winner per media key and filter weaker duplicates.
+ *
+ * RELATED FILES:
+ * - src/hooks/useUnifiedFeed.ts (applies feed post-processing pipelines)
+ * - src/types/index.ts (`FeedEntry` contract used by this module)
+ * - src/utils/media.ts (separate media-path resolution utilities)
+ */
+
+// -----------------------------------------------------------------------------
+// Key Normalization
+// -----------------------------------------------------------------------------
+
+/**
+ * Exported helper that converts a media URL into a stable lookup key.
+ *
+ * Strips casing and query-string noise so duplicate uploads that differ only
+ * by URL params can still be compared consistently.
+ */
 export function normalizeMediaKey(url: string): string {
     if (!url) return '';
     return url.trim().toLowerCase().split('?')[0];
 }
 
+// -----------------------------------------------------------------------------
+// Context Scoring
+// -----------------------------------------------------------------------------
+
+/**
+ * Exported heuristic score for how context-rich a `FeedEntry` is.
+ *
+ * Higher scores are preferred when selecting a canonical post among media
+ * duplicates. Signal sources include post text length, album/photo language,
+ * and number of attached media URLs.
+ */
 export function facebookContextScore(entry: FeedEntry): number {
     const text = `${entry.title || ''} ${entry.content || ''}`
         .replace(/timeline photos/gi, ' ')
@@ -21,6 +58,18 @@ export function facebookContextScore(entry: FeedEntry): number {
     return score;
 }
 
+// -----------------------------------------------------------------------------
+// Duplicate Filtering
+// -----------------------------------------------------------------------------
+
+/**
+ * Exported filter that removes Facebook image-post duplicates while keeping the
+ * most informative/newest winner for each media asset.
+ *
+ * Cross-system note:
+ * - This is intentionally pure and side-effect free; orchestration and state
+ *   updates happen in feed hooks/store flows (for example `useUnifiedFeed`).
+ */
 export function filterFacebookDuplicateImagePosts(entries: FeedEntry[]): FeedEntry[] {
     if (entries.length === 0) return entries;
 

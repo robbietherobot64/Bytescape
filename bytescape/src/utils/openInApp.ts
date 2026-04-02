@@ -1,25 +1,53 @@
 /**
- * Open a URL — either in an in-app tab or in the system browser.
+ * PURPOSE
+ * - Centralize external navigation behavior for links and profile opens.
+ * - Provide one routing surface for either in-app webview tabs or system browser.
  *
- * The native WebView overlay (commands/browser.rs) is currently broken due
- * to a window-label mismatch in the Rust backend (Track A). Until that's
- * fixed, we route:
- *   • Bluesky profile URLs  → system browser (instant, reliable)
- *   • All other http(s) URLs → system browser via @tauri-apps/plugin-opener
+ * HOW IT WORKS
+ * - `openInApp()` routes a URL via feature toggle.
+ * - `openProfile()` decides whether to open a native profile tab or resolve to
+ *   a protocol-specific external URL.
+ * - `installLinkInterceptor()` captures eligible anchor clicks and forwards
+ *   them through the same route for consistent behavior.
  *
- * The in-app webview path is preserved for future re-enablement.
+ * RELATED FILES
+ * - src/store/navStore* (tab lifecycle: open/switch metadata)
+ * - src/store/authStore* ("is this me/local profile" decision path)
+ * - src/screens/WebViewScreen* and profile screen routes
+ * - src-tauri/src/commands/browser.rs (native/browser-side integration)
+ *
+ * CROSS-SYSTEM NOTE
+ * - This utility is a seam between frontend navigation stores and native
+ *   webview/browser capabilities. URL policy changes here affect both tab
+ *   routing and platform opener behavior.
+ *
+ * CAVEAT (TECH-DEBT CONTEXT)
+ * - Runtime toggle comments and effective behavior have drifted across sprints
+ *   (known toggle-mismatch debt). Keep behavior unchanged in comment-only passes;
+ *   resolve via dedicated functional fix when Track A/B coordination is scheduled.
  */
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavStore, useAuthStore } from '../store';
 
 /**
- * Open a URL. Routes to the system browser because the in-app WebView
- * (Tauri add_child / WebKitGTK) has unresolved rendering/visibility bugs
- * on Linux. This has been broken across 3+ sprints — system browser is
- * the reliable path until a native profile screen replaces raw webviews.
+ * Feature flag for URL routing strategy.
+ *
+ * `true`  => force system browser via opener plugin.
+ * `false` => use in-app webview tab flow.
  */
 const USE_SYSTEM_BROWSER = false;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// URL + Profile Routing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Open a URL through the configured route (system browser or in-app tab).
+ *
+ * Cross-system behavior:
+ * - System route delegates to native opener plugin.
+ * - In-app route creates/switches `webview` tabs through nav store state.
+ */
 export function openInApp(url: string, title?: string): void {
     if (USE_SYSTEM_BROWSER) {
         openUrl(url).catch((err) =>
@@ -53,7 +81,10 @@ export function openInApp(url: string, title?: string): void {
 }
 
 /**
- * Open a profile in the native ProfileViewScreen tab.
+ * Open a profile target using protocol-aware routing.
+ *
+ * - Local/P2P/self profiles open native `profile-view` tabs.
+ * - External profiles resolve to URL form and route via `openInApp()`.
  */
 export function openProfile(handle: string, protocol?: 'bluesky' | 'activitypub' | 'mastodon' | 'local' | 'p2p'): void {
     if (!handle) return;
@@ -114,8 +145,10 @@ export function openProfile(handle: string, protocol?: 'bluesky' | 'activitypub'
 }
 
 /**
- * Install a global click interceptor that catches all `<a target="_blank">`
- * clicks and routes them through openInApp (currently → system browser).
+ * Install a global click interceptor for external links.
+ *
+ * Captures `<a target="_blank">` clicks and forwards them through
+ * `openInApp()` so tab/browser policy is enforced consistently app-wide.
  *
  * Call once at app startup (e.g. in a useEffect in App.tsx).
  * Returns a cleanup function that removes the listener.
