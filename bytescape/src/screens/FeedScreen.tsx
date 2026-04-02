@@ -11,6 +11,36 @@ import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../ho
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
 
+/**
+ * PURPOSE
+ * - Render the primary social feed surface: compose, filter, browse, and
+ *   paginate content across local + protocol-backed sources.
+ *
+ * HOW IT WORKS
+ * - Delegates feed retrieval/state machine behavior to `useUnifiedFeed`.
+ * - Publishes posts via engine command (`publish_post_v2`) and refreshes feed.
+ * - Resolves local media paths to app-safe URLs (`convertFileSrc`).
+ * - Applies client-side media/content lens filtering plus dedupe pass.
+ * - Supports overscroll pull-to-refresh and infinite/older pagination flows.
+ *
+ * RELATED FILES
+ * - src/hooks/useUnifiedFeed.ts
+ * - src/components/ComposeBox.tsx
+ * - src/components/feed/VirtualizedFeedList.tsx
+ * - src/components/FeedRightPanel.tsx
+ * - src/components/FriendsPanel.tsx
+ * - src-tauri/src/lib.rs (publish + hashtag commands)
+ *
+ * CROSS-SYSTEM NOTES
+ * - `useUnifiedFeed` encapsulates cross-tab feed composition and cache policy.
+ * - `invoke()` bridges publish and hashtag mutations to engine-side commands.
+ * - Custom window events (`navigate-hashtag`) coordinate card-level interactions
+ *   with screen-level tab/filter state.
+ */
+
+/**
+ * UI-only secondary feed lens applied after unified feed fetch.
+ */
 export type MediaFilter = 'all' | 'images' | 'video' | 'short' | 'long' | 'articles';
 
 const CONTEXT_LABELS: Record<string, string> = {
@@ -30,7 +60,11 @@ interface FeedScreenProps {
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
+/**
+ * Main feed composition and browsing screen.
+ */
 export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenChat, onViewProfile }: FeedScreenProps) {
+    // ═══ UI Control State ═══
     // === UI Control State ===
     const [contextOpen, setContextOpen] = useState(false);
     const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
@@ -51,6 +85,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     activeTabRef.current = activeTab;
     const PULL_THRESHOLD = 80;
     const triggerRefreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+    // ═══ Feed Data Integration (`useUnifiedFeed`) ═══
     // === Data Hook ===
     const {
         feedEntries,
@@ -75,6 +111,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         autoRefreshFeeds
     });
 
+    // ═══ Lifecycle Wiring (media dir, hashtag navigation, import refresh) ═══
     useEffect(() => {
         appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
     }, []);
@@ -114,6 +151,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         }
     }, [savedFeeds, selectedFeedUris]);
 
+    // ═══ Action Handlers: Hashtags + Publish + Media Resolve ═══
     const handleAddHashtag = async () => {
         const tag = hashtagInput.trim().replace(/^#/, '');
         if (!tag) return;
@@ -142,8 +180,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         }
     };
 
-
-
+    // ═══ Derived Feed Projection (dedupe + media lens filtering) ═══
     const handlePublishPost = async (text: string, target: PostTarget, attachments: Attachment[], options?: PublishOptions) => {
         setIsPosting(true);
         setPostStatus('Publishing...');
@@ -223,6 +260,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         });
     }, [feedEntries, mediaFilter]);
 
+    // ═══ Pull-to-Refresh Interaction State Machine ═══
     // === Pull-to-Refresh via Scroll Wheel Overscroll ===
     const overscrollAccum = useRef(0);
     const decayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,6 +328,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         }
     }, [setActiveTab]);
 
+    // ═══ Render: Context Panel + Feed Body + Friends Panel ═══
     return (
         <div className="feed-layout">
             {/* Feed context panel — left side */}

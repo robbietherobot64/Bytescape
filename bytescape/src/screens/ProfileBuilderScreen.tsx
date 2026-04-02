@@ -8,16 +8,32 @@ import { BsPalette2, BsEye, BsPencilSquare, BsSave, BsTrash, BsArrowLeft, BsCode
 import type { ProfileLayout } from '../types';
 
 /**
+ * PURPOSE
+ * - Provide a visual (GrapesJS) and raw-HTML workflow for authoring a custom
+ *   profile layout.
+ *
+ * HOW IT WORKS
+ * - On mount, checks persisted profile layout mode via Tauri command.
+ * - In visual mode, lazily imports GrapesJS and registers Bytescape-specific
+ *   blocks, then loads saved layout data (`components_json`/`styles_json` or
+ *   fallback HTML/CSS).
+ * - Saves/deletes layout by invoking Rust commands that persist to redb.
+ * - Can switch to the raw editor screen for direct HTML/CSS editing.
+ *
+ * RELATED FILES
+ * - src/components/RawHtmlEditor.tsx
+ * - src/screens/ProfileScreen.tsx
+ * - src/types/index.ts (ProfileLayout)
+ * - src-tauri/src/lib.rs (profile layout Tauri commands)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Uses `invoke()` to cross the UI/engine boundary for layout read/write.
+ * - Uses `useNavStore` for global screen/sidebar routing state.
+ *
  * ProfileBuilderScreen — GrapesJS-powered drag-and-drop profile page builder.
- *
- * Users can design their own MySpace/GeoCities-style profile page by dragging
- * Bytescape-specific blocks (About Me, Post Feed, Media Grid, Friends List,
- * Music Player, Guestbook, Away Message) onto a visual canvas.
- *
- * The output HTML + CSS is saved via Tauri commands to redb and rendered on
- * the ProfileScreen in a sandboxed iframe.
  */
 export function ProfileBuilderScreen() {
+    // ═══ Local Component State & Store Wiring ═══
     const editorRef = useRef<Editor | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [isPreview, setIsPreview] = useState(false);
@@ -28,6 +44,7 @@ export function ProfileBuilderScreen() {
     const [rawMode, setRawMode] = useState(false);
     const { setScreen, setActiveSidebar } = useNavStore();
 
+    // ═══ Initialization: Mode Detection + Editor Bootstrapping ═══
     // Check if existing layout is raw mode on mount
     useEffect(() => {
         invoke<ProfileLayout | null>('get_profile_layout').then((layout) => {
@@ -429,6 +446,7 @@ export function ProfileBuilderScreen() {
         }
     }, []);
 
+    // ═══ User Actions: Save/Delete/Preview/Navigation ═══
     // Delete layout
     const handleDelete = useCallback(async () => {
         try {
@@ -466,6 +484,7 @@ export function ProfileBuilderScreen() {
         setActiveSidebar('profile');
     }, [setScreen, setActiveSidebar]);
 
+    // ═══ View Styles (Inline Style Objects) ═══
     const toolbarStyle: React.CSSProperties = {
         display: 'flex',
         alignItems: 'center',
@@ -504,6 +523,7 @@ export function ProfileBuilderScreen() {
         color: '#ef4444',
     };
 
+    // ═══ Render: Raw HTML Mode vs GrapesJS Builder Mode ═══
     return (
         <div className="profile-builder-screen" style={{
             display: 'flex',

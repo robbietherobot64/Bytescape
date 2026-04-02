@@ -22,7 +22,7 @@
 | 8 | Frontend Foundation | 8 | 2,581 | ✅ Complete |
 | 9 | Frontend Hooks | 7 | 2,349 | ✅ Complete |
 | 10 | Frontend Utils | 13 | 1,432 | ✅ Complete |
-| 11 | Frontend Screens | 16 | 7,526 | ⬜ Not started |
+| 11 | Frontend Screens | 16 | 7,604 | ✅ Complete |
 | 12 | Frontend Components (Large) | 13 | 5,694 | ⬜ Not started |
 | 13 | Frontend Components (Medium) | 13 | 2,164 | ⬜ Not started |
 | 14 | Feed, Lenses, Widgets & Small Components | 33 | 2,698 | ⬜ Not started |
@@ -236,22 +236,22 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/screens/ChatScreen.tsx` | 778 | ⬜ | Direct messaging interface |
-| `src/screens/VaultScreen.tsx` | 710 | ⬜ | Personal file vault |
-| `src/screens/LoginScreen.tsx` | 707 | ⬜ | Authentication flow |
-| `src/screens/FriendsScreen.tsx` | 697 | ⬜ | Friends list & management |
-| `src/screens/ProfileBuilderScreen.tsx` | 656 | ⬜ | Drag-and-drop profile page builder |
-| `src/screens/ProfileBrowserScreen.tsx` | 647 | ⬜ | Browse other profiles |
-| `src/screens/SettingsScreen.tsx` | 609 | ⬜ | App settings & preferences |
-| `src/screens/FeedScreen.tsx` | 529 | ⬜ | Main social feed view |
-| `src/screens/PeerProfileScreen.tsx` | 460 | ⬜ | Viewing a peer's profile |
-| `src/screens/GroupScreen.tsx` | 432 | ⬜ | Group/community view |
-| `src/screens/ProfileScreen.tsx` | 298 | ⬜ | User's own profile |
-| `src/screens/WebViewScreen.tsx` | 281 | ⬜ | In-app web browser |
-| `src/screens/AuditScreen.tsx` | 246 | ⬜ | Data audit/review |
-| `src/screens/ForumScreen.tsx` | 232 | ⬜ | Discussion forum view |
-| `src/screens/ProfileViewScreen.tsx` | 187 | ⬜ | Profile view (read-only) |
-| `src/screens/ImportScreen.tsx` | 135 | ⬜ | Archive import wizard |
+| `src/screens/ChatScreen.tsx` | 778 | ✅ | Expanded header, section dividers, chat flow docs, transport/state caveat notes |
+| `src/screens/VaultScreen.tsx` | 710 | ✅ | Full header, section dividers, vault lifecycle docs, cache/memory caveats |
+| `src/screens/LoginScreen.tsx` | 707 | ✅ | Full header, auth-flow sections, OAuth cross-system docs |
+| `src/screens/FriendsScreen.tsx` | 697 | ✅ | Full header, section dividers, peer status/load docs, sequential-check caveat |
+| `src/screens/ProfileBuilderScreen.tsx` | 656 | ✅ | Expanded header, builder lifecycle docs, block/persistence cross-system notes |
+| `src/screens/ProfileBrowserScreen.tsx` | 647 | ✅ | Expanded header, navigation/history/docs, provider integration annotations |
+| `src/screens/SettingsScreen.tsx` | 609 | ✅ | Expanded header, settings domains documented, OAuth/listener boundary notes |
+| `src/screens/FeedScreen.tsx` | 529 | ✅ | Full header, feed orchestration sections, event/provider coupling annotations |
+| `src/screens/PeerProfileScreen.tsx` | 460 | ✅ | Header + section docs, peer fetch/pagination notes |
+| `src/screens/GroupScreen.tsx` | 432 | ✅ | Header + tab/command docs, moderation/member flow annotations |
+| `src/screens/ProfileScreen.tsx` | 298 | ✅ | Header + mode-render docs (custom profile vs wall) |
+| `src/screens/WebViewScreen.tsx` | 281 | ✅ | Header + lifecycle docs, browser command boundary annotations |
+| `src/screens/AuditScreen.tsx` | 246 | ✅ | Header + audit pipeline docs, log/memory visualization notes |
+| `src/screens/ForumScreen.tsx` | 232 | ✅ | Header + topic tree/group browse docs, recursion notes |
+| `src/screens/ProfileViewScreen.tsx` | 187 | ✅ | Header + profile fetch/render docs, sanitization boundary notes |
+| `src/screens/ImportScreen.tsx` | 135 | ✅ | Header + drag/drop/import flow docs |
 
 **Subtotal**: 16 files · 7,604 lines
 

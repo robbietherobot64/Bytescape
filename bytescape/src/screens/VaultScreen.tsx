@@ -6,6 +6,24 @@ import { Win98Box } from '../components/Win98Box';
 import { VaultFileModal } from '../components/VaultFileModal';
 import { BsFolderFill, BsFolder2Open, BsSearch, BsGrid, BsListUl, BsUpload, BsChevronRight } from 'react-icons/bs';
 
+/**
+ * PURPOSE
+ * - Present a local-first file explorer for imported and uploaded vault media/documents.
+ *
+ * HOW IT WORKS
+ * - Loads metadata and aggregate stats from Rust commands, then composes a virtual explorer UI
+ *   (tree filters, breadcrumbs, grid/list views, and detail modal navigation).
+ * - Supports two upload paths:
+ *   1) Native picker via filesystem paths for large files (`vault_upload_files_from_paths`)
+ *   2) Drag-and-drop byte IPC for small files (`vault_upload_file`, capped to reduce UI freeze risk)
+ * - Uses in-memory thumbnail URL caching with LRU eviction to balance responsiveness vs Blob memory growth.
+ *
+ * RELATED FILES
+ * - src/components/VaultFileModal.tsx (detail preview / delete / next-prev navigation)
+ * - src/types/index.ts (`VaultFile`, `VaultFileStats`, `VaultFileKind` contracts)
+ * - src-tauri/src/lib.rs and vault backend modules (Tauri commands invoked here)
+ */
+
 type ViewMode = 'grid' | 'list';
 type KindFilter = 'all' | VaultFileKind;
 
@@ -82,6 +100,9 @@ function cacheThumbUrl(id: string, url: string): void {
     thumbCache.set(id, url);
 }
 
+/**
+ * Thumbnail view with lazy Rust fetch + shared in-memory object URL cache.
+ */
 function FileThumbnail({ file }: { file: VaultFile }) {
     const [thumbUrl, setThumbUrl] = useState<string | null>(thumbCache.get(file.id) ?? null);
 
@@ -114,6 +135,14 @@ function FileThumbnail({ file }: { file: VaultFile }) {
     );
 }
 
+/**
+ * Vault explorer screen.
+ *
+ * Cross-system notes:
+ * - Engine interaction: all file CRUD/stats/thumbnail operations are Tauri `invoke()` calls.
+ * - Native integration: file picker comes from Tauri dialog plugin to avoid browser sandbox limits.
+ * - Composition boundary: modal preview/deletion flow is delegated to `VaultFileModal`.
+ */
 export function VaultScreen({ auth: _auth }: VaultScreenProps) {
     const [files, setFiles] = useState<VaultFile[]>([]);
     const [stats, setStats] = useState<VaultFileStats | null>(null);
@@ -130,6 +159,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
     // Detail modal
     const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
     const dedupeCheckedRef = useRef(false);
+
+    // ═══ Lifecycle + Engine Fetch ═══
 
     // Load on mount
     useEffect(() => {
@@ -164,6 +195,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
             console.error('Failed to load vault stats:', e);
         }
     }
+
+    // ═══ Upload Flows (Path-based + Byte-based) ═══
 
     // Upload files via native file picker → Rust reads files from disk (no IPC bloat)
     const pickAndUploadFiles = useCallback(async () => {
@@ -243,6 +276,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
         loadStats();
     }, []);
 
+    // ═══ Drag-and-Drop Interaction ═══
+
     // Drag and drop
     function handleDragOver(e: React.DragEvent) {
         e.preventDefault();
@@ -265,6 +300,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
         }
     }
 
+    // ═══ Mutations + Local Refresh ═══
+
     // Delete file
     async function deleteFile(fileId: string) {
         try {
@@ -276,6 +313,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
             console.error('Failed to delete file:', e);
         }
     }
+
+    // ═══ Explorer Model (Folders, Filters, Breadcrumbs) ═══
 
     // Virtual folder tree
     type FolderPath = { type: 'root' } | { type: 'source'; source: string } | { type: 'kind'; kind: VaultFileKind } | { type: 'tag'; tag: string };
@@ -365,6 +404,8 @@ export function VaultScreen({ auth: _auth }: VaultScreenProps) {
         const nextIndex = (selectedIndex + 1) % filteredFiles.length;
         setSelectedFile(filteredFiles[nextIndex]);
     }, [selectedFile, filteredFiles, selectedIndex]);
+
+    // ═══ Keyboard Navigation + Render Helpers ═══
 
     useEffect(() => {
         if (!selectedFile) return;

@@ -9,6 +9,26 @@ import { adaptBytescapeItem } from '../utils/adapters';
 import { useNavStore } from '../store';
 import { BsPersonFill, BsPencilFill } from 'react-icons/bs';
 
+/**
+ * PURPOSE
+ * Renders the local user's profile page, including a customizable layout mode,
+ * bio wall sections, and paginated cross-source post history.
+ *
+ * HOW IT WORKS
+ * 1) Checks whether a saved profile layout exists (`get_profile_layout`).
+ * 2) Fetches source metadata and paged posts (`list_vault_sources`, `list_vault_posts_paged`).
+ * 3) Supports source filtering and incremental pagination via local state + refs.
+ * 4) Routes to profile builder through navigation store actions.
+ *
+ * RELATED FILES
+ * - src/components/ProfileRenderer.tsx (custom profile layout renderer)
+ * - src/components/ProfileBioSections.tsx (wall tab sections)
+ * - src/components/FeedEntryCard.tsx (post card rendering)
+ * - src/utils/adapters.ts (BytescapeItem -> FeedEntry conversion)
+ * - src-tauri/src/lib.rs (profile/vault Tauri command handlers)
+ * - src/store/* (navigation state transitions)
+ */
+
 const PAGE_SIZE = 20;
 
 interface PagedResult {
@@ -24,7 +44,16 @@ interface ProfileScreenProps {
 type SourceFilter = 'all' | string;
 type ProfileTab = 'wall' | 'posts';
 
+/**
+ * Local profile screen for account identity + wall/posts views.
+ *
+ * Cross-system notes:
+ * - Command boundary: reads profile/layout and vault posts via Tauri `invoke`.
+ * - Store boundary: uses `useNavStore` to navigate into the profile-builder flow.
+ * - Rendering boundary: delegates custom layout + bio sections to dedicated components.
+ */
 export function ProfileScreen({ auth }: ProfileScreenProps) {
+    /* ════════════════════ Screen state + store wiring ════════════════════ */
     const [items, setItems] = useState<BytescapeItem[]>([]);
     const [total, setTotal] = useState(0);
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
@@ -37,6 +66,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const offsetRef = useRef(0);
     const { setScreen, setActiveSidebar } = useNavStore();
 
+    /* ════════════════════ Initialization/data loading ════════════════════ */
     // Check for custom profile layout
     useEffect(() => {
         invoke('get_profile_layout').then((layout) => {
@@ -94,6 +124,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         loadInitial();
     }, [loadInitial]);
 
+    /* ════════════════════ UI handlers/helpers ════════════════════ */
     // Reset when source filter changes
     const handleSourceFilter = (s: SourceFilter) => {
         if (s === sourceFilter) return;
@@ -113,6 +144,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     const hasMore = offsetRef.current < total;
 
+    /* ════════════════════ Render ════════════════════ */
     return (
         <div className="profile-geocities">
             {/* ═══ Hero Banner ═══ */}

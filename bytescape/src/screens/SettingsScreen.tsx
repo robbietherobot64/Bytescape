@@ -6,6 +6,30 @@ import { AuthStatus, LinkedAccount } from '../types';
 import { ThemePicker } from '../components/ThemePicker';
 import { useFeedCacheStore } from '../store';
 
+/**
+ * PURPOSE
+ * - Centralize account, identity, sync, appearance, and data-management
+ *   operations in one settings surface.
+ *
+ * HOW IT WORKS
+ * - Reads linked account state and auth state from engine commands.
+ * - Starts OAuth flows (Bluesky/Mastodon) and listens for callback events.
+ * - Exposes sync ticket creation/join actions backed by Tauri commands.
+ * - Provides destructive and export actions for local vault lifecycle.
+ *
+ * RELATED FILES
+ * - src/components/ThemePicker.tsx
+ * - src/store/index.ts (feed cache store)
+ * - src/types/index.ts (AuthStatus, LinkedAccount)
+ * - src-tauri/src/lib.rs (settings/auth/sync/export commands + events)
+ *
+ * CROSS-SYSTEM NOTES
+ * - `invoke()` calls bridge UI actions to engine-side account/sync/export logic.
+ * - `listen()` wires backend-emitted OAuth events into UI state transitions.
+ * - `useFeedCacheStore` invalidation prevents stale cross-screen data after
+ *   account disconnect.
+ */
+
 interface SettingsScreenProps {
     auth: AuthStatus | null;
     archiveCount: number;
@@ -14,7 +38,12 @@ interface SettingsScreenProps {
     onAuthUpdated?: (auth: AuthStatus) => void;
 }
 
+/**
+ * Settings screen component for identity, connected protocols, sync, theme,
+ * export, and account deletion workflows.
+ */
 export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: SettingsScreenProps) {
+    // ═══ Local UI State ═══
     const [error, setError] = useState("");
     const [status, setStatus] = useState("");
 
@@ -44,6 +73,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
 
     const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 
+    // ═══ Startup Effects & OAuth Event Wiring ═══
     useEffect(() => {
         loadLinkedAccounts();
     }, [auth]);
@@ -127,6 +157,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         };
     }, [mastodonOauthPending, onAuthUpdated]);
 
+    // ═══ Engine Data Operations (invoke + store side effects) ═══
     async function loadLinkedAccounts() {
         try {
             const accounts = await invoke<LinkedAccount[]>('list_linked_accounts');
@@ -190,6 +221,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         }
     }
 
+    // ═══ OAuth/Sync/Vault Action Handlers ═══
     async function startMastodonAuth() {
         if (!mastodonInstance) return;
         setLinkLoading(true);
@@ -322,6 +354,7 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         }
     }
 
+    // ═══ Render: Settings Sections ═══
     return (
         <div className="screen-centered" style={{ paddingBottom: 40 } as React.CSSProperties}>
             <div className="main-header">

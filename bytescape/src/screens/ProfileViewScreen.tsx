@@ -4,6 +4,26 @@ import { Win98Box } from '../components/Win98Box';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { FeedEntry } from '../types';
 
+/**
+ * PURPOSE
+ * Resolves and renders a remote/local social profile plus recent posts,
+ * with protocol-aware fallback behavior.
+ *
+ * HOW IT WORKS
+ * - Attempts unified backend resolution via `resolve_profile`.
+ * - Falls back to protocol-specific commands/cache heuristics when needed.
+ * - Loads recent posts once profile identity is available.
+ *
+ * RELATED FILES
+ * - src-tauri/src/lib.rs (Tauri command registration for invoked methods)
+ * - src/components/FeedEntryCard.tsx (post rendering)
+ * - src/types/index.ts (FeedEntry contract)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This screen directly performs backend `invoke(...)` calls instead of routing
+ *   through a dedicated provider/store hook, coupling UI lifecycle to transport.
+ */
+
 interface ProfileViewProps {
     handle: string;
     protocol?: 'bluesky' | 'activitypub' | 'mastodon';
@@ -23,12 +43,21 @@ interface ResolvedProfile {
     source: string;
 }
 
+/**
+ * Protocol-agnostic profile view with best-effort identity/post hydration.
+ */
 export function ProfileViewScreen({ handle, protocol = 'bluesky' }: ProfileViewProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Local state
+    // ═══════════════════════════════════════════════════════════════════════
     const [profile, setProfile] = useState<ResolvedProfile | null>(null);
     const [posts, setPosts] = useState<FeedEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Profile resolution effect (with protocol-specific fallback paths)
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         let isMounted = true;
         
@@ -89,6 +118,9 @@ export function ProfileViewScreen({ handle, protocol = 'bluesky' }: ProfileViewP
     }, [handle, protocol]);
 
     // Fetch posts once profile is resolved
+    // ═══════════════════════════════════════════════════════════════════════
+    // Posts fetch effect
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         if (!profile?.did) return;
         let isMounted = true;
@@ -112,7 +144,10 @@ export function ProfileViewScreen({ handle, protocol = 'bluesky' }: ProfileViewP
     }, [profile?.did, profile?.source]);
 
     const isBluesky = protocol === 'bluesky';
-    
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
             <Win98Box title={`Profile: ${handle}`}>

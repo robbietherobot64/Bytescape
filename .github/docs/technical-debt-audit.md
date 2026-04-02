@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–10 (88 source files · ~35,280 lines · Rust + TypeScript)
+> **Scope**: Batches 1–11 (104 source files · ~42,900 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 10 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, **Frontend Utils**) uncovered **268 issues** across 88 files:
+A systematic audit of the first 11 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, **Frontend Screens**) uncovered **302 issues** across 104 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 55 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 130 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 83 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 63 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 146 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 93 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -28,6 +28,7 @@ The top systemic concerns are:
 7. **Frontend foundation sprawl** — `store/index.ts` bundles 6 unrelated Zustand stores in one file, `App.tsx` has 40+ line duplicated chat-open callbacks, `DataProvider.ts` is a 100+ method monolithic interface with 6 untyped returns. The provider pattern requires 3-file changes for every new backend command.
 8. **Hooks doing orchestration work** — `useUnifiedFeed.ts` and `useGroupsData.ts` both perform heavy orchestration, fallback logic, and backend transport concerns that should live in service/provider layers. This blurs boundaries between view hooks and domain logic.
 9. **Utility layer contract drift** — frontend utility modules now mix pure helpers with transport-bound logic (`prefetchBlobUrls` -> `invoke`) and contradictory runtime flags (`openInApp`). This erodes the “utils are pure/reusable” boundary and causes coupling between presentation and backend internals.
+10. **Screen-layer orchestration overload** — multiple top-level screens (`FeedScreen`, `ChatScreen`, `SettingsScreen`, `ProfileBuilderScreen`, `WebViewScreen`) combine transport calls, state orchestration, and rendering in monolithic components, increasing coupling and making defects harder to isolate.
 
 ---
 
@@ -650,6 +651,64 @@ Batch 10 includes the frontend utility layer: rich text parsing, markdown conver
 
 ---
 
+## Batch 11 — Frontend Screens
+
+**Scope:** 16 files · ~7,604 lines in `src/screens/`
+**Findings:** 34 issues (8 HIGH · 16 MEDIUM · 10 LOW)
+
+This batch covers top-level user-facing screens. The dominant pattern is **screen-level orchestration overload**: multiple screens embed transport calls, state machines, and rendering concerns in single large components.
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 11.1 | `ChatScreen.tsx` | **Monolithic component with mixed domains** — conversation loading, protocol branching, send pipeline, classification, and rendering all in one screen | High regression risk; difficult to isolate behavior for tests/fixes |
+| 11.2 | `LoginScreen.tsx` | **Mastodon pending-auth flow state inconsistency** — pending branch logic and state transitions are partially disconnected | User can get stuck in confusing auth states; flow reliability risk |
+| 11.3 | `ProfileBuilderScreen.tsx` | **Editor bootstrap and profile runtime tightly coupled** — GrapesJS setup, block registry, and persistence are all inline in one screen | Hard to evolve profile builder safely; large blast radius for changes |
+| 11.4 | `ProfileBrowserScreen.tsx` | **Routing/history/network/render concerns merged in one screen** | Navigation bugs and data bugs become intertwined; reduced maintainability |
+| 11.5 | `SettingsScreen.tsx` | **God-screen behavior** — account linking, recovery, sync, export, destructive actions, and appearance settings in one component | Very high cognitive load and difficult QA matrix |
+| 11.6 | `FeedScreen.tsx` | **High orchestration density** — compose interactions, filters, refresh, side panels, and feed coordination in one top-level component | Performance and correctness regressions likely during feature additions |
+| 11.7 | `WebViewScreen.tsx` | **Complex lifecycle orchestration with multiple effects/refs/cancellation paths** | Fragile under tab switches and async race conditions |
+| 11.8 | `ProfileViewScreen.tsx` | **Unsanitized HTML rendering path risk (`dangerouslySetInnerHTML`)** | Potential XSS if upstream sanitization assumptions fail |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 11.9 | `ChatScreen.tsx` | **Effect dependency suppression (`exhaustive-deps` bypass)** around convo synchronization | Stale closure/state drift risks in message flow |
+| 11.10 | `VaultScreen.tsx` | **Local caching/lifecycle complexity** for thumbnails and object URLs | Long-session memory behavior is harder to reason about |
+| 11.11 | `VaultScreen.tsx` | **Repeated date/size formatting in render paths** | Minor render overhead and duplicated presentation logic |
+| 11.12 | `LoginScreen.tsx` | **Multi-flow auth UI packed into one component** (local, Bluesky OAuth, Mastodon OAuth) | Hard to test each auth path independently |
+| 11.13 | `FriendsScreen.tsx` | **Sequential peer connectivity checks (`await` loop)** | Poor scaling with many peers; UI freshness lag |
+| 11.14 | `FriendsScreen.tsx` | **Large inline style and branching density** | Reduced composability and harder theming refactors |
+| 11.15 | `ProfileBuilderScreen.tsx` | **Hardcoded block templates/styles inline** | Theme/style drift and maintenance burden |
+| 11.16 | `ProfileBrowserScreen.tsx` | **Ad-hoc identity parsing and URL history semantics** | Inconsistent navigation behavior across profile types |
+| 11.17 | `SettingsScreen.tsx` | **Provider/command fallback branching inside view layer** | Logic duplication and harder error handling consistency |
+| 11.18 | `SettingsScreen.tsx` | **OAuth listener setup duplicated by provider type** | Repetition invites auth flow drift |
+| 11.19 | `FeedScreen.tsx` | **Global custom event coupling for hashtag navigation** | Hidden dependencies between components and screens |
+| 11.20 | `PeerProfileScreen.tsx` | **Transport + pagination + render concerns mixed** | Hard to test and optimize independently |
+| 11.21 | `PeerProfileScreen.tsx` | **Ad-hoc extension of feed entry error typing** | Weakens response contract clarity |
+| 11.22 | `GroupScreen.tsx` | **Command-heavy moderation/membership logic embedded in screen** | Hard to extract reusable group-domain actions |
+| 11.23 | `WebViewScreen.tsx` | **Raw command string orchestration across multiple effects** | Missing typed abstraction raises command drift risk |
+| 11.24 | `ForumScreen.tsx` | **Recursive topic rendering without virtualization strategy** | Performance risk on larger topic trees |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 11.25 | `ChatScreen.tsx` | **Mastodon DM placeholder path still present in production UI** | Incomplete user path signaling |
+| 11.26 | `VaultScreen.tsx` | **`auth` prop accepted but minimally used** | Prop contract drift/noise |
+| 11.27 | `LoginScreen.tsx` | **OAuth listener timeout/cleanup patterns repeated** | Refactor opportunity for shared helper |
+| 11.28 | `ProfileBrowserScreen.tsx` | **Heavy inline style objects in render** | Styling duplication and visual noise |
+| 11.29 | `GroupScreen.tsx` | **Weak tab typing (`string`-style state usage)** | Potential drift from intended tab union constraints |
+| 11.30 | `ProfileScreen.tsx` | **Unused or weakly used props in component contract** | Interface drift over time |
+| 11.31 | `ProfileScreen.tsx` | **Mixed mode rendering (custom profile vs wall) in one component body** | Readability and change-safety cost |
+| 11.32 | `AuditScreen.tsx` | **Inline style-heavy terminal layout composition** | Reduced reuse and maintainability |
+| 11.33 | `ForumScreen.tsx` | **localStorage coupling for UI preferences in screen layer** | Portability/testing friction |
+| 11.34 | `ImportScreen.tsx` | **Native drag-drop event wiring embedded in component** | Reuse/testability limitations |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -743,4 +802,20 @@ Batch 10 includes the frontend utility layer: rich text parsing, markdown conver
 | `src/utils/mediaServer.ts` | 0 | 1 | 0 | 1 |
 | `src/utils/testUtils.tsx` | 0 | 0 | 1 | 1 |
 | `src/utils/date.ts` | 0 | 0 | 0 | 0 |
-| **TOTAL** | **55** | **130** | **83** | **268** |
+| `src/screens/ChatScreen.tsx` | 1 | 1 | 1 | 3 |
+| `src/screens/VaultScreen.tsx` | 0 | 2 | 1 | 3 |
+| `src/screens/LoginScreen.tsx` | 1 | 1 | 1 | 3 |
+| `src/screens/FriendsScreen.tsx` | 0 | 2 | 1 | 3 |
+| `src/screens/ProfileBuilderScreen.tsx` | 1 | 1 | 0 | 2 |
+| `src/screens/ProfileBrowserScreen.tsx` | 1 | 1 | 1 | 3 |
+| `src/screens/SettingsScreen.tsx` | 1 | 2 | 0 | 3 |
+| `src/screens/FeedScreen.tsx` | 1 | 2 | 0 | 3 |
+| `src/screens/PeerProfileScreen.tsx` | 0 | 2 | 1 | 3 |
+| `src/screens/GroupScreen.tsx` | 0 | 1 | 1 | 2 |
+| `src/screens/ProfileScreen.tsx` | 0 | 0 | 2 | 2 |
+| `src/screens/WebViewScreen.tsx` | 1 | 2 | 0 | 3 |
+| `src/screens/AuditScreen.tsx` | 0 | 0 | 1 | 1 |
+| `src/screens/ForumScreen.tsx` | 0 | 1 | 1 | 2 |
+| `src/screens/ProfileViewScreen.tsx` | 1 | 0 | 0 | 1 |
+| `src/screens/ImportScreen.tsx` | 0 | 1 | 0 | 1 |
+| **TOTAL** | **63** | **146** | **93** | **302** |

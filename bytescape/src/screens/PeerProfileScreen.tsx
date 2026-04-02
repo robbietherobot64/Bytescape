@@ -6,6 +6,26 @@ import { adaptBytescapeItem } from '../utils/adapters';
 import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import { useNavStore } from '../store';
 
+/**
+ * PURPOSE
+ * Renders a peer's profile and shared feed over P2P, including profile metadata,
+ * source filtering, and incremental paging.
+ *
+ * HOW IT WORKS
+ * 1) Requests peer profile/feed slices from Rust via `request_peer_feed`.
+ * 2) Pre-downloads referenced media blobs via `download_peer_blob` so existing
+ *    blob rendering pipelines can resolve media locally.
+ * 3) Adapts `BytescapeItem` records into `FeedEntry` for `VirtualizedFeedList`.
+ * 4) Uses local UI state + refs for pagination, source filter, and connectivity.
+ *
+ * RELATED FILES
+ * - src-tauri/src/lib.rs (Tauri command handlers for peer feed/blob download)
+ * - src/components/feed/VirtualizedFeedList.tsx (virtualized feed rendering)
+ * - src/utils/adapters.ts (BytescapeItem -> FeedEntry adaptation)
+ * - src/utils/VideoPlaybackManager.ts (global video pipeline cleanup)
+ * - src/store/* (navigation store for screen/sidebar transitions)
+ */
+
 const PAGE_SIZE = 20;
 /** Hard cap on accumulated peer profile entries to prevent unbounded memory growth. */
 const MAX_PEER_ENTRIES = 200;
@@ -54,9 +74,18 @@ interface PeerProfileScreenProps {
     initialPeerName?: string;
 }
 
+/**
+ * Peer profile screen for remote identities discovered in the social graph.
+ *
+ * Cross-system notes:
+ * - Invokes Rust commands (`request_peer_feed`, `download_peer_blob`) for data.
+ * - Uses `useNavStore` to move between app-level screens/sidebar contexts.
+ * - Coordinates with blob/media utilities rather than rendering binary payloads directly.
+ */
 export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreenProps) {
     const { setScreen, setActiveSidebar } = useNavStore();
 
+    /* ════════════════════ Profile + feed state ════════════════════ */
     // Profile state
     const [peerUsername, setPeerUsername] = useState<string>(initialPeerName || '');
     const [peerDid, setPeerDid] = useState<string>('');
@@ -92,6 +121,7 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
         [items]
     );
 
+    /* ════════════════════ Data loading/invoke boundary ════════════════════ */
     const loadFeed = useCallback(async (offset: number, append: boolean) => {
         if (!append) setLoading(true);
         else setLoadingMore(true);
@@ -163,6 +193,7 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
         loadFeed(0, false);
     }, [loadFeed]);
 
+    /* ════════════════════ UI handlers/navigation ════════════════════ */
     const handleLoadMore = () => {
         if (!loadingMore && offsetRef.current < totalCount) {
             loadFeed(offsetRef.current, true);
@@ -205,6 +236,7 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
 
     const hasMore = offsetRef.current < totalCount && items.length < MAX_PEER_ENTRIES;
 
+    /* ════════════════════ Render ════════════════════ */
     return (
         <div ref={scrollContainerRef} style={{ height: '100%', overflow: 'auto', background: 'var(--bg-primary)' }}>
             <div style={{ maxWidth: 700, margin: '0 auto', padding: '16px' }}>

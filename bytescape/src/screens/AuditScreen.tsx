@@ -2,6 +2,27 @@ import { useMemo, useRef, useEffect } from 'react';
 import { ParseProgress, ParseResult, SidebarItem } from '../types';
 import './AuditScreen.css';
 
+/**
+ * PURPOSE
+ * Renders the post-parse audit/import experience as three terminal-like panels:
+ * import logs, memory counts, and detected tracker summary.
+ *
+ * HOW IT WORKS
+ * - Consumes parse progress/result and derives display totals for memories + trackers.
+ * - Auto-scrolls the log terminal when new entries arrive.
+ * - Exposes final actions to import parsed data and navigate after completion.
+ *
+ * RELATED FILES
+ * - src/screens/ImportScreen.tsx (entry point where import flow is initiated)
+ * - src/types/index.ts (ParseProgress, ParseResult, SidebarItem shapes)
+ * - src/App.tsx (orchestrates screen routing and handler wiring)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This screen is presentation-only; state mutations are delegated to parent handlers
+ *   (e.g., `onShred()`, `onNavigate()`). Backend `invoke(...)` calls and store/provider
+ *   updates occur upstream and are projected into this component via props.
+ */
+
 interface AuditScreenProps {
     progress: ParseProgress | null;
     parseResult: ParseResult | null;
@@ -13,6 +34,9 @@ interface AuditScreenProps {
     onNavigate: (item: SidebarItem) => void;
 }
 
+/**
+ * Displays import audit telemetry and completion actions.
+ */
 export function AuditScreen({
     progress,
     parseResult,
@@ -23,6 +47,9 @@ export function AuditScreen({
     onShred,
     onNavigate
 }: AuditScreenProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Derived state and refs
+    // ═══════════════════════════════════════════════════════════════════════
     const terminalRef = useRef<HTMLDivElement>(null);
     const memoriesRef = useRef<HTMLDivElement>(null);
     const trackersRef = useRef<HTMLDivElement>(null);
@@ -76,6 +103,9 @@ export function AuditScreen({
         padding: '8px 10px',
     };
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <>
             <div className="audit-screen" style={{ padding: '0 16px 20px' } as React.CSSProperties}>

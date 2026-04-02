@@ -1,15 +1,26 @@
 /**
- * ProfileBrowserScreen (B3.1 + B3.2)
+ * PURPOSE
+ * - Provide a browser-like UX for discovering peers and visiting their profile
+ *   feed views over P2P.
  *
- * A browser-like top-level screen for discovering, visiting, and traversing
- * peer profiles. Features:
+ * HOW IT WORKS
+ * - Loads the peer directory from the engine (`list_peers`).
+ * - Maintains local back/forward history and address bar input.
+ * - Requests peer profile/feed data via `request_peer_feed` with pagination.
+ * - Opportunistically fetches peer media blobs for hydrated feed rendering.
+ * - Syncs Omnibar location through `useLocationStore` for URL-style navigation.
  *
- * - Address bar showing the current peer's node ID / handle
- * - Peer directory listing from the friend list
- * - Sandboxed iframe rendering for peers who have custom profile layouts (B3.2)
- * - Falls back to the inline PeerProfileScreen content for peers without custom layouts
- * - Reads <meta name="bytescape:did"> tags from rendered profiles for action buttons
- * - Back/forward navigation through visited peers
+ * RELATED FILES
+ * - src/screens/FriendsScreen.tsx
+ * - src/components/FeedEntryCard.tsx
+ * - src/utils/adapters.ts
+ * - src/hooks/useLocation.ts
+ * - src-tauri/src/lib.rs (peer-related Tauri commands)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Uses `invoke()` for engine-side peer directory/feed/blob requests.
+ * - Uses `usePeerStore` presence state for online/offline indicators.
+ * - Uses `useNavStore` and `useLocationStore` to coordinate app-level routing.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -30,7 +41,12 @@ interface VisitedPeer {
     name: string;
 }
 
+/**
+ * Browser-style peer profile surface with local history navigation and
+ * incremental P2P feed loading.
+ */
 export function ProfileBrowserScreen() {
+    // ═══ Store Integration + Navigation State ═══
     const { setScreen, setActiveSidebar } = useNavStore();
     const { peerStatuses } = usePeerStore();
 
@@ -53,6 +69,7 @@ export function ProfileBrowserScreen() {
     const [connected, setConnected] = useState(false);
     const offsetRef = useRef(0);
 
+    // ═══ Data Bootstrap & Peer Navigation Flow ═══
     // Load peer list on mount
     useEffect(() => {
         setLoadingPeers(true);
@@ -220,7 +237,8 @@ export function ProfileBrowserScreen() {
     const truncateId = (id: string, len = 8) =>
         id.length > len * 2 ? `${id.slice(0, len)}…${id.slice(-len)}` : id;
 
-    // ─── Address bar chrome ───
+    // ═══ Render Helpers: Address Bar / Directory / Peer View ═══
+    // Address bar chrome
     const renderAddressBar = () => (
         <div style={{
             display: 'flex',
@@ -330,7 +348,7 @@ export function ProfileBrowserScreen() {
         </div>
     );
 
-    // ─── Peer directory (home view) ───
+    // Peer directory (home view)
     const renderPeerDirectory = () => (
         <div style={{ padding: 16, maxWidth: 700, margin: '0 auto' } as React.CSSProperties}>
             <Win98Box variant="window" title="🌐 Profile Browser — Peer Directory">
@@ -476,7 +494,7 @@ export function ProfileBrowserScreen() {
         </div>
     );
 
-    // ─── Peer profile view ───
+    // Peer profile view
     const renderPeerView = () => (
         <div style={{ padding: 16, maxWidth: 700, margin: '0 auto' } as React.CSSProperties}>
             {/* Profile header */}
@@ -618,6 +636,7 @@ export function ProfileBrowserScreen() {
         </div>
     );
 
+    // ═══ Root Render ═══
     return (
         <div style={{
             display: 'flex',

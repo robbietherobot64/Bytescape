@@ -4,12 +4,39 @@ import { useTopicTree, useGroupSearch, isGroupJoined, isGroupPending } from '../
 import { TopicNode, GroupSummary } from '../types';
 import './ForumScreen.css';
 
+/**
+ * PURPOSE
+ * Provides a navigable forum directory with topic hierarchy, group discovery,
+ * and topic subscription controls.
+ *
+ * HOW IT WORKS
+ * - Reads topic tree and topic subscription actions from `useTopicTree()`.
+ * - Runs query-driven group search via `useGroupSearch()`.
+ * - Persists expanded topic IDs in localStorage for stable navigation state.
+ * - Renders recursive topic nodes and group rows with membership badges.
+ *
+ * RELATED FILES
+ * - src/hooks/useGroupsData.ts (topic tree + search data layer)
+ * - src/types/index.ts (TopicNode / GroupSummary contracts)
+ * - src/screens/GroupScreen.tsx (group detail view opened from this screen)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Provider/store/invoke interactions are encapsulated inside `useGroupsData`.
+ *   This screen delegates network/state effects to hooks and remains a view layer.
+ */
+
 interface ForumScreenProps {
     onOpenGroup: (groupId: string) => void;
     onCreateGroup: () => void;
 }
 
+/**
+ * Top-level forum browser entry screen.
+ */
 export function ForumScreen({ onOpenGroup, onCreateGroup }: ForumScreenProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Data hooks and persisted UI state
+    // ═══════════════════════════════════════════════════════════════════════
     const { topics, loading, subscribeTopic, unsubscribeTopic } = useTopicTree();
     const { results: searchResults, searching, search } = useGroupSearch();
     const [searchQuery, setSearchQuery] = useState('');
@@ -48,6 +75,9 @@ export function ForumScreen({ onOpenGroup, onCreateGroup }: ForumScreenProps) {
         }
     }, [subscribeTopic, unsubscribeTopic]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <div className="forum-screen">
             <div className="forum-header">
@@ -131,6 +161,9 @@ interface TopicTreeNodeProps {
     onOpenGroup: (groupId: string) => void;
 }
 
+/**
+ * Recursive topic node renderer for hierarchical forum taxonomy.
+ */
 function TopicTreeNode({ topic, depth, expanded, onToggleExpand, onSubscribeToggle, onOpenGroup }: TopicTreeNodeProps) {
     const hasChildren = topic.children.length > 0 || topic.groups.length > 0;
     const isExpanded = expanded.has(topic.id);
@@ -203,6 +236,9 @@ interface GroupListItemProps {
     onOpen: (groupId: string) => void;
 }
 
+/**
+ * Group row renderer used by both search results and expanded topic branches.
+ */
 function GroupListItem({ group, depth = 0, onOpen }: GroupListItemProps) {
     const joined = isGroupJoined(group.group_id);
     const pending = isGroupPending(group.group_id);

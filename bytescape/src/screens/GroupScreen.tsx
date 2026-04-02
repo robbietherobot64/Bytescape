@@ -6,6 +6,23 @@ import { FeedItemRenderer } from '../components/lenses/FeedItemRenderer';
 import { GroupMember, MemberRole } from '../types';
 import './GroupScreen.css';
 
+/**
+ * PURPOSE
+ * Displays a forum/group detail experience with tabbed content for posts,
+ * group metadata, and membership management.
+ *
+ * HOW IT WORKS
+ * 1) Reads group state from `useGroupDetail(groupId)` (group, members, posts, role).
+ * 2) Executes moderation/membership mutations through Rust `invoke(...)` commands.
+ * 3) Re-renders tab panels from in-memory hook data and refreshes after mutations.
+ *
+ * RELATED FILES
+ * - src/hooks/useGroupsData.ts (group detail data provider hook)
+ * - src/components/lenses/FeedItemRenderer.tsx (post rendering in Posts tab)
+ * - src/types/index.ts (GroupMember, MemberRole contract)
+ * - src-tauri/src/lib.rs (group/member Tauri commands)
+ */
+
 interface GroupScreenProps {
     groupId: string;
     onBack: () => void;
@@ -13,6 +30,14 @@ interface GroupScreenProps {
 
 type GroupTab = 'posts' | 'about' | 'members';
 
+/**
+ * Group detail screen with member-aware controls and moderation affordances.
+ *
+ * Cross-system notes:
+ * - Provider boundary: `useGroupDetail` centralizes fetch/refresh logic.
+ * - Command boundary: child tabs call Rust commands with `invoke` for mutations.
+ * - UI consistency relies on explicit `refresh()` after each mutation.
+ */
 export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
     const { group, members, posts, loading, membership, myRole, joinGroup, leaveGroup, refresh } = useGroupDetail(groupId);
     const [activeTab, setActiveTab] = useState<GroupTab>('posts');
@@ -48,13 +73,14 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
 
     return (
         <div className="group-screen">
+            {/* ════════════════════ Top navigation ════════════════════ */}
             <div className="group-back-bar">
                 <button className="group-back-btn" onClick={onBack} aria-label="Back to Forums">
                     <BsArrowLeft /> Back to Forums
                 </button>
             </div>
 
-            {/* Header */}
+            {/* ════════════════════ Group header/meta/actions ════════════════════ */}
             <div className="group-header">
                 {group.banner_blob && (
                     <div className="group-banner" style={{ backgroundImage: `url(${group.banner_blob})` }} />
@@ -93,7 +119,7 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                 </div>
             </div>
 
-            {/* Tabs */}
+            {/* ════════════════════ Tab switcher ════════════════════ */}
             <div className="group-tabs">
                 {(['posts', 'about', 'members'] as GroupTab[]).map(tab => (
                     <button
@@ -111,7 +137,7 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
                 ))}
             </div>
 
-            {/* Tab content */}
+            {/* ════════════════════ Active tab panel ════════════════════ */}
             <div className="group-tab-content">
                 {activeTab === 'posts' && (
                     <GroupPostsTab
@@ -140,7 +166,7 @@ export function GroupScreen({ groupId, onBack }: GroupScreenProps) {
     );
 }
 
-// ─── Posts Tab ───
+/* ════════════════════ Posts tab section ════════════════════ */
 
 interface GroupPostsTabProps {
     groupId: string;
@@ -150,6 +176,13 @@ interface GroupPostsTabProps {
     onRefresh: () => void;
 }
 
+/**
+ * Posts tab for group content and moderation controls.
+ *
+ * Cross-system notes:
+ * - Uses `invoke` commands (`pin_group_post`, `unpin_group_post`, `remove_group_post`).
+ * - Depends on parent-provided `onRefresh` to synchronize with provider state.
+ */
 function GroupPostsTab({ groupId, posts, membership, isModerator, onRefresh }: GroupPostsTabProps) {
     const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
 
@@ -237,8 +270,11 @@ function GroupPostsTab({ groupId, posts, membership, isModerator, onRefresh }: G
     );
 }
 
-// ─── About Tab ───
+/* ════════════════════ About tab section ════════════════════ */
 
+/**
+ * Read-only metadata tab for group description and rules.
+ */
 function GroupAboutTab({ description, rules }: { description: string; rules: string | null }) {
     return (
         <div className="group-about-tab">
@@ -260,7 +296,7 @@ function GroupAboutTab({ description, rules }: { description: string; rules: str
     );
 }
 
-// ─── Members Tab ───
+/* ════════════════════ Members tab section ════════════════════ */
 
 interface GroupMembersTabProps {
     groupId: string;
@@ -271,6 +307,13 @@ interface GroupMembersTabProps {
     onRefresh: () => void;
 }
 
+/**
+ * Membership administration tab with pending queue, role actions, and invitations.
+ *
+ * Cross-system notes:
+ * - Invokes Rust membership commands (`approve_member`, `ban_member`, etc.).
+ * - Role/visibility gates are enforced in UI, but server-side authorization is still required.
+ */
 function GroupMembersTab({ groupId, members, isModerator, isOwner, visibility, onRefresh }: GroupMembersTabProps) {
     const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
     const [inviteInput, setInviteInput] = useState('');

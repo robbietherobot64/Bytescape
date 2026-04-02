@@ -5,11 +5,35 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { AuthStatus, IdentityRecoveryStartResult, IdentityRecoveryVerifyResult, IdentityRecoveryFinalizeResult } from '../types';
 import { Win98Box } from '../components/Win98Box';
 
+/**
+ * PURPOSE
+ * - Orchestrate Bytescape entry flows: Bluesky auth, Mastodon auth, archive-only import, local vault creation,
+ *   and escrow-based identity recovery.
+ *
+ * HOW IT WORKS
+ * - Maintains a mode-driven state machine for top-level login/recovery branches.
+ * - Starts OAuth/recovery commands through Rust via Tauri `invoke()` and listens for async completion events.
+ * - Delegates post-auth routing/session handoff to parent callbacks (`onLoginSuccess`, `onNavigateImport`).
+ *
+ * RELATED FILES
+ * - src/App.tsx (parent screen/router that consumes login callbacks)
+ * - src/types/index.ts (`AuthStatus` + identity recovery result contracts)
+ * - src-tauri/src/lib.rs / auth modules (OAuth + identity commands/events emitted to this screen)
+ */
+
 interface LoginScreenProps {
     onLoginSuccess: (auth: AuthStatus, shouldImport: boolean) => void;
     onNavigateImport: () => void;
 }
 
+/**
+ * Authentication and recovery entry screen.
+ *
+ * Cross-system notes:
+ * - Engine interaction: command/event bridge relies on `invoke()` + `listen()` for OAuth and recovery lifecycle.
+ * - App composition interaction: success path returns `AuthStatus` to parent, which updates global app state.
+ * - External system interaction: opens provider authorization URLs in system browser through opener plugin.
+ */
 export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenProps) {
     const [mode, setMode] = useState<'welcome' | 'connect-bluesky' | 'connect-mastodon' | 'import-only' | 'local-vault' | 'recover'>('welcome');
     const [identifier, setIdentifier] = useState("");
@@ -31,6 +55,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
     const [recoveryCode, setRecoveryCode] = useState('');
     const [verifiedDid, setVerifiedDid] = useState('');
     const [verifiedPubkey, setVerifiedPubkey] = useState('');
+
+    // ═══ OAuth Event Wiring (Bluesky) ═══
 
     // Listen for OAuth completion/error events from the backend
     useEffect(() => {
@@ -69,6 +95,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         };
     }, [oauthPending, importOnLogin, onLoginSuccess]);
 
+    // ═══ OAuth Event Wiring (Mastodon) ═══
+
     // Listen for Mastodon OAuth callback events from the backend
     useEffect(() => {
         let unlistenComplete: UnlistenFn | undefined;
@@ -104,6 +132,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
             unlistenError?.();
         };
     }, [mastodonOauthPending, importOnLogin, onLoginSuccess]);
+
+    // ═══ Primary Auth Flows ═══
 
     async function handleBlueskyOAuth() {
         if (!identifier.trim()) {
@@ -212,6 +242,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         }
     }
 
+    // ═══ Recovery Flow (Escrow Bundle → Code Verify → Finalize) ═══
+
     async function handleRecoveryStart() {
         const trimmed = bundleInput.trim();
         if (!trimmed) {
@@ -293,6 +325,8 @@ export function LoginScreen({ onLoginSuccess, onNavigateImport }: LoginScreenPro
         setVerifiedPubkey('');
         setError('');
     }
+
+    // ═══ Mode-Driven UI Composition ═══
 
     return (
         <div className="app-container">

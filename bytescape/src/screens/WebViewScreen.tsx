@@ -4,6 +4,22 @@ import { listen } from '@tauri-apps/api/event';
 import { useNavStore, useBrowserStore } from '../store';
 import { openInApp } from '../utils/openInApp';
 
+/**
+ * PURPOSE
+ * Hosts the in-app browser tab shell that coordinates a native OS webview from React.
+ *
+ * HOW IT WORKS
+ * 1) Computes container bounds from layout and asks Rust to create/show/hide/close.
+ * 2) Syncs active URL/loading state through `useBrowserStore`.
+ * 3) Subscribes to browser events (URL/title/new-tab) and forwards updates to stores/navigation.
+ * 4) Uses lifecycle guards to avoid duplicate side effects in React StrictMode.
+ *
+ * RELATED FILES
+ * - src/store/* (browser + nav stores)
+ * - src/utils/openInApp.ts (new-tab routing into app browser tabs)
+ * - src-tauri/src/lib.rs (browser_* Tauri command handlers + event emitters)
+ */
+
 interface WebViewScreenProps {
     url: string;
     title?: string;
@@ -40,6 +56,7 @@ function getWebviewBounds(el: HTMLElement | null): { x: number; y: number; width
  * The webview label is derived from `tabId` so it's stable across remounts.
  */
 export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewScreenProps) {
+    /* ════════════════════ Instance identity + shared state ════════════════════ */
     const containerRef = useRef<HTMLDivElement>(null);
     // Stable label derived from tabId — survives StrictMode remount
     const label = `wv-${tabId}`;
@@ -50,7 +67,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     const [error, setError] = useState<string | null>(null);
     const { setActiveLabel, setCurrentUrl } = useBrowserStore();
 
-    // ─── Create on mount, destroy on unmount ───
+    /* ════════════════════ Create on mount / destroy on unmount ════════════════════ */
     // Uses a local `cancelled` flag so stale StrictMode callbacks are no-ops.
     useEffect(() => {
         let cancelled = false;
@@ -124,7 +141,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ─── Show/hide when tab activation changes ───
+    /* ════════════════════ Activation show/hide lifecycle ════════════════════ */
     useEffect(() => {
         if (!createdRef.current) {
             // Webview not created yet. If we just became active, try creating now.
@@ -170,7 +187,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isActive]);
 
-    // ─── Track resize ───
+    /* ════════════════════ Resize tracking -> native bounds sync ════════════════════ */
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -187,7 +204,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ─── Browser store sync ───
+    /* ════════════════════ Browser store synchronization ════════════════════ */
     useEffect(() => {
         if (isActive && createdRef.current) {
             setActiveLabel(label);
@@ -198,7 +215,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
         }
     }, [isActive, url, label, setActiveLabel, setCurrentUrl]);
 
-    // ─── Event listeners ───
+    /* ════════════════════ Event bridge subscriptions ════════════════════ */
     useEffect(() => {
         let dead = false;
         const unsubs: (() => void)[] = [];
@@ -222,7 +239,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
         return () => { dead = true; unsubs.forEach(fn => fn()); };
     }, [label, tabId]);
 
-    // ─── Retry handler ───
+    /* ════════════════════ Retry/error recovery ════════════════════ */
     const handleRetry = useCallback(() => {
         setError(null);
         if (createdRef.current) {
@@ -236,7 +253,7 @@ export function WebViewScreen({ url, title: _title, isActive, tabId }: WebViewSc
             .catch(err => setError(String(err)));
     }, [label, url]);
 
-    // ─── Render ───
+    /* ════════════════════ Render shell + error overlay ════════════════════ */
     return (
         <div ref={containerRef} className="webview-container" style={{ position: 'relative' } as React.CSSProperties}>
             {error && (

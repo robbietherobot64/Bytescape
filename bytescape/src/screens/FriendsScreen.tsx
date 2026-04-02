@@ -6,12 +6,37 @@ import { AuthStatus, ProfileView, MyPeerInfo, PeerInfo, PeerConnectResult } from
 import { usePeerStore, useNavStore } from '../store';
 import { openProfile } from '../utils/openInApp';
 
+/**
+ * PURPOSE
+ * - Provide social relationship browsing across two systems: Bluesky graph (followers/following)
+ *   and Bytescape P2P peer graph.
+ *
+ * HOW IT WORKS
+ * - Top-level subview switch toggles between Bluesky follow lists and peer-management tools.
+ * - P2P branch reads/writes connectivity status through `usePeerStore` and backend commands/events.
+ * - Bluesky branch fetches relationship lists via Rust commands and supports profile deep-links + chat handoff.
+ *
+ * RELATED FILES
+ * - src/store/index.ts (`usePeerStore`, `useNavStore` integration points)
+ * - src/screens/ChatScreen.tsx (chat handoff target via `onOpenChat`)
+ * - src/utils/openInApp.ts (in-app profile deep linking)
+ * - src-tauri/src/lib.rs (list/connect peer + follows/followers commands and peer events)
+ */
+
 interface FriendsScreenProps {
     auth: AuthStatus | null;
     onOpenChat?: (peerNodeId: string, peerName: string) => void;
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
+/**
+ * Friends and peers screen.
+ *
+ * Cross-system notes:
+ * - Store interaction: `usePeerStore` contributes background peer statuses merged with local checking state.
+ * - Engine interaction: `invoke()` and `listen()` bridge to Rust for social graph fetch and real-time peer updates.
+ * - Navigation interaction: callbacks (`onOpenChat`, `onViewProfile`) let parent shell route into other screens/tabs.
+ */
 export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreenProps) {
     const [subview, setSubview] = useState<'following' | 'followers' | 'peers'>('following');
 
@@ -55,6 +80,10 @@ export function FriendsScreen({ auth, onOpenChat, onViewProfile }: FriendsScreen
 
 // ─── P2P Peers View ───
 
+/**
+ * P2P management panel: identity, peer CRUD, connectivity checks, and profile/chat launch actions.
+ */
+
 function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: string, peerName: string) => void; onViewProfile?: (peerNodeId: string, peerName?: string) => void }) {
     const globalStatuses = usePeerStore(s => s.peerStatuses);
     const [myInfo, setMyInfo] = useState<MyPeerInfo | null>(null);
@@ -69,6 +98,8 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
     const [addError, setAddError] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
     const [copied, setCopied] = useState(false);
+
+    // ═══ Engine Fetch + Event Sync ═══
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -110,6 +141,8 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
         );
         return () => { unlisten.then(fn => fn()); };
     }, [loadData]);
+
+    // ═══ Peer Management Actions ═══
 
     const handleCopyNodeId = async () => {
         if (!myInfo) return;
@@ -189,6 +222,8 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
             await handleCheckConnectivity(peer.node_id);
         }
     };
+
+    // ═══ Status Composition + Presentation Helpers ═══
 
     // Merge global background statuses with local interactive statuses.
     // Local statuses take priority (they include 'checking' state).
@@ -549,11 +584,17 @@ function PeersView({ onOpenChat, onViewProfile }: { onOpenChat?: (peerNodeId: st
 
 // ─── Bluesky Follows View (existing functionality) ───
 
+/**
+ * Bluesky follows/followers panel with chat/profile actions.
+ */
+
 function BlueskyFollowsView({ auth, subview, onOpenChat }: { auth: AuthStatus | null; subview: 'following' | 'followers'; onOpenChat?: (peerNodeId: string, peerName: string) => void }) {
     const [people, setPeople] = useState<ProfileView[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [chattingWith, setChattingWith] = useState<string | null>(null);
+
+    // ═══ Social Graph Fetch + Action Handoff ═══
 
     useEffect(() => {
         if (auth) fetchPeople();

@@ -9,6 +9,23 @@ import { Win98Box } from '../components/Win98Box';
 import { BsPersonFill, BsSearch, BsArrowDown, BsChatDotsFill } from 'react-icons/bs';
 import './ChatScreen.css';
 
+/**
+ * PURPOSE
+ * - Provide a unified chat workspace for live protocol DMs, direct P2P chat, and archived conversations.
+ *
+ * HOW IT WORKS
+ * - Reads and writes chat UI state via `useChatStore` and auth context via `useAuthStore`.
+ * - Pulls persisted messages/contacts from Rust engine commands (`list_vault_messages`, `list_contacts`, `list_p2p_conversations`).
+ * - Subscribes to backend-emitted P2P events (`p2p-message`) and performs periodic import polling for live sources.
+ * - Classifies conversations into tabs (live/p2p/archives), derives active conversation metadata, and renders send/read-only modes.
+ *
+ * RELATED FILES
+ * - src/store/index.ts (chat/auth stores used for cross-screen state continuity)
+ * - src/screens/FriendsScreen.tsx (creates pending convo IDs and deep-links into Chat)
+ * - src-tauri/src/lib.rs (Tauri command/event handlers invoked from this screen)
+ * - src/types/index.ts (`VaultMessage`, `P2pConversation` contracts mirrored from Rust)
+ */
+
 /* ────────────────────────────────────────────────────────
    ChatScreen — Tabbed chat with Bluesky / P2P / Archives
    Layout: [Tabs + Convo List 240px] [Chat Area flex-1] [Buddy List 200px]
@@ -24,6 +41,15 @@ interface BuddyInfo {
     did: string;
     avatar?: string;
 }
+
+/**
+ * Chat workspace screen.
+ *
+ * Cross-system notes:
+ * - Store interaction: `useChatStore` preserves selected conversation/input state across navigation.
+ * - Provider/state interaction: `useAuthStore` supplies DID/handle identity for message ownership and optimistic sends.
+ * - Engine interaction: `invoke()` and `listen()` bridge this lens to Rust command/event flows.
+ */
 export function ChatScreen() {
     const auth = useAuthStore(s => s.auth);
     const {
@@ -45,6 +71,8 @@ export function ChatScreen() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
+
+    // ═══ Lifecycle + Engine Sync ═══
 
     // ── Load messages + buddies + P2P convos on mount ──
     useEffect(() => {
@@ -115,6 +143,8 @@ export function ChatScreen() {
             setP2pConvos([]);
         }
     }
+
+    // ═══ Conversation Derivation + Tab Classification ═══
 
     // ── Group messages by conversation (deduplicated) ──
     // Messages may be duplicated if they were imported under different owner_dids
@@ -244,6 +274,8 @@ export function ChatScreen() {
         }
     }, [messages, selectedConvoId, pendingConvoMeta]);
 
+    // ═══ Scroll + Input Interaction ═══
+
     // ── Scroll management ──
     useEffect(() => {
         if (messagesEndRef.current && isAtBottomRef.current) {
@@ -270,6 +302,8 @@ export function ChatScreen() {
             if (atBottom) setShowScrollBtn(false);
         }
     }, []);
+
+    // ═══ Send Pipeline (Optimistic UI + Engine Delivery) ═══
 
     // ── Send message ──
     const handleSend = async () => {
@@ -367,6 +401,8 @@ export function ChatScreen() {
     function getConvoInitial(cid: string): string {
         return getConvoTitle(cid).replace('@', '').charAt(0).toUpperCase();
     }
+
+    // ═══ Buddy Directory (Contacts First, Message-Derived Fallback) ═══
 
     // ── Buddy list from contacts or derived from messages ──
     const derivedBuddies: BuddyInfo[] = useMemo(() => {
@@ -745,6 +781,10 @@ export function ChatScreen() {
     );
 }
 
+/**
+ * Conversation row renderer for left-list entries.
+ * Kept local to avoid prop-drilling list-specific presentation logic elsewhere.
+ */
 /* ── Conversation List Item ── */
 function ConvoItem({
     title, initial, lastMsg, isActive, isMine, onClick, archived, online

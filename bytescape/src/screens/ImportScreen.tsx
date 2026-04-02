@@ -2,6 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { SidebarItem, AuthStatus } from '../types';
 
+/**
+ * PURPOSE
+ * Provides import entry actions for Bluesky sync and archive ZIP ingestion,
+ * including native drag-drop handling in Tauri desktop context.
+ *
+ * HOW IT WORKS
+ * - Shows protocol import CTA (Bluesky) gated by auth/link status.
+ * - Opens archive picker via callback and accepts ZIP path drops from native window events.
+ * - Surfaces import progress/error status and simple vault count summary.
+ *
+ * RELATED FILES
+ * - src/App.tsx (imports handlers and routing to this screen)
+ * - src/screens/AuditScreen.tsx (downstream import audit/progress presentation)
+ * - src-tauri/src/lib.rs (archive/bluesky commands eventually triggered by parent handlers)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This screen binds directly to Tauri window drag-drop events, but delegates all
+ *   import/store/provider side effects to parent callbacks (`onImportBluesky`, `onFilePick`, `onFileDropPath`).
+ */
+
 interface ImportScreenProps {
     auth: AuthStatus | null;
     isImporting: boolean;
@@ -15,6 +35,9 @@ interface ImportScreenProps {
     error: string;
 }
 
+/**
+ * Import launcher UI for account-based and file-based data ingestion.
+ */
 export function ImportScreen({
     auth,
     isImporting,
@@ -26,11 +49,17 @@ export function ImportScreen({
     onNavigate: _onNavigate,
     error
 }: ImportScreenProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // View state
+    // ═══════════════════════════════════════════════════════════════════════
     const isBlueskyLinked = auth?.source === 'bluesky';
 
     // Tauri native drag-drop — provides real filesystem paths
     const [dragOver, setDragOver] = useState(false);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Native drag-drop subscription
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         let cancelled = false;
         let unlisten: (() => void) | undefined;
@@ -59,6 +88,9 @@ export function ImportScreen({
         };
     }, [onFileDropPath]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <div className="screen-centered">
             <div className="main-header">
