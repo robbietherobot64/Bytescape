@@ -3,6 +3,39 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { blobCacheUrl } from '../utils/mediaServer';
 
 /**
+ * useBlobUrl — Resolve media references (especially `blob:` hashes) into
+ * browser-consumable URLs for rendering images/video in the Lens.
+ *
+ * PURPOSE
+ * - Convert app-level media paths into displayable URLs.
+ * - Resolve `blob:<hash>` entries through the backend cache pipeline.
+ * - Reuse resolved URLs to avoid redundant IPC and reduce render jitter.
+ *
+ * HOW IT WORKS
+ * - For non-blob paths, resolve synchronously (`convertFileSrc` fallback).
+ * - For blob hashes, invoke the Tauri command `get_media_blob` to materialize
+ *   a cached file path, then map it to an HTTP/media-server URL.
+ * - Cache resolved hash -> URL mappings in memory for fast repeat access.
+ * - `useLazyBlobUrl()` gates the expensive path behind viewport visibility.
+ *
+ * CROSS-SYSTEM NOTES
+ * - Tauri invoke path: `invoke('get_media_blob', { hashStr })` from this hook
+ *   crosses Lens -> Engine, where the command is registered in
+ *   `src-tauri/src/lib.rs` and returns a filesystem path for the blob.
+ * - HTTP URL conversion uses `blobCacheUrl()` to avoid known asset:// issues
+ *   in some WebKitGTK/runtime combinations.
+ *
+ * TECH DEBT
+ * - `resolvedUrlCache` is a process-global, unbounded `Map` with no eviction.
+ *   Long sessions can accumulate entries indefinitely and increase memory use.
+ *
+ * RELATED FILES
+ * - `src/utils/mediaServer.ts` (file-path -> local HTTP URL conversion)
+ * - `src-tauri/src/lib.rs` (Tauri command registration)
+ * - `src-tauri/src/db.rs` / media blob storage pipeline
+ */
+
+/**
  * In-memory cache of hash → asset URL to avoid re-invoking for already-resolved blobs.
  * The files on disk are also cached (the Rust side writes once to blob_cache/),
  * but this avoids the IPC round-trip entirely for repeat renders.
@@ -10,6 +43,8 @@ import { blobCacheUrl } from '../utils/mediaServer';
  * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
  */
 export const resolvedUrlCache = new Map<string, string>();
+
+// ═══ Path Resolution Helpers ═══════════════════════════════════════════════
 
 /**
  * Hook to resolve a media path that may be a blob hash.
@@ -50,6 +85,12 @@ function resolveNonBlobSync(path: string): string {
     }
 }
 
+/**
+ * Resolve a possibly-blob media path into a display URL.
+ *
+ * @param path Input media path (`blob:<hash>`, filesystem path, or URL).
+ * @returns Tuple of `[resolvedUrl, isLoading, error]`.
+ */
 export function useBlobUrl(path: string | undefined): [string | null, boolean, string | null] {
     // Synchronous cache initialization — prevents the "null → effect → URL" render gap
     // that causes images to flash a dark placeholder for 1-2 frames on mount.
@@ -143,10 +184,13 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
     return [url, isLoading, error];
 }
 
+// ═══ Lazy Viewport-Aware Resolution ════════════════════════════════════════
+
 /**
- * Hook that only activates useBlobUrl when an element is in the viewport.
- * Attaches an IntersectionObserver to the returned ref.
- * Returns [ref, url, isLoading, error]
+ * Lazily resolve media only when a target element is near/inside viewport.
+ *
+ * @param path Input media path to resolve once visible.
+ * @returns `[refCallback, resolvedUrl, isLoading, error]`.
  */
 export function useLazyBlobUrl(path: string | undefined): [
     React.RefCallback<HTMLElement>,

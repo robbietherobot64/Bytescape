@@ -1,13 +1,37 @@
 /**
- * useCollabDoc — React hook for Yjs CRDT document lifecycle (C6.1)
+ * FILE: useCollabDoc
  *
- * Manages creating, loading, and syncing a Yjs document with the Rust backend.
- * Used by ArticleEditor in collaborative mode.
+ * PURPOSE
+ * - Provide a React hook that owns a Yjs `Y.Doc` lifecycle for collaborative editing.
+ * - Bridge frontend CRDT state to the Rust/Tauri persistence layer.
+ * - Expose a simple API (`ydoc`, loading/error state, and `snapshot()`) for editor consumers.
+ *
+ * HOW IT WORKS
+ * - Creates a single in-memory `Y.Doc` instance when collaboration is enabled.
+ * - Initializes by either loading an existing backend document state or creating a new collab doc.
+ * - Listens for local Yjs updates, batches them with a debounce, and persists merged updates.
+ * - Provides snapshot support to persist current editor text into the linked Bytescape item.
+ * - Destroys the Yjs document on unmount.
+ *
+ * RELATED FILES
+ * - src/components/editor/* (collaborative editor consumers)
+ * - src/types/index.ts (shared collab metadata/response types)
+ * - src-tauri/src/lib.rs (Tauri command registration + handlers)
+ * - src-tauri/src/sync.rs (collaboration/sync backend behavior)
+ *
+ * CROSS-SYSTEM NOTE
+ * - This hook calls backend commands through Tauri `invoke()` (`get_collab_state`,
+ *   `create_collab_doc`, `apply_collab_update`, `snapshot_collab_to_item`).
+ *   The frontend keeps transient in-memory state while durability is owned by Rust.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import * as Y from 'yjs';
 import type { CollabDocMeta, CollabStateResponse } from '../types';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Base64 / binary helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /** Base64 ↔ Uint8Array helpers */
 function base64ToUint8Array(b64: string): Uint8Array {
@@ -27,6 +51,11 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
     return btoa(binary);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Public hook contracts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Configuration options for `useCollabDoc()`. */
 export interface UseCollabDocOptions {
     /** Existing collab doc ID to load. If null, a new doc is created on mount. */
     docId?: string | null;
@@ -38,6 +67,7 @@ export interface UseCollabDocOptions {
     enabled: boolean;
 }
 
+/** Return shape provided by `useCollabDoc()`. */
 export interface UseCollabDocResult {
     /** The Yjs document instance. Null until initialized. */
     ydoc: Y.Doc | null;
@@ -79,10 +109,18 @@ export function useCollabDoc({
     const collabDocIdRef = useRef(collabDocId);
     collabDocIdRef.current = collabDocId;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Y.Doc allocation
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // Create Y.Doc once
     if (enabled && !ydocRef.current) {
         ydocRef.current = new Y.Doc();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Initial load/create handshake (frontend ↔ Tauri backend)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Initialize: load existing doc or create new one
     useEffect(() => {
@@ -137,12 +175,18 @@ export function useCollabDoc({
         };
     }, [enabled, docId, itemId, title]);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Update persistence pipeline
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // Subscribe to Y.Doc updates and persist to backend
     useEffect(() => {
         if (!enabled || !ydocRef.current || !isLoaded) return;
 
         const ydoc = ydocRef.current;
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        // Caveat: queue is intentionally in-memory only; queued updates are not
+        // persisted independently and will be lost if the process exits before flush.
         let pendingUpdates: Uint8Array[] = [];
 
         const flushUpdates = () => {
@@ -183,7 +227,15 @@ export function useCollabDoc({
         };
     }, [enabled, isLoaded]);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Snapshot API
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // Snapshot content to linked BytescapeItem
+    /**
+     * Persist the current editor content to the linked Bytescape item record.
+     * Uses Tauri `invoke('snapshot_collab_to_item')` for backend durability.
+     */
     const snapshot = useCallback(async (content: string): Promise<string> => {
         const currentDocId = collabDocIdRef.current;
         if (!currentDocId) {
@@ -194,6 +246,10 @@ export function useCollabDoc({
             content,
         });
     }, []);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Teardown
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Cleanup Y.Doc on unmount
     useEffect(() => {

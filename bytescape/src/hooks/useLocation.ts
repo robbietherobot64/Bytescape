@@ -1,34 +1,47 @@
 /**
- * useLocation — B10.1 Internal URL Scheme + B10.2 Navigation History Stack
+ * useLocation — Internal URL routing + in-app history for Bytescape.
  *
- * Provides URL-based navigation for all Bytescape screens.
- * Every screen is addressable by a `byte://` URL.
+ * PURPOSE
+ * - Provide a single URL-oriented navigation layer for Lens-side screens.
+ * - Map `byte://...` routes to `NavStore` / `ChatStore` state and back.
+ * - Maintain local back/forward history with bounded depth.
  *
- * URL Scheme:
- *   byte://feed                        → Feed (all)
- *   byte://feed/following              → Feed (following tab)
- *   byte://feed/you                    → Feed (your posts)
- *   byte://chat                        → Chat (no convo selected)
- *   byte://chat/bsky/{convoId}         → Chat with Bluesky conversation
- *   byte://chat/p2p/{nodeId}           → Chat with P2P peer
- *   byte://vault                       → Vault file manager
- *   byte://profile                     → Own profile
- *   byte://profile-builder             → Profile builder (GrapesJS / Raw HTML)
- *   byte://profile-browser             → Peer profile browser
- *   byte://peer/{nodeId}               → View specific peer's profile
- *   byte://import                      → Archive import
- *   byte://settings                    → Settings
- *   byte://friends                     → Social / Friends screen
- *   byte://login                       → Login screen
+ * HOW IT WORKS
+ * - `resolveUrl()` parses incoming URLs into a strongly-typed `ResolvedRoute`.
+ * - `navigate()` applies route changes to stores, then updates history state.
+ * - `buildUrl()` reconstructs a canonical URL from current store values.
+ * - `syncFromNavStore()` backfills URL/history when navigation is changed
+ *   from outside this hook (for example direct store calls).
+ *
+ * CROSS-SYSTEM NOTES
+ * - Nav/Chat synchronization path:
+ *   `navigate()` -> `useNavStore.setScreen/setActiveSidebar/setFeedActiveTab`
+ *   and `useChatStore.setSelectedConvoId` when route carries chat context.
+ * - This keeps the app address bar model and UI selection state aligned.
+ *
+ * TECH DEBT
+ * - Dual-state sync risk: both URL history state and Nav/Chat stores can
+ *   initiate navigation updates. `syncFromNavStore()` mitigates drift, but the
+ *   architecture still has two sources of truth that can diverge under races.
+ *
+ * RELATED FILES
+ * - `src/store/index.ts` (store types and mutators consumed here)
+ * - `src/screens/*` (screen-level navigation entry points)
+ * - `src/hooks/useUnifiedFeed.ts` (feed tab type used in route params)
  */
 
 import { create } from 'zustand';
 import { useNavStore, useChatStore, Screen } from '../store';
 import type { FeedTab } from './useUnifiedFeed';
 
-// ─── URL ↔ Screen Resolution ───
+// ═══ URL ↔ Screen Resolution ═══════════════════════════════════════════════
 
-/** Parsed result from a byte:// URL */
+/**
+ * Parsed route payload derived from a `byte://` URL.
+ *
+ * Exported so other modules can safely inspect the resolved navigation target
+ * before mutating store state.
+ */
 export interface ResolvedRoute {
     screen: Screen;
     sidebar: 'feed' | 'search' | 'profile' | 'chat' | 'social' | 'import' | 'vault' | 'settings';
@@ -43,8 +56,10 @@ export interface ResolvedRoute {
 }
 
 /**
- * Parse a byte:// URL into a ResolvedRoute.
- * Returns null if the URL is invalid.
+ * Parse a `byte://` URL into a `ResolvedRoute` object.
+ *
+ * @param url URL string in `byte://...` or `/...` format.
+ * @returns Parsed route payload, or `null` when no route matches.
  */
 export function resolveUrl(url: string): ResolvedRoute | null {
     // Strip scheme
@@ -165,7 +180,11 @@ export function resolveUrl(url: string): ResolvedRoute | null {
 }
 
 /**
- * Generate a byte:// URL from the current navigation state.
+ * Build a canonical `byte://` URL from screen + optional route parameters.
+ *
+ * @param screen Target screen key from `Screen`.
+ * @param params Optional route context (feed tab, convo id, peer id).
+ * @returns A normalized `byte://...` URL for history/address rendering.
  */
 export function buildUrl(screen: Screen, params?: {
     feedTab?: FeedTab;
@@ -223,7 +242,7 @@ export function buildUrl(screen: Screen, params?: {
     }
 }
 
-// ─── B10.2 Navigation History Stack ───
+// ═══ B10.2 Navigation History Stack ════════════════════════════════════════
 
 const MAX_HISTORY = 50;
 
@@ -268,6 +287,13 @@ interface LocationState {
     syncFromNavStore: () => void;
 }
 
+/**
+ * Zustand store backing URL navigation + back/forward history.
+ *
+ * Cross-system behavior:
+ * - Applies route intent to `NavStore` and `ChatStore`.
+ * - Tracks a local URL history cursor for browser-like navigation semantics.
+ */
 export const useLocationStore = create<LocationState>((set, get) => ({
     currentUrl: 'byte://login',
     history: ['byte://login'],
@@ -415,14 +441,14 @@ export const useLocationStore = create<LocationState>((set, get) => ({
     },
 }));
 
+// ═══ Public Hook API ═══════════════════════════════════════════════════════
+
 /**
- * Hook providing the current URL and navigation functions.
+ * React hook exposing URL state and navigation controls.
  *
- * Usage:
- * ```tsx
- * const { currentUrl, navigate, goBack, goForward, canGoBack, canGoForward } = useLocation();
- * navigate('byte://feed/following');
- * ```
+ * This is the main Lens-facing entrypoint for route navigation operations.
+ * Consumers should prefer this hook over direct writes when possible, to keep
+ * history and store synchronization consistent.
  */
 export function useLocation() {
     const currentUrl = useLocationStore(s => s.currentUrl);

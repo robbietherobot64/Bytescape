@@ -20,7 +20,7 @@
 | 6 | ActivityPub Federation | 9 | 2,866 | ✅ Complete |
 | 7 | Tauri Commands (Backend API) | 21 | 10,220 | ✅ Complete |
 | 8 | Frontend Foundation | 8 | 2,581 | ✅ Complete |
-| 9 | Frontend Hooks | 7 | 2,349 | ⬜ Not started |
+| 9 | Frontend Hooks | 7 | 2,349 | ✅ Complete |
 | 10 | Frontend Utils | 12 | 1,429 | ⬜ Not started |
 | 11 | Frontend Screens | 16 | 7,526 | ⬜ Not started |
 | 12 | Frontend Components (Large) | 13 | 5,694 | ⬜ Not started |
@@ -194,13 +194,13 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/hooks/useUnifiedFeed.ts` | 641 | ⬜ | Multi-source feed aggregation hook |
-| `src/hooks/useGroupsData.ts` | 450 | ⬜ | Group membership & data management |
-| `src/hooks/useLocation.ts` | 445 | ⬜ | Geolocation with privacy controls |
-| `src/hooks/useBlobUrl.ts` | 294 | ⬜ | Content-addressed media URL resolution |
-| `src/hooks/useCollabDoc.ts` | 216 | ⬜ | CRDT collaborative document hook |
-| `src/hooks/useTheme.ts` | 159 | ⬜ | Theme loading and application |
-| `src/hooks/useCharacterCount.ts` | 144 | ⬜ | Post character counting with facets |
+| `src/hooks/useUnifiedFeed.ts` | 641 | ✅ | Expanded module header, ═══ sections, exported hook/type docs, provider boundary notes |
+| `src/hooks/useGroupsData.ts` | 450 | ✅ | Full header, ═══ sections, hook/function docs, mock-vs-backend caveat notes |
+| `src/hooks/useLocation.ts` | 445 | ✅ | Header with URL scheme flow, route/type docs, NavStore/ChatStore sync notes |
+| `src/hooks/useBlobUrl.ts` | 294 | ✅ | Header + section docs, exported cache/hook docs, media IPC and cache caveat notes |
+| `src/hooks/useCollabDoc.ts` | 216 | ✅ | Header + lifecycle docs, Yjs/Tauri sync annotations, queue durability caveat |
+| `src/hooks/useTheme.ts` | 159 | ✅ | Header + persistence flow docs, localStorage side-effect annotations, singleton caveat |
+| `src/hooks/useCharacterCount.ts` | 144 | ✅ | Header, API/type docs, grapheme-counting rationale and Segmenter caveat |
 
 **Subtotal**: 7 files · 2,349 lines
 

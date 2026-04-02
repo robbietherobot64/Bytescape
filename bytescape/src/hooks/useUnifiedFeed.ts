@@ -6,6 +6,36 @@ import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
 import { useDataProvider } from '../providers';
 
 /**
+ * PURPOSE
+ * -------
+ * This hook is the app's main "feed traffic controller." It decides where posts come
+ * from (Bluesky, local vault, subscribed feeds), merges them into one list shape, and
+ * exposes everything the Feed screen needs to render and paginate.
+ *
+ * HOW IT WORKS
+ * ------------
+ * 1) Watches auth state + UI filters (tab, source, feed/tag selections).
+ * 2) Loads from cache first for instant paint, then refreshes in background.
+ * 3) Calls backend/provider APIs for the active tab and adapts records to `FeedEntry`.
+ * 4) Deduplicates, applies source filters, and updates pagination state.
+ * 5) Handles refresh loops, "load more", and active syndication verification.
+ *
+ * RELATED FILES
+ * -------------
+ * - src/providers/index.ts (DataProvider command bridge)
+ * - src/utils/adapters.ts (normalizes backend/platform payloads)
+ * - src/store/*feed cache* (stale-while-revalidate cache)
+ * - src/screens/FeedScreen.tsx (primary consumer)
+ *
+ * STRUCTURAL CAVEATS
+ * ------------------
+ * - Monolithic orchestration: one large hook currently owns fetch, cache, polling,
+ *   dedup, and verification concerns.
+ * - Intentional duplicated branch logic exists between initial load (`fetchFeed`) and
+ *   pagination (`handleLoadMore`) to keep per-tab behavior aligned.
+ */
+
+/**
  * Nest owner replies under their parent posts.
  * If a FeedEntry has a reply_parent_uri that matches another entry's id or original_url,
  * move it into the parent's owner_replies array instead of showing it standalone.
@@ -42,10 +72,17 @@ function nestOwnerReplies(entries: FeedEntry[]): FeedEntry[] {
     return entries.filter((_, i) => !replyIndices.has(i));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Exported feed tab model
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** UI tab identifiers supported by the unified feed hook. */
 export type FeedTab = 'all' | 'following' | 'subscribed' | 'you' | 'groups';
 
+/** Tabs that should auto-refresh in the foreground while the user is active. */
 export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed', 'groups'];
 
+/** Human-readable labels for feed tabs. */
 export const FEED_TAB_LABELS: Record<FeedTab, string> = {
     all: 'All',
     following: 'Following',
@@ -53,9 +90,14 @@ export const FEED_TAB_LABELS: Record<FeedTab, string> = {
     you: 'You',
     groups: 'Groups',
 };
+
+/** Special filter token meaning "do not narrow by source". */
 export const FEED_FILTER_ALL = '__all__';
 const ARCHIVE_PAGE_SIZE = 200;
 
+/**
+ * Returns custom feed URIs, excluding Bluesky's built-in following feed URI.
+ */
 export function customFeedUris(feeds: GeneratorView[]): string[] {
     return feeds
         .map(f => f.uri)
@@ -71,6 +113,13 @@ interface UseUnifiedFeedOptions {
     autoRefreshFeeds: boolean;
 }
 
+/**
+ * Main orchestrator for feed retrieval, caching, refresh, and pagination.
+ *
+ * Cross-system note:
+ * This hook delegates network/storage access to `useDataProvider()`, which bridges
+ * frontend calls to backend services and platform connectors.
+ */
 export function useUnifiedFeed({
     auth,
     activeTab,
@@ -152,6 +201,13 @@ export function useUnifiedFeed({
         }
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Fetch pipeline
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Cross-system note: each branch below calls provider methods that map to
+    // backend commands/connectors. Keep frontend assumptions aligned with backend
+    // payload contracts in adapters/types.
+
     // === Fetch Feed ===
     //
     // Each tab has a distinct data source:
@@ -188,6 +244,7 @@ export function useUnifiedFeed({
         try {
             if (tab === 'following') {
                 // ── Following tab: Bluesky home timeline ──
+                // Cross-system: provider.getTimeline() -> backend timeline command.
                 const [posts, nextCursor] = await provider.getTimeline({ limit: 50 });
                 if (isStale()) return;
 
@@ -207,6 +264,8 @@ export function useUnifiedFeed({
 
             } else if (tab === 'you') {
                 // ── You tab: user's own posts (Bluesky author feed + local vault) ──
+                // Cross-system: combines provider.getAuthorFeed() (remote protocol)
+                // and provider.listVaultPostsPaged() (local engine storage).
                 const [bskyResult, vaultResult, sources] = await Promise.all([
                     provider.getAuthorFeed({ limit: 50 })
                         .catch((): [BlueskyPost[], string | null] => [[], null]),
@@ -245,6 +304,8 @@ export function useUnifiedFeed({
 
             } else if (tab === 'subscribed') {
                 // ── Subscribed tab: show content from user's saved/subscribed feeds ──
+                // Cross-system: provider.listSavedFeeds()/getUnifiedFeed() bridge to
+                // backend aggregation over followed feeds + hashtag lookups.
                 // Parallelize independent IPC calls (P7 — saves 200-500ms)
                 const [feedsData, tags] = await Promise.all([
                     provider.listSavedFeeds().catch((e: unknown): GeneratorView[] => {
@@ -332,6 +393,8 @@ export function useUnifiedFeed({
 
             } else if (tab === 'all') {
                 // ── All tab: unified feed (Rust merges timeline + feeds + vault) ──
+                // Cross-system: provider.getTimelineUnified() is the Rust-side merge
+                // endpoint that fuses multiple sources into one timeline.
                 // Parallelize list_saved_feeds with get_timeline_unified (P7)
                 // get_timeline_unified internally calls list_saved_feeds for its own logic,
                 // but we still need the GeneratorView[] data for the UI feed selector.
@@ -465,6 +528,13 @@ export function useUnifiedFeed({
             }
         });
     }, [feedEntries, auth, activeTab, fetchFeed]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Pagination pipeline (load more)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Structural caveat: this mirrors parts of `fetchFeed` branch-by-branch.
+    // The duplication is intentional for now, so initial and incremental loads
+    // keep source-specific behavior consistent.
 
     // === Load More ===
 

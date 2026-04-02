@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–8 (68 source files · ~31,500 lines · Rust + TypeScript)
+> **Scope**: Batches 1–9 (75 source files · ~33,850 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 8 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, **Frontend Foundation**) uncovered **213 issues** across 68 files:
+A systematic audit of the first 9 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, **Frontend Hooks**) uncovered **242 issues** across 75 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 44 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 102 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 67 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 50 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 117 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 75 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -26,6 +26,7 @@ The top systemic concerns are:
 5. **Memory pressure from large media** — Facebook, Instagram, and vault operations load entire media files into memory with no size guards.
 6. **God file problem** — `import.rs` at 2,900 lines is the largest file in the codebase and mixes 8+ unrelated concerns (archive import, timeline fetching, DM import, feed aggregation, publishing, social graph). Should be split into 5-6 submodules.
 7. **Frontend foundation sprawl** — `store/index.ts` bundles 6 unrelated Zustand stores in one file, `App.tsx` has 40+ line duplicated chat-open callbacks, `DataProvider.ts` is a 100+ method monolithic interface with 6 untyped returns. The provider pattern requires 3-file changes for every new backend command.
+8. **Hooks doing orchestration work** — `useUnifiedFeed.ts` and `useGroupsData.ts` both perform heavy orchestration, fallback logic, and backend transport concerns that should live in service/provider layers. This blurs boundaries between view hooks and domain logic.
 
 ---
 
@@ -541,6 +542,63 @@ Batch 8 covers the application shell, global state management, and the data prov
 
 ---
 
+## Batch 9 — Frontend Hooks
+
+**Scope:** 7 files · ~2,349 lines in `src/hooks/`
+**Findings:** 29 issues (6 HIGH · 15 MEDIUM · 8 LOW)
+
+This batch covers the core orchestration hooks used by feed, groups, navigation, media resolution, collaboration, themes, and posting composition. Main structural concerns:
+
+- **Hooks are acting as service layers** (`useUnifiedFeed`, `useGroupsData`) with transport/fallback logic mixed into UI-state hooks
+- **Large hook complexity** (`useUnifiedFeed` at ~640 lines) with duplicated branch logic between initial fetch and pagination
+- **Mock + production paths in same module** (`useGroupsData`) creates split behavior and hidden test/prod drift
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 9.1 | `useUnifiedFeed.ts` | **Monolithic orchestration hook (~640 lines)** — handles fetching, dedup, caching, verification, pagination, prefetch, and fallback logic in one unit | Hard to reason about and test; regressions likely when touching unrelated concerns |
+| 9.2 | `useUnifiedFeed.ts` | **`handleLoadMore()` duplicates branch logic from `fetchFeed()`** for `following`, `you`, `subscribed`, and `all` tabs | Divergent behavior between first page and subsequent pages; bug fixes must be duplicated |
+| 9.3 | `useGroupsData.ts` | **Mock and production logic mixed in same runtime path** under `BACKEND_READY` flag with massive in-file mock dataset | Easy for mock path to drift from backend behavior; production bugs hidden during UI development |
+| 9.4 | `useLocation.ts` | **URL parser and NavStore synchronizer are separate mutable systems** — `navigate()` mutates NavStore + ChatStore, while `syncFromNavStore()` mutates history from NavStore | Two-way sync risks loops/state drift; hard to guarantee single source of truth |
+| 9.5 | `useBlobUrl.ts` | **Global mutable `resolvedUrlCache` with no eviction** | Unbounded memory growth across long sessions with media-heavy feeds |
+| 9.6 | `useCollabDoc.ts` | **Persistence queue is in-memory only** (`pendingUpdates`) with debounced flush and no retry queue after failure | Update loss risk during transient backend errors or app shutdown |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 9.7 | `useUnifiedFeed.ts` | **`fetchFeed` has complex tab-branch behavior and many side effects** (state, cache, provider calls, prefetch) in one callback | Difficult unit testing; high cognitive load |
+| 9.8 | `useUnifiedFeed.ts` | **Repeated client-side `source` filtering in multiple branches** | Repetition invites inconsistent filtering rules across tabs |
+| 9.9 | `useUnifiedFeed.ts` | **Verification loop launches one async task per unverified entry without batching/cap** | Burst of IPC/network calls on large feeds; potential contention |
+| 9.10 | `useUnifiedFeed.ts` | **Cache invalidation logic tightly coupled to filter arrays via stringified key** | Cache key construction is fragile and easy to break when filters evolve |
+| 9.11 | `useGroupsData.ts` | **Huge static mock graph in hook module** (topics, groups, members) | Inflates bundle and obscures actual hook behavior |
+| 9.12 | `useGroupsData.ts` | **`useGroupDetail` does nested auth check via `invoke('check_auth_status')`** after members fetch | Extra round-trip per refresh; should come from auth store/context |
+| 9.13 | `useGroupsData.ts` | **Global mutable mock state (`Set`s / objects) shared across hook consumers** | Cross-component test pollution and non-deterministic behavior in dev |
+| 9.14 | `useLocation.ts` | **Route support drift** — `resolveUrl` valid feed tabs omit `'groups'` while `FeedTab` includes it | URL parsing silently coerces unsupported tabs to `'all'` |
+| 9.15 | `useLocation.ts` | **`MAX_HISTORY` hardcoded to 50** | No configurability for power users; history truncation surprises |
+| 9.16 | `useBlobUrl.ts` | **No dedupe for concurrent hash resolves** — same hash requested by many components can trigger repeated invokes before cache fills | Redundant IPC calls and wasted work |
+| 9.17 | `useBlobUrl.ts` | **`useLazyBlobUrl` starts observing per-element with no shared observer pool** | Many observers in long lists; avoidable overhead |
+| 9.18 | `useCollabDoc.ts` | **`origin === 'remote'` filter relies on convention** — if callers don't set origin correctly, remote updates may be re-persisted | Potential update echo loops |
+| 9.19 | `useTheme.ts` | **Module-level `_restored` singleton** controls hydration across all consumers | Hidden global state complicates SSR/tests and multi-root setups |
+| 9.20 | `useTheme.ts` | **Multiple localStorage writes across independent effects** | Extra synchronous main-thread I/O during theme changes |
+| 9.21 | `useCharacterCount.ts` | **`Intl.Segmenter` instantiated on every `countGraphemes` call** | Avoidable allocation cost while typing |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 9.22 | `useUnifiedFeed.ts` | **Magic constants** (`45_000`, `200`, `50`, `30`) in multiple places | Hard to tune behavior globally |
+| 9.23 | `useUnifiedFeed.ts` | **`LIVE_TABS` excludes `'you'` by design but not documented in API contract** | Surprise for future maintainers expecting all tabs to auto-refresh |
+| 9.24 | `useGroupsData.ts` | **`BACKEND_READY` flag is hardcoded `true`** while mock paths remain in file | Dead-path confusion and maintenance overhead |
+| 9.25 | `useLocation.ts` | **`sidebar` union in `ResolvedRoute` duplicates `SidebarItem` type shape** | Type drift risk between modules |
+| 9.26 | `useBlobUrl.ts` | **`extractBlobHash` string parsing rules are undocumented at callsites** | Edge-case behavior is non-obvious to future maintainers |
+| 9.27 | `useCollabDoc.ts` | **Base64 helper implementations are local-only** and duplicated pattern likely elsewhere | Utility duplication risk |
+| 9.28 | `useTheme.ts` | **Theme storage keys are un-namespaced constants in module scope** | Potential collisions if embedding app contexts change |
+| 9.29 | `useCharacterCount.ts` | **`resolveTargets()` accepts free-form comma string API** | Caller typos silently reduce target set; weak contract |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -614,4 +672,11 @@ Batch 8 covers the application shell, global state management, and the data prov
 | `src/providers/DataProviderContext.tsx` | 0 | 1 | 0 | 1 |
 | `src/providers/index.ts` | 0 | 0 | 1 | 1 |
 | `src/contexts/TabActiveContext.tsx` | 0 | 0 | 1 | 1 |
-| **TOTAL** | **44** | **102** | **67** | **213** |
+| `src/hooks/useUnifiedFeed.ts` | 2 | 4 | 2 | 8 |
+| `src/hooks/useGroupsData.ts` | 1 | 3 | 2 | 6 |
+| `src/hooks/useLocation.ts` | 1 | 2 | 1 | 4 |
+| `src/hooks/useBlobUrl.ts` | 1 | 2 | 1 | 4 |
+| `src/hooks/useCollabDoc.ts` | 1 | 1 | 1 | 3 |
+| `src/hooks/useTheme.ts` | 0 | 2 | 1 | 3 |
+| `src/hooks/useCharacterCount.ts` | 0 | 1 | 0 | 1 |
+| **TOTAL** | **50** | **117** | **75** | **242** |

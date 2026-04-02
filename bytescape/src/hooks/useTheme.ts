@@ -1,7 +1,34 @@
+/**
+ * FILE: useTheme
+ *
+ * PURPOSE
+ * - Expose theme state/actions from the theme store to React consumers.
+ * - Apply theme-related state to DOM attributes/classes/CSS variables.
+ * - Persist and restore theme preferences via `localStorage`.
+ *
+ * HOW IT WORKS
+ * - On first mount across the app, restores persisted values from `localStorage`.
+ * - Mirrors store state to the DOM (`data-theme`, classes, CSS custom properties).
+ * - Persists current store values back to `localStorage` as users customize themes.
+ *
+ * RELATED FILES
+ * - src/store/* (theme store state + actions)
+ * - src/themes/* (theme definitions)
+ * - src/App.tsx (application-level hook consumer)
+ * - src/App.css (CSS variables and classes consumed by this hook)
+ *
+ * CROSS-SYSTEM NOTE
+ * - Persistence boundary here is browser-side `localStorage` only.
+ *   No Tauri `invoke()` calls are used in this hook.
+ */
 import { useEffect } from 'react';
 import { useThemeStore } from '../store';
 import type { ThemeId } from '../types';
 import type { ColorOverrides, UserBackground, BackgroundMode } from '../store';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Persistence keys
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const STORAGE_KEY = 'bytescape-theme';
 const OVERRIDES_KEY = 'bytescape-theme-overrides';
@@ -9,7 +36,11 @@ const BG_KEY = 'bytescape-theme-bg';
 const BG_MODE_KEY = 'bytescape-theme-bg-mode';
 const USER_BGS_KEY = 'bytescape-theme-user-bgs';
 
-/** Module-level guard: localStorage restore runs exactly once across all useTheme() consumers. */
+/**
+ * Module-level singleton guard.
+ * Caveat: `_restored` intentionally survives across hook instances in the same
+ * runtime so restore logic executes only once.
+ */
 let _restored = false;
 
 /**
@@ -33,6 +64,10 @@ export function useTheme() {
     const setBackgroundMode = useThemeStore((s) => s.setBackgroundMode);
     const addUserBackground = useThemeStore((s) => s.addUserBackground);
     const removeUserBackground = useThemeStore((s) => s.removeUserBackground);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Restore from localStorage (one-time)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /* On mount: restore from localStorage (runs exactly once across all consumers) */
     useEffect(() => {
@@ -81,6 +116,10 @@ export function useTheme() {
         // Only run on mount
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DOM + persistence sync effects
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /* Whenever activeTheme changes → apply to DOM + persist */
     useEffect(() => {
@@ -140,6 +179,10 @@ export function useTheme() {
     useEffect(() => {
         try { localStorage.setItem(USER_BGS_KEY, JSON.stringify(userBackgrounds)); } catch { /* quota */ }
     }, [userBackgrounds]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Public API
+    // ═══════════════════════════════════════════════════════════════════════════
 
     return {
         activeTheme,

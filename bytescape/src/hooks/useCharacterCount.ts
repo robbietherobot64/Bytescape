@@ -1,4 +1,30 @@
+/**
+ * FILE: useCharacterCount
+ *
+ * PURPOSE
+ * - Provide platform-aware text counting for compose flows.
+ * - Support both grapheme-based and code-unit-based limits per target.
+ * - Expose reusable pure helpers plus a memoized React hook.
+ *
+ * HOW IT WORKS
+ * - Resolves selected post targets into countable platforms.
+ * - Computes counts against target limits and derives status bands.
+ * - Flags over-limit targets for truncation warnings and posting guards.
+ *
+ * RELATED FILES
+ * - src/components/*Compose* (compose UI consumers)
+ * - src/types/index.ts (posting target domain types)
+ * - src/hooks/useCharacterCount.test.ts (counting behavior coverage, if present)
+ *
+ * CROSS-SYSTEM NOTE
+ * - This module is frontend-local computation only.
+ *   It does not use Tauri `invoke()` and does not persist to `localStorage`.
+ */
 import { useMemo } from 'react';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Limits and public types
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /** Per-target character limits */
 export const TARGET_LIMITS = {
@@ -8,8 +34,10 @@ export const TARGET_LIMITS = {
     local: 10_000,    // 10K characters (MED-4 limit)
 } as const;
 
+/** Supported character-counting targets derived from `TARGET_LIMITS`. */
 export type CountTarget = keyof typeof TARGET_LIMITS;
 
+/** Per-target computed count details used by UI warnings and badges. */
 export interface TargetCount {
     target: CountTarget;
     current: number;
@@ -20,6 +48,7 @@ export interface TargetCount {
     overBy: number;
 }
 
+/** Aggregated counting output returned by helper/hook APIs. */
 export interface CharacterCountResult {
     counts: TargetCount[];
     /** True if ALL targets are over limit — post should be fully disabled */
@@ -37,6 +66,8 @@ export interface CharacterCountResult {
  */
 export function countGraphemes(text: string): number {
     if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+        // Caveat: creates a new `Intl.Segmenter` instance per call for correctness
+        // and simplicity; this is acceptable for current compose text sizes.
         const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
         let count = 0;
         for (const _seg of segmenter.segment(text)) {
@@ -48,6 +79,7 @@ export function countGraphemes(text: string): number {
     return [...text].length;
 }
 
+/** Map current usage ratio to UI warning severity. */
 function getStatus(current: number, limit: number): TargetCount['status'] {
     const ratio = current / limit;
     if (ratio > 1) return 'over';
@@ -55,6 +87,10 @@ function getStatus(current: number, limit: number): TargetCount['status'] {
     if (ratio > 0.80) return 'warn';
     return 'ok';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Target resolution and counting helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /** Map a PostTarget selection (comma-separated platforms) to the set of CountTargets that apply */
 export function resolveTargets(postTarget: string): CountTarget[] {
@@ -116,6 +152,10 @@ export function computeCharacterCounts(text: string, targets: CountTarget[]): Ch
     return { counts, allOver, anyOver, truncatedTargets };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// UI constants
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /** Target display icons */
 export const TARGET_ICONS: Record<CountTarget, string> = {
     bluesky: '🦋',
@@ -131,6 +171,10 @@ export const STATUS_COLORS: Record<TargetCount['status'], string> = {
     danger: '#e67e22',
     over: '#e74c3c',
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// React hook
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /**
  * React hook for platform-aware character counting in ComposeBox.

@@ -9,6 +9,37 @@ import {
     FeedEntry,
 } from '../types';
 
+/**
+ * PURPOSE
+ * -------
+ * This module powers the Groups UI data layer. It exposes React hooks and helpers
+ * for topic browsing, group details, membership actions, search, and create-group flow.
+ *
+ * HOW IT WORKS
+ * ------------
+ * 1) Hooks load data from backend commands via `invoke(...)` when available.
+ * 2) If backend calls fail (or are disabled), mock/seed data keeps the UI usable.
+ * 3) Membership/search/create actions run the same real-vs-mock branching model.
+ * 4) Hooks return state + operations for screens/components to render immediately.
+ *
+ * RELATED FILES
+ * -------------
+ * - src/screens/GroupsScreen.tsx (topic tree + discovery consumer)
+ * - src/screens/GroupDetailScreen.tsx (group profile + membership consumer)
+ * - src/types/index.ts (TopicNode/LocalGroup/GroupMember contracts)
+ * - src-tauri/src/lib.rs (registered Tauri commands called via `invoke`)
+ *
+ * STRUCTURAL CAVEAT
+ * -----------------
+ * This file intentionally mixes real backend command paths and local mock fallbacks
+ * in the same functions. That hybrid path is useful for incremental delivery, but it
+ * also increases branching complexity and duplicate behavior surfaces.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Runtime mode + mock fixtures
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // ─── Backend availability flag ───
 // Set to true once backend sprint v12 commands are registered in lib.rs.
 // Until then, all functions return mock/seeded data so the UI can be developed.
@@ -194,9 +225,17 @@ const MOCK_MEMBERS: Record<string, GroupMember[]> = {
     ],
 };
 
-// ─── Hook: useGroupsData ───
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hooks
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/** Topic tree data + operations */
+/**
+ * Loads and manages the hierarchical topic tree used in Groups discovery.
+ *
+ * Cross-system note:
+ * Uses Tauri command calls (`get_topic_tree`, `subscribe_topic`, `unsubscribe_topic`)
+ * when backend mode is enabled; otherwise mutates local mock state.
+ */
 export function useTopicTree() {
     const [topics, setTopics] = useState<TopicNode[]>([]);
     const [loading, setLoading] = useState(true);
@@ -236,7 +275,13 @@ export function useTopicTree() {
     return { topics, loading, refresh, subscribeTopic, unsubscribeTopic };
 }
 
-/** Group detail data + operations */
+/**
+ * Loads one group's full detail model, members, feed posts, and membership state.
+ *
+ * Cross-system note:
+ * Calls backend commands (`get_group_cmd`, `get_group_members_cmd`, `get_group_feed`,
+ * `check_auth_status`, `join_group`, `leave_group`) through Tauri IPC via `invoke`.
+ */
 export function useGroupDetail(groupId: string | null) {
     const [group, setGroup] = useState<LocalGroup | null>(null);
     const [members, setMembers] = useState<GroupMember[]>([]);
@@ -337,7 +382,13 @@ export function useGroupDetail(groupId: string | null) {
     return { group, members, posts, loading, membership, myRole, joinGroup, leaveGroup, refresh };
 }
 
-/** Search groups */
+/**
+ * Group search hook for query-driven discovery.
+ *
+ * Cross-system note:
+ * Uses backend command `search_groups_cmd` in real mode; uses local group filtering
+ * against mock fixtures in fallback mode.
+ */
 export function useGroupSearch() {
     const [results, setResults] = useState<GroupSummary[]>([]);
     const [searching, setSearching] = useState(false);
@@ -367,7 +418,17 @@ export function useGroupSearch() {
     return { results, searching, search };
 }
 
-/** Create group */
+// ═══════════════════════════════════════════════════════════════════════════════
+// Exported non-hook helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Creates a group and returns its `group_id`.
+ *
+ * Cross-system note:
+ * Uses backend command `create_group` when available, otherwise writes to in-memory
+ * mock fixtures so UI flows remain testable without backend readiness.
+ */
 export async function createGroup(params: {
     name: string;
     slug: string;
@@ -401,29 +462,31 @@ export async function createGroup(params: {
     return groupId;
 }
 
-/** Check if user has joined a group */
+/** Returns whether the current mock user is an active member of `groupId`. */
 export function isGroupJoined(groupId: string): boolean {
     return MOCK_JOINED_GROUPS.has(groupId);
 }
 
-/** Check if join request is pending */
+/** Returns whether `groupId` currently has a pending join request in mock state. */
 export function isGroupPending(groupId: string): boolean {
     return MOCK_PENDING_GROUPS.has(groupId);
 }
 
-/** Get list of all groups the user has joined */
+/** Returns all mock joined group IDs for quick membership checks. */
 export function getJoinedGroupIds(): string[] {
     return Array.from(MOCK_JOINED_GROUPS);
 }
 
-/** Get all mock groups (for share-to-group picker) */
+/** Returns full mock group records for groups the user has already joined. */
 export function getJoinedGroups(): LocalGroup[] {
     return Array.from(MOCK_JOINED_GROUPS)
         .map(id => MOCK_GROUPS[id])
         .filter((g): g is LocalGroup => !!g);
 }
 
-/** Flatten all topics for a dropdown picker */
+/**
+ * Flattens a nested topic tree into an indented list for dropdown/select controls.
+ */
 export function flattenTopics(nodes: TopicNode[], depth = 0): { id: string; name: string; depth: number }[] {
     const result: { id: string; name: string; depth: number }[] = [];
     for (const node of nodes) {
@@ -435,7 +498,9 @@ export function flattenTopics(nodes: TopicNode[], depth = 0): { id: string; name
     return result;
 }
 
-// ─── Helpers ───
+// ═══════════════════════════════════════════════════════════════════════════════
+// Internal helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function toggleSubscription(nodes: TopicNode[], topicId: string, subscribed: boolean): TopicNode[] {
     return nodes.map(node => {
