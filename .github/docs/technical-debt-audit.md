@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–7 (60 source files · ~28,920 lines · Rust + TypeScript)
+> **Scope**: Batches 1–8 (68 source files · ~31,500 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 7 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, **Tauri Commands**) uncovered **189 issues** across 60 files:
+A systematic audit of the first 8 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, **Frontend Foundation**) uncovered **213 issues** across 68 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 40 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 90 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 59 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 44 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 102 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 67 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -25,6 +25,7 @@ The top systemic concerns are:
 4. **Missing pagination** — Follows/followers only return first page in both Bluesky and Mastodon connectors, unbounded loops in several API calls.
 5. **Memory pressure from large media** — Facebook, Instagram, and vault operations load entire media files into memory with no size guards.
 6. **God file problem** — `import.rs` at 2,900 lines is the largest file in the codebase and mixes 8+ unrelated concerns (archive import, timeline fetching, DM import, feed aggregation, publishing, social graph). Should be split into 5-6 submodules.
+7. **Frontend foundation sprawl** — `store/index.ts` bundles 6 unrelated Zustand stores in one file, `App.tsx` has 40+ line duplicated chat-open callbacks, `DataProvider.ts` is a 100+ method monolithic interface with 6 untyped returns. The provider pattern requires 3-file changes for every new backend command.
 
 ---
 
@@ -487,6 +488,59 @@ commands/import/
 
 ---
 
+## Batch 8 — Frontend Foundation
+
+**Scope:** 8 files · ~2,581 lines in `src/`, `src/store/`, `src/providers/`, `src/contexts/`
+**Findings:** 24 issues (4 HIGH · 12 MEDIUM · 8 LOW)
+
+Batch 8 covers the application shell, global state management, and the data provider abstraction layer. These are the files every screen and component depends on. Key concerns:
+
+- **Duplicated callback logic** — The "open chat" flow is copy-pasted between FeedScreen and FriendsScreen callbacks in App.tsx with divergent convo-resolution logic
+- **Monolithic interfaces** — `DataProvider` has 100+ methods in a flat interface; adding any backend command requires touching 3 files
+- **Single-file store sprawl** — 6 unrelated Zustand stores crammed into one file
+- **No lazy loading** — All 17 screen components are eagerly imported regardless of which ones the user visits
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 8.1 | `App.tsx` | **"Open Chat" logic duplicated between FeedScreen and FriendsScreen callbacks** — 40+ lines of identical Bluesky/AP/P2P branching copied in both `onOpenChat` handlers with slightly different convo-finding logic | Bugs fixed in one callback won't be fixed in the other; convo resolution diverges |
+| 8.2 | `App.tsx` | **All import/audit state is local `useState`** — `progress`, `parseResult`, `logs`, `isShredding`, `importComplete`, `selectedArchivePath` are local state in App. Preserved only because tabs render simultaneously (display:none). | Fragile coupling between tab rendering strategy and state persistence |
+| 8.3 | `DataProvider.ts` | **Interface is 100+ methods with no grouping/namespacing** — single flat interface with every command the app can execute. Any new backend command requires touching 3 files (DataProvider + TauriDataProvider + future providers). | Hard to navigate; impossible to implement partial providers; adding commands is expensive |
+| 8.4 | `store/index.ts` | **6 unrelated stores in a single file** — BrowserStore, AuthStore, AppStore, NavStore, PeerStore, ChatStore, FeedCacheStore, ThemeStore all in one 459-line file | Import pollution; merge conflicts; developers must read unrelated stores |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 8.5 | `App.tsx` | **`importBluesky()` fires automatically on every boot** for Bluesky users — no opt-out, no rate limiting, no "last synced" check | Unnecessary API calls on every launch; slow startup for large feeds |
+| 8.6 | `App.tsx` | **`loadArchiveStats` fallback chain** — calls `vault_get_stats` then falls back to `count_archive_posts`. Two stats APIs for the same purpose. | Masks real errors; fallback exists because two stats commands coexist (see #7.25) |
+| 8.7 | `App.tsx` | **Error boundary only wraps the content area** — if AppLayout or the tab bar crashes, entire app goes white | Partial error boundary coverage; shell-level crashes unrecoverable |
+| 8.8 | `App.tsx` | **`renderTabScreen` is a 150+ line switch statement** with inline props. No lazy loading of screens. | All 17 screen components imported eagerly; startup bundle includes everything |
+| 8.9 | `store/index.ts` | **`FeedCacheStore.getCache` maxAge hardcoded to 120s** — `appendCache` preserves original `fetchedAt`, so appended pages can appear stale immediately | Cache may seem expired right after pagination; no user control |
+| 8.10 | `store/index.ts` | **`tabCounter` is a module-level mutable variable** — resets on HMR, new tabs can collide with existing IDs | Duplicate tab IDs after HMR cause React key conflicts |
+| 8.11 | `store/index.ts` | **`closeTab` when last tab closed sets `activeTabId: null`** but doesn't reset `screen` — app can have a screen with no tab | Ghost screen state; empty main area but sidebar still highlights old screen |
+| 8.12 | `TauriDataProvider.ts` | **Every method uses `{ ...params }` spread** — unnecessary object copy on every IPC call | Minor perf overhead; style inconsistency |
+| 8.13 | `TauriDataProvider.ts` | **No error wrapping** — raw Rust error strings bubble to the UI with no normalization or retry | Users see raw text like "ExpiredToken" or "Io(BrokenPipe)" |
+| 8.14 | `DataProvider.ts` | **6 methods return `Promise<unknown>`** — `fetchRemoteActor`, `importVaultMessages`, `sendP2pChatMessage`, `sendBskyDm`, `migrateWillowPaths`, `importArchiveMessages` | Callers must use `as` casts; no type safety on responses |
+| 8.15 | `DataProviderContext.tsx` | **Singleton `defaultProvider` created at module scope** — `new TauriDataProvider()` instantiated even if component tree never mounts | Wasteful in SSR/test environments |
+| 8.16 | `App.tsx` | **P2P keepalive polls with sequential connectivity checks** — iterates peers one-by-one with `await`. 20 peers × 10s timeout = 200s cycle vs 90s interval. | Overlapping keepalive cycles; peers polled sequentially not in parallel |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 8.17 | `main.tsx` | **No error boundary at root level** — if `<App />` throws during initial render, blank white screen | Unrecoverable crash on startup errors |
+| 8.18 | `App.tsx` | **`searchQuery` state managed but unused** — `handleSearchSubmit` logs to console, doesn't filter feed | Dead feature; search bar appears functional but does nothing |
+| 8.19 | `store/index.ts` | **`AuthInfo.source` is `string` not a union type** — should be `"bluesky" \| "local" \| "mastodon"` | No type safety on auth source checks |
+| 8.20 | `store/index.ts` | **Theme store has no persistence** — theme selection and overrides reset on app restart | Users lose customizations every session |
+| 8.21 | `store/index.ts` | **`UserBackground.dataUrl` stores images as base64 in Zustand** — large images (5MB+) live in JS heap | Memory pressure from background images |
+| 8.22 | `providers/index.ts` | **Re-exports manually maintained** — adding a new provider type requires updating barrel file | Minor maintenance burden |
+| 8.23 | `App.tsx` | **`handleLogout` clears chat store but not FeedCacheStore or PeerStore** — stale data from previous account persists | Stale feed cache and peer statuses after logout |
+| 8.24 | `TabActiveContext.tsx` | **Default context value is `true`** — components outside tab system always think they're active | Resources not released for orphan components |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -552,4 +606,12 @@ commands/import/
 | `commands/media.rs` | 2 | 4 | 1 | 7 |
 | `commands/import.rs` | 2 | 6 | 1 | 9 |
 | *Cross-cutting (Batch 7)* | 2 | 0 | 0 | 2 |
-| **TOTAL** | **40** | **90** | **59** | **189** |
+| `src/main.tsx` | 0 | 0 | 1 | 1 |
+| `src/App.tsx` | 2 | 5 | 2 | 9 |
+| `src/store/index.ts` | 1 | 3 | 3 | 7 |
+| `src/providers/DataProvider.ts` | 1 | 1 | 0 | 2 |
+| `src/providers/TauriDataProvider.ts` | 0 | 2 | 0 | 2 |
+| `src/providers/DataProviderContext.tsx` | 0 | 1 | 0 | 1 |
+| `src/providers/index.ts` | 0 | 0 | 1 | 1 |
+| `src/contexts/TabActiveContext.tsx` | 0 | 0 | 1 | 1 |
+| **TOTAL** | **44** | **102** | **67** | **213** |

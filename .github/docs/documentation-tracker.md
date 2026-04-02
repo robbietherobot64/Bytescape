@@ -19,7 +19,7 @@
 | 5 | P2P, Sync & Real-time | 8 | 3,393 | ✅ Complete |
 | 6 | ActivityPub Federation | 9 | 2,866 | ✅ Complete |
 | 7 | Tauri Commands (Backend API) | 21 | 10,220 | ✅ Complete |
-| 8 | Frontend Foundation | 8 | 2,581 | ⬜ Not started |
+| 8 | Frontend Foundation | 8 | 2,581 | ✅ Complete |
 | 9 | Frontend Hooks | 7 | 2,349 | ⬜ Not started |
 | 10 | Frontend Utils | 12 | 1,429 | ⬜ Not started |
 | 11 | Frontend Screens | 16 | 7,526 | ⬜ Not started |
@@ -175,14 +175,14 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/main.tsx` | 12 | ⬜ | React DOM entry point |
-| `src/App.tsx` | 770 | ⬜ | App shell, routing, tab management |
-| `src/store/index.ts` | 476 | ⬜ | Zustand global state store |
-| `src/providers/DataProvider.ts` | 591 | ⬜ | Abstract data provider interface |
-| `src/providers/TauriDataProvider.ts` | 642 | ⬜ | Tauri-specific data provider implementation |
-| `src/providers/DataProviderContext.tsx` | 50 | ⬜ | React context for data provider injection |
-| `src/providers/index.ts` | 19 | ⬜ | Provider re-exports |
-| `src/contexts/TabActiveContext.tsx` | 21 | ⬜ | Tab visibility context for resource management |
+| `src/main.tsx` | 12 | ✅ | File header with boot sequence, DataProviderRoot annotation |
+| `src/App.tsx` | 770 | ✅ | Full header (5-step HOW IT WORKS), 11 section dividers, 12 function docs, tech debt notes |
+| `src/store/index.ts` | 476 | ✅ | 38-line header, 8 ═══ section dividers, all stores/interfaces documented, tech debt notes |
+| `src/providers/DataProvider.ts` | 591 | ✅ | Expanded header, 16 section dividers in interface, DataProvider abstraction doc, tech debt notes |
+| `src/providers/TauriDataProvider.ts` | 642 | ✅ | Expanded header (IPC flow), class doc with snake_case mapping, 16 section dividers |
+| `src/providers/DataProviderContext.tsx` | 50 | ✅ | RELATED FILES section added to existing header |
+| `src/providers/index.ts` | 19 | ✅ | RELATED FILES section added to existing header |
+| `src/contexts/TabActiveContext.tsx` | 21 | ✅ | File header with HOW IT WORKS, RELATED FILES (VideoPlayer, App.tsx) |
 
 **Subtotal**: 8 files · 2,581 lines
 

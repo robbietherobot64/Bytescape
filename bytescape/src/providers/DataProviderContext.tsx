@@ -7,6 +7,12 @@
  * Desktop (Tauri):  <DataProviderRoot provider={new TauriDataProvider()}>
  * Web (REST):       <DataProviderRoot provider={new RestDataProvider()}>
  * Portal (WASM):    <DataProviderRoot provider={new WasmProvider()}>
+ *
+ * RELATED FILES:
+ * - src/providers/DataProvider.ts      — DataProvider interface consumed here
+ * - src/providers/TauriDataProvider.ts — default concrete implementation (Tauri IPC)
+ * - src/providers/index.ts             — barrel re-export of this module's symbols
+ * - src/main.tsx                       — wraps <App /> in <DataProviderRoot>
  */
 
 import React, { createContext, useContext } from 'react';

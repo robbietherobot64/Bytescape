@@ -1,3 +1,19 @@
+/**
+ * TabActiveContext.tsx — React context signalling whether a tab is visible.
+ *
+ * HOW IT WORKS:
+ * 1. App.tsx renders each tab panel and wraps it in a `<TabActiveContext.Provider>`
+ *    whose value is `true` only for the currently-selected tab.
+ * 2. Child components call `useTabActive()` to read that boolean.
+ * 3. Resource-heavy components (e.g. VideoPlayer) check the flag and
+ *    pause / release native resources when the tab becomes inactive,
+ *    preventing GStreamer pipeline leaks without imperative DOM hacks.
+ *
+ * RELATED FILES:
+ * - src/App.tsx                          — provides the context value per tab
+ * - src/components/VideoPlayer.tsx       — consumes useTabActive() to pause playback
+ * - src/components/VideoPlaybackManager.tsx — legacy imperative approach this replaces
+ */
 import { createContext, useContext } from 'react';
 
 /**

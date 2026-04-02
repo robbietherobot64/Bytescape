@@ -1,8 +1,48 @@
+/**
+ * store/index.ts — Global client-side state management (Zustand)
+ *
+ * Central barrel file exporting all Zustand stores used across the Bytescape
+ * application. Each store is a lightweight, hook-based reactive atom that
+ * components subscribe to for re-renders on relevant state slices.
+ *
+ * HOW IT WORKS:
+ * 1. Each store is created via `create<T>()` from Zustand, producing a
+ *    React hook (e.g. `useNavStore`) that components call directly.
+ * 2. State updates use Zustand's `set()` — immutable replacements that
+ *    trigger surgical re-renders only in subscribed components.
+ * 3. NavStore implements browser-style tabbing: tabs are opened, closed,
+ *    and switched with URL-bar-like semantics (reuse module tabs, fork
+ *    content tabs).
+ * 4. FeedCacheStore provides stale-while-revalidate caching so feed data
+ *    survives tab switches without refetching.
+ * 5. ThemeStore drives the CSS-variable-based theming system, allowing
+ *    per-variable overrides and custom background images.
+ *
+ * RELATED FILES:
+ * - src/App.tsx                 — consumes AuthStore, NavStore, ThemeStore
+ * - src/screens/FeedScreen.tsx  — consumes NavStore, FeedCacheStore
+ * - src/screens/ChatScreen.tsx  — consumes ChatStore, PeerStore
+ * - src/types/index.ts          — shared type definitions (VaultMessage, etc.)
+ * - src/hooks/useUnifiedFeed.ts — consumes FeedCacheStore for SWR pattern
+ * - src/themes/                 — theme definitions consumed by ThemeStore
+ *
+ * @module store
+ *
+ * TECH DEBT:
+ * - All 8 stores live in a single file; should be split into per-store
+ *   modules (e.g. store/nav.ts, store/chat.ts) for maintainability.
+ * - `tabCounter` is a module-level mutable variable — not safe across
+ *   HMR boundaries; IDs can collide after hot reload.
+ * - ThemeStore state is not persisted (no Zustand `persist` middleware);
+ *   theme resets on every app launch.
+ */
 import { create } from 'zustand';
 import { VaultMessage, SidebarItem, ThemeId } from '../types';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
-// ─── Browser (WebView) Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Browser (WebView) Store
+// ═══════════════════════════════════════════════════════════════════════
 // Shared state between WebViewScreen and Omnibar so the global Omnibar
 // can display the current URL and control back/forward/reload in the
 // active native webview.
@@ -19,6 +59,7 @@ interface BrowserState {
     setIsLoading: (loading: boolean) => void;
 }
 
+/** Zustand store for native webview state — URL, loading indicator, and active label. */
 export const useBrowserStore = create<BrowserState>((set) => ({
     activeLabel: null,
     currentUrl: null,
@@ -28,7 +69,11 @@ export const useBrowserStore = create<BrowserState>((set) => ({
     setIsLoading: (loading) => set({ isLoading: loading }),
 }));
 
-// ─── Auth Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Auth Store
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Identity info for the currently authenticated user. */
 interface AuthInfo {
     handle: string;
     did: string;
@@ -45,12 +90,17 @@ interface AuthState {
     setAuth: (auth: AuthInfo | null) => void;
 }
 
+/** Zustand store for authentication — holds the current user identity (or null when logged out). */
 export const useAuthStore = create<AuthState>((set) => ({
     auth: null,
     setAuth: (auth) => set({ auth }),
 }));
 
-// ─── App Store (import/error/global) ───
+// ═══════════════════════════════════════════════════════════════════════
+//  App Store (import / error / global)
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Global application state: import progress, error banner, archive count. */
 interface AppState {
     importProgress: string | null;
     setImportProgress: (progress: string | null) => void;
@@ -62,6 +112,7 @@ interface AppState {
     setArchiveCount: (count: number) => void;
 }
 
+/** Zustand store for top-level app concerns — import progress, global error banner, archive count. */
 export const useAppStore = create<AppState>((set) => ({
     importProgress: null,
     setImportProgress: (progress) => set({ importProgress: progress }),
@@ -73,7 +124,11 @@ export const useAppStore = create<AppState>((set) => ({
     setArchiveCount: (count) => set({ archiveCount: count }),
 }));
 
-// ─── Navigation Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Navigation Store
+// ═══════════════════════════════════════════════════════════════════════
+
+/** All routable screen identifiers in the app — used by NavStore and TabItem. */
 export type Screen = "login" | "feed" | "import" | "audit" | "archive" | "profile" | "profile-builder" | "profile-browser" | "settings" | "chat" | "friends" | "vault" | "peer-profile" | "webview" | "profile-view" | "forum" | "group";
 
 /** Browser-style tab descriptor */
@@ -85,6 +140,7 @@ export interface TabItem {
     meta?: Record<string, string>;
 }
 
+// TECH DEBT: module-level mutable counter — not HMR-safe; IDs can collide after hot reload.
 let tabCounter = 0;
 function nextTabId(): string {
     return `tab-${++tabCounter}`;
@@ -137,6 +193,13 @@ interface NavState {
     updateTabLabel: (tabId: string, label: string) => void;
 }
 
+/**
+ * Zustand store for screen routing and browser-style tab management.
+ *
+ * Implements Chrome-like tab semantics: module screens (feed, chat, etc.)
+ * are reused when reopened, while content screens (peer profiles) always
+ * open a new tab adjacent to the currently active one.
+ */
 export const useNavStore = create<NavState>((set, get) => ({
     screen: 'login',
     setScreen: (screen) => set({ screen }),
@@ -250,9 +313,11 @@ export const useNavStore = create<NavState>((set, get) => ({
     },
 }));
 
-// ─── Chat Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Peer Store (global P2P status tracking)
+// ═══════════════════════════════════════════════════════════════════════
 
-// ─── Peer Store (global P2P status tracking) ───
+/** Tracks online/offline presence for all known P2P peers (keyed by Iroh node ID). */
 interface PeerState {
     /** Map of node_id → online status */
     peerStatuses: Record<string, 'online' | 'offline'>;
@@ -260,6 +325,7 @@ interface PeerState {
     setPeerStatuses: (statuses: Record<string, 'online' | 'offline'>) => void;
 }
 
+/** Zustand store for P2P peer presence — consumed by ChatScreen and friend lists. */
 export const usePeerStore = create<PeerState>((set) => ({
     peerStatuses: {},
     setPeerStatus: (nodeId, status) => set((state) => ({
@@ -268,7 +334,11 @@ export const usePeerStore = create<PeerState>((set) => ({
     setPeerStatuses: (statuses) => set({ peerStatuses: statuses }),
 }));
 
-// ─── Chat Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Chat Store
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Metadata for a conversation initiated but not yet containing messages. */
 interface PendingConvoMeta {
     did: string;
     handle: string;
@@ -293,6 +363,10 @@ interface ChatState {
     setIsSending: (sending: boolean) => void;
 }
 
+/**
+ * Zustand store for direct-messaging UI state — messages, selected
+ * conversation, compose input, and send-in-progress flag.
+ */
 export const useChatStore = create<ChatState>((set) => ({
     messages: [],
     setMessages: (msgs) => set((state) =>
@@ -312,7 +386,9 @@ export const useChatStore = create<ChatState>((set) => ({
     setIsSending: (sending) => set({ isSending: sending }),
 }));
 
-// ─── Feed Cache Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Feed Cache Store
+// ═══════════════════════════════════════════════════════════════════════
 // Persists feed data across tab switches and screen navigation.
 // Enables cache-first rendering (stale-while-revalidate pattern).
 
@@ -343,6 +419,19 @@ interface FeedCacheState {
     setCachedFollowingList: (list: ProfileView[]) => void;
 }
 
+/**
+ * Zustand store for stale-while-revalidate feed caching.
+ *
+ * Keyed by tab name (e.g. "all", "following", custom feed URIs).
+ * Also caches sidebar context data (saved feeds list, following list).
+ *
+ * TECH DEBT:
+ * - `getCache` uses a hardcoded default TTL of 120 000 ms (2 min);
+ *   should be configurable per feed type.
+ * - `appendCache` preserves the original `fetchedAt` timestamp from
+ *   the first page, so the entire cache entry can expire even though
+ *   the last page was fetched more recently.
+ */
 export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     cache: {},
     setCache: (tab, entries, cursor) => set((state) => ({
@@ -390,9 +479,11 @@ export const useFeedCacheStore = create<FeedCacheState>((set, get) => ({
     setCachedFollowingList: (list) => set({ cachedFollowingList: list }),
 }));
 
-// ─── Theme Store ───
+// ═══════════════════════════════════════════════════════════════════════
+//  Theme Store
+// ═══════════════════════════════════════════════════════════════════════
 
-/** Per-variable color overrides keyed by CSS variable name (e.g. "--bg-sidebar") */
+/** Per-variable color overrides keyed by CSS variable name (e.g. "--bg-sidebar"). */
 export type ColorOverrides = Record<string, string>;
 
 /** User-uploaded background image persisted as base64 data URL */
@@ -425,6 +516,13 @@ interface ThemeState {
     removeUserBackground: (id: string) => void;
 }
 
+/**
+ * Zustand store for visual theming — active theme ID, per-variable CSS
+ * overrides, custom background images, and user-uploaded background library.
+ *
+ * TECH DEBT: Not wrapped with Zustand `persist` middleware — all theme
+ * customisations reset on app restart.
+ */
 export const useThemeStore = create<ThemeState>((set) => ({
     activeTheme: 'geocities',
     customOverrides: {},

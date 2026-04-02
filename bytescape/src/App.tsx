@@ -1,6 +1,37 @@
-/** This is the app file for Bytescape. It initializes the app, manages global state, and renders the main layout and screens. */
+/**
+ * App.tsx — Main Application Shell
+ *
+ * The root component that bootstraps the Bytescape application. Manages
+ * authentication, P2P connectivity, archive imports, navigation, and
+ * renders all 17 screens within a tabbed layout.
+ *
+ * HOW IT WORKS:
+ * 1. On mount, initializes the Iroh P2P node and checks for an existing
+ *    auth session (Bluesky OAuth or local). If authenticated, auto-imports
+ *    the latest Bluesky feed and chat messages.
+ * 2. Registers global event listeners for parse progress (Facebook archives),
+ *    import progress (Bluesky), and P2P peer connections. A background
+ *    keepalive pings all known peers every 90s.
+ * 3. Sidebar navigation maps to screen tabs via a tabbed pane system — all
+ *    open tabs render simultaneously (inactive ones use display:none) so
+ *    React state is preserved across tab switches.
+ * 4. Facebook archive import follows a two-phase flow: parse → audit → shred
+ *    (commit_memories). Bluesky import runs feed + chat in parallel.
+ * 5. An ErrorBoundary wraps all screen content to catch rendering failures
+ *    without crashing the entire app shell.
+ *
+ * RELATED FILES:
+ * - store/index.ts          — Zustand stores (auth, app, nav, chat, peer)
+ * - components/AppLayout    — Shell layout with sidebar, top bar, tab strip
+ * - screens/*               — Individual screen components rendered by renderTabScreen
+ * - types/index.ts          — Shared TypeScript interfaces (AuthStatus, ParseResult, etc.)
+ * - hooks/useTheme.ts       — Theme switching (sets data-theme on <html>)
+ * - src-tauri/src/lib.rs    — Tauri command definitions invoked via IPC
+ */
 
-/** Import global styles and themes */
+// ═══════════════════════════════════════════════════════════════
+// IMPORTS
+// ═══════════════════════════════════════════════════════════════
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -12,6 +43,10 @@ import "./themes/win98.css";
 import "./themes/midnight.css";
 import "./themes/hacker.css";
 import "./App.css";
+
+// ═══════════════════════════════════════════════════════════════
+// ERROR BOUNDARY
+// ═══════════════════════════════════════════════════════════════
 
 /**
  * Local error boundary for screen-level rendering failures.
@@ -38,7 +73,7 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, childre
   }
 }
 
-// Types
+// ─── Types ───────────────────────────────────────────────────
 import {
   AuthStatus,
   ParseProgress,
@@ -48,7 +83,7 @@ import {
   VaultFileStats
 } from "./types";
 
-// Components
+// ─── Components ──────────────────────────────────────────────
 import { AppLayout } from "./components/AppLayout";
 import { LoginScreen } from "./screens/LoginScreen";
 import { FeedScreen } from "./screens/FeedScreen";
@@ -73,8 +108,27 @@ import { useTheme } from "./hooks/useTheme";
 import { useLocationStore } from "./hooks/useLocation";
 import { installLinkInterceptor } from "./utils/openInApp";
 
+/**
+ * Root application component.
+ *
+ * Orchestrates authentication, P2P networking, data imports (Bluesky +
+ * Facebook/Instagram), sidebar navigation, and tabbed screen rendering.
+ * All global event listeners and background tasks (keepalive, auto-import)
+ * are registered here so they persist regardless of which screen is active.
+ *
+ * @IPC setup_iroh_node, migrate_willow_paths — called during initialization
+ * @IPC check_auth_status, logout — authentication lifecycle
+ * @IPC import_bluesky_posts, import_vault_messages — Bluesky data sync
+ * @IPC import_archive_auto, commit_memories — Facebook/Instagram archive import
+ * @IPC list_peers, check_peer_connectivity — P2P keepalive polling
+ * @IPC vault_get_stats, count_archive_posts — archive count for UI badges
+ */
 function App() {
-  // ─── Theme (applies data-theme attribute on <html>) ───
+  // ═══════════════════════════════════════════════════════════
+  // STORES & STATE
+  // ═══════════════════════════════════════════════════════════
+
+  /** Applies the active theme's data-theme attribute on <html> */
   useTheme();
 
   // ─── Stores ───
@@ -127,6 +181,8 @@ function App() {
   const importGuardRef = React.useRef(false);
 
   // Search state (top bar)
+  // NOTE: searchQuery is captured but not wired into feed filtering yet.
+  // handleSearchSubmit only logs to console — see "Future:" comment below.
   const [searchQuery, setSearchQuery] = useState('');
 
   const handleSearchSubmit = (query: string) => {
@@ -137,13 +193,24 @@ function App() {
     console.log('Search submitted:', query);
   };
 
-  // === Init ===
+  // ═══════════════════════════════════════════════════════════
+  // EVENT LISTENERS & INITIALIZATION
+  // ═══════════════════════════════════════════════════════════
+
+  /** Bootstrap effect — runs once on mount to initialize backend services. */
   useEffect(() => {
     initApp();
   }, []);
 
   /**
    * Initializes backend services required by feed, vault, and sync features.
+   *
+   * Sequence: setup Iroh P2P node → run Willow path migration → check auth.
+   * If any step fails, subsequent steps still attempt to run so the app
+   * degrades gracefully (e.g., offline-only mode without P2P).
+   *
+   * @IPC setup_iroh_node — starts the Iroh networking node
+   * @IPC migrate_willow_paths — one-time migration from legacy path format
    */
   async function initApp() {
     // Initialize Iroh node first — vault, blobs, and P2P all depend on it
@@ -181,7 +248,7 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // ── Global P2P peer-connected listener ──
+  // ─── Global P2P peer-connected listener ────────────────────
   // Lives at App level so it works regardless of which screen is active.
   // When a remote peer connects TO us, the backend emits "peer-connected".
   useEffect(() => {
@@ -197,9 +264,11 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // ── Background P2P keepalive ──
+  // ─── Background P2P keepalive ──────────────────────────────
   // Every 90 seconds, check connectivity to all known peers so the status
   // stays fresh even when the user isn't on the Social screen.
+  // NOTE: Peers are pinged sequentially (await inside for-loop). With many
+  // peers this could take a while; consider Promise.all for parallelism.
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -227,7 +296,19 @@ function App() {
     setLogs((prev) => [...prev, msg]);
   }, []);
 
-  // === Auth ===
+  // ═══════════════════════════════════════════════════════════
+  // AUTH
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Checks for an existing authenticated session on startup.
+   *
+   * If a valid session exists, opens the Feed tab, loads archive stats,
+   * and triggers identity setup if the user hasn’t chosen a username.
+   * For Bluesky sessions, also kicks off an auto-import of the latest feed.
+   *
+   * @IPC check_auth_status — returns the current AuthStatus or null
+   */
   async function checkAuth() {
     try {
       const status = await invoke<AuthStatus | null>("check_auth_status");
@@ -250,6 +331,12 @@ function App() {
     setLoading(false);
   }
 
+  /**
+   * Callback passed to LoginScreen after successful authentication.
+   *
+   * Sets up the initial app state (Feed tab, archive stats, identity check)
+   * and optionally triggers a Bluesky import if the user chose to sync.
+   */
   const handleLoginSuccess = async (status: AuthStatus, shouldImport: boolean) => {
     setAuth(status);
     // Create the initial Feed tab after login
@@ -267,6 +354,14 @@ function App() {
     }
   };
 
+  /**
+   * Signs the user out and resets all application state.
+   *
+   * Clears auth, navigation tabs, chat messages, archive data, and
+   * import progress. Navigates back to the login screen.
+   *
+   * @IPC logout — destroys the backend session
+   */
   async function handleLogout() {
     try {
       await invoke("logout");
@@ -296,8 +391,19 @@ function App() {
     setShowRecoverySetup(false);
   }
 
-  // === Data Loading ===
-  /** Loads archive summary counts for UI badges and status text. */
+  // ═══════════════════════════════════════════════════════════
+  // DATA LOADING
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Loads archive summary counts for UI badges and status text.
+   *
+   * Tries the new vault_get_stats command first; falls back to the legacy
+   * count_archive_posts if the vault isn’t initialized yet.
+   *
+   * @IPC vault_get_stats — returns VaultFileStats with total_files
+   * @IPC count_archive_posts — legacy fallback returning a plain count
+   */
   async function loadArchiveStats() {
     try {
       const stats = await invoke<VaultFileStats>("vault_get_stats");
@@ -315,7 +421,21 @@ function App() {
 
 
 
-  // === Bluesky Import ===
+  // ═══════════════════════════════════════════════════════════
+  // BLUESKY IMPORT
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Imports Bluesky feed posts and chat messages into the local vault.
+   *
+   * Runs feed import (import_bluesky_posts) and chat import
+   * (import_vault_messages) in parallel. Uses a ref-based guard to
+   * prevent concurrent invocations. After completion, reloads archive
+   * stats so UI badges update immediately.
+   *
+   * @IPC import_bluesky_posts — downloads and stores new feed posts
+   * @IPC import_vault_messages — syncs Bluesky DM conversations
+   */
   async function importBluesky() {
     if (importGuardRef.current) return;
     importGuardRef.current = true;
@@ -367,7 +487,21 @@ function App() {
 
 
 
-  // === Facebook Import ===
+  // ═══════════════════════════════════════════════════════════
+  // FACEBOOK / INSTAGRAM ARCHIVE IMPORT
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Opens a file picker (or accepts a drop path) and parses a ZIP archive.
+   *
+   * Navigates to the Audit screen, logs the ZIP structure for diagnostics,
+   * auto-detects the archive source (Facebook vs Instagram) from the filename,
+   * and invokes the backend parser. Results are stored in parseResult state
+   * for the AuditScreen to display.
+   *
+   * @IPC debug_zip_contents — lists files inside the ZIP for diagnostic logging
+   * @IPC import_archive_auto — parses the archive and returns ParseResult
+   */
   async function handleFilePick(pathOverride?: string) {
     try {
       const rawSelected = pathOverride || await open({
@@ -427,6 +561,16 @@ function App() {
     }
   }
 
+  /**
+   * Commits parsed archive data to the vault and imports archived conversations.
+   *
+   * This is the second phase of archive import (after parse + user review).
+   * Persists posts via commit_memories, then imports archived chat messages
+   * if the source is known. Updates archive stats on completion.
+   *
+   * @IPC commit_memories — persists staged posts to redb
+   * @IPC import_archive_messages — imports chat threads from the archive
+   */
   async function handleShred() {
     setIsShredding(true);
     addLog("[shred] Committing memories...");
@@ -453,7 +597,16 @@ function App() {
     setIsShredding(false);
   }
 
-  // === Navigation ===
+  // ═══════════════════════════════════════════════════════════
+  // NAVIGATION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Maps a sidebar item to the corresponding screen tab.
+   *
+   * Uses a lookup table to translate sidebar identifiers (e.g., 'feed',
+   * 'chat', 'social') into screen/tab pairs, then opens or focuses that tab.
+   */
   function handleNavigate(item: SidebarItem) {
     setActiveSidebar(item);
     const screenMap: Record<string, { screen: Parameters<typeof openTab>[0]; label?: string }> = {
@@ -483,7 +636,9 @@ function App() {
     handleOpenGroup(groupId);
   }
 
-  // === Render Helpers ===
+  // ═══════════════════════════════════════════════════════════
+  // RENDER HELPERS
+  // ═══════════════════════════════════════════════════════════
 
   /** Screens that need full-bleed layout (no padding, flex column, overflow hidden) */
   const FULL_BLEED_SCREENS: Set<Screen> = new Set([
@@ -505,7 +660,19 @@ function App() {
     overflowY: 'auto',
   };
 
-  /** Render the screen content for a given tab */
+  /**
+   * Renders the appropriate screen component for a given tab.
+   *
+   * Each case maps a Screen identifier to its React component, wiring in
+   * the necessary props (auth, callbacks, navigation handlers). All tabs
+   * are rendered simultaneously — inactive ones are hidden via CSS so their
+   * state is preserved across switches.
+   *
+   * NOTE: The onOpenChat callback is duplicated between FeedScreen and
+   * FriendsScreen with slightly different implementations. Both resolve a
+   * convo ID from the peer's DID/node-id and navigate to Chat. Consider
+   * extracting a shared openChatWithPeer() helper.
+   */
   function renderTabScreen(tab: TabItem) {
     switch (tab.screen) {
       case 'feed':
@@ -515,6 +682,8 @@ function App() {
             activeTab={feedActiveTab}
             setActiveTab={setFeedActiveTab}
             isImporting={isImporting}
+            // NOTE: This onOpenChat logic is largely duplicated in FriendsScreen below.
+            // Consider extracting a shared openChatWithPeer(peerNodeId, peerName) helper.
             onOpenChat={async (peerNodeId, peerName) => {
               const { setSelectedConvoId, setPendingConvoMeta, messages } = useChatStore.getState();
               
@@ -601,6 +770,8 @@ function App() {
         return (
           <FriendsScreen
             auth={auth}
+            // NOTE: Duplicates FeedScreen's onOpenChat above with minor differences
+            // (Mastodon guard, messages.find vs Array.from). Unify into shared helper.
             onOpenChat={(peerNodeId, peerName) => {
               const { setSelectedConvoId, setPendingConvoMeta, messages } = useChatStore.getState();
 
@@ -680,7 +851,9 @@ function App() {
     }
   }
 
-  // === Render ===
+  // ═══════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════
 
   if (loading) {
     return (

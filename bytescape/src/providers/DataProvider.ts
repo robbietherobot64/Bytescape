@@ -7,6 +7,21 @@
  *   - RestDataProvider   (web    — uses fetch() against bytescape.social REST API)
  *   - WasmProvider       (portal — uses WASM-compiled subset)
  *
+ * HOW IT WORKS:
+ *   1. UI components obtain a DataProvider via DataProviderContext (React context).
+ *   2. Components call typed async methods (e.g. getTimeline, publishPostV2).
+ *   3. The active implementation (TauriDataProvider on desktop) translates each
+ *      call to the appropriate backend transport (Tauri invoke, fetch, WASM).
+ *   4. Parameters are typed objects defined in this file; return types come from
+ *      types/index.ts, mirroring Rust #[derive(Serialize)] structs.
+ *   5. Errors propagate as rejected Promises — callers use try/catch.
+ *
+ * RELATED FILES:
+ *   - providers/TauriDataProvider.ts   — Desktop implementation (Tauri invoke)
+ *   - providers/DataProviderContext.tsx — React context that supplies the provider
+ *   - types/index.ts                   — Shared TS interfaces mirroring Rust structs
+ *   - src-tauri/src/lib.rs             — Rust command definitions & registration
+ *
  * Method names use camelCase TypeScript conventions.
  * Parameters are typed objects. Return types use interfaces from types/index.ts.
  */
@@ -45,9 +60,9 @@ import type {
   VaultStats,
 } from '../types';
 
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 //  Parameter types  — typed objects for every command
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 
 export interface GetTimelineParams {
   limit: number;
@@ -424,9 +439,9 @@ export interface SyncDocResult {
   namespace_id: string;
 }
 
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 //  Relay types (Phase 4.5 stubs — backend not yet deployed)
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 
 export type RelayStatus = 'connected' | 'syncing' | 'offline';
 
@@ -436,12 +451,30 @@ export interface RelaySyncStatus {
   error?: string | null;
 }
 
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 //  DataProvider Interface
-// ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
 
+/**
+ * DataProvider — The contract every data backend must implement.
+ *
+ * This monolithic interface defines ~100 methods spanning feed retrieval,
+ * auth, vault CRUD, P2P networking, media, chat, and more.  The active
+ * implementation is injected via React context (DataProviderContext).
+ *
+ * @see TauriDataProvider — the desktop implementation (Tauri invoke)
+ *
+ * TECH DEBT:
+ *   - 6 methods return `Promise<unknown>` (fetchRemoteActor, importVaultMessages,
+ *     sendP2pChatMessage, sendBskyDm, importArchiveMessages, migrateWillowPaths) —
+ *     these need proper return types once their Rust commands stabilize.
+ *   - This interface is monolithic; consider splitting into sub-interfaces
+ *     (FeedProvider, AuthProvider, VaultProvider, etc.) for testability
+ *     and narrower dependency injection.
+ */
 export interface DataProvider {
-  // ── Feed ──────────────────────────────────────────────────────
+  /** Feed — retrieval and discovery for Bluesky, Mastodon, unified, and groups feeds. */
+  // ═══ Feed ═════════════════════════════════════════════════════
   getTimeline(params: GetTimelineParams): Promise<[BlueskyPost[], string | null]>;
   getAuthorFeed(params: GetAuthorFeedParams): Promise<[BlueskyPost[], string | null]>;
   getUnifiedFeed(params: GetUnifiedFeedParams): Promise<[BlueskyPost[], string | null]>;
@@ -454,7 +487,8 @@ export interface DataProvider {
   verifySyndications(params: VerifySyndicationsParams): Promise<boolean>;
   getGroupsFeed(params: GetGroupsFeedParams): Promise<BytescapeItem[]>;
 
-  // ── Auth ──────────────────────────────────────────────────────
+  /** Auth — authentication and session management for all linked platforms. */
+  // ═══ Auth ═════════════════════════════════════════════════════
   checkAuthStatus(): Promise<AuthStatus | null>;
   login(params: LoginParams): Promise<AuthStatus>;
   logout(): Promise<void>;
@@ -469,7 +503,8 @@ export interface DataProvider {
   unlinkAccount(params: UnlinkAccountParams): Promise<void>;
   deleteAccount(): Promise<void>;
 
-  // ── Profile ───────────────────────────────────────────────────
+  /** Profile — profile resolution and social graph queries across protocols. */
+  // ═══ Profile ══════════════════════════════════════════════════
   resolveProfile(params: ResolveProfileParams): Promise<ProfileView>;
   fetchRemoteActor(params: FetchRemoteActorParams): Promise<unknown>;
   listFollows(params: ListFollowsParams): Promise<ProfileView[]>;
@@ -478,7 +513,8 @@ export interface DataProvider {
   listContacts(): Promise<ProfileView[]>;
   mastodonGetTimeline(params: MastodonGetTimelineParams): Promise<FeedEntry[]>;
 
-  // ── Vault ─────────────────────────────────────────────────────
+  /** Vault — local vault CRUD for posts, files, stats, and data export. */
+  // ═══ Vault ════════════════════════════════════════════════════
   listVaultPostsPaged(params: ListVaultPostsPagedParams): Promise<PagedVaultResult>;
   listVaultSources(): Promise<string[]>;
   vaultListFiles(): Promise<VaultFile[]>;
@@ -493,7 +529,8 @@ export interface DataProvider {
   countArchivePosts(): Promise<number>;
   exportVaultData(params: ExportVaultDataParams): Promise<ExportVaultDataResult>;
 
-  // ── Posting ───────────────────────────────────────────────────
+  /** Posting — content creation, cross-platform syndication, and compose-time helpers. */
+  // ═══ Posting ══════════════════════════════════════════════════
   publishPostV2(params: PublishPostParams): Promise<PublishResult>;
   syndicateVaultItem(params: SyndicateVaultItemParams): Promise<string>;
   searchMentions(params: SearchMentionsParams): Promise<MentionSuggestion[]>;
@@ -503,7 +540,8 @@ export interface DataProvider {
   replyToPost(params: ReplyToPostParams): Promise<void>;
   mastodonReply(params: MastodonReplyParams): Promise<void>;
 
-  // ── Interactions ──────────────────────────────────────────────
+  /** Interactions — likes, reposts, and their Mastodon equivalents (favourite/reblog). */
+  // ═══ Interactions ═════════════════════════════════════════════
   likePost(params: LikePostParams): Promise<LikeResult>;
   unlikePost(params: UnlikePostParams): Promise<boolean>;
   repostPost(params: RepostPostParams): Promise<RepostResult>;
@@ -515,14 +553,16 @@ export interface DataProvider {
   mastodonFollowHashtag(params: MastodonHashtagParams): Promise<void>;
   mastodonUnfollowHashtag(params: MastodonHashtagParams): Promise<void>;
 
-  // ── Media ─────────────────────────────────────────────────────
+  /** Media — blob retrieval, HLS video resolution, and batch URL mapping. */
+  // ═══ Media ════════════════════════════════════════════════════
   getMediaBlob(params: GetMediaBlobParams): Promise<string>;
   getMediaServerPort(): Promise<number>;
   resolveHlsVideo(params: ResolveHlsVideoParams): Promise<string>;
   cancelVideoResolve(params: CancelVideoResolveParams): Promise<void>;
   resolveBlobUrlsBatch(params: ResolveBlobUrlsBatchParams): Promise<Record<string, string>>;
 
-  // ── Chat ──────────────────────────────────────────────────────
+  /** Chat — vault-archived messages, P2P chat, and Bluesky DMs. */
+  // ═══ Chat ═════════════════════════════════════════════════════
   listVaultMessages(): Promise<VaultMessage[]>;
   importVaultMessages(): Promise<unknown>;
   listP2pConversations(): Promise<P2pConversation[]>;
@@ -531,7 +571,8 @@ export interface DataProvider {
   sendMessage(params: SendMessageParams): Promise<void>;
   sendBskyDm(params: SendBskyDmParams): Promise<unknown>;
 
-  // ── Browser ───────────────────────────────────────────────────
+  /** Browser — embedded webview lifecycle (create, navigate, eval, show/hide). */
+  // ═══ Browser ══════════════════════════════════════════════════
   browserCreate(params: BrowserCreateParams): Promise<void>;
   browserNavigate(params: BrowserNavigateParams): Promise<void>;
   browserEval(params: BrowserEvalParams): Promise<void>;
@@ -540,7 +581,8 @@ export interface DataProvider {
   browserClose(params: BrowserLabelParams): Promise<void>;
   browserSetBounds(params: BrowserSetBoundsParams): Promise<void>;
 
-  // ── Peer / P2P ────────────────────────────────────────────────
+  /** Peer / P2P — Iroh-based networking, feed exchange, and blob transfer. */
+  // ═══ Peer / P2P ═══════════════════════════════════════════════
   setupIrohNode(): Promise<string>;
   listPeers(): Promise<PeerInfo[]>;
   getMyPeerInfo(): Promise<MyPeerInfo>;
@@ -550,7 +592,8 @@ export interface DataProvider {
   requestPeerFeed(params: RequestPeerFeedParams): Promise<PeerFeedResponse>;
   downloadPeerBlob(params: DownloadPeerBlobParams): Promise<boolean>;
 
-  // ── Widget / Profile Builder ──────────────────────────────────
+  /** Widget / Profile Builder — layout persistence, widget data, and guestbook. */
+  // ═══ Widget / Profile Builder ═════════════════════════════════
   getProfileLayout(): Promise<ProfileLayout | null>;
   saveProfileLayout(params: SaveProfileLayoutParams): Promise<void>;
   deleteProfileLayout(): Promise<void>;
@@ -560,7 +603,8 @@ export interface DataProvider {
   addGuestbookEntry(params: AddGuestbookEntryParams): Promise<GuestbookEntry>;
   deleteGuestbookEntry(params: DeleteGuestbookEntryParams): Promise<void>;
 
-  // ── Identity ──────────────────────────────────────────────────
+  /** Identity — local identity creation and passphrase-based recovery flow. */
+  // ═══ Identity ═════════════════════════════════════════════════
   setLocalUsername(params: SetLocalUsernameParams): Promise<AuthStatus>;
   createLocalIdentity(): Promise<AuthStatus>;
   identityInitFullRecovery(params: IdentityInitRecoveryParams): Promise<IdentityInitResult>;
@@ -568,24 +612,28 @@ export interface DataProvider {
   identityVerifyRecovery(params: IdentityVerifyRecoveryParams): Promise<IdentityRecoveryVerifyResult>;
   identityFinalizeRecovery(): Promise<IdentityRecoveryFinalizeResult>;
 
-  // ── Import ────────────────────────────────────────────────────
+  /** Import — archive import pipeline: Bluesky sync, ZIP parsing, and commit. */
+  // ═══ Import ═══════════════════════════════════════════════════
   importBlueskyPosts(): Promise<number>;
   importArchiveAuto(params: ImportArchiveAutoParams): Promise<ParseResult>;
   commitMemories(): Promise<number>;
   importArchiveMessages(params: ImportArchiveMessagesParams): Promise<unknown>;
   debugZipContents(params: DebugZipContentsParams): Promise<string[]>;
 
-  // ── Sync ──────────────────────────────────────────────────────
+  /** Sync — Iroh Docs-based CRDT synchronization between devices. */
+  // ═══ Sync ═════════════════════════════════════════════════════
   createSyncDoc(): Promise<SyncDocResult>;
   joinSyncDoc(params: JoinSyncDocParams): Promise<string>;
   migrateWillowPaths(): Promise<unknown>;
 
-  // ── Collab ────────────────────────────────────────────────────
+  /** Collab — real-time collaborative editing via Yjs documents. */
+  // ═══ Collab ═══════════════════════════════════════════════════
   getCollabState(params: GetCollabStateParams): Promise<CollabStateResponse>;
   createCollabDoc(params: CreateCollabDocParams): Promise<CollabDocMeta>;
   applyCollabUpdate(params: ApplyCollabUpdateParams): Promise<void>;
   snapshotCollabToItem(params: SnapshotCollabToItemParams): Promise<string>;
 
-  // ── Relay (Phase 4.5 — stubs) ────────────────────────────────
+  /** Relay — cloud-based sync (Phase 4.5 — backend not yet deployed). */
+  // ═══ Relay (Phase 4.5 — stubs) ═══════════════════════════════
   relaySyncStatus(): Promise<RelaySyncStatus>;
 }

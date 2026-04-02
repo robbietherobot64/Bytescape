@@ -3,8 +3,28 @@
  *
  * Every method delegates to `invoke()` from `@tauri-apps/api/core`,
  * mapping camelCase TypeScript method names to snake_case Rust commands.
- *
  * This is a 1:1 drop-in replacement for direct invoke() calls.
+ *
+ * HOW IT WORKS:
+ *   1. Each method receives a typed params object from the DataProvider interface.
+ *   2. The method spreads (or manually maps) params into a plain object.
+ *   3. `invoke('snake_case_command', { ...params })` sends the call over
+ *      Tauri's IPC bridge to the Rust backend (src-tauri/src/lib.rs).
+ *   4. The Rust command executes and returns a JSON-serialized result.
+ *   5. `invoke()` deserializes the result into the expected TypeScript type.
+ *
+ * RELATED FILES:
+ *   - providers/DataProvider.ts        — The interface this class implements
+ *   - providers/DataProviderContext.tsx — React context that injects this provider
+ *   - types/index.ts                   — Shared TS interfaces mirroring Rust structs
+ *   - src-tauri/src/lib.rs             — Rust command definitions & registration
+ *
+ * TECH DEBT:
+ *   - Every method spreads params (`{ ...params }`) which is unnecessary when
+ *     the param keys already match the Rust command's expected field names.
+ *     A generic helper like `invokeCmd<T>(cmd, params)` would reduce boilerplate.
+ *   - No error wrapping or normalization — Rust errors surface as raw strings.
+ *     Consider a unified error type or at least consistent error logging.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -122,9 +142,22 @@ import type {
   VaultStats,
 } from '../types';
 
+/**
+ * TauriDataProvider — Desktop-only DataProvider backed by Tauri IPC.
+ *
+ * IPC CONTRACT: Every method maps a camelCase TypeScript name to a snake_case
+ * Rust command registered in `src-tauri/src/lib.rs`.  Example:
+ *   TS: `getTimelineUnified(params)`  →  Rust: `get_timeline_unified`
+ *
+ * The mapping is manual (no codegen). When adding a new command, you must:
+ *   1. Define the `#[tauri::command]` fn in Rust
+ *   2. Register it in the `invoke_handler` macro in lib.rs
+ *   3. Add the method here with the matching snake_case invoke string
+ *   4. Add the method signature to the DataProvider interface
+ */
 export class TauriDataProvider implements DataProvider {
 
-  // ── Feed ────────────────────────────────────────────────────────
+  // ═══ Feed ═══════════════════════════════════════════════════════
 
   async getTimeline(params: GetTimelineParams): Promise<[BlueskyPost[], string | null]> {
     return invoke('get_timeline', { ...params });
@@ -185,7 +218,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('verify_syndications', { ...params });
   }
 
-  // ── Auth ────────────────────────────────────────────────────────
+  // ═══ Auth ═══════════════════════════════════════════════════════
 
   async checkAuthStatus(): Promise<AuthStatus | null> {
     return invoke('check_auth_status');
@@ -239,7 +272,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('delete_account');
   }
 
-  // ── Profile ─────────────────────────────────────────────────────
+  // ═══ Profile ════════════════════════════════════════════════════
 
   async resolveProfile(params: ResolveProfileParams): Promise<ProfileView> {
     return invoke('resolve_profile', { ...params });
@@ -269,7 +302,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('mastodon_get_timeline', { ...params });
   }
 
-  // ── Vault ───────────────────────────────────────────────────────
+  // ═══ Vault ══════════════════════════════════════════════════════
 
   async listVaultPostsPaged(params: ListVaultPostsPagedParams): Promise<PagedVaultResult> {
     return invoke('list_vault_posts_paged', { ...params });
@@ -323,7 +356,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('export_vault_data', { ...params });
   }
 
-  // ── Posting ─────────────────────────────────────────────────────
+  // ═══ Posting ════════════════════════════════════════════════════
 
   async publishPostV2(params: PublishPostParams): Promise<PublishResult> {
     return invoke('publish_post_v2', { ...params });
@@ -357,7 +390,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('mastodon_reply', { ...params });
   }
 
-  // ── Interactions ────────────────────────────────────────────────
+  // ═══ Interactions ═══════════════════════════════════════════════
 
   async likePost(params: LikePostParams): Promise<LikeResult> {
     return invoke('like_post', { ...params });
@@ -399,7 +432,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('mastodon_unfollow_hashtag', { ...params });
   }
 
-  // ── Media ───────────────────────────────────────────────────────
+  // ═══ Media ══════════════════════════════════════════════════════
 
   async getMediaBlob(params: GetMediaBlobParams): Promise<string> {
     return invoke('get_media_blob', { ...params });
@@ -421,7 +454,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('resolve_blob_urls_batch', { ...params });
   }
 
-  // ── Chat ────────────────────────────────────────────────────────
+  // ═══ Chat ═══════════════════════════════════════════════════════
 
   async listVaultMessages(): Promise<VaultMessage[]> {
     return invoke('list_vault_messages');
@@ -451,7 +484,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('send_bsky_dm', { ...params });
   }
 
-  // ── Browser ─────────────────────────────────────────────────────
+  // ═══ Browser ════════════════════════════════════════════════════
 
   async browserCreate(params: BrowserCreateParams): Promise<void> {
     return invoke('browser_create', { ...params });
@@ -481,7 +514,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('browser_set_bounds', { ...params });
   }
 
-  // ── Peer / P2P ──────────────────────────────────────────────────
+  // ═══ Peer / P2P ═════════════════════════════════════════════════
 
   async setupIrohNode(): Promise<string> {
     return invoke('setup_iroh_node');
@@ -515,7 +548,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('download_peer_blob', { ...params });
   }
 
-  // ── Widget / Profile Builder ────────────────────────────────────
+  // ═══ Widget / Profile Builder ═══════════════════════════════════
 
   async getProfileLayout(): Promise<ProfileLayout | null> {
     return invoke('get_profile_layout');
@@ -549,7 +582,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('delete_guestbook_entry', { ...params });
   }
 
-  // ── Identity ────────────────────────────────────────────────────
+  // ═══ Identity ═══════════════════════════════════════════════════
 
   async setLocalUsername(params: SetLocalUsernameParams): Promise<AuthStatus> {
     return invoke('set_local_username', { ...params });
@@ -575,7 +608,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('identity_finalize_recovery');
   }
 
-  // ── Import ──────────────────────────────────────────────────────
+  // ═══ Import ═════════════════════════════════════════════════════
 
   async importBlueskyPosts(): Promise<number> {
     return invoke('import_bluesky_posts');
@@ -597,7 +630,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('debug_zip_contents', { ...params });
   }
 
-  // ── Sync ────────────────────────────────────────────────────────
+  // ═══ Sync ═══════════════════════════════════════════════════════
 
   async createSyncDoc(): Promise<SyncDocResult> {
     return invoke('create_sync_doc');
@@ -611,7 +644,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('migrate_willow_paths');
   }
 
-  // ── Collab ──────────────────────────────────────────────────────
+  // ═══ Collab ═════════════════════════════════════════════════════
 
   async getCollabState(params: GetCollabStateParams): Promise<CollabStateResponse> {
     return invoke('get_collab_state', { ...params });
@@ -629,7 +662,7 @@ export class TauriDataProvider implements DataProvider {
     return invoke('snapshot_collab_to_item', { ...params });
   }
 
-  // ── Relay (Phase 4.5 — stub) ───────────────────────────────────
+  // ═══ Relay (Phase 4.5 — stub) ══════════════════════════════════
 
   async relaySyncStatus(): Promise<RelaySyncStatus> {
     try {
