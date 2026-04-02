@@ -13,6 +13,34 @@ import type { LinkCard, LinkedAccount } from '../types';
 import type { AutocompleteItem } from './AutocompleteDropdown';
 import type { MentionSuggestion } from '../types';
 
+/**
+ * PURPOSE
+ * - Provide the primary post composition surface for short posts and article-mode posts.
+ * - Coordinate text, media attachments, platform targets, autocomplete, and link unfurl preview.
+ *
+ * HOW IT WORKS
+ * - Tracks compose state locally and derives posting constraints from `useCharacterCount()`.
+ * - Calls backend commands (`invoke`) for mention/hashtag suggestions, linked-account detection,
+ *   link unfurling, and attachment file-size checks.
+ * - Delegates final publish behavior to injected `onPublish` callback.
+ *
+ * RELATED FILES
+ * - src/hooks/useCharacterCount.ts (multi-target limit logic)
+ * - src/utils/richtext.ts (autocomplete parsing + insertion)
+ * - src/components/AutocompleteDropdown.tsx (suggestion UI)
+ * - src/components/ArticleEditor.tsx (article-mode editor)
+ * - src-tauri/src/lib.rs (command registration for invoked backend APIs)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Engine interactions are through `invoke()` command boundary:
+ *   `search_mentions`, `search_hashtags_autocomplete`, `unfurl_link`,
+ *   `list_linked_accounts`, `mastodon_get_session`, `get_file_size`.
+ * - Attachment preview URLs use Tauri's `convertFileSrc`, coupling rendering to local file access rules.
+ */
+
+/**
+ * Local attachment descriptor used by compose/publish pipeline.
+ */
 export interface Attachment {
     path?: string;
     blob_hash?: string;
@@ -21,8 +49,14 @@ export interface Attachment {
     file_size?: number;
 }
 
+/**
+ * Comma-separated platform target string, e.g. `local,bluesky`.
+ */
 export type PostTarget = string; // Comma-separated platforms: "local", "local,bluesky", etc.
 
+/**
+ * Optional publish metadata for non-basic post flows (e.g., article + link card).
+ */
 export interface PublishOptions {
     itemType?: 'Status' | 'Article';
     title?: string;
@@ -38,6 +72,14 @@ interface ComposeBoxProps {
     initialAttachments?: Attachment[];
 }
 
+/**
+ * Main composer component.
+ *
+ * Responsibilities:
+ * - Collect user input and enforce compose constraints.
+ * - Surface inline assistance (autocomplete, link previews, target counters).
+ * - Hand off publish request to parent orchestrator through `onPublish`.
+ */
 export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '', initialAttachments = [] }: ComposeBoxProps) {
     const [composeText, setComposeText] = useState(initialText);
     const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(['local']));
@@ -54,7 +96,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     // Compute postTarget from selected platforms (comma-separated)
     const postTarget = Array.from(selectedPlatforms).join(',') || 'local';
 
-    // ─── Autocomplete State (C1.2b / C1.3b) ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Autocomplete State (C1.2b / C1.3b)
+    // ═══════════════════════════════════════════════════════════════════════
     const [acContext, setAcContext] = useState<AutocompleteContext | null>(null);
     const [acItems, setAcItems] = useState<AutocompleteItem[]>([]);
     const [acSelectedIndex, setAcSelectedIndex] = useState(0);
@@ -62,7 +106,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
     const acVisible = acContext !== null && acContext.type !== null;
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ─── Link Preview State (C2.1) ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Link Preview State (C2.1)
+    // ═══════════════════════════════════════════════════════════════════════
     const [linkCard, setLinkCard] = useState<LinkCard | null>(null);
     const [linkDismissed, setLinkDismissed] = useState<string | null>(null);
     const [linkLoading, setLinkLoading] = useState(false);
@@ -82,7 +128,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         : composeText.trim().length > 0;
     const canPost = !isPosting && !isOverCharLimit && (hasContent || attachments.length > 0);
 
-    // ─── Autocomplete Logic (C1.2b / C1.3b) ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Autocomplete Logic (C1.2b / C1.3b)
+    // ═══════════════════════════════════════════════════════════════════════
 
     const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newText = e.target.value;
@@ -179,7 +227,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         };
     }, []);
 
-    // ─── Link Preview Detection (C2.1) ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Link Preview Detection (C2.1)
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         if (articleMode) return;
         const urlMatch = composeText.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
@@ -211,7 +261,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         };
     }, [composeText, articleMode, linkDismissed, linkCard?.url]);
 
-    // ─── Detect Linked Platforms ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Detect Linked Platforms
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         async function detectPlatforms() {
             const platforms: string[] = ['local'];
@@ -237,7 +289,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         detectPlatforms();
     }, []);
 
-    // ─── Close Platform Dropdown on Outside Click ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Close Platform Dropdown on Outside Click
+    // ═══════════════════════════════════════════════════════════════════════
     useEffect(() => {
         if (!platformDropdownOpen) return;
         const handleClickOutside = (e: MouseEvent) => {
@@ -252,7 +306,9 @@ export function ComposeBox({ onPublish, isPosting, postStatus, initialText = '',
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [platformDropdownOpen]);
 
-    // ─── Platform Toggle Handlers ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Platform Toggle Handlers
+    // ═══════════════════════════════════════════════════════════════════════
     const PLATFORM_INFO: Record<string, { icon: string; label: string }> = {
         local: { icon: '🔒', label: 'Local Vault' },
         bluesky: { icon: '🦋', label: 'Bluesky' },

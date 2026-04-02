@@ -1,7 +1,31 @@
 import { useState, useCallback, useRef, type CSSProperties } from 'react';
 import { useTheme } from '../hooks/useTheme';
 
-// ─── Editable CSS variables grouped by section ───
+/**
+ * PURPOSE
+ * - Provide granular runtime theming controls for CSS variable overrides and
+ *   background customization (preset, URL, uploaded image).
+ *
+ * HOW IT WORKS
+ * - Reads current customization state from `useTheme()`.
+ * - Applies overrides using provider-exposed mutators (`setColorOverride`,
+ *   `setCustomBackground`, etc.).
+ * - Uses a shared hidden native color input to edit many token swatches.
+ *
+ * RELATED FILES
+ * - src/hooks/useTheme.ts (hook API consumed here)
+ * - src/providers/ThemeProvider.tsx (state persistence + CSS variable application)
+ * - src/themes/* (base theme token definitions)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component does not call backend commands directly.
+ * - It is tightly coupled to theme provider contract and CSS variable names;
+ *   token drift between this file and theme definitions causes silent UX regressions.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Editable CSS variables grouped by section
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface ColorToken {
     variable: string;
@@ -64,7 +88,9 @@ const COLOR_GROUPS: ColorGroup[] = [
     },
 ];
 
-// ─── Default Background Presets ───
+// ═══════════════════════════════════════════════════════════════════════════
+// Default Background Presets
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface BackgroundPreset {
     id: string;
@@ -118,7 +144,9 @@ const BACKGROUND_PRESETS: BackgroundPreset[] = [
     },
 ];
 
-// ─── Styles ───
+// ═══════════════════════════════════════════════════════════════════════════
+// Styles
+// ═══════════════════════════════════════════════════════════════════════════
 
 const sectionStyle: CSSProperties = {
     marginTop: 16,
@@ -202,14 +230,20 @@ const resetButtonStyle: CSSProperties = {
     borderRadius: 'var(--border-radius-sm)',
 };
 
-// ─── Component ───
+// ═══════════════════════════════════════════════════════════════════════════
+// Component
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * ThemeCustomizer — granular per-colour customization panel.
+ * ThemeCustomizer — granular per-color customization panel.
  *
  * Renders below the ThemePicker cards. Each colour swatch opens an
  * HTML5 colour picker. Background section offers preset gradients
  * and a URL input for custom images/gifs.
+ *
+ * Integration notes:
+ * - Uses `useTheme()` as the sole state boundary for theme writes.
+ * - Assumes provider handles persistence and DOM variable propagation.
  */
 export function ThemeCustomizer() {
     const {

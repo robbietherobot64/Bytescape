@@ -1,13 +1,26 @@
 /**
- * ProfileBioSections — MySpace/SpaceHey-inspired editable profile bio.
+ * PURPOSE
+ * - Render and manage an editable, section-based profile bio surface.
+ * - Support section CRUD/reordering and user-generated guestbook activity.
  *
- * Renders a configurable grid of profile sections that users can edit,
- * reorder, delete, and extend with custom sections. Default sections:
- *   📝 About Me, 👥 Connections, 🎵 Now Playing, 📸 Photos,
- *   💬 Guestbook, 🔗 Links
+ * HOW IT WORKS
+ * - Loads serialized widget payload from backend, merges/falls back to defaults,
+ *   and renders visible sections in deterministic order.
+ * - Edit mode works on a draft array (`editSections`) and commits atomically.
+ * - Type-specific renderers provide specialized UX for links, guestbook, etc.
  *
- * Persistence: Uses the backend's `save_widget_data` / `get_widget_data`
- * Tauri commands (stores as JSON string in the profile layout's widget_data field).
+ * RELATED FILES
+ * - src/components/ProfileBioSections.css (visual styles)
+ * - src/components/Win98Box.tsx (window/card container)
+ * - src-tauri/src/lib.rs (Tauri command handlers invoked from this component)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Backend command interactions via `invoke()`:
+ *   - `get_widget_data` / `save_widget_data` (profile widget persistence)
+ *   - `list_guestbook_entries` / `add_guestbook_entry` / `delete_guestbook_entry`
+ *   - `list_follows` / `list_contacts` (connection metadata)
+ * - This file is a frontend lens over engine data; command names and payloads
+ *   must stay synchronized with Rust command signatures.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -16,13 +29,17 @@ import { Win98Box } from './Win98Box';
 import { BsPencilFill, BsCheckLg, BsXLg, BsPlusLg, BsArrowUp, BsArrowDown, BsTrash } from 'react-icons/bs';
 import './ProfileBioSections.css';
 
-/* ─── Data Model ─── */
+// ═══════════════════════════════════════════════════════════════════════════
+// Data Model
+// ═══════════════════════════════════════════════════════════════════════════
 
+/** Public link model used by the `links` section serializer. */
 export interface ProfileLink {
     label: string;
     url: string;
 }
 
+/** Public section model persisted in widget data JSON. */
 export interface ProfileSection {
     id: string;
     type: 'about' | 'connections' | 'now-playing' | 'photos' | 'guestbook' | 'links' | 'custom';
@@ -49,7 +66,9 @@ const DEFAULT_SECTIONS: ProfileSection[] = [
     { id: 'links', type: 'links', title: 'Links', content: '[]', order: 5, visible: true },
 ];
 
-/* ─── Helpers ─── */
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
 
 function generateId(): string {
     return `section-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -72,7 +91,9 @@ function serializeBioData(sections: ProfileSection[]): string {
     return JSON.stringify({ version: 1, sections });
 }
 
-/* ─── Props ─── */
+// ═══════════════════════════════════════════════════════════════════════════
+// Props
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface ProfileBioSectionsProps {
     handle?: string | null;
@@ -80,8 +101,18 @@ interface ProfileBioSectionsProps {
     source?: string | null;
 }
 
-/* ─── Component ─── */
+// ═══════════════════════════════════════════════════════════════════════════
+// Component
+// ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Editable profile bio sections surface.
+ *
+ * Behavior summary:
+ * - View mode: shows visible sections in saved order.
+ * - Edit mode: allows rename/reorder/content editing/add/remove operations.
+ * - Save action serializes current draft and persists it through backend commands.
+ */
 export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsProps) {
     const [sections, setSections] = useState<ProfileSection[]>([]);
     const [editing, setEditing] = useState(false);
@@ -264,7 +295,9 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         }
     }, []);
 
-    // ─── Section renderers ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Section renderers
+    // ═══════════════════════════════════════════════════════════════════════
 
     const visibleSections = editing
         ? editSections
@@ -547,7 +580,9 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         );
     }
 
-    // ─── Render ───
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
 
     if (!loaded) {
         return <div className="bio-section-placeholder" style={{ padding: 20 } as React.CSSProperties}>Loading profile...</div>;

@@ -1,6 +1,29 @@
 import { useState, useCallback, useRef, useEffect, type CSSProperties } from 'react';
 
-// ─── Emoji Data ───
+/**
+ * PURPOSE
+ * - Provide a compact in-app emoji picker with category browsing, keyword search,
+ *   and a recently-used rail.
+ *
+ * HOW IT WORKS
+ * - Uses a local static emoji catalog (`EMOJI_CATEGORIES`) plus a runtime-managed
+ *   recent list persisted in `localStorage`.
+ * - On open, focuses search input and refreshes recents.
+ * - Supports close-on-outside-click and Escape handling.
+ * - Emits selected emoji through `onSelect`, while persisting recents.
+ *
+ * RELATED FILES
+ * - src/components/ComposeBox.tsx (consumer that can mount this picker in composer UX)
+ * - src/App.css (theme CSS variables consumed by inline styles)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component is frontend-local and does not call backend commands.
+ * - Persistence boundary is browser storage (`localStorage`), keyed by `RECENT_KEY`.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Emoji Data
+// ═══════════════════════════════════════════════════════════════════════════
 // Compact built-in dataset organized by category.
 // Each entry: [emoji, keywords] where keywords aid search.
 
@@ -481,6 +504,7 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
 const RECENT_KEY = 'bytescape-emoji-recent';
 const MAX_RECENT = 24;
 
+/** Read recent emoji list from browser storage. */
 function getRecentEmojis(): string[] {
     try {
         const saved = localStorage.getItem(RECENT_KEY);
@@ -489,6 +513,7 @@ function getRecentEmojis(): string[] {
     return [];
 }
 
+/** Persist a selected emoji at the front of the recent list. */
 function saveRecentEmoji(emoji: string) {
     const recent = getRecentEmojis().filter(e => e !== emoji);
     recent.unshift(emoji);
@@ -497,7 +522,9 @@ function saveRecentEmoji(emoji: string) {
     return recent;
 }
 
-// ─── Styles ───
+// ═══════════════════════════════════════════════════════════════════════════
+// Styles
+// ═══════════════════════════════════════════════════════════════════════════
 
 const pickerContainerStyle: CSSProperties = {
     position: 'absolute',
@@ -570,9 +597,9 @@ const emojiButtonStyle: CSSProperties = {
     textAlign: 'center',
 };
 
-
-
-// ─── Component ───
+// ═══════════════════════════════════════════════════════════════════════════
+// Component
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface EmojiPickerProps {
     onSelect: (emoji: string) => void;
@@ -580,6 +607,14 @@ interface EmojiPickerProps {
     visible: boolean;
 }
 
+/**
+ * Floating emoji picker panel.
+ *
+ * Contract:
+ * - Controlled by `visible`.
+ * - Returns selected emoji through `onSelect`.
+ * - Requests dismissal through `onClose`.
+ */
 export function EmojiPicker({ onSelect, onClose, visible }: EmojiPickerProps) {
     const [search, setSearch] = useState('');
     const [activeCategory, setActiveCategory] = useState('smileys');

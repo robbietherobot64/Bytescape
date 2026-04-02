@@ -1,18 +1,22 @@
 /**
- * Omnibar (B10.3)
+ * PURPOSE
+ * - Provide a unified address/search input for both internal `byte://` navigation
+ *   and external browsing.
+ * - Expose quick browser-like controls (back/forward/reload/stop) while preserving
+ *   app navigation semantics.
  *
- * Browser-style address bar + search bar hybrid.
- * Shows the current byte:// URL, allows direct URL entry, and doubles
- * as a search bar for vault/feed content.
+ * HOW IT WORKS
+ * - Reads navigation state from `useLocationStore` for app routes.
+ * - Reads active webview state from `useBrowserStore`; when a webview is active,
+ *   controls dispatch to backend browser commands via Tauri `invoke()`.
+ * - Resolves submitted input as external URL, internal route, peer URL, or search query.
+ * - Shows route/history suggestions derived from local known routes + location history.
  *
- * Features:
- * - Displays current page URL from useLocationStore
- * - Back / Forward / Home buttons with keyboard shortcuts
- * - Content origin icon (🏠 local / 🔗 peer)
- * - Editable — type a byte:// URL to navigate directly
- * - Plain text input triggers search
- * - Route autocomplete for known paths
- * - GeoCities beveled-inset aesthetic
+ * RELATED FILES
+ * - `src/hooks/useLocation.ts` (routing state, `resolveUrl()`, history)
+ * - `src/store/index.ts` (browser tab state used by webview mode)
+ * - `src/utils/openInApp.ts` (external URL entrypoint)
+ * - `src-tauri/src/lib.rs` (browser command handlers: navigate/eval)
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -31,6 +35,10 @@ interface OmnibarProps {
     onSearchSubmit?: (query: string) => void;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Static route model
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /** Known routes for autocomplete */
 const KNOWN_ROUTES = [
     { url: 'byte://feed', label: 'Feed — All', icon: '🏠' },
@@ -47,7 +55,19 @@ const KNOWN_ROUTES = [
     { url: 'byte://friends', label: 'Social / Friends', icon: '🏠' },
 ];
 
+/**
+ * Omnibar component.
+ *
+ * Cross-system notes:
+ * - Hook interaction: consumes `useLocationStore` for app-level navigation state.
+ * - Store interaction: consumes `useBrowserStore` for active webview tab metadata.
+ * - Backend interaction: uses Tauri `invoke()` to control embedded browser tabs.
+ */
 export function Omnibar({ onSearchSubmit }: OmnibarProps) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // External state wiring (hooks/store)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     const currentUrl = useLocationStore(s => s.currentUrl);
     const canGoBack = useLocationStore(s => s.canGoBack);
     const canGoForward = useLocationStore(s => s.canGoForward);
@@ -61,6 +81,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
     const browserLoading = useBrowserStore(s => s.isLoading);
     const isBrowserActive = !!browserLabel;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Local interaction state
+    // ═══════════════════════════════════════════════════════════════════════════
+
     const [inputValue, setInputValue] = useState('');
     const [isFocused, setIsFocused] = useState(false);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -69,6 +93,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
     // The URL to display: browser URL when webview is active, otherwise byte:// URL
     const displayUrl = isBrowserActive && browserUrl ? browserUrl : currentUrl;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Effects
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Sync display value with current URL when not focused
     useEffect(() => {
@@ -93,6 +121,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, [showSuggestions]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Derived helpers
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Determine content origin icon
     const getOriginIcon = () => {
@@ -128,6 +160,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
 
         return [...matches, ...historyMatches].slice(0, 8);
     }, [inputValue, displayUrl]);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Input handling + navigation dispatch
+    // ═══════════════════════════════════════════════════════════════════════════
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -232,6 +268,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
     };
 
     const suggestions = showSuggestions ? getSuggestions() : [];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Render tree
+    // ═══════════════════════════════════════════════════════════════════════════
 
     return (
         <div className="omnibar" style={omnibarContainerStyle}>
@@ -379,6 +419,10 @@ export function Omnibar({ onSearchSubmit }: OmnibarProps) {
         </div>
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Styles (inline by design)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── Styles ───
 // Using inline styles with React.CSSProperties typing to avoid csstype issues.

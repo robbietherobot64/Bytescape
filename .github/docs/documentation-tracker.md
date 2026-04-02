@@ -23,7 +23,7 @@
 | 9 | Frontend Hooks | 7 | 2,349 | ✅ Complete |
 | 10 | Frontend Utils | 13 | 1,432 | ✅ Complete |
 | 11 | Frontend Screens | 16 | 7,604 | ✅ Complete |
-| 12 | Frontend Components (Large) | 13 | 5,694 | ⬜ Not started |
+| 12 | Frontend Components (Large) | 13 | 6,072 | ✅ Complete |
 | 13 | Frontend Components (Medium) | 13 | 2,164 | ⬜ Not started |
 | 14 | Feed, Lenses, Widgets & Small Components | 33 | 2,698 | ⬜ Not started |
 | **Total** | | **161** | **~55,140** | |
@@ -263,19 +263,19 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/EmojiPicker.tsx` | 750 | ⬜ | Emoji selection UI |
-| `src/components/ProfileBioSections.tsx` | 700 | ⬜ | Profile bio section components |
-| `src/components/ThemeCustomizer.tsx` | 657 | ⬜ | Theme editor with live preview |
-| `src/components/ComposeBox.tsx` | 633 | ⬜ | Post composition editor (Tiptap) |
-| `src/components/FeedEntryCard.tsx` | 574 | ⬜ | Individual feed post card |
-| `src/components/Omnibar.tsx` | 483 | ⬜ | Universal search/command bar |
-| `src/components/RawHtmlEditor.tsx` | 439 | ⬜ | HTML editor for profiles |
-| `src/components/FriendsPanel.tsx` | 392 | ⬜ | Friends sidebar panel |
-| `src/components/FeedRightPanel.tsx` | 329 | ⬜ | Feed detail/context panel |
-| `src/components/ProfileRenderer.tsx` | 297 | ⬜ | Profile HTML renderer |
-| `src/components/ArticleEditor.tsx` | 280 | ⬜ | Long-form article editor |
-| `src/components/VideoPlayer.tsx` | 277 | ⬜ | Click-to-play video player |
-| `src/components/Chat/ChatLayout.tsx` | 261 | ⬜ | Chat window layout |
+| `src/components/EmojiPicker.tsx` | 750 | ✅ | Expanded header, section dividers, dataset/search flow docs |
+| `src/components/ProfileBioSections.tsx` | 700 | ✅ | Expanded header, profile/guestbook orchestration docs, cross-system notes |
+| `src/components/ThemeCustomizer.tsx` | 657 | ✅ | Full header, token editor/background flow docs, caveat annotations |
+| `src/components/ComposeBox.tsx` | 633 | ✅ | Full header, compose pipeline docs, provider/IPC boundary notes |
+| `src/components/FeedEntryCard.tsx` | 574 | ✅ | Header + section docs for interactions/media/thread rendering |
+| `src/components/Omnibar.tsx` | 483 | ✅ | Header + navigation/search command docs, browser command notes |
+| `src/components/RawHtmlEditor.tsx` | 439 | ✅ | Header + import/edit/preview/persist flow docs |
+| `src/components/FriendsPanel.tsx` | 392 | ✅ | Header + source aggregation/docs, refresh/status caveat notes |
+| `src/components/FeedRightPanel.tsx` | 329 | ✅ | Header + filter/feed-selector state docs and sentinel-state notes |
+| `src/components/ProfileRenderer.tsx` | 297 | ✅ | Header + widget render/sanitize/persist docs, policy boundary notes |
+| `src/components/ArticleEditor.tsx` | 280 | ✅ | Header + editor/collab lifecycle docs, extension boundary notes |
+| `src/components/VideoPlayer.tsx` | 277 | ✅ | Header + playback/resolve arbitration docs, cache caveat notes |
+| `src/components/Chat/ChatLayout.tsx` | 261 | ✅ | Header + conversation grouping/render docs, performance caveat notes |
 
 **Subtotal**: 13 files · 6,072 lines
 

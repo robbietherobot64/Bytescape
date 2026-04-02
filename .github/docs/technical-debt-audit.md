@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–11 (104 source files · ~42,900 lines · Rust + TypeScript)
+> **Scope**: Batches 1–12 (117 source files · ~48,970 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 11 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, **Frontend Screens**) uncovered **302 issues** across 104 files:
+A systematic audit of the first 12 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, **Large Frontend Components**) uncovered **341 issues** across 117 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 63 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 146 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 93 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 72 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 168 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 101 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -29,6 +29,7 @@ The top systemic concerns are:
 8. **Hooks doing orchestration work** — `useUnifiedFeed.ts` and `useGroupsData.ts` both perform heavy orchestration, fallback logic, and backend transport concerns that should live in service/provider layers. This blurs boundaries between view hooks and domain logic.
 9. **Utility layer contract drift** — frontend utility modules now mix pure helpers with transport-bound logic (`prefetchBlobUrls` -> `invoke`) and contradictory runtime flags (`openInApp`). This erodes the “utils are pure/reusable” boundary and causes coupling between presentation and backend internals.
 10. **Screen-layer orchestration overload** — multiple top-level screens (`FeedScreen`, `ChatScreen`, `SettingsScreen`, `ProfileBuilderScreen`, `WebViewScreen`) combine transport calls, state orchestration, and rendering in monolithic components, increasing coupling and making defects harder to isolate.
+11. **Component-layer monoliths** — large UI components (ComposeBox, FeedEntryCard, Omnibar, ProfileBioSections) now absorb both domain orchestration and rendering concerns, causing very large files with brittle state transitions and limited reuse.
 
 ---
 
@@ -709,6 +710,69 @@ This batch covers top-level user-facing screens. The dominant pattern is **scree
 
 ---
 
+## Batch 12 — Frontend Components (Large)
+
+**Scope:** 13 files · ~6,072 lines in `src/components/` (+ `src/components/Chat/`)
+**Findings:** 39 issues (9 HIGH · 22 MEDIUM · 8 LOW)
+
+Batch 12 covers the largest reusable UI components. The primary pattern is component monoliths combining view rendering, domain orchestration, and transport concerns in single files.
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 12.1 | `EmojiPicker.tsx` | **Large hardcoded emoji catalog embedded in component file** | Increases bundle size and makes updates/versioning difficult |
+| 12.2 | `ProfileBioSections.tsx` | **Multi-domain component ownership** (persistence, guestbook, profile editing, social connections) | High coupling and difficult targeted refactors |
+| 12.3 | `ComposeBox.tsx` | **Very high orchestration density in one component** (editor, attachments, targets, mentions, link unfurl) | State-race risk and reduced change safety |
+| 12.4 | `FeedEntryCard.tsx` | **Monolithic card component combining render + interaction orchestration + backend actions** | Large blast radius for feed interaction bugs |
+| 12.5 | `Omnibar.tsx` | **Navigation/webview command orchestration tightly coupled into UI control** | Any routing change risks omnibar behavior regressions |
+| 12.6 | `FriendsPanel.tsx` | **Data fetch/normalize/dedupe logic embedded inside panel component** | Hard to isolate and test data behavior independently |
+| 12.7 | `ProfileRenderer.tsx` | **String-based widget dispatch contract for dynamic rendering** | Runtime drift risk between widget schema and renderer |
+| 12.8 | `VideoPlayer.tsx` | **Global unbounded HLS resolve cache (`Map`) at module scope** | Potential memory growth in long sessions |
+| 12.9 | `ChatLayout.tsx` | **Conversation grouping/sorting/title derivation recomputed in render path** | Performance bottleneck at larger message counts |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 12.10 | `EmojiPicker.tsx` | **Search scans full emoji sets per query without indexing** | Scaling/perf cost during active typing |
+| 12.11 | `ProfileBioSections.tsx` | **Loosely typed command payload boundaries** (`JSON.stringify` + casts) | Drift risk with backend schema changes |
+| 12.12 | `ThemeCustomizer.tsx` | **CSS-variable token contract is string-literal driven** | No compile-time guard against token drift |
+| 12.13 | `ThemeCustomizer.tsx` | **Background/file handling and token editing combined in one component** | Reduced cohesion and harder reuse |
+| 12.14 | `ComposeBox.tsx` | **Direct backend calls in view layer instead of service-hook abstraction** | Harder portability/testing for compose flow |
+| 12.15 | `ComposeBox.tsx` | **Complex async state transitions across multiple feature toggles** | Race/cancellation edge-case risk |
+| 12.16 | `FeedEntryCard.tsx` | **Recursive quoted/reply rendering path can amplify render cost** | Performance degradation in deep thread structures |
+| 12.17 | `FeedEntryCard.tsx` | **Heavy inline style/branch density** | Maintenance overhead and theming inconsistency |
+| 12.18 | `Omnibar.tsx` | **No complete keyboard-selection interaction model for suggestions** | Accessibility/UX degradation |
+| 12.19 | `RawHtmlEditor.tsx` | **Import/parse/persist/render all colocated in one component** | Blurred boundaries and harder unit testing |
+| 12.20 | `RawHtmlEditor.tsx` | **String-based status/error model** | Weakly typed failure semantics |
+| 12.21 | `FriendsPanel.tsx` | **Hardcoded polling cadence and local refresh policy** | Difficult global tuning and wasted work |
+| 12.22 | `FriendsPanel.tsx` | **Inline source/status branching complexity** | Hard to reason about status mapping correctness |
+| 12.23 | `FeedRightPanel.tsx` | **Broad prop/sentinel contract (`'__disabled__'`)** | Brittle caller-component coordination |
+| 12.24 | `FeedRightPanel.tsx` | **Many tab/mode branches in single component** | Lower readability and slower feature iteration |
+| 12.25 | `ProfileRenderer.tsx` | **Parse/sanitize/fetch/save/render concerns bundled together** | Difficult to extract testable renderer core |
+| 12.26 | `ProfileRenderer.tsx` | **Sanitization policy decisions embedded locally** | Policy drift risk vs centralized security model |
+| 12.27 | `ArticleEditor.tsx` | **Presentation + transformation + collaboration orchestration in one component** | Complex mental model and higher regression risk |
+| 12.28 | `ArticleEditor.tsx` | **`any[]` extension typing for editor plugins** | Reduced type safety in integration layer |
+| 12.29 | `VideoPlayer.tsx` | **String-heuristic source-type branching (`.m3u8`, `blob:`)** | Fragile media-kind detection paths |
+| 12.30 | `VideoPlayer.tsx` | **Playback gating + resolve pipeline + arbitration all in one component** | Hard to isolate playback bugs |
+| 12.31 | `ChatLayout.tsx` | **No virtualization for potentially long message lists** | Rendering cost increases with conversation size |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 12.32 | `EmojiPicker.tsx` | **Large inline style footprint tied to theme token strings** | Styling maintenance overhead |
+| 12.33 | `ProfileBioSections.tsx` | **Inline style fragments repeated across sub-sections** | Reduced visual consistency and reuse |
+| 12.34 | `ThemeCustomizer.tsx` | **File-size failures surfaced via `alert()`** | UX inconsistency with app-level notification patterns |
+| 12.35 | `Omnibar.tsx` | **High inline-style density** | Harder long-term design-system migration |
+| 12.36 | `RawHtmlEditor.tsx` | **Preview HTML assembly remains component-local and mostly un-memoized** | Minor redraw overhead with large content |
+| 12.37 | `FeedRightPanel.tsx` | **Sentinel state strings documented only implicitly** | Cognitive overhead for maintainers |
+| 12.38 | `ArticleEditor.tsx` | **Repeated inline style assertions (`as React.CSSProperties`)** | Styling noise and weaker separation |
+| 12.39 | `ChatLayout.tsx` | **Ad-hoc date/title formatting in render helpers** | Minor duplication vs shared formatter utilities |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -818,4 +882,17 @@ This batch covers top-level user-facing screens. The dominant pattern is **scree
 | `src/screens/ForumScreen.tsx` | 0 | 1 | 1 | 2 |
 | `src/screens/ProfileViewScreen.tsx` | 1 | 0 | 0 | 1 |
 | `src/screens/ImportScreen.tsx` | 0 | 1 | 0 | 1 |
-| **TOTAL** | **63** | **146** | **93** | **302** |
+| `src/components/EmojiPicker.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/ProfileBioSections.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/ThemeCustomizer.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/ComposeBox.tsx` | 1 | 2 | 0 | 3 |
+| `src/components/FeedEntryCard.tsx` | 1 | 2 | 0 | 3 |
+| `src/components/Omnibar.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/RawHtmlEditor.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/FriendsPanel.tsx` | 1 | 2 | 0 | 3 |
+| `src/components/FeedRightPanel.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/ProfileRenderer.tsx` | 1 | 2 | 0 | 3 |
+| `src/components/ArticleEditor.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/VideoPlayer.tsx` | 1 | 2 | 0 | 3 |
+| `src/components/Chat/ChatLayout.tsx` | 1 | 1 | 1 | 3 |
+| **TOTAL** | **72** | **168** | **101** | **341** |

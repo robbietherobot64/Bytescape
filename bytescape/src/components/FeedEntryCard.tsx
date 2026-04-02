@@ -23,6 +23,31 @@ import {
     GalleryOverlay,
 } from './feed';
 
+/**
+ * PURPOSE
+ * - Render one normalized `FeedEntry` card with source-aware interaction controls.
+ * - Handle local optimistic UI for like/repost/reply/thread interactions.
+ * - Compose shared feed primitives (`MediaGrid`, `EngagementBar`, `ThreadReplies`, etc.)
+ *   into one cohesive card experience.
+ *
+ * HOW IT WORKS
+ * - Derives display-level metadata (hashtags, syndicated links, media source paths).
+ * - Tracks interaction state locally for responsive UX, then reconciles via Tauri `invoke()`.
+ * - Branches behavior by source (`bluesky` vs `mastodon`) and degrades safely for non-interactive sources.
+ * - Recursively renders quoted posts and owner replies using `FeedEntryCard` itself.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (shape of `FeedEntry`, `Audience`, reply and interaction payloads)
+ * - `src/components/feed/*` (shared feed rendering helpers and UI primitives)
+ * - `src/components/ReplyCompose.tsx` and `src/components/QuoteRepostModal.tsx`
+ * - `src/utils/openInApp.ts` and `src/utils/VideoPlaybackManager.ts`
+ * - `src-tauri/src/lib.rs` (command handlers invoked here, e.g. like/repost/thread)
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /** Extract unique hashtags from post text content */
 function extractHashtags(text: string | undefined): string[] {
     if (!text) return [];
@@ -47,6 +72,10 @@ function navigateToHashtag(tag: string) {
     window.dispatchEvent(new CustomEvent('navigate-hashtag', { detail: cleaned }));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
 interface FeedEntryCardProps {
     entry: FeedEntry;
     resolveMediaPath?: (p: string) => string;
@@ -57,7 +86,19 @@ interface FeedEntryCardProps {
 
 /* ─── Component ─── */
 
+/**
+ * Internal, non-exported card implementation.
+ *
+ * Cross-system notes:
+ * - Calls backend commands through Tauri `invoke()` for engagement actions.
+ * - Uses feed helper exports from `./feed` to keep layout primitives consistent across views.
+ * - Emits browser-level `navigate-hashtag` custom events consumed by feed navigation listeners.
+ */
 function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Local UI state and derived presentation data
+    // ═══════════════════════════════════════════════════════════════════════════
+
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -120,6 +161,10 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const handleAudienceUpdated = (newAudiences: Audience[]) => {
         if (onEntryUpdated) onEntryUpdated(entry.id, newAudiences);
     };
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Engagement actions (optimistic UI + backend reconciliation)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // ─── Like / Unlike ───
     const handleLike = async (e: React.MouseEvent) => {
@@ -221,6 +266,10 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
         setQuoteModalOpen(true);
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Reply/thread toggles and callbacks
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // ─── Reply Toggle ───
     const handleReplyToggle = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -269,6 +318,10 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const repostBannerText = entry.reposted_by_handle
         ? `${entry.reposted_by_handle} reposted`
         : (entry.viewer_repost ? 'You reposted' : null);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Render tree
+    // ═══════════════════════════════════════════════════════════════════════════
 
     return (
         <div 
@@ -544,7 +597,14 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     );
 }
 
-/** Memoized FeedEntryCard — skips re-render when entry identity and interaction state haven't changed. */
+/**
+ * Memoized public feed card component.
+ *
+ * Cross-system notes:
+ * - Receives normalized `FeedEntry` records from feed hooks/store orchestration layers.
+ * - Triggers backend command pathways through child action handlers (`invoke()` usage inside).
+ * - Uses conservative memo guards to reduce re-render churn in high-volume feed lists.
+ */
 export const FeedEntryCard = React.memo(FeedEntryCardInner, (prev, next) => {
     return (
         prev.entry.id === next.entry.id &&

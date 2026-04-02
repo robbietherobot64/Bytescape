@@ -5,12 +5,42 @@ import { usePeerStore, useAuthStore } from '../store';
 import { openProfile } from '../utils/openInApp';
 import { PeerInfo, ProfileView } from '../types';
 
+/**
+ * FriendsPanel
+ *
+ * PURPOSE
+ * - Render a unified social sidebar list of contacts from three sources:
+ *   P2P peers, Bluesky follows, and Mastodon follows.
+ * - Expose lightweight actions for profile view and chat launch.
+ *
+ * HOW IT WORKS
+ * - Reads connection status from `usePeerStore()` and auth identity from `useAuthStore()`.
+ * - Calls Tauri commands via `invoke()` to fetch source-specific relationship lists.
+ * - Normalizes entries to a local `UnifiedFriend` view-model and de-duplicates by DID.
+ * - Groups entries by source/status and renders `FriendItem` rows.
+ *
+ * RELATED FILES
+ * - ../store/index (peer status + auth selectors)
+ * - ../utils/openInApp (profile deep-link behavior)
+ * - ../types/index (PeerInfo/ProfileView contracts)
+ * - src-tauri/src/lib.rs (Tauri command registration used by list_peers/list_follows/mastodon_get_following)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Frontend store state (`peerStatuses`) determines online/offline visual state independent of
+ *   the persisted `last_seen` timestamps returned by backend peer listing.
+ * - Bluesky and Mastodon lists are remote/social graph snapshots; chat/profile actions route through
+ *   UI callbacks or `openProfile()` and do not mutate backend state directly from this component.
+ */
+
 interface FriendsPanelProps {
     onOpenChat?: (peerNodeId: string, peerName: string) => void;
     onViewProfile?: (peerNodeId: string, peerName?: string) => void;
 }
 
 /** Status-aware away message based on last-seen timestamp */
+/* ═══════════════════════════════════════════════════════════════════════
+    Presence + status helpers
+    ═══════════════════════════════════════════════════════════════════════ */
 function getAwayMessage(lastSeen: number | null): string {
     if (!lastSeen) return 'Away';
     const secs = Math.floor(Date.now() / 1000) - lastSeen;
@@ -47,6 +77,16 @@ interface UnifiedFriend {
     did?: string;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+    Main exported panel
+    ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Render the Friends sidebar with source tabs and grouped contact rows.
+ *
+ * Accepts optional `onOpenChat` and `onViewProfile` callbacks to delegate
+ * navigation/interaction orchestration to parent screens.
+ */
 export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
     const globalStatuses = usePeerStore(s => s.peerStatuses);
     const auth = useAuthStore(s => s.auth);
@@ -288,6 +328,17 @@ interface FriendItemProps {
     onProfile?: (nodeId: string, name?: string) => void;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   Row renderer
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Render one normalized friend row with profile + chat actions.
+ *
+ * Cross-system behavior:
+ * - P2P rows call parent callbacks (in-app profile/chat route).
+ * - Bluesky/Mastodon rows open network-native profiles via `openProfile()`.
+ */
 function FriendItem({ friend, onChat, onProfile }: FriendItemProps) {
     const initial = friend.displayName[0]?.toUpperCase() || '?';
     const isP2p = friend.source === 'p2p';

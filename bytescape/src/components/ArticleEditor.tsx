@@ -1,3 +1,18 @@
+/**
+ * PURPOSE
+ * - Rich article authoring surface for Bytescape items, supporting local editing and optional CRDT collaboration.
+ *
+ * HOW IT WORKS
+ * - Initializes Tiptap with local-history extensions or Yjs-backed collaboration extensions.
+ * - Converts between Markdown <-> HTML for persistence while exposing Tiptap JSON for structured consumers.
+ * - Emits normalized editor state (`ArticleEditorData`) on content/title changes.
+ * - Shows collaboration loading/error UI while `useCollabDoc` initializes or fails.
+ *
+ * RELATED FILES
+ * - `src/hooks/useCollabDoc.ts` (CRDT lifecycle, doc resolution, snapshot API)
+ * - `src/utils/markdown.ts` (Markdown/HTML transforms + word/reading metrics)
+ * - Components/screens that persist article data through store/provider flows
+ */
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -6,6 +21,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { markdownToHtml, htmlToMarkdown, countWords, readingTime } from '../utils/markdown';
 import { useCollabDoc } from '../hooks/useCollabDoc';
 
+/**
+ * Serialized payload emitted to parent components for persistence and preview.
+ */
 export interface ArticleEditorData {
     title: string;
     content: string;       // Markdown
@@ -14,6 +32,9 @@ export interface ArticleEditorData {
     wordCount: number;
 }
 
+/**
+ * Public configuration contract for `ArticleEditor`.
+ */
 export interface ArticleEditorProps {
     initialTitle?: string;
     initialContent?: string;  // Markdown string
@@ -27,6 +48,14 @@ export interface ArticleEditorProps {
     itemId?: string | null;
 }
 
+/**
+ * `ArticleEditor`
+ *
+ * Cross-system notes:
+ * - Hook integration: consumes `useCollabDoc()` to attach editor state to shared Yjs docs.
+ * - Provider/store integration: parent layers own persistence and pass `onChange`; this component is UI + transform focused.
+ * - Backend/invoke integration: no direct `invoke()` calls here; Tauri interaction is intentionally delegated to hooks/services.
+ */
 export function ArticleEditor({
     initialTitle = '',
     initialContent = '',
@@ -36,6 +65,9 @@ export function ArticleEditor({
     collabDocId: inputCollabDocId,
     itemId,
 }: ArticleEditorProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Local UI + callback state
+    // ═══════════════════════════════════════════════════════════════════════
     const [title, setTitle] = useState(initialTitle);
     const [wordCount, setWordCount] = useState(0);
 
@@ -44,6 +76,9 @@ export function ArticleEditor({
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Collaboration bridge (Yjs/CRDT)
+    // ═══════════════════════════════════════════════════════════════════════
     // CRDT collaborative editing hook
     const {
         ydoc,
@@ -78,6 +113,9 @@ export function ArticleEditor({
         });
     }, [activeCollabDocId]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Tiptap composition and lifecycle
+    // ═══════════════════════════════════════════════════════════════════════
     // Build Tiptap extensions based on mode
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const extensions = useMemo((): any[] => {
@@ -147,6 +185,9 @@ export function ArticleEditor({
 
     const rt = readingTime(wordCount);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render states
+    // ═══════════════════════════════════════════════════════════════════════
     // Show loading state while collaborative doc state loads
     if (collaborative && !collabLoaded) {
         return (

@@ -4,6 +4,30 @@ import { Win98Box } from './Win98Box';
 import { openProfile } from '../utils/openInApp';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
+/**
+ * FeedRightPanel
+ *
+ * PURPOSE
+ * - Render contextual right/left rail controls for feed navigation and filtering.
+ * - Provide tab-specific controls for Following, Subscribed, You, and Discovery views.
+ *
+ * HOW IT WORKS
+ * - Receives all state via props from the parent feed composition layer.
+ * - Uses local UI-only expansion/enable toggles for feed/tag filter sections.
+ * - Updates parent-managed filter arrays through callback setters.
+ *
+ * RELATED FILES
+ * - ../hooks/useUnifiedFeed (tab model + feed query behavior)
+ * - ../screens/FeedScreen.tsx (parent orchestration and prop wiring)
+ * - ../utils/openInApp (external profile routing for follow rows)
+ * - ../types/index (ProfileView/GeneratorView interfaces)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component does not call backend commands directly; data comes from parent hooks.
+ * - Parent-provided callbacks (`setSelectedFeedUris`, `setSelectedHashtagsFilter`,
+ *   `onNavigateTab`) are the integration seam to store/provider/backend-driven state.
+ */
+
 interface FeedRightPanelProps {
     activeTab: string;
     followingList: ProfileView[];
@@ -28,6 +52,14 @@ interface FeedRightPanelProps {
 
 /* ── (styles moved to FeedScreen.css — .sub-* classes) ─────────────── */
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+    Main exported panel
+    ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Render the feed side panel with tab-aware controls and compact navigation affordances.
+ */
 export function FeedRightPanel({
     activeTab,
     followingList,
@@ -49,6 +81,7 @@ export function FeedRightPanel({
     position = 'right',
     onNavigateTab,
 }: FeedRightPanelProps) {
+    /* ═══ Local UI state (presentation only) ═══════════════════════════ */
     /* ── Subscribed tab state ────────────────────────────────────────── */
     const [feedsExpanded, setFeedsExpanded] = useState(true);
     const [tagsExpanded, setTagsExpanded] = useState(true);
@@ -57,6 +90,7 @@ export function FeedRightPanel({
 
     const visibleFeeds = savedFeeds.filter(f => !f.uri.includes('/following'));
 
+    /* ═══ Parent filter synchronization ════════════════════════════════ */
     /* When the master checkbox is toggled, update the filter arrays.
        Enabled + nothing selected = "show all".  Disabled = show none. */
     useEffect(() => {
@@ -77,6 +111,7 @@ export function FeedRightPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tagsEnabled]);
 
+    /* ═══ Chip toggle helpers ══════════════════════════════════════════ */
     /* ── Feed chip toggle ────────────────────────────────────────────── */
     const isFeedActive = useCallback(
         (uri: string) => selectedFeedUris.length === 0 || selectedFeedUris.includes(uri),
@@ -302,6 +337,12 @@ export function FeedRightPanel({
 }
 
 /* ─── Following list sub-component (reused in Following + All tabs) ──── */
+/**
+ * Compact follow-row list used in multiple panel contexts.
+ *
+ * Cross-system behavior:
+ * - Uses `openProfile()` to route to in-app profile views for selected follows.
+ */
 function FollowingSection({ followingList, max }: { followingList: ProfileView[]; max?: number }) {
     const list = max ? followingList.slice(0, max) : followingList;
     return (

@@ -1,16 +1,19 @@
 /**
- * RawHtmlEditor (B2.2)
+ * PURPOSE
+ * - Provide a power-user editor for raw profile markup (`HTML/CSS/JS`) in one place.
+ * - Persist profile layout in `raw` render mode using existing profile layout commands.
  *
- * A code editor for power users who want to write raw HTML/CSS/JS
- * for their profile page. The output is rendered in a sandboxed iframe
- * on the ProfileScreen to prevent XSS while allowing full creative control.
+ * HOW IT WORKS
+ * - Loads existing layout via `get_profile_layout` and hydrates local editor state.
+ * - Saves/deletes layouts through Tauri `invoke()` profile commands.
+ * - Builds a `srcDoc` preview document and renders it in a sandboxed iframe.
+ * - Supports importing `.html` files and extracting inline `<style>`/`<script>` blocks.
  *
- * Features:
- * - Three code panels: HTML, CSS, JavaScript
- * - Live preview in a sandboxed iframe
- * - Save/load via existing profile layout Tauri commands
- * - File upload support (paste HTML file contents)
- * - Security: rendered in iframe with sandbox="allow-scripts" (no allow-same-origin)
+ * RELATED FILES
+ * - `src/types/index.ts` (`ProfileLayout` shape)
+ * - `src/screens/ProfileScreen.tsx` / profile builder flow (entrypoint and navigation)
+ * - `src/components/Win98Box.tsx` (preview shell container)
+ * - `src-tauri/src/lib.rs` (profile layout command handlers)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -19,6 +22,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { Win98Box } from '../components/Win98Box';
 import { ProfileLayout } from '../types';
 import { BsSave, BsEye, BsUpload, BsTrash, BsCodeSlash } from 'react-icons/bs';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Default editor templates
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_HTML = `<div class="profile-page">
   <h1>Welcome to my page!</h1>
@@ -56,10 +63,23 @@ const DEFAULT_JS = `// Your custom JavaScript (runs in sandbox)
 console.log('Profile page loaded!');`;
 
 interface RawHtmlEditorProps {
+    /** Return to the profile builder surface. */
     onBack: () => void;
 }
 
+/**
+ * Raw HTML editor component.
+ *
+ * Cross-system notes:
+ * - Backend interaction: profile layouts are read/written through Tauri `invoke()`.
+ * - UI composition: preview is wrapped in `Win98Box` for consistent desktop shell chrome.
+ * - Type coupling: `ProfileLayout` must remain aligned with Rust serialization contracts.
+ */
 export function RawHtmlEditor({ onBack }: RawHtmlEditorProps) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Local state and refs
+    // ═══════════════════════════════════════════════════════════════════════════
+
     const [html, setHtml] = useState(DEFAULT_HTML);
     const [css, setCss] = useState(DEFAULT_CSS);
     const [js, setJs] = useState(DEFAULT_JS);
@@ -69,6 +89,10 @@ export function RawHtmlEditor({ onBack }: RawHtmlEditorProps) {
     const [saveStatus, setSaveStatus] = useState<string | null>(null);
     const [hasExisting, setHasExisting] = useState(false);
     const iframeRef = useRef<HTMLIFrameElement>(null);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Lifecycle: load persisted raw layout
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Load existing raw layout on mount
     useEffect(() => {
@@ -81,6 +105,10 @@ export function RawHtmlEditor({ onBack }: RawHtmlEditorProps) {
             }
         }).catch(() => {});
     }, []);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Command handlers (save/delete/upload)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     const handleSave = useCallback(async () => {
         setSaving(true);
@@ -160,6 +188,10 @@ export function RawHtmlEditor({ onBack }: RawHtmlEditorProps) {
         }
     }, []);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Preview/document assembly helpers
+    // ═══════════════════════════════════════════════════════════════════════════
+
     const buildPreviewSrcDoc = () => `<!DOCTYPE html>
 <html>
 <head>
@@ -181,6 +213,10 @@ ${html}
 <script>${js}<\/script>
 </body>
 </html>`;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Inline style objects
+    // ═══════════════════════════════════════════════════════════════════════════
 
     const textareaStyle: React.CSSProperties = {
         width: '100%',
@@ -209,6 +245,10 @@ ${html}
         fontWeight: active ? 600 : 400,
         fontFamily: 'monospace',
     });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Render tree
+    // ═══════════════════════════════════════════════════════════════════════════
 
     return (
         <div style={{

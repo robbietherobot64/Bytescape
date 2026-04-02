@@ -1,12 +1,24 @@
 /**
- * Profile Renderer (B2.4)
+ * ProfileRenderer
  *
- * Renders a saved GrapesJS profile layout with live React widget hydration.
- * Parses the saved HTML to find widget container elements (identified by CSS class),
- * then renders sanitized HTML segments interspersed with live React widget components.
+ * PURPOSE
+ * - Render a saved user profile layout in either raw iframe mode or hydrated widget mode.
  *
- * Security: Uses DOMPurify (HIGH-3 compliance) to sanitize all HTML content.
- * CSS is also sanitized to strip potentially dangerous constructs.
+ * HOW IT WORKS
+ * - Loads `ProfileLayout` + serialized `WidgetData` through Tauri commands.
+ * - Splits HTML into static segments and widget placeholders by known widget CSS classes.
+ * - Sanitizes CSS/HTML, then renders sanitized markup and mounts live React widgets.
+ * - Saves widget edits via `save_widget_data` when editable widgets update.
+ *
+ * RELATED FILES
+ * - ./widgets (widget registry + hydrated widget components)
+ * - ../types/index (ProfileLayout/WidgetData/AwayMessageConfig/MusicTrack)
+ * - src-tauri/src/lib.rs (get_profile_layout/get_widget_data/save_widget_data command registration)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component is a frontend hydration boundary over backend-stored profile templates.
+ * - Widget class names in `WIDGET_CLASSES` must stay aligned between editor output and renderer input.
+ * - Security posture depends on DOMPurify sanitization and CSS filtering before DOM mount.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -36,6 +48,10 @@ interface ProfileRendererProps {
 type LayoutSegment =
     | { type: 'html'; content: string }
     | { type: 'widget'; widgetClass: string };
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Parsing + sanitization helpers
+   ═══════════════════════════════════════════════════════════════════════ */
 
 /**
  * Parse the saved layout HTML into alternating HTML and widget segments.
@@ -92,6 +108,14 @@ function parseLayoutIntoSegments(html: string): LayoutSegment[] {
     }
 
     for (const child of Array.from(body.childNodes)) {
+
+                /* ═══════════════════════════════════════════════════════════════════════
+                   Main exported renderer
+                   ═══════════════════════════════════════════════════════════════════════ */
+
+                /**
+                 * Render the current profile layout using raw sandbox mode or hydrated widget mode.
+                 */
         walk(child);
     }
 

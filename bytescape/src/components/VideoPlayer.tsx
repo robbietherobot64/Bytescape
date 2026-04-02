@@ -1,3 +1,19 @@
+/**
+ * PURPOSE
+ * - Render Bytescape video media with progressive UX and backend-assisted URL resolution.
+ *
+ * HOW IT WORKS
+ * - Defers heavy resolution until the component is near viewport via `IntersectionObserver`.
+ * - Resolves sources by strategy: HLS playlist -> backend native file, vault blob hash -> backend media path, or direct URL passthrough.
+ * - Uses global playback coordination so only one video actively plays at a time.
+ * - Caches resolved URLs in-memory to avoid repeated backend work for the same source.
+ *
+ * RELATED FILES
+ * - `src/hooks/useBlobUrl.ts` (poster blob URL resolution)
+ * - `src/utils/mediaServer.ts` (local media server port discovery)
+ * - `src/utils/VideoPlaybackManager.ts` (global play/pause coordination)
+ * - `src-tauri/src/lib.rs` command handlers for media resolution/cancellation
+ */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
@@ -20,6 +36,9 @@ const videoUrlCache = new Map<string, string>();
  * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict drop-dead media restrictions.
  */
 export function VideoPlayer({ src, poster, className, style, autoPlay = false }: VideoPlayerProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Local state and element refs
+    // ═══════════════════════════════════════════════════════════════════════
     const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -27,9 +46,13 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
 
+    // Cross-system note: poster rendering uses hook-level blob decoding; this component only consumes resolved output.
     // Smoothly resolve the poster if it's a blob:hash
     const [, resolvedPoster] = useLazyBlobUrl(poster);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Global playback coordination
+    // ═══════════════════════════════════════════════════════════════════════
     // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
         // Unregister previous element
@@ -57,6 +80,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     };
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Visibility gating
+    // ═══════════════════════════════════════════════════════════════════════
     // Intersection observer for lazy loading metadata bounds
     useEffect(() => {
         const observer = new IntersectionObserver(
@@ -76,6 +102,10 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         return () => observer.disconnect();
     }, []);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Source resolution pipeline (includes Tauri invoke bridge)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Cross-system note: all native/media resolution calls are bridged through Tauri commands.
     useEffect(() => {
         if (!src || !isVisible) return;
 
@@ -150,6 +180,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         };
     }, [src, isVisible]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <div ref={containerRef} className={className} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
             {error && (

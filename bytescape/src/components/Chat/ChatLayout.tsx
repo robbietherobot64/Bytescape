@@ -1,5 +1,22 @@
+/**
+ * PURPOSE
+ * - Present a two-pane chat experience (conversation list + active thread) for normalized DM data.
+ *
+ * HOW IT WORKS
+ * - Receives message data and mutation handlers from parent orchestration layers.
+ * - Groups messages by `convo_id`, computes ordering/title metadata, and renders list + thread views.
+ * - Maintains local UI state for selected conversation, draft input, send state, and scroll behavior.
+ *
+ * RELATED FILES
+ * - Chat data hooks/services that fetch and normalize messages before passing `messages` into this component
+ * - Parent screens/providers that implement `onSync` and `onSendMessage`
+ * - CSS/theme files defining `chat-*` classes used by this layout
+ */
 import React, { useState, useRef, useEffect } from 'react';
 
+/**
+ * Render-ready message shape consumed by `ChatLayout`.
+ */
 export interface ChatMessage {
     id: string;
     convo_id: string;
@@ -9,6 +26,9 @@ export interface ChatMessage {
     sent_at: string;
 }
 
+/**
+ * Public props contract for `ChatLayout`.
+ */
 export interface ChatLayoutProps {
     currentUser: { did: string; handle: string } | null;
     messages: ChatMessage[];
@@ -27,6 +47,14 @@ function formatListDate(tsStr: string): string {
     return new Date(tsStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+/**
+ * Chat conversation layout component.
+ *
+ * Cross-system notes:
+ * - This component is presentational/stateful UI and does not directly call `invoke()`.
+ * - Data fetching/sync/send behaviors are injected via `messages`, `onSync`, and `onSendMessage`,
+ *   typically from hooks/store/provider orchestration layers.
+ */
 export function ChatLayout({
     currentUser,
     messages,
@@ -34,6 +62,9 @@ export function ChatLayout({
     onSync,
     onSendMessage,
 }: ChatLayoutProps) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // Local UI state
+    // ═══════════════════════════════════════════════════════════════════════
     const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
     const [messageInput, setMessageInput] = useState("");
     const [isSending, setIsSending] = useState(false);
@@ -43,6 +74,10 @@ export function ChatLayout({
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Derived conversation model
+    // ═══════════════════════════════════════════════════════════════════════
+    // Cross-system note: upstream hooks/providers are expected to deliver a flat, normalized message list.
     // Group messages by conversation and normalize to newest-first ordering.
     const byConvo: Record<string, ChatMessage[]> = {};
     for (const m of messages) {
@@ -69,6 +104,9 @@ export function ChatLayout({
         activeTitle = handles.length > 0 ? handles.join(", ") : "Just You";
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Scroll management
+    // ═══════════════════════════════════════════════════════════════════════
     // Scroll logic
     const handleChatScroll = () => {
         if (chatContainerRef.current) {
@@ -99,6 +137,10 @@ export function ChatLayout({
         }
     }, [selectedConvoId]);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Message send action
+    // ═══════════════════════════════════════════════════════════════════════
+    // Cross-system note: send side effects are delegated through `onSendMessage` (typically hook/provider backed).
     const handleSend = async () => {
         if (!selectedConvoId || !messageInput.trim()) return;
         setIsSending(true);
@@ -110,6 +152,9 @@ export function ChatLayout({
         }
     };
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Render
+    // ═══════════════════════════════════════════════════════════════════════
     return (
         <div className="chat-layout">
             {/* Sidebar List */}
