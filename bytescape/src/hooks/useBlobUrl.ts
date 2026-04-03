@@ -44,6 +44,14 @@ import { blobCacheUrl } from '../utils/mediaServer';
  */
 export const resolvedUrlCache = new Map<string, string>();
 
+/**
+ * Write a resolved URL into the shared cache.
+ * Used by `prefetchBlobUrls()` to pre-seed cache entries in bulk.
+ */
+export function cacheResolvedUrl(hash: string, url: string): void {
+    resolvedUrlCache.set(hash, url);
+}
+
 // ═══ Path Resolution Helpers ═══════════════════════════════════════════════
 
 /**
