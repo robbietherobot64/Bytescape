@@ -24,7 +24,7 @@
 | 10 | Frontend Utils | 13 | 1,432 | ✅ Complete |
 | 11 | Frontend Screens | 16 | 7,604 | ✅ Complete |
 | 12 | Frontend Components (Large) | 13 | 6,072 | ✅ Complete |
-| 13 | Frontend Components (Medium) | 13 | 2,164 | ⬜ Not started |
+| 13 | Frontend Components (Medium) | 13 | 2,146 | ✅ Complete |
 | 14 | Feed, Lenses, Widgets & Small Components | 33 | 2,698 | ⬜ Not started |
 | **Total** | | **161** | **~55,140** | |
 
@@ -287,19 +287,19 @@
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/CreateGroupModal.tsx` | 213 | ⬜ | Group creation form |
-| `src/components/AudienceDrawer.tsx` | 210 | ⬜ | Post audience selection |
-| `src/components/RecoverySetupModal.tsx` | 209 | ⬜ | Account recovery setup |
-| `src/components/QuoteRepostModal.tsx` | 209 | ⬜ | Quote-repost composition |
-| `src/components/VaultFileModal.tsx` | 206 | ⬜ | Vault file detail modal |
-| `src/components/ReplyCompose.tsx` | 176 | ⬜ | Reply composition |
-| `src/components/AudiencePills.tsx` | 151 | ⬜ | Audience selection pills UI |
-| `src/components/LinkPreviewCard.tsx` | 144 | ⬜ | Link unfurl/preview card |
-| `src/components/AutocompleteDropdown.tsx` | 133 | ⬜ | Mention/hashtag autocomplete |
-| `src/components/IdentitySetupModal.tsx` | 131 | ⬜ | DID identity setup |
-| `src/components/GroupPickerModal.tsx` | 130 | ⬜ | Group selection modal |
-| `src/components/ThemePicker.tsx` | 119 | ⬜ | Theme selection grid |
-| `src/components/Sidebar.tsx` | 115 | ⬜ | Main navigation sidebar |
+| `src/components/CreateGroupModal.tsx` | 213 | ✅ | Expanded header, form flow docs, validation/cross-system notes |
+| `src/components/AudienceDrawer.tsx` | 210 | ✅ | Header + selection flow docs, state/callback boundary notes |
+| `src/components/RecoverySetupModal.tsx` | 209 | ✅ | Header + recovery step docs, clipboard/import caveat annotations |
+| `src/components/QuoteRepostModal.tsx` | 209 | ✅ | Header + quote/attachment flow docs, compose-boundary notes |
+| `src/components/VaultFileModal.tsx` | 206 | ✅ | Header + preview/download lifecycle docs, object URL caveat notes |
+| `src/components/ReplyCompose.tsx` | 176 | ✅ | Header + reply-send flow docs, source-routing caveat notes |
+| `src/components/AudiencePills.tsx` | 151 | ✅ | Header + taxonomy/render docs, tooltip/state notes |
+| `src/components/LinkPreviewCard.tsx` | 144 | ✅ | Header + link-card render docs, metadata formatting notes |
+| `src/components/AutocompleteDropdown.tsx` | 133 | ✅ | Header + keyboard nav docs, parent-state coupling notes |
+| `src/components/IdentitySetupModal.tsx` | 131 | ✅ | Header + identity init flow docs, invoke-boundary notes |
+| `src/components/GroupPickerModal.tsx` | 130 | ✅ | Header + group-share flow docs, command-contract notes |
+| `src/components/ThemePicker.tsx` | 119 | ✅ | Header + theme selection docs, config/source notes |
+| `src/components/Sidebar.tsx` | 115 | ✅ | Header + desktop/mobile nav docs, duplication caveat notes |
 
 **Subtotal**: 13 files · 2,146 lines
 

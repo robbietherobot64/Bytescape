@@ -3,6 +3,30 @@ import { SidebarItem } from '../types';
 import { BsHouseFill, BsSearch, BsPersonFill, BsChatDotsFill, BsPeopleFill, BsBoxArrowInDown, BsFolderFill, BsGearFill, BsListUl } from 'react-icons/bs';
 import { RelayStatusBadge } from './RelayStatusBadge';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Renders primary app navigation across desktop and mobile form factors,
+ * including a hamburger-driven mobile menu and optional feed-tab slot content.
+ *
+ * HOW IT WORKS
+ * - Receives current route-like selection via `activeSidebar` from parent state.
+ * - Emits navigation intent through `onNavigate(item)` callback.
+ * - Uses local UI state (`menuOpen`) only for mobile dropdown visibility.
+ * - Shows `RelayStatusBadge` in desktop footer for network/relay visibility.
+ *
+ * RELATED FILES
+ * - src/App.tsx (owns selected sidebar state and handlers)
+ * - src/types/index.ts (`SidebarItem` union type)
+ * - src/components/RelayStatusBadge.tsx (relay/network status presentation)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Navigation state is parent/store-orchestrated; this component is presentational.
+ * - No direct Tauri `invoke()` usage here; backend connectivity signal is delegated
+ *   to `RelayStatusBadge` internals.
+ */
+
 interface SidebarProps {
     activeSidebar: SidebarItem;
     onNavigate: (item: SidebarItem) => void;
@@ -23,9 +47,13 @@ const ALL_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[]
     { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
+/**
+ * Main navigation shell for desktop sidebar and mobile top-bar/menu variants.
+ */
 export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps) {
     const [menuOpen, setMenuOpen] = useState(false);
 
+    // ═══ Mobile interaction helper: navigate and collapse dropdown ═══
     const handleMenuNavigate = (id: SidebarItem) => {
         setMenuOpen(false);
         onNavigate(id);
@@ -33,7 +61,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
 
     return (
         <nav className="sidebar">
-            {/* Desktop layout — full sidebar (hidden on mobile via CSS) */}
+            {/* ═══ Desktop layout — full sidebar (hidden on mobile via CSS) ═══ */}
             <div className="sidebar-top">
                 <div className="sidebar-logo">BYTESCAPE</div>
                 <SidebarIcon id="feed" icon={<BsHouseFill />} label="Feed" active={activeSidebar} onClick={onNavigate} />
@@ -50,7 +78,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
                 <RelayStatusBadge />
             </div>
 
-            {/* Mobile top bar: hamburger + feed tabs (hidden on desktop via CSS) */}
+            {/* ═══ Mobile top bar: hamburger + feed tabs (hidden on desktop via CSS) ═══ */}
             <div className="mobile-top-bar">
                 <button
                     className={`mobile-hamburger ${menuOpen ? 'open' : ''}`}
@@ -59,7 +87,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
                 >
                     {menuOpen ? '✕' : '☰'}
                 </button>
-                {/* Feed tabs slot — rendered inline when on feed screen */}
+                {/* Feed tabs slot — injected by parent screen when context requires it */}
                 {feedTabSlot && (
                     <div className="mobile-feed-tabs">
                         {feedTabSlot}
@@ -72,7 +100,7 @@ export function Sidebar({ activeSidebar, onNavigate, feedTabSlot }: SidebarProps
                 )}
             </div>
 
-            {/* Dropdown menu (mobile only) */}
+            {/* ═══ Dropdown menu (mobile only) ═══ */}
             {menuOpen && (
                 <div className="mobile-menu-backdrop" onClick={() => setMenuOpen(false)}>
                     <div className="mobile-menu-dropdown" onClick={e => e.stopPropagation()}>
@@ -101,6 +129,9 @@ interface SidebarIconProps {
     onClick: (id: SidebarItem) => void;
 }
 
+/**
+ * Small presentational nav button used by desktop sidebar entries.
+ */
 function SidebarIcon({ id, icon, label, active, onClick }: SidebarIconProps) {
     return (
         <button

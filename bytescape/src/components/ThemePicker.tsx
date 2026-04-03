@@ -2,6 +2,29 @@ import type { ThemeId } from '../types';
 import { useTheme } from '../hooks/useTheme';
 import { ThemeCustomizer } from './ThemeCustomizer';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Provides selectable built-in theme presets and exposes a follow-up customizer
+ * surface for fine-grained appearance adjustments.
+ *
+ * HOW IT WORKS
+ * - Reads `activeTheme` and `setTheme()` from the theme provider hook.
+ * - Renders preset cards from `THEME_OPTIONS` with icon/description/swatch strip.
+ * - Applies theme immediately on click using `setTheme(theme.id)`.
+ * - Renders `ThemeCustomizer` below presets for per-token overrides/backgrounds.
+ *
+ * RELATED FILES
+ * - src/hooks/useTheme.ts (theme context/provider bridge)
+ * - src/components/ThemeCustomizer.tsx (advanced token editing UI)
+ * - src/App.css (theme variable consumption)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component is provider-driven (`useTheme`) rather than store-driven.
+ * - Theme application is UI-side state + CSS variable propagation; no Tauri invoke.
+ */
+
 interface ThemeOption {
     id: ThemeId;
     label: string;
@@ -50,6 +73,7 @@ export function ThemePicker() {
     const { activeTheme, setTheme } = useTheme();
 
     return (
+        // ═══ Preset chooser + customizer stack ═══
         <div style={{ display: 'grid', gap: 12 }}>
             {THEME_OPTIONS.map((theme) => {
                 const isActive = activeTheme === theme.id;

@@ -3,6 +3,31 @@ import ReactDOM from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { LocalGroup } from '../types';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Presents a modal picker for selecting one joined group and sharing a single
+ * feed item into that group.
+ *
+ * HOW IT WORKS
+ * - Loads memberships on mount by calling backend command `get_user_group_memberships`.
+ * - Filters groups client-side by `searchQuery`.
+ * - On selection, calls backend command `share_to_group` with `itemId` + `targetGroupId`.
+ * - Renders via portal into `document.body` so modal layering is independent of
+ *   parent layout stacking contexts.
+ * - Supports Escape and overlay-click close patterns.
+ *
+ * RELATED FILES
+ * - src/types/index.ts (`LocalGroup` shape mirrored from backend payload)
+ * - src/screens/FeedScreen.tsx (share affordance entry point)
+ * - src-tauri/src/lib.rs (Tauri command registration for group commands)
+ *
+ * CROSS-SYSTEM NOTES
+ * - Backend interaction is direct via Tauri `invoke()` (no intermediary store).
+ * - Parent screen owns success lifecycle via `onShared()` (toast/UI update flow).
+ */
+
 interface GroupPickerModalProps {
     /** The item ID to share into the selected group */
     itemId: string;
@@ -21,6 +46,7 @@ export function GroupPickerModal({ itemId, onClose, onShared }: GroupPickerModal
     const [searchQuery, setSearchQuery] = useState('');
     const [sharingTo, setSharingTo] = useState<string | null>(null);
 
+    // ═══ Data hydration: fetch joined groups from backend once on mount ═══
     useEffect(() => {
         invoke<LocalGroup[]>('get_user_group_memberships')
             .then(g => {
@@ -34,10 +60,12 @@ export function GroupPickerModal({ itemId, onClose, onShared }: GroupPickerModal
             });
     }, []);
 
+    // ═══ Local projection: derive visible subset from search text ═══
     const filtered = searchQuery
         ? groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()))
         : groups;
 
+    // ═══ Mutation: perform share operation and report success upward ═══
     const handleShare = async (group: LocalGroup) => {
         setSharingTo(group.group_id);
         try {
@@ -53,7 +81,7 @@ export function GroupPickerModal({ itemId, onClose, onShared }: GroupPickerModal
         }
     };
 
-    // Close on Escape
+    // ═══ Accessibility: close on Escape while mounted ═══
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();

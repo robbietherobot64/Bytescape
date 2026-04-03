@@ -4,11 +4,39 @@ import { invoke } from '@tauri-apps/api/core';
 import { Audience, SyndicationEvent } from '../types';
 import { PLATFORM_CONFIG } from './AudiencePills';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Bottom-sheet style drawer for expanding a post's distribution audience
+ * (e.g., syndicating local content to Bluesky).
+ *
+ * HOW IT WORKS
+ * - Renders currently active syndication targets from `shareHistory`.
+ * - Exposes available expansion targets from `EXPANDABLE_AUDIENCES`.
+ * - On share action, calls backend command `syndicate_vault_item`.
+ * - Applies an optimistic `onUpdated(...)` callback so parent UI can reflect
+ *   immediate audience state while canonical refresh catches up.
+ *
+ * RELATED FILES
+ * - `src/components/AudiencePills.tsx` (platform visual config)
+ * - `src/types/index.ts` (`Audience`, `SyndicationEvent`)
+ * - Backend command registration in `src-tauri/src/lib.rs`
+ *
+ * CROSS-SYSTEM NOTES
+ * - `invoke('syndicate_vault_item', ...)` crosses frontend/backend boundary.
+ * - Canonical share-history data comes from parent query/store lifecycle;
+ *   this component only performs optimistic, local UX updates.
+ */
+
 /** Map Audience enum values to platform config keys */
 function platformKey(a: Audience | string): string {
     return a.toLowerCase();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 interface AudienceDrawerProps {
     itemId: string;
     shareHistory: SyndicationEvent[];
@@ -26,6 +54,14 @@ const EXPANDABLE_AUDIENCES: { id: Audience; available: boolean; disabledReason?:
 
 const FALLBACK = { emoji: '📝', label: 'Unknown', bg: 'rgba(136,136,168,0.12)', color: 'var(--text-muted)', border: 'rgba(136,136,168,0.2)' };
 
+/**
+ * `AudienceDrawer` renders share status and executes expansion actions.
+ *
+ * Cross-system behavior:
+ * - Reads historical share events supplied by parent store/provider layer.
+ * - Invokes Tauri command for syndication side-effects.
+ * - Emits optimistic audience update via `onUpdated(...)`.
+ */
 export function AudienceDrawer({ itemId, shareHistory, syndicatedUris, onClose, onUpdated }: AudienceDrawerProps) {
     const [loading, setLoading] = useState<Audience | null>(null);
     const [error, setError] = useState('');
@@ -43,6 +79,7 @@ export function AudienceDrawer({ itemId, shareHistory, syndicatedUris, onClose, 
 
         try {
             if (target === 'Bluesky') {
+                // Backend bridge: persist/propagate syndication for this item.
                 await invoke<string>('syndicate_vault_item', { itemId });
 
                 // Optimistically update visible audiences.

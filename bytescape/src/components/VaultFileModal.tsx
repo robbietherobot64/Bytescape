@@ -3,6 +3,31 @@ import { invoke } from '@tauri-apps/api/core';
 import { VaultFile } from '../types';
 import { VideoPlayer } from './VideoPlayer';
 
+/**
+ * PURPOSE
+ * Renders the full-screen modal viewer for a selected vault file, including:
+ * - Media/document preview
+ * - Modal navigation controls (previous/next)
+ * - Delete action
+ * - Optional expanded file metadata panel
+ *
+ * HOW IT WORKS
+ * 1) Watches `selectedFile` and requests raw bytes for previewable kinds via Tauri.
+ * 2) Builds an in-memory Blob URL for preview rendering.
+ * 3) Cleans up Blob URLs when file changes/unmount occurs.
+ * 4) Delegates destructive action + navigation back to parent callbacks.
+ *
+ * RELATED FILES
+ * - src/types/index.ts (VaultFile shape)
+ * - src/components/VideoPlayer.tsx (video rendering)
+ * - Rust command: `vault_get_file_data` (Tauri invoke backend)
+ * - Parent vault screen/container that owns `selectedFile`, filtering, and navigation state
+ *
+ * CROSS-SYSTEM NOTE
+ * This component does not read from a local store/provider directly. It bridges UI ⇄ Engine
+ * by invoking `vault_get_file_data` to hydrate preview bytes for the selected file ID.
+ */
+
 interface VaultFileModalProps {
     selectedFile: VaultFile;
     selectedIndex: number;
@@ -18,6 +43,13 @@ interface VaultFileModalProps {
     formatTimeFull: (ts: number) => string;
 }
 
+/**
+ * Public props contract for `VaultFileModal`.
+ *
+ * Parent owns all modal state and orchestration; this component remains presentation-focused
+ * except for preview byte retrieval via Tauri invoke.
+ */
+
 export function VaultFileModal({
     selectedFile,
     selectedIndex,
@@ -32,10 +64,16 @@ export function VaultFileModal({
     formatFileSize,
     formatTimeFull,
 }: VaultFileModalProps) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Local UI state
+    // ═══════════════════════════════════════════════════════════════════════════
     const [showFileData, setShowFileData] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [previewLoading, setPreviewLoading] = useState(false);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Preview lifecycle (UI ⇄ Tauri command `vault_get_file_data`)
+    // ═══════════════════════════════════════════════════════════════════════════
     useEffect(() => {
         if (!selectedFile) {
             if (previewUrl && previewUrl.startsWith('blob:')) {
@@ -96,7 +134,7 @@ export function VaultFileModal({
                     </div>
                 </div>
 
-                {/* Preview */}
+                {/* ═══ Preview surface + modal navigation ═══ */}
                 <div className="vault-modal-preview">
                     {canNavigateModal && (
                         <>
@@ -157,6 +195,7 @@ export function VaultFileModal({
                     )}
                 </div>
 
+                {/* ═══ Optional metadata/detail panel ═══ */}
                 {showFileData && (
                     <div className="vault-file-data-panel">
                         <div className="vault-modal-details">

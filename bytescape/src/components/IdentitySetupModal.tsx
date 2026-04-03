@@ -1,3 +1,26 @@
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ════════════════════════════════════════════════════════════════════════════
+ * Gate first-run identity completion after authentication when
+ * `identity_ready === false`.
+ *
+ * HOW IT WORKS
+ * - Seeds a username suggestion from the authenticated handle/source.
+ * - Applies client-side normalization and validation constraints.
+ * - Persists username via Tauri command invoke (`set_local_username`).
+ * - Returns updated auth payload upstream through `onComplete`.
+ *
+ * RELATED FILES
+ * - `src/providers/*` / auth bootstrap flow (controls modal visibility)
+ * - `src/types/index.ts` (`AuthStatus` contract)
+ * - `src-tauri/src/lib.rs` (registers `set_local_username` command)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component bridges UI ↔ backend command invocation directly.
+ * - It does not own global auth state; parent provider/store reconciles the
+ *   `AuthStatus` returned from invoke and propagates app-wide updates.
+ */
 import { useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { Win98Box } from './Win98Box';
@@ -11,7 +34,10 @@ interface IdentitySetupModalProps {
 }
 
 /**
- * IdentitySetupModal — shown after login when identity_ready is false.
+ * ════════════════════════════════════════════════════════════════════════════
+ * IdentitySetupModal
+ * ════════════════════════════════════════════════════════════════════════════
+ * Shown after login when `identity_ready` is false.
  *
  * Derives a suggested username from the user's handle (e.g. "lovingisliving"
  * from "lovingisliving.bsky.social") and lets the user confirm or change it.
@@ -21,7 +47,7 @@ export function IdentitySetupModal({ auth, onComplete }: IdentitySetupModalProps
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
-    // Derive a suggested username from the handle on mount
+    // ═══ Seed default username from authenticated handle/source ═══
     useEffect(() => {
         const suggested = deriveUsername(auth.handle, auth.source);
         setUsername(suggested);
@@ -49,6 +75,7 @@ export function IdentitySetupModal({ auth, onComplete }: IdentitySetupModalProps
     }
 
     async function handleConfirm() {
+        // ═══ Local validation boundary before backend persistence ═══
         const trimmed = username.trim().toLowerCase();
         if (trimmed.length < 2) {
             setError('Username must be at least 2 characters.');
@@ -66,7 +93,9 @@ export function IdentitySetupModal({ auth, onComplete }: IdentitySetupModalProps
         setSaving(true);
         setError('');
         try {
+            // Backend call updates canonical auth identity in engine state.
             const updatedAuth = await invoke<AuthStatus>('set_local_username', { username: trimmed });
+            // Parent/provider receives updated auth and syncs app-wide state.
             onComplete(updatedAuth);
         } catch (e: any) {
             setError(typeof e === 'string' ? e : e.message || 'Failed to save username');

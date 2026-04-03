@@ -1,3 +1,26 @@
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ════════════════════════════════════════════════════════════════════════════
+ * Render a compact, dismissible link-preview card for Compose flows.
+ *
+ * HOW IT WORKS
+ * - Receives normalized card metadata (`LinkCard`) from parent orchestration.
+ * - Computes a readable domain from `card.url` with a safe URL-parse fallback.
+ * - Renders optional media (`image_url`, `favicon_url`) with defensive `onError`
+ *   handlers that hide failed assets.
+ * - Delegates lifecycle actions (dismiss/removal) to the parent via `onDismiss`.
+ *
+ * RELATED FILES
+ * - `src/components/ComposeBox.tsx` (creates/owns preview state and dismissal)
+ * - `src/types/index.ts` (`LinkCard` shape)
+ * - Styling currently uses inline styles (no dedicated stylesheet module here)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component is intentionally presentational and stateless.
+ * - No direct store/provider/invoke usage exists here; upstream components are
+ *   responsible for backend fetch/invoke and state persistence.
+ */
 import type { LinkCard } from '../types';
 
 interface LinkPreviewCardProps {
@@ -6,10 +29,16 @@ interface LinkPreviewCardProps {
 }
 
 /**
- * Renders a link card preview in the ComposeBox.
- * Shows thumbnail, title, description, and domain — similar to Twitter/Bluesky link cards.
+ * ════════════════════════════════════════════════════════════════════════════
+ * LinkPreviewCard
+ * ════════════════════════════════════════════════════════════════════════════
+ * Renders link card metadata (thumbnail/title/description/domain) for Compose.
+ *
+ * @param card Normalized link-card payload to display.
+ * @param onDismiss Callback invoked when the user removes this preview.
  */
 export function LinkPreviewCard({ card, onDismiss }: LinkPreviewCardProps) {
+    // ═══ Derived presentation metadata ═══
     const domain = (() => {
         try {
             return new URL(card.url).hostname.replace(/^www\./, '');
@@ -30,7 +59,7 @@ export function LinkPreviewCard({ card, onDismiss }: LinkPreviewCardProps) {
                 position: 'relative',
             }}
         >
-            {/* Dismiss button */}
+            {/* ═══ Dismiss action ═══ */}
             <button
                 onClick={onDismiss}
                 type="button"
@@ -57,7 +86,7 @@ export function LinkPreviewCard({ card, onDismiss }: LinkPreviewCardProps) {
             </button>
 
             <div style={{ display: 'flex', gap: 0 }}>
-                {/* Thumbnail */}
+                {/* ═══ Media column (optional thumbnail) ═══ */}
                 {card.image_url && (
                     <div
                         style={{
@@ -84,7 +113,7 @@ export function LinkPreviewCard({ card, onDismiss }: LinkPreviewCardProps) {
                     </div>
                 )}
 
-                {/* Text content */}
+                {/* ═══ Text column ═══ */}
                 <div style={{ flex: 1, padding: '8px 12px', minWidth: 0 }}>
                     {/* Domain + favicon */}
                     <div style={{

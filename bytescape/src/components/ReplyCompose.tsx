@@ -4,6 +4,30 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ReplyResult } from '../types';
 
+/**
+ * PURPOSE
+ * Inline composer for post replies across supported social backends.
+ * Supports text + optional media attachments, and dispatches to the
+ * correct backend command based on source platform.
+ *
+ * HOW IT WORKS
+ * 1) Tracks local draft text/attachments/loading/error UI state.
+ * 2) Uses Tauri dialog to pick media from disk and creates preview URLs.
+ * 3) Sends either:
+ *    - `mastodon_reply` for Mastodon replies, or
+ *    - `reply_to_post` for Bluesky-style replies.
+ * 4) Resets compose state and notifies parent via callbacks.
+ *
+ * RELATED FILES
+ * - src/types/index.ts (`ReplyResult` + post/reply model types)
+ * - Rust commands registered in src-tauri/src/lib.rs (`mastodon_reply`, `reply_to_post`)
+ * - Parent feed/thread components that open this compose surface and refresh timeline state
+ *
+ * CROSS-SYSTEM NOTE
+ * This component is intentionally store-agnostic. It relies on parent-provided identifiers
+ * and callback hooks, while using Tauri `invoke` as the UI⇄Engine boundary.
+ */
+
 interface ReplyComposeProps {
     parentUri: string;
     parentCid: string;
@@ -16,6 +40,13 @@ interface ReplyComposeProps {
     onCancel: () => void;
 }
 
+/**
+ * Public props contract for `ReplyCompose`.
+ *
+ * Parent supplies full reply threading context (`parent*` + `root*`) and handles post-send
+ * cache/timeline refresh in `onReplySent`.
+ */
+
 interface ReplyAttachment {
     path?: string;
     blob_hash?: string;
@@ -23,15 +54,26 @@ interface ReplyAttachment {
     preview?: string;
 }
 
+/**
+ * Local attachment shape used only by UI compose state.
+ * `blob_hash` exists for forward compatibility with pre-uploaded attachment flows.
+ */
+
 export function ReplyCompose({
     parentUri, parentCid, rootUri, rootCid,
     replyToHandle, source, mastodonStatusId, onReplySent, onCancel
 }: ReplyComposeProps) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Local compose state
+    // ═══════════════════════════════════════════════════════════════════════════
     const [text, setText] = useState('');
     const [attachments, setAttachments] = useState<ReplyAttachment[]>([]);
     const [isPosting, setIsPosting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Attachment selection (native dialog via Tauri plugin)
+    // ═══════════════════════════════════════════════════════════════════════════
     const handleAddMedia = async () => {
         try {
             const selected = await open({
@@ -68,6 +110,9 @@ export function ReplyCompose({
         setAttachments(prev => prev.filter((_, i) => i !== index));
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Send pipeline (UI ⇄ Tauri invoke commands)
+    // ═══════════════════════════════════════════════════════════════════════════
     const handleSend = async () => {
         if (!text.trim() && attachments.length === 0) return;
         setIsPosting(true);

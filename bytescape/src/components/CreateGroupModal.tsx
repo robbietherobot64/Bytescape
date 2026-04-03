@@ -4,11 +4,46 @@ import { useTopicTree, createGroup, flattenTopics } from '../hooks/useGroupsData
 import { GroupVisibility } from '../types';
 import './CreateGroupModal.css';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Modal for creating a new group with validated fields for name/slug,
+ * description, visibility, topic, and optional rules.
+ *
+ * HOW IT WORKS
+ * - Pulls hierarchical topics from `useTopicTree()` and flattens them for a
+ *   single `<select>` control.
+ * - Auto-generates a URL-safe slug from the name until the user manually edits
+ *   the slug field.
+ * - Performs lightweight client-side validation before submit.
+ * - Submits through `createGroup(...)`, then returns the created group id via
+ *   `onCreated(...)` for parent-level navigation/state refresh.
+ *
+ * RELATED FILES
+ * - `src/hooks/useGroupsData.ts` (topic loading + group creation API)
+ * - `src/types/index.ts` (`GroupVisibility` and related group types)
+ * - `src/components/CreateGroupModal.css` (presentation)
+ *
+ * CROSS-SYSTEM NOTES
+ * - This component does not call `invoke(...)` directly; it delegates to the
+ *   groups data hook layer (`createGroup`) which encapsulates backend command
+ *   interaction and data normalization.
+ * - `onCreated(...)` is the contract boundary to parent/store/provider layers
+ *   that decide how to refresh list state, route, or open the new group view.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 interface CreateGroupModalProps {
     onClose: () => void;
     onCreated: (groupId: string) => void;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
 function slugify(name: string): string {
     return name
         .toLowerCase()
@@ -18,6 +53,15 @@ function slugify(name: string): string {
         .replace(/^-|-$/g, '');
 }
 
+/**
+ * `CreateGroupModal` orchestrates client validation + group creation workflow.
+ *
+ * Cross-system behavior:
+ * - Reads topic tree via groups hook state.
+ * - Writes new group via groups hook mutation (`createGroup`), which bridges to
+ *   backend/storage commands.
+ * - Notifies parent through `onCreated` so upstream state managers can reconcile.
+ */
 export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) {
     const { topics } = useTopicTree();
     const [name, setName] = useState('');
@@ -69,6 +113,8 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
 
         setSubmitting(true);
         try {
+            // Mutates group state through the hook abstraction.
+            // Any backend `invoke(...)` calls are intentionally centralized there.
             const groupId = await createGroup({
                 name: name.trim(),
                 slug: slug.trim(),
@@ -77,6 +123,7 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
                 topicId,
                 rules: rules.trim() || undefined,
             });
+            // Parent decides post-create behavior (refresh, route, selection, etc.).
             onCreated(groupId);
         } catch (err: any) {
             setError(typeof err === 'string' ? err : err?.message || 'Failed to create group');

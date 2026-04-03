@@ -1,8 +1,25 @@
 /**
- * AutocompleteDropdown Component (C1.2b / C1.3b)
+ * ════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ════════════════════════════════════════════════════════════════════════════
+ * Provide a generic autocomplete list UI for Compose mention/hashtag flows.
  *
- * A positioned dropdown for @mention and #hashtag suggestions.
- * Shows below the ComposeBox textarea with keyboard navigation support.
+ * HOW IT WORKS
+ * - Accepts precomputed items and active selection index from parent state.
+ * - Renders mention/hashtag variants under a shared `AutocompleteItem` union.
+ * - Scrolls selected row into view as keyboard selection changes.
+ * - Adds an outside-click listener while visible to trigger `onClose`.
+ * - Emits selection to parent on `onMouseDown` to avoid textarea blur race.
+ *
+ * RELATED FILES
+ * - `src/components/ComposeBox.tsx` (input parsing, keyboard nav, state owner)
+ * - `src/types/index.ts` (`MentionSuggestion` backend-normalized type)
+ * - Compose styles in App/CSS component class definitions
+ *
+ * CROSS-SYSTEM NOTES
+ * - No direct store/provider/invoke calls exist in this component.
+ * - Backend suggestion fetches (if any) and caching policies are intentionally
+ *   owned by parent hooks/components, not by this dropdown renderer.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -10,6 +27,9 @@ import type { MentionSuggestion } from '../types';
 
 // ─── Types ───
 
+/**
+ * Mention-shaped UI item used by the dropdown renderer.
+ */
 export interface MentionItem {
     type: 'mention';
     handle: string;
@@ -17,11 +37,17 @@ export interface MentionItem {
     avatarUrl?: string | null;
 }
 
+/**
+ * Hashtag-shaped UI item used by the dropdown renderer.
+ */
 export interface HashtagItem {
     type: 'hashtag';
     tag: string;
 }
 
+/**
+ * Discriminated union consumed by `AutocompleteDropdown`.
+ */
 export type AutocompleteItem = MentionItem | HashtagItem;
 
 interface AutocompleteDropdownProps {
@@ -35,16 +61,28 @@ interface AutocompleteDropdownProps {
 
 // ─── Helpers ───
 
+/**
+ * Convert a backend/domain `MentionSuggestion` into a renderable dropdown item.
+ */
 export function mentionToItem(s: MentionSuggestion): MentionItem {
     return { type: 'mention', handle: s.handle, did: s.did, avatarUrl: s.avatar_url };
 }
 
+/**
+ * Convert a raw hashtag token into a renderable dropdown item.
+ */
 export function hashtagToItem(tag: string): HashtagItem {
     return { type: 'hashtag', tag };
 }
 
 // ─── Component ───
 
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * AutocompleteDropdown
+ * ════════════════════════════════════════════════════════════════════════════
+ * Stateless suggestion-list renderer controlled by parent Compose state.
+ */
 export function AutocompleteDropdown({
     items,
     selectedIndex,
@@ -55,7 +93,7 @@ export function AutocompleteDropdown({
 }: AutocompleteDropdownProps) {
     const listRef = useRef<HTMLDivElement>(null);
 
-    // Scroll selected item into view
+    // ═══ Keep keyboard-selected row visible within scroll container ═══
     useEffect(() => {
         if (!listRef.current) return;
         const selected = listRef.current.querySelector('.autocomplete-item.selected');
@@ -64,7 +102,7 @@ export function AutocompleteDropdown({
         }
     }, [selectedIndex]);
 
-    // Close on outside click
+    // ═══ Close when pointer interaction occurs outside the dropdown ═══
     const handleClickOutside = useCallback((e: MouseEvent) => {
         if (listRef.current && !listRef.current.contains(e.target as Node)) {
             onClose();

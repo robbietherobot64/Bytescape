@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–12 (117 source files · ~48,970 lines · Rust + TypeScript)
+> **Scope**: Batches 1–13 (130 source files · ~51,130 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 12 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, **Large Frontend Components**) uncovered **341 issues** across 117 files:
+A systematic audit of the first 13 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, Large Frontend Components, **Medium Frontend Components**) uncovered **380 issues** across 130 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 72 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 168 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 101 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 75 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 186 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 119 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -30,6 +30,7 @@ The top systemic concerns are:
 9. **Utility layer contract drift** — frontend utility modules now mix pure helpers with transport-bound logic (`prefetchBlobUrls` -> `invoke`) and contradictory runtime flags (`openInApp`). This erodes the “utils are pure/reusable” boundary and causes coupling between presentation and backend internals.
 10. **Screen-layer orchestration overload** — multiple top-level screens (`FeedScreen`, `ChatScreen`, `SettingsScreen`, `ProfileBuilderScreen`, `WebViewScreen`) combine transport calls, state orchestration, and rendering in monolithic components, increasing coupling and making defects harder to isolate.
 11. **Component-layer monoliths** — large UI components (ComposeBox, FeedEntryCard, Omnibar, ProfileBioSections) now absorb both domain orchestration and rendering concerns, causing very large files with brittle state transitions and limited reuse.
+12. **Modal contract drift** — medium-sized components (modals/pickers) frequently duplicate validation, inline styling, and backend-call patterns with weakly typed command boundaries. This creates many small divergence points that are hard to standardize over time.
 
 ---
 
@@ -773,6 +774,69 @@ Batch 12 covers the largest reusable UI components. The primary pattern is compo
 
 ---
 
+## Batch 13 — Frontend Components (Medium)
+
+**Scope:** 13 files · ~2,146 lines in `src/components/`
+**Findings:** 39 issues (3 HIGH · 18 MEDIUM · 18 LOW)
+
+Batch 13 covers modals, pickers, and mid-size interaction components. Main pattern: repeated mini-orchestration islands that duplicate validation, transport, and styling patterns.
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 13.1 | `RecoverySetupModal.tsx` | **Recovery import/export flow uses brittle clipboard and untyped import payload handling** | Recovery UX fragility and higher failure risk in critical account flows |
+| 13.2 | `VaultFileModal.tsx` | **Preview lifecycle and object URL cleanup complexity in component scope** | Memory leak/regression risk under rapid file switching |
+| 13.3 | `ReplyCompose.tsx` | **Hard-coded source routing logic for send path in component** | Protocol expansion drift and brittle reply behavior over time |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 13.4 | `CreateGroupModal.tsx` | **Validation and slug policy logic duplicated at UI layer** | Drift risk vs backend constraints |
+| 13.5 | `AudienceDrawer.tsx` | **Optimistic audience updates tightly coupled to local assumptions** | Potential mismatch between UI and persisted state |
+| 13.6 | `RecoverySetupModal.tsx` | **Flow-step state machine is implicit in local booleans/step flags** | Harder to test edge transitions |
+| 13.7 | `QuoteRepostModal.tsx` | **File/media handling and quote composition bundled in one modal** | Reduced cohesion and higher maintenance overhead |
+| 13.8 | `QuoteRepostModal.tsx` | **Character-limit policy partially local to modal** | Inconsistent limit behavior risk vs compose primitives |
+| 13.9 | `VaultFileModal.tsx` | **Transport + preview + rendering concerns bundled** | Hard to isolate failures and improve reuse |
+| 13.10 | `ReplyCompose.tsx` | **Attachment MIME inference is extension-based and coarse** | Incorrect media typing for edge formats |
+| 13.11 | `AudiencePills.tsx` | **Platform taxonomy and rendering rules local to component** | Duplication risk across audience UIs |
+| 13.12 | `AudiencePills.tsx` | **Tooltip positioning math is component-local and brittle** | Layout edge-case instability |
+| 13.13 | `LinkPreviewCard.tsx` | **Component-local URL/domain derivation and display rules** | Repeated formatting logic across link surfaces |
+| 13.14 | `AutocompleteDropdown.tsx` | **Keyboard interaction model externally coupled to parent state** | Harder to guarantee consistent accessibility behavior |
+| 13.15 | `IdentitySetupModal.tsx` | **Validation and normalization rules are local-only** | Schema drift risk against backend identity constraints |
+| 13.16 | `IdentitySetupModal.tsx` | **Direct invoke usage in UI component** | Reduced testability and boundary clarity |
+| 13.17 | `GroupPickerModal.tsx` | **Inline command strings and response assumptions without typed contract wrappers** | Command drift risk and weaker compile-time safety |
+| 13.18 | `ThemePicker.tsx` | **Theme options are static/local instead of centralized config source** | Drift risk with future theme additions |
+| 13.19 | `Sidebar.tsx` | **Desktop/mobile nav definitions duplicate intent in separate structures** | Inconsistency risk when nav changes |
+| 13.20 | `Sidebar.tsx` | **Map-less manual nav item rendering repeats behavior** | Higher maintenance overhead for nav evolution |
+| 13.21 | `CreateGroupModal.tsx` | **Form logic and presentation tightly coupled in one component** | Lower composability and test granularity |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 13.22 | `CreateGroupModal.tsx` | **Large inline style blocks for form sections** | Styling duplication and visual drift risk |
+| 13.23 | `CreateGroupModal.tsx` | **State-transition comments imply hidden flow complexity** | Readability cost for future maintainers |
+| 13.24 | `AudienceDrawer.tsx` | **Inline style density and token coupling** | Harder design-system migration |
+| 13.25 | `AudienceDrawer.tsx` | **Fallback/config behavior is only implicitly documented in code paths** | Maintainability friction |
+| 13.26 | `RecoverySetupModal.tsx` | **Flow extraction opportunity not realized (shared setup hook absent)** | Small but recurring duplication risk |
+| 13.27 | `QuoteRepostModal.tsx` | **Mixed local constants with broader compose config** | Minor config drift risk |
+| 13.28 | `VaultFileModal.tsx` | **Inline style and branch-heavy render paths** | Readability overhead |
+| 13.29 | `ReplyCompose.tsx` | **Type shape suggests partially implemented upload abstraction** | Interface clarity issues |
+| 13.30 | `AudiencePills.tsx` | **Presentation semantics tied to local constants** | Reduced reuse across surfaces |
+| 13.31 | `LinkPreviewCard.tsx` | **Alt/text semantics are basic and mostly decorative** | Minor accessibility quality gap |
+| 13.32 | `AutocompleteDropdown.tsx` | **List item key strategy can be unstable with duplicates** | Minor rerender inefficiency risk |
+| 13.33 | `AutocompleteDropdown.tsx` | **Unused hover callback path suggests dead interaction surface** | Cognitive overhead |
+| 13.34 | `IdentitySetupModal.tsx` | **Broad `any`-style error handling patterns remain** | Low observability quality |
+| 13.35 | `GroupPickerModal.tsx` | **Modal focus/accessibility helpers are minimal** | Minor UX/accessibility debt |
+| 13.36 | `GroupPickerModal.tsx` | **Loading/error/empty branches are tightly inlined** | Minor readability debt |
+| 13.37 | `ThemePicker.tsx` | **Inline style-heavy swatch rendering** | Styling maintenance overhead |
+| 13.38 | `ThemePicker.tsx` | **Index-based key usage for static arrays** | Minor reconciliation risk if list becomes dynamic |
+| 13.39 | `Sidebar.tsx` | **Helper functions tightly coupled to current class names/layout** | Small refactor friction |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -895,4 +959,17 @@ Batch 12 covers the largest reusable UI components. The primary pattern is compo
 | `src/components/ArticleEditor.tsx` | 0 | 2 | 1 | 3 |
 | `src/components/VideoPlayer.tsx` | 1 | 2 | 0 | 3 |
 | `src/components/Chat/ChatLayout.tsx` | 1 | 1 | 1 | 3 |
-| **TOTAL** | **72** | **168** | **101** | **341** |
+| `src/components/CreateGroupModal.tsx` | 0 | 2 | 2 | 4 |
+| `src/components/AudienceDrawer.tsx` | 0 | 2 | 2 | 4 |
+| `src/components/RecoverySetupModal.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/QuoteRepostModal.tsx` | 0 | 2 | 2 | 4 |
+| `src/components/VaultFileModal.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/ReplyCompose.tsx` | 1 | 1 | 1 | 3 |
+| `src/components/AudiencePills.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/LinkPreviewCard.tsx` | 0 | 1 | 1 | 2 |
+| `src/components/AutocompleteDropdown.tsx` | 0 | 1 | 2 | 3 |
+| `src/components/IdentitySetupModal.tsx` | 0 | 2 | 1 | 3 |
+| `src/components/GroupPickerModal.tsx` | 0 | 1 | 2 | 3 |
+| `src/components/ThemePicker.tsx` | 0 | 1 | 2 | 3 |
+| `src/components/Sidebar.tsx` | 0 | 2 | 1 | 3 |
+| **TOTAL** | **75** | **186** | **119** | **380** |

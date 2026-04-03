@@ -1,6 +1,27 @@
 import { useState } from 'react';
 import { SyndicationEvent } from '../types';
 
+/**
+ * PURPOSE
+ * Renders a compact, ordered "audience path" for a post:
+ * origin platform → syndicated destinations.
+ *
+ * HOW IT WORKS
+ * 1) Normalizes source platform into a canonical key.
+ * 2) Builds a chain with origin first, then active syndication targets sorted by time.
+ * 3) Renders small pills with per-platform style tokens.
+ * 4) Shows a lightweight timestamp tooltip when a pill is clicked.
+ *
+ * RELATED FILES
+ * - src/types/index.ts (`SyndicationEvent`)
+ * - Feed/post row components that pass `source`, `originalTimestamp`, and `shareHistory`
+ * - Syndication-producing backend commands/events (Rust) that populate timeline metadata
+ *
+ * CROSS-SYSTEM NOTE
+ * This component is purely presentational and does not call `invoke` or read store/provider
+ * state directly. It depends on already-normalized feed data supplied by parent layers.
+ */
+
 interface AudiencePillsProps {
     /** The post's origin platform (e.g. 'instagram', 'facebook', 'bluesky', 'dtp') */
     source: string;
@@ -11,6 +32,10 @@ interface AudiencePillsProps {
     /** Compact mode — icons only, no labels */
     compact?: boolean;
 }
+
+/**
+ * Public props contract for `AudiencePills`.
+ */
 
 /** Config for every platform that can appear in the chain */
 const PLATFORM_CONFIG: Record<string, { emoji: string; label: string; bg: string; color: string; border: string }> = {
@@ -28,8 +53,15 @@ const PLATFORM_CONFIG: Record<string, { emoji: string; label: string; bg: string
     activitypub: { emoji: '🐘', label: 'ActivityPub', bg: 'rgba(99,100,255,0.12)', color: '#858afa', border: 'rgba(99,100,255,0.25)' },
 };
 
+/**
+ * Fallback visual config used when a platform key has no explicit mapping.
+ */
+
 const FALLBACK = { emoji: '📝', label: 'Unknown', bg: 'rgba(136,136,168,0.12)', color: 'var(--text-muted)', border: 'rgba(136,136,168,0.2)' };
 
+/**
+ * Formats an epoch-seconds timestamp for tooltip display.
+ */
 function formatTimestamp(epoch: number): string {
     if (!epoch) return '';
     const d = new Date(epoch * 1000);
@@ -40,9 +72,15 @@ function formatTimestamp(epoch: number): string {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined }) + ` at ${time}`;
 }
 
+/**
+ * Visualizes platform propagation for a post as clickable pills with timestamp context.
+ */
 export function AudiencePills({ source, originalTimestamp, shareHistory, compact = false }: AudiencePillsProps) {
     const [tooltip, setTooltip] = useState<{ platform: string; x: number; y: number } | null>(null);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Chain construction
+    // ═══════════════════════════════════════════════════════════════════════════
     // Build ordered chain: origin first, then active syndicated platforms in chronological order
     const chain: { key: string; config: typeof FALLBACK; timestamp: number }[] = [];
 
@@ -114,7 +152,7 @@ export function AudiencePills({ source, originalTimestamp, shareHistory, compact
                 ))}
             </div>
 
-            {/* Timestamp tooltip */}
+            {/* ═══ Timestamp tooltip ═══ */}
             {activeTooltip && tooltip && (
                 <div
                     style={{
@@ -148,4 +186,8 @@ export function AudiencePills({ source, originalTimestamp, shareHistory, compact
     );
 }
 
+/**
+ * Exported platform style map for reuse in sibling UI surfaces requiring
+ * consistent platform emoji/label/color semantics.
+ */
 export { PLATFORM_CONFIG };

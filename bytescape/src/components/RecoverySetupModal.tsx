@@ -3,6 +3,32 @@ import { invoke } from "@tauri-apps/api/core";
 import { Win98Box } from './Win98Box';
 import { IdentityInitResult, RecoveryEscrowBundle } from '../types';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Guides the user through recovery setup for identity key escrow after initial
+ * identity/username creation.
+ *
+ * HOW IT WORKS
+ * - Step 1 (`code`): collect + validate recovery code and confirmation.
+ * - Step 2 (`bundle`): show escrow bundle metadata + raw encrypted bundle JSON.
+ * - Allows copying bundle to clipboard and final completion callback.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (`IdentityInitResult`, `RecoveryEscrowBundle`)
+ * - `src/components/Win98Box.tsx` (window shell)
+ * - Backend identity command implementation/registration in `src-tauri/src/lib.rs`
+ *
+ * CROSS-SYSTEM NOTES
+ * - Calls `invoke('identity_init_full_recovery', ...)` to request encrypted
+ *   escrow bundle generation from backend identity subsystem.
+ * - Parent flow controls next setup route/state through `onComplete(...)`.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 interface RecoverySetupModalProps {
     /** Called when the user finishes (or skips) recovery setup */
     onComplete: () => void;
@@ -43,6 +69,7 @@ export function RecoverySetupModal({ onComplete }: RecoverySetupModalProps) {
         setSaving(true);
         setError('');
         try {
+            // Backend identity bridge: generates encrypted escrow bundle JSON.
             const result = await invoke<IdentityInitResult>('identity_init_full_recovery', {
                 recoveryCode: code,
             });

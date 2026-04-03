@@ -6,6 +6,35 @@ import { Win98Box } from './Win98Box';
 import { FeedEntry, PublishResult } from '../types';
 import { stripHtml } from '../utils/sanitize';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * Compose modal for quote-reposting an existing feed entry with optional media.
+ *
+ * HOW IT WORKS
+ * - Lets the user write text + attach up to 4 local media files.
+ * - Shows a compact sanitized preview of the original post being quoted.
+ * - On submit, calls `publish_post_v2` with quote context (`quoteUri/quoteCid`).
+ * - Returns backend publish result via `onQuoted(...)` to parent flow.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (`FeedEntry`, `PublishResult`)
+ * - `src/utils/sanitize.ts` (`stripHtml`)
+ * - Backend publish command implementation/registration in `src-tauri/src/lib.rs`
+ * - `@tauri-apps/plugin-dialog` + `convertFileSrc` for local attachment UX
+ *
+ * CROSS-SYSTEM NOTES
+ * - Uses Tauri dialog API to select host files and converts paths to webview
+ *   preview URLs via `convertFileSrc(...)`.
+ * - Uses `invoke('publish_post_v2', ...)` to perform canonical publish action.
+ * - Parent/store layer is expected to merge the returned `PublishResult` into
+ *   feed state and trigger any follow-up refresh.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
 interface QuoteRepostModalProps {
     /** The post being quoted */
     originalEntry: FeedEntry;
@@ -81,6 +110,7 @@ export function QuoteRepostModal({ originalEntry, onClose, onQuoted }: QuoteRepo
             }));
 
             // publish_post_v2 handles bluesky quote embedding via the quoteUri param
+            // Cross-system backend bridge: write post + quote metadata to connector layer.
             const result = await invoke<PublishResult>('publish_post_v2', {
                 text: text.trim(),
                 attachments: attachmentData,
@@ -90,6 +120,7 @@ export function QuoteRepostModal({ originalEntry, onClose, onQuoted }: QuoteRepo
                 quoteCid: originalEntry.cid || '',
             });
 
+            // Parent decides how to reconcile feed state after successful publish.
             onQuoted(result);
             onClose();
         } catch (err: unknown) {
