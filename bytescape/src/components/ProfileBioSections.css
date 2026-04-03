@@ -2,21 +2,48 @@
    ProfileBioSections — MySpace/SpaceHey-inspired profile bio sections
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ─── 3-Column Grid Layout ─── */
+.bio-sections-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+}
+
+.bio-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+/* Full-width custom sections below the grid */
+.bio-sections-full {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+/* Legacy single-column fallback */
 .bio-sections {
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
 
-/* ─── Two-column responsive grid layout ─── */
-.bio-sections--grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-}
-@media (max-width: 700px) {
-    .bio-sections--grid {
+@media (max-width: 768px) {
+    .bio-sections-columns {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+    .bio-sections-columns {
+        grid-template-columns: 1fr 1fr;
+    }
+    .bio-column--right {
+        grid-column: 1 / -1;
     }
 }
 

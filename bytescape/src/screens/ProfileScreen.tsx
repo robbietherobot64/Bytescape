@@ -201,7 +201,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             ) : (
             <>
             {/* ═══ Profile Tabs & Content ═══ */}
-            <div className="profile-tabs" style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border-outset-dark)', margin: '0 auto', maxWidth: 560, padding: '0 16px' } as React.CSSProperties}>
+            <div className="profile-tabs" style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border-outset-dark)', margin: '0 auto', maxWidth: 960, padding: '0 16px' } as React.CSSProperties}>
                 <button
                     className={`wall-filter-btn ${profileTab === 'wall' ? 'active' : ''}`}
                     onClick={() => setProfileTab('wall')}
@@ -218,7 +218,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 </button>
             </div>
 
-            <div className="profile-content-narrow" style={{ maxWidth: 560, margin: '16px auto', padding: '0 16px' } as React.CSSProperties}>
+            <div className="profile-content-narrow" style={{ maxWidth: 960, margin: '16px auto', padding: '0 16px' } as React.CSSProperties}>
                 {profileTab === 'wall' ? (
                     /* Wall tab — editable bio sections */
                     <ProfileBioSections

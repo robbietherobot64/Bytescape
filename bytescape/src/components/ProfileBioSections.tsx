@@ -42,7 +42,7 @@ export interface ProfileLink {
 /** Public section model persisted in widget data JSON. */
 export interface ProfileSection {
     id: string;
-    type: 'about' | 'connections' | 'now-playing' | 'photos' | 'guestbook' | 'links' | 'custom';
+    type: 'about' | 'connections' | 'now-playing' | 'guestbook' | 'links' | 'custom';
     title: string;
     content: string;
     order: number;
@@ -59,12 +59,25 @@ interface GuestbookEntry {
 
 const DEFAULT_SECTIONS: ProfileSection[] = [
     { id: 'about', type: 'about', title: 'About Me', content: '', order: 0, visible: true },
-    { id: 'connections', type: 'connections', title: 'Connections', content: '', order: 1, visible: true },
-    { id: 'now-playing', type: 'now-playing', title: 'Now Playing', content: '', order: 2, visible: true },
-    { id: 'photos', type: 'photos', title: 'Photos', content: '', order: 3, visible: true },
-    { id: 'guestbook', type: 'guestbook', title: 'Guestbook', content: '', order: 4, visible: true },
-    { id: 'links', type: 'links', title: 'Links', content: '[]', order: 5, visible: true },
+    { id: 'now-playing', type: 'now-playing', title: 'Now Playing', content: '', order: 1, visible: true },
+    { id: 'links', type: 'links', title: 'Links', content: '[]', order: 2, visible: true },
+    { id: 'guestbook', type: 'guestbook', title: 'Guestbook', content: '', order: 3, visible: true },
+    { id: 'connections', type: 'connections', title: 'Connections', content: '', order: 4, visible: true },
 ];
+
+/** Maps section types to their profile grid column. */
+const COLUMN_MAP: Record<string, 'left' | 'center' | 'right' | 'full'> = {
+    about: 'left',
+    'now-playing': 'left',
+    links: 'left',
+    guestbook: 'center',
+    connections: 'right',
+    custom: 'full',
+};
+
+function getColumnKey(type: string): 'left' | 'center' | 'right' | 'full' {
+    return COLUMN_MAP[type] || 'full';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -227,12 +240,19 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
     // Move section up/down
     const moveSection = useCallback((id: string, direction: -1 | 1) => {
         setEditSections(prev => {
-            const idx = prev.findIndex(s => s.id === id);
-            if (idx < 0) return prev;
-            const newIdx = idx + direction;
-            if (newIdx < 0 || newIdx >= prev.length) return prev;
+            const section = prev.find(s => s.id === id);
+            if (!section) return prev;
+            const col = getColumnKey(section.type);
+            // Gather visible sections in the same column, in current order
+            const colSections = prev.filter(s => s.visible !== false && getColumnKey(s.type) === col);
+            const colIdx = colSections.findIndex(s => s.id === id);
+            const targetColIdx = colIdx + direction;
+            if (targetColIdx < 0 || targetColIdx >= colSections.length) return prev;
+            // Swap positions in the full list
+            const idxA = prev.findIndex(s => s.id === id);
+            const idxB = prev.findIndex(s => s.id === colSections[targetColIdx].id);
             const copy = [...prev];
-            [copy[idx], copy[newIdx]] = [copy[newIdx], copy[idx]];
+            [copy[idxA], copy[idxB]] = [copy[idxB], copy[idxA]];
             return copy;
         });
     }, []);
@@ -303,6 +323,88 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         ? editSections
         : sections.filter(s => s.visible).sort((a, b) => a.order - b.order);
 
+    // Group sections by their assigned column
+    const leftSections = visibleSections.filter(s => getColumnKey(s.type) === 'left');
+    const centerSections = visibleSections.filter(s => getColumnKey(s.type) === 'center');
+    const rightSections = visibleSections.filter(s => getColumnKey(s.type) === 'right');
+    const fullSections = visibleSections.filter(s => getColumnKey(s.type) === 'full');
+    const hasAnyColumn = leftSections.length > 0 || centerSections.length > 0 || rightSections.length > 0;
+
+    /** Render a single section card (used in each column). */
+    function renderSectionCard(section: ProfileSection, colSections: ProfileSection[]) {
+        const colIdx = colSections.indexOf(section);
+        return (
+            <Win98Box
+                key={section.id}
+                variant="window"
+                title={
+                    editing && editingTitle === section.id
+                        ? undefined
+                        : section.title
+                }
+                className={`bio-section-card ${editing ? 'bio-section-card--editing' : ''}`}
+                onClose={editing ? () => deleteSection(section.id) : undefined}
+            >
+                {editing && editingTitle === section.id && (
+                    <input
+                        className="bio-section-title-editor"
+                        value={section.title}
+                        onChange={(e) => updateSectionTitle(section.id, e.target.value)}
+                        onBlur={() => setEditingTitle(null)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(null); }}
+                        autoFocus
+                    />
+                )}
+
+                {editing && (
+                    <div
+                        className="bio-section-controls"
+                        style={{ padding: '4px 8px', borderBottom: '1px solid var(--border-outset-dark, #444)' } as React.CSSProperties}
+                    >
+                        <button
+                            onClick={() => moveSection(section.id, -1)}
+                            disabled={colIdx === 0}
+                            title="Move up"
+                        >
+                            <BsArrowUp size={10} />
+                        </button>
+                        <button
+                            onClick={() => moveSection(section.id, 1)}
+                            disabled={colIdx === colSections.length - 1}
+                            title="Move down"
+                        >
+                            <BsArrowDown size={10} />
+                        </button>
+                        <button
+                            onClick={() => setEditingTitle(editingTitle === section.id ? null : section.id)}
+                            title="Rename section"
+                        >
+                            Aa
+                        </button>
+                        <button
+                            onClick={() => setEditingSection(editingSection === section.id ? null : section.id)}
+                            title="Edit content"
+                        >
+                            <BsPencilFill size={9} />
+                        </button>
+                        <span style={{ flex: 1 } as React.CSSProperties} />
+                        <button
+                            className="bio-section-delete"
+                            onClick={() => deleteSection(section.id)}
+                            title="Delete section"
+                        >
+                            <BsTrash size={10} />
+                        </button>
+                    </div>
+                )}
+
+                <div className="bio-section-body">
+                    {renderSectionContent(section)}
+                </div>
+            </Win98Box>
+        );
+    }
+
     function renderSectionContent(section: ProfileSection) {
         // If editing this section's content, show textarea
         if (editing && editingSection === section.id) {
@@ -327,8 +429,6 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
                 return renderConnections();
             case 'now-playing':
                 return renderNowPlaying(section);
-            case 'photos':
-                return renderPhotos();
             case 'guestbook':
                 return renderGuestbook();
             case 'links':
@@ -405,17 +505,6 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
             <div className="bio-now-playing">
                 <span className="bio-now-playing-icon">💿</span>
                 <span className="bio-now-playing-text">{section.content}</span>
-            </div>
-        );
-    }
-
-    function renderPhotos() {
-        // Photos section shows a placeholder — real photos would come from the vault
-        return (
-            <div className="bio-photos-grid">
-                <p className="bio-section-placeholder" style={{ gridColumn: '1 / -1' } as React.CSSProperties}>
-                    📸 Your recent photos will appear here. Import media to populate this section.
-                </p>
             </div>
         );
     }
@@ -595,7 +684,6 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         { type: 'about', label: 'About Me', emoji: '📝' },
         { type: 'connections', label: 'Connections', emoji: '👥' },
         { type: 'now-playing', label: 'Now Playing', emoji: '🎵' },
-        { type: 'photos', label: 'Photos', emoji: '📸' },
         { type: 'guestbook', label: 'Guestbook', emoji: '💬' },
         { type: 'links', label: 'Links', emoji: '🔗' },
         { type: 'custom', label: 'Custom Section', emoji: '✨' },
@@ -648,88 +736,33 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
                 {saveStatus && <span className="bio-save-status">{saveStatus}</span>}
             </div>
 
-            {/* Sections */}
-            <div className="bio-sections">
-                {visibleSections.map((section, idx) => (
-                    <Win98Box
-                        key={section.id}
-                        variant="window"
-                        title={
-                            editing && editingTitle === section.id
-                                ? undefined // We'll render custom title bar content
-                                : section.title
-                        }
-                        className={`bio-section-card ${editing ? 'bio-section-card--editing' : ''}`}
-                        onClose={editing ? () => deleteSection(section.id) : undefined}
-                    >
-                        {/* Custom title bar content when editing title */}
-                        {editing && editingTitle === section.id && (
-                            <input
-                                className="bio-section-title-editor"
-                                value={section.title}
-                                onChange={(e) => updateSectionTitle(section.id, e.target.value)}
-                                onBlur={() => setEditingTitle(null)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(null); }}
-                                autoFocus
-                            />
-                        )}
+            {/* Sections — 3-column grid layout */}
+            {hasAnyColumn ? (
+                <div className="bio-sections-columns">
+                    <div className="bio-column bio-column--left">
+                        {leftSections.map(s => renderSectionCard(s, leftSections))}
+                    </div>
+                    <div className="bio-column bio-column--center">
+                        {centerSections.map(s => renderSectionCard(s, centerSections))}
+                    </div>
+                    <div className="bio-column bio-column--right">
+                        {rightSections.map(s => renderSectionCard(s, rightSections))}
+                    </div>
+                </div>
+            ) : null}
 
-                        {/* Edit controls */}
-                        {editing && (
-                            <div
-                                className="bio-section-controls"
-                                style={{ padding: '4px 8px', borderBottom: '1px solid var(--border-outset-dark, #444)' } as React.CSSProperties}
-                            >
-                                <button
-                                    onClick={() => moveSection(section.id, -1)}
-                                    disabled={idx === 0}
-                                    title="Move up"
-                                >
-                                    <BsArrowUp size={10} />
-                                </button>
-                                <button
-                                    onClick={() => moveSection(section.id, 1)}
-                                    disabled={idx === visibleSections.length - 1}
-                                    title="Move down"
-                                >
-                                    <BsArrowDown size={10} />
-                                </button>
-                                <button
-                                    onClick={() => setEditingTitle(editingTitle === section.id ? null : section.id)}
-                                    title="Rename section"
-                                >
-                                    Aa
-                                </button>
-                                <button
-                                    onClick={() => setEditingSection(editingSection === section.id ? null : section.id)}
-                                    title="Edit content"
-                                >
-                                    <BsPencilFill size={9} />
-                                </button>
-                                <span style={{ flex: 1 } as React.CSSProperties} />
-                                <button
-                                    className="bio-section-delete"
-                                    onClick={() => deleteSection(section.id)}
-                                    title="Delete section"
-                                >
-                                    <BsTrash size={10} />
-                                </button>
-                            </div>
-                        )}
+            {/* Full-width custom sections below the grid */}
+            {fullSections.length > 0 && (
+                <div className="bio-sections-full">
+                    {fullSections.map(s => renderSectionCard(s, fullSections))}
+                </div>
+            )}
 
-                        {/* Section content */}
-                        <div className="bio-section-body">
-                            {renderSectionContent(section)}
-                        </div>
-                    </Win98Box>
-                ))}
-
-                {visibleSections.length === 0 && (
-                    <p className="bio-section-placeholder" style={{ textAlign: 'center', padding: 20 } as React.CSSProperties}>
-                        No sections yet. {editing ? 'Click "Add Section" to get started!' : 'Click "Edit Bio" to add sections.'}
-                    </p>
-                )}
-            </div>
+            {visibleSections.length === 0 && (
+                <p className="bio-section-placeholder" style={{ textAlign: 'center', padding: 20 } as React.CSSProperties}>
+                    No sections yet. {editing ? 'Click "Add Section" to get started!' : 'Click "Edit Bio" to add sections.'}
+                </p>
+            )}
         </div>
     );
 }

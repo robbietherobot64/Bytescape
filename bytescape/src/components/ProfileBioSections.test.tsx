@@ -58,7 +58,6 @@ describe('ProfileBioSections', () => {
         });
         expect(screen.getByText('Connections')).toBeTruthy();
         expect(screen.getByText('Now Playing')).toBeTruthy();
-        expect(screen.getByText('Photos')).toBeTruthy();
         expect(screen.getByText('Guestbook')).toBeTruthy();
         expect(screen.getByText('Links')).toBeTruthy();
     });
@@ -222,7 +221,7 @@ describe('ProfileBioSections', () => {
         // In edit mode, each section has a delete button in controls and a close button on title bar
         // The Win98Box close button is rendered when onClose is provided
         const closeButtons = screen.getAllByTitle('Close');
-        const initialSections = 6; // About, Connections, Now Playing, Photos, Guestbook, Links
+        const initialSections = 5; // About, Now Playing, Links, Guestbook, Connections
         expect(closeButtons.length).toBe(initialSections);
 
         // Click close on the first section (About Me)
