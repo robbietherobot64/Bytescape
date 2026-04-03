@@ -885,6 +885,8 @@ function App() {
       onSearchChange={setSearchQuery}
       onSearchSubmit={handleSearchSubmit}
       avatarInitial={auth?.local_username?.[0]?.toUpperCase() || auth?.handle?.[0]?.toUpperCase()}
+      handle={auth?.handle}
+      did={auth?.did}
     >
       <ErrorBoundary fallback={<div>Application Error</div>}>
         {/* Render ALL open tabs simultaneously — inactive tabs are hidden via display:none

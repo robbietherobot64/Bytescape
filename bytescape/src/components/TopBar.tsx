@@ -34,6 +34,7 @@ interface TopBarProps {
  */
 const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
+    { id: 'profile', icon: <BsPersonFill />, label: 'Profile' },
     { id: 'forums', icon: <BsListUl />, label: 'Forums' },
     { id: 'chat', icon: <BsChatDotsFill />, label: 'Chat' },
     { id: 'vault', icon: <BsFolderFill />, label: 'Vault' },
@@ -45,7 +46,7 @@ const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
 /**
  * Exported top navigation shell used across desktop and responsive layouts.
  */
-export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitial }: TopBarProps) {
+export function TopBar({ activeSidebar, onNavigate, onSearchSubmit }: TopBarProps) {
     // ===== Section: local interaction state =====
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -71,17 +72,6 @@ export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitia
 
     return (
         <div className="topbar">
-            {/* ===== Section: left rail action (profile) ===== */}
-            <button
-                className="topbar-profile-btn"
-                onClick={() => handleNavClick('profile')}
-                title="My Profile"
-            >
-                <div className="topbar-avatar">
-                    {avatarInitial || <BsPersonFill />}
-                </div>
-            </button>
-
             {/* ===== Section: center omnibar (global search/address) ===== */}
             <Omnibar onSearchSubmit={onSearchSubmit} />
 

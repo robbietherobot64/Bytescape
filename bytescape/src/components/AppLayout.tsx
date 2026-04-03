@@ -28,8 +28,12 @@ interface AppLayoutProps {
     searchQuery: string;
     onSearchChange: (query: string) => void;
     onSearchSubmit: (query: string) => void;
-    /** User avatar initial for top bar. */
+    /** User avatar initial for top bar / tab bar. */
     avatarInitial?: string;
+    /** User handle for account switcher. */
+    handle?: string | null;
+    /** User DID for account switcher. */
+    did?: string | null;
 }
 
 // ============================================================
@@ -63,13 +67,20 @@ export function AppLayout({
     onSearchChange,
     onSearchSubmit,
     avatarInitial,
+    handle,
+    did,
 }: AppLayoutProps) {
     const { tabs } = useNavStore();
 
     return (
         <div className="app-layout">
-            {/* Desktop/Web top tab strip */}
-            <TabBar />
+            {/* Desktop/Web top tab strip + account switcher */}
+            <TabBar
+                avatarInitial={avatarInitial}
+                handle={handle}
+                did={did}
+                onNavigate={onNavigate}
+            />
 
             {/* Global top chrome: nav trigger, search, profile affordances */}
             <TopBar
