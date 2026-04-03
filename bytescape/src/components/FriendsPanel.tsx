@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { BsChatDotsFill, BsPersonFill } from 'react-icons/bs';
 import { usePeerStore, useAuthStore } from '../store';
 import { openProfile } from '../utils/openInApp';
+import { platformAbbrev, platformEmoji } from '../utils/platform';
 import { PeerInfo, ProfileView } from '../types';
 
 /**
@@ -209,7 +210,7 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                             className={`friends-source-tab ${activeSection === 'p2p' ? 'active' : ''}`}
                             onClick={() => setActiveSection('p2p')}
                         >
-                            🔗 P2P
+                            {platformEmoji('p2p')} {platformAbbrev('p2p')}
                         </button>
                     )}
                     {bskyFriends.length > 0 && (
@@ -217,7 +218,7 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                             className={`friends-source-tab ${activeSection === 'bluesky' ? 'active' : ''}`}
                             onClick={() => setActiveSection('bluesky')}
                         >
-                            🦋 Bsky
+                            {platformEmoji('bluesky')} {platformAbbrev('bluesky')}
                         </button>
                     )}
                     {mastoFriends.length > 0 && (
@@ -225,7 +226,7 @@ export function FriendsPanel({ onOpenChat, onViewProfile }: FriendsPanelProps) {
                             className={`friends-source-tab ${activeSection === 'mastodon' ? 'active' : ''}`}
                             onClick={() => setActiveSection('mastodon')}
                         >
-                            🐘 Masto
+                            {platformEmoji('mastodon')} {platformAbbrev('mastodon')}
                         </button>
                     )}
                 </div>

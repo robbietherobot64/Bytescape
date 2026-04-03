@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { SourceBadge } from '../SourceBadge';
 import { BlobImage } from '../BlobImage';
+import { platformAbbrev } from '../../utils/platform';
 import { FeedEntry } from '../../types';
 
 /**
@@ -227,7 +228,7 @@ export function ReaderLens({ entries, mediaDir, resolveMediaPath }: ReaderLensPr
                     >
                         <option value="all">All Sources</option>
                         {sources.map(s => (
-                            <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                            <option key={s} value={s}>{platformAbbrev(s)}</option>
                         ))}
                     </select>
                 </div>

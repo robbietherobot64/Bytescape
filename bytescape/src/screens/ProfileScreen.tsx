@@ -6,6 +6,7 @@ import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ProfileRenderer } from '../components/ProfileRenderer';
 import { ProfileBioSections } from '../components/ProfileBioSections';
 import { adaptBytescapeItem } from '../utils/adapters';
+import { platformEmoji, platformAbbrev } from '../utils/platform';
 import { useNavStore } from '../store';
 import { BsPersonFill, BsPencilFill } from 'react-icons/bs';
 
@@ -133,15 +134,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setTotal(0);
     };
 
-    const sourceEmoji = (s: string): string => {
-        switch (s.toLowerCase()) {
-            case 'bluesky': return '🦋';
-            case 'facebook': return '📘';
-            case 'mastodon': return '🐘';
-            default: return '📝';
-        }
-    };
-
     const hasMore = offsetRef.current < total;
 
     /* ════════════════════ Render ════════════════════ */
@@ -244,7 +236,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                         className={`wall-filter-btn ${sourceFilter === s ? 'active' : ''}`}
                                         onClick={() => handleSourceFilter(s)}
                                     >
-                                        {sourceEmoji(s)} {s}
+                                        {platformEmoji(s)} {platformAbbrev(s)}
                                     </button>
                                 ))}
                             </div>

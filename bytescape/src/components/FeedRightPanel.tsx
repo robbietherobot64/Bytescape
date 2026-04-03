@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { ProfileView, GeneratorView } from '../types';
 import { Win98Box } from './Win98Box';
 import { openProfile } from '../utils/openInApp';
+import { platformAbbrev } from '../utils/platform';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
 /**
@@ -257,7 +258,7 @@ export function FeedRightPanel({
                                 onChange={e => setArchiveSourceFilter(e.target.value)}
                             >
                                 <option value="">All sources</option>
-                                {vaultSources.map(s => <option key={s} value={s}>{s}</option>)}
+                                {vaultSources.map(s => <option key={s} value={s}>{platformAbbrev(s)}</option>)}
                             </select>
                         </div>
                         <Win98Box variant="sunken" className="panel-stat-box">

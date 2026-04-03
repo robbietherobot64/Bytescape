@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { AuthStatus, PublishResult } from '../types';
 import { ComposeBox, Attachment, PublishOptions, PostTarget } from '../components/ComposeBox';
+import { platformAbbrev } from '../utils/platform';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { FriendsPanel } from '../components/FriendsPanel';
 import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
@@ -378,7 +379,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                         >
                             <option value="">All Platforms</option>
                             {vaultSources.map(s => (
-                                <option key={s} value={s}>{s}</option>
+                                <option key={s} value={s}>{platformAbbrev(s)}</option>
                             ))}
                         </select>
                     </div>

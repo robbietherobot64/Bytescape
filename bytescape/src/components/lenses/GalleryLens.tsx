@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { BlobImage } from '../BlobImage';
 import { SourceBadge } from '../SourceBadge';
+import { platformAbbrev } from '../../utils/platform';
 import { Lightbox } from './Lightbox';
 import { FeedEntry } from '../../types';
 
@@ -109,7 +110,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                     >
                         <option value="all">All Sources</option>
                         {sources.map(s => (
-                            <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                            <option key={s} value={s}>{platformAbbrev(s)}</option>
                         ))}
                     </select>
                 </div>
