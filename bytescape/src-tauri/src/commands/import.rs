@@ -55,14 +55,8 @@ use std::sync::Arc;
 use chrono::Datelike;
 use crate::blob_hash;
 
-#[cfg(feature = "willow")]
-use willow_25::{MCC25, MCL25, MPL25};
-
-#[cfg(not(feature = "willow"))]
 const MCL25: usize = 1024;
-#[cfg(not(feature = "willow"))]
 const MCC25: usize = 1024;
-#[cfg(not(feature = "willow"))]
 const MPL25: usize = 1024;
 
 use crate::error::BytescapeError;

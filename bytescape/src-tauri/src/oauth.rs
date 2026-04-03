@@ -73,6 +73,16 @@ use atrium_oauth::{
 /// The browser redirects here after authentication.
 const OAUTH_PREFERRED_PORT: u16 = 28457;
 
+/// Escape special HTML characters to prevent XSS injection.
+/// Used when rendering OAuth error messages from external providers.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Fallback ports tried if the preferred port is already in use.
 /// All ports are registered in the OAuth client metadata's redirect_uris.
 const OAUTH_FALLBACK_PORTS: &[u16] = &[28458, 28459, 28460, 38457];
@@ -730,9 +740,13 @@ impl OAuthManager {
                         last_recovered_at: None,
                     });
                 if !recovery_status.has_local_identity {
+                    let recovery_code: String = rand::Rng::sample_iter(rand::rng(), &rand::distr::Alphanumeric)
+                        .take(24)
+                        .map(char::from)
+                        .collect();
                     let _ = app_state
                         .keychain
-                        .identity_init_full_recovery("bytescape-auto-init");
+                        .identity_init_full_recovery(&recovery_code);
                 }
 
                 let local_username = app_state.keychain.get_local_username().unwrap_or(None);
@@ -797,6 +811,7 @@ impl OAuthManager {
     }
 
     fn error_html(message: &str) -> String {
+        let escaped = html_escape(message);
         format!(
             r#"<!DOCTYPE html>
 <html><body style="background:#1a1a2e;color:#e0e0e0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
@@ -806,7 +821,7 @@ impl OAuthManager {
 <p style="color:#a0a0b0;">{}</p>
 <p style="color:#666;margin-top:24px;">You can close this window and try again in Bytescape.</p>
 </div></body></html>"#,
-            message
+            escaped
         )
     }
 

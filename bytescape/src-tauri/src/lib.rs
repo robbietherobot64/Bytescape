@@ -110,6 +110,11 @@ pub struct AppState {
     /// Active FFmpeg processes tracked by URL hash for cancellation support.
     /// Frontend can call `cancel_video_resolve` when user scrolls past a video.
     pub active_ffmpeg: tokio::sync::Mutex<std::collections::HashMap<String, u32>>,
+    /// Prevents concurrent token refreshes that would race against each other.
+    /// The Bluesky PDS invalidates the old refresh token on use, so if two
+    /// requests both see an expired access token and both try to refresh, the
+    /// second one will fail with an invalid token error.
+    pub session_refresh_lock: tokio::sync::Mutex<()>,
 }
 
 /// Sentinel value stored in keychain when using OAuth instead of app-password.
@@ -157,6 +162,19 @@ impl AppState {
             );
         }
 
+        if !Self::is_jwt_expired(&access_jwt, 60) {
+            return Ok(access_jwt);
+        }
+
+        // Acquire the refresh lock to prevent concurrent refresh races.
+        // The PDS invalidates the old refresh token on use, so only one
+        // concurrent refresh is allowed.
+        let _guard = self.session_refresh_lock.lock().await;
+
+        // Re-check after acquiring lock — another task may have already refreshed
+        let access_jwt = self.keychain.get_access_jwt()
+            .map_err(|e| format!("Keychain error: {}", e))?
+            .ok_or_else(|| "No access token available".to_string())?;
         if !Self::is_jwt_expired(&access_jwt, 60) {
             return Ok(access_jwt);
         }
@@ -745,6 +763,7 @@ pub fn run() {
                 session_restored: AtomicBool::new(false),
                 feed_cache: FeedCache::new(),
                 active_ffmpeg: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                session_refresh_lock: tokio::sync::Mutex::new(()),
             };
 
             app.manage(state);

@@ -79,6 +79,9 @@ pub struct ApActor {
     pub image: Option<ApMediaLink>,
     pub manually_approves_followers: bool,
     pub owner_did: String,
+    /// Private key material — must NEVER be serialized in API responses.
+    /// Only used internally for HTTP signature generation.
+    #[serde(skip_serializing)]
     pub secret_key_hex: String,
     pub created_at: String,
 }

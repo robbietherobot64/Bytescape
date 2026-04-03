@@ -861,11 +861,15 @@ pub async fn get_followers_list(
 // Mastodon→BytescapeItem converters, and rate limiting.
 // ═══════════════════════════════════════════════════════════════════
 
-/// Normalize an instance URL (ensure https:// prefix, strip trailing slash).
+/// Normalize an instance URL (enforce https:// prefix, strip trailing slash).
+/// Rejects plaintext HTTP to prevent credential leakage.
 pub fn normalize_instance(instance: &str) -> String {
     let trimmed = instance.trim().trim_end_matches('/');
-    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+    if trimmed.starts_with("https://") {
         trimmed.to_string()
+    } else if trimmed.starts_with("http://") {
+        // Upgrade http to https — never send auth tokens in plaintext
+        format!("https://{}", &trimmed["http://".len()..])
     } else {
         format!("https://{}", trimmed)
     }

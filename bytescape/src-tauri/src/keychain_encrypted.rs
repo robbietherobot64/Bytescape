@@ -159,7 +159,7 @@ pub struct IdentityRecoveryFinalizeResult {
 pub struct EncryptedKeychain {
     file_path: PathBuf,
     cache: Arc<Mutex<Option<AuthData>>>,
-    master_password: String,
+    master_password: zeroize::Zeroizing<String>,
 }
 
 impl EncryptedKeychain {
@@ -174,7 +174,7 @@ impl EncryptedKeychain {
         Self {
             file_path: path,
             cache: Arc::new(Mutex::new(None)),
-            master_password,
+            master_password: zeroize::Zeroizing::new(master_password),
         }
     }
 
@@ -230,13 +230,25 @@ impl EncryptedKeychain {
         encrypted_data.extend_from_slice(&ciphertext);
         let encoded = STANDARD.encode(&encrypted_data);
         
-        // Write to file
+        // Write to file atomically — write to temp then rename to prevent corruption on crash
         let content = serde_json::to_string_pretty(&serde_json::json!({
             "encrypted_data": encoded
         }))
             .map_err(|e| BytescapeError::KeychainSave(format!("Serialization failed: {}", e)))?;
-        fs::write(&self.file_path, content)
+        let tmp_path = self.file_path.with_extension("tmp");
+        fs::write(&tmp_path, &content)
             .map_err(|e| BytescapeError::KeychainSave(format!("File write failed: {}", e)))?;
+        fs::rename(&tmp_path, &self.file_path)
+            .map_err(|e| BytescapeError::KeychainSave(format!("Atomic rename failed: {}", e)))?;
+
+        // SEC-1: Restrict file permissions to owner-only on Unix (0o600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&self.file_path, perms)
+                .map_err(|e| BytescapeError::KeychainSave(format!("chmod 600 failed: {}", e)))?;
+        }
         
         Ok(())
     }

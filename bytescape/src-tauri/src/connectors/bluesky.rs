@@ -1081,6 +1081,7 @@ fn extract_quote_from_view(embed: &serde_json::Value) -> Option<Box<BlueskyImpor
 
 
 /// Resolve a DID to its PDS URL via the PLC directory.
+/// Validates the endpoint URL to prevent SSRF against private networks.
 async fn resolve_pds(client: &Client, did: &str) -> Result<String, String> {
     let url = format!("{}/{}", PLC_DIRECTORY, did);
     let response = client.get(&url)
@@ -1092,13 +1093,42 @@ async fn resolve_pds(client: &Client, did: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to parse DID doc: {}", e))?;
 
-    doc.service
+    let endpoint = doc.service
         .and_then(|services| {
             services.iter()
                 .find(|s| s.service_type == "AtprotoPersonalDataServer")
                 .map(|s| s.service_endpoint.clone())
         })
-        .ok_or_else(|| "No PDS found".to_string())
+        .ok_or_else(|| "No PDS found".to_string())?;
+
+    validate_pds_url(&endpoint)?;
+    Ok(endpoint)
+}
+
+/// Validates a PDS URL to prevent SSRF attacks.
+/// Rejects non-HTTPS URLs and private/loopback IP addresses.
+fn validate_pds_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url)
+        .map_err(|e| format!("Invalid PDS URL '{}': {}", url, e))?;
+
+    if parsed.scheme() != "https" {
+        return Err(format!("PDS URL must be HTTPS, got: {}", url));
+    }
+
+    if let Some(host) = parsed.host_str() {
+        // Block loopback and private IP ranges
+        if host == "localhost" || host.starts_with("127.") || host == "[::1]" {
+            return Err(format!("PDS URL points to loopback: {}", url));
+        }
+        // Check for private IP ranges (10.x, 172.16-31.x, 192.168.x, 169.254.x)
+        if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+            if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
+                return Err(format!("PDS URL points to private network: {}", url));
+            }
+        }
+    }
+
+    Ok(())
 }
 /// Search for posts on Bluesky.
 pub async fn search_posts(

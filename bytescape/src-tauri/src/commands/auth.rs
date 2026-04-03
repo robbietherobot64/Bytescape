@@ -310,8 +310,12 @@ pub async fn login(
             did: None, public_key: None, last_recovered_at: None,
         });
     if !recovery_status.has_local_identity {
-        // Generate keypair silently — user will confirm username in the identity setup step
-        let _ = state.keychain.identity_init_full_recovery("bytescape-auto-init");
+        // Generate keypair with a random recovery code — never use a hardcoded passphrase
+        let recovery_code: String = rand::Rng::sample_iter(rand::rng(), &rand::distr::Alphanumeric)
+            .take(24)
+            .map(char::from)
+            .collect();
+        let _ = state.keychain.identity_init_full_recovery(&recovery_code);
     }
 
     let local_username = state.keychain.get_local_username().unwrap_or(None);
