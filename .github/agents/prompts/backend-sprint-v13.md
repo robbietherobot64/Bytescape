@@ -8,7 +8,9 @@
 - **🔥 CRITICAL — Memory Leak (User feedback 2026-03-28):** Filtering feed by video → 32+ GB memory, only Instagram videos show, never load. Videos overall still stuttery.
 - **🔥 CRITICAL — CPU Spike on Launch (User feedback 2026-03-28):** CPU spikes to ~100% on app launch, causing lag.
 
-**HEAD:** `46c5777` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass, cargo check clean.
+**HEAD:** `25dc29f` on `main`. **Build:** 0 tsc errors, 250 frontend tests, 216 Rust tests pass, cargo check clean.
+
+> **📋 Technical Debt Audit (2026-04-02):** A comprehensive audit surfaced 432 issues (86 HIGH, 207 MEDIUM, 139 LOW) across 162 files. See `.github/docs/technical-debt-audit.md`. This sprint absorbs the **security quick-wins** (SEC-1 through SEC-7 + SEC-13) as a new P0.5 section. Database performance, connector correctness, and architecture refactoring are tracked in ROADMAP Open Issues and deferred to sprint v14+.
 
 ---
 
@@ -50,6 +52,126 @@
 - Blob consistency check should be throttled or deferred further
 - App should be interactive within 2 seconds of launch
 - Add `tracing::info!` timing spans to all startup phases
+
+---
+
+## P0.5: Security Quick-Wins from Technical Debt Audit (🔥🔥 Security-Critical)
+
+**Priority:** 🔥🔥 Highest alongside P0 — these are exploitable vulnerabilities that must be addressed before any public release.
+
+> **Source:** `.github/docs/technical-debt-audit.md` (Audit items 3.1–3.11, 4.3, 4.6). Full security tracker in ROADMAP → Security Hardening (SEC-1 through SEC-13).
+
+### 0.5.1 SEC-6: XSS in OAuth Error Page *(Audit 3.11, LOW effort)*
+
+In `auth.rs`, the OAuth error callback renders `error_description` directly into HTML without escaping. A crafted Bluesky PDS could inject arbitrary HTML/JS.
+
+**Fix:** HTML-escape all interpolated values in the OAuth error response body. Use a simple function:
+```rust
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+```
+
+### 0.5.2 SEC-7: Non-Atomic Keychain Writes *(Audit 3.7, LOW effort)*
+
+In `keychain.rs`, `save()` uses `fs::write()` directly. A crash mid-write corrupts the keychain file, causing **total credential loss**.
+
+**Fix:** Write to a temp file, then atomic rename:
+```rust
+let tmp = path.with_extension("tmp");
+fs::write(&tmp, &data)?;
+fs::rename(&tmp, &path)?;
+```
+
+### 0.5.3 SEC-4: SSRF via JWT `aud` Claim *(Audit 4.3, LOW effort)*
+
+In `connectors/bluesky.rs`, the JWT `aud` claim is used to construct the PDS API endpoint. A crafted JWT can redirect requests to `http://169.254.169.254/` (cloud metadata) or internal services.
+
+**Fix:** After extracting the PDS URL from the JWT, validate it:
+1. Must be HTTPS
+2. Must not resolve to a private/loopback IP (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16)
+3. Must end with a recognized domain pattern (e.g., `*.bsky.network`, `*.atproto.com`, or user-configured allowlist)
+
+### 0.5.4 SEC-5: HTTP Instance URLs Accepted *(Audit 4.6, LOW effort)*
+
+In `connectors/mastodon.rs`, the Mastodon instance URL is not validated for HTTPS — auth tokens can be sent in plaintext.
+
+**Fix:** Reject any instance URL that doesn't start with `https://`. Add a single check at the top of all Mastodon connection functions.
+
+### 0.5.5 SEC-13: JWT Refresh Race Condition *(Audit 3.1, MEDIUM effort)*
+
+In `auth.rs`, concurrent Tauri commands can each see an expired token, both trigger `refresh_session()`, and the second invalidates the first's new token — causing cascading 401 failures.
+
+**Fix:** Wrap the check→refresh→save cycle in a `tokio::sync::Mutex`. Commands should await the mutex before checking/refreshing:
+```rust
+// In AppState:
+pub session_refresh_lock: tokio::sync::Mutex<()>,
+```
+
+### 0.5.6 SEC-1: Master Key as Plaintext File *(Audit 3.3, MEDIUM effort)*
+
+`.master_key` stored as base64 on disk — any user-level process can read and decrypt the entire keychain.
+
+**Fix:** Use the `keyring` crate (or `secret-service` on Linux) to store the master key in the OS credential store. Fall back to the file-based approach with restrictive permissions (`0o600`) if no OS keyring is available. Log a warning if falling back.
+
+### 0.5.7 SEC-2: Hardcoded Recovery Code *(Audit 3.2, LOW effort)*
+
+Auto-initialized identities use `"bytescape-auto-init"` as the recovery passphrase — anyone who obtains the escrow bundle can decrypt the Iroh secret key.
+
+**Fix:** Generate a random 24-character alphanumeric recovery code on identity creation:
+```rust
+use rand::Rng;
+let code: String = rand::thread_rng()
+    .sample_iter(&rand::distributions::Alphanumeric)
+    .take(24)
+    .map(char::from)
+    .collect();
+```
+Display the code to the user once during setup and prompt them to save it.
+
+### 0.5.8 SEC-3: Secrets Never Zeroized *(Audit 3.4, MEDIUM effort)*
+
+`master_key`, JWT tokens, and other secrets are stored as plain `String` — key material persists in freed heap memory and can be read from core dumps or swap.
+
+**Fix:** Add `zeroize` crate to `Cargo.toml`. Replace `String` fields holding secrets with `zeroize::Zeroizing<String>` or create a wrapper type. Derive `ZeroizeOnDrop` on key-holding structs. Priority fields:
+- `Keychain.master_key`
+- `BlueskySession.access_jwt` / `refresh_jwt`
+- `ApActor.secret_key_hex`
+
+### 0.5.9 `clear_all_data` Misses 8 Tables *(Audit 2.4, LOW effort, DATA PRIVACY)*
+
+`clear_all_data()` only clears items, messages, contacts, and blobs — but leaves behind Groups, Guestbook, AP Actors, Collab Docs, and 4 other tables. The user's "Clear all data" expectation is full wipe.
+
+**Fix:** Add all redb table definitions to the clear loop in `db.rs`. Every table defined in `const` at the top of `db.rs` must be included.
+
+### 0.5.10 AP Private Key Leak Risk *(Audit 6.1, LOW effort)*
+
+`ApActor` derives `Serialize` with `secret_key_hex` field — any accidental serialization (logging, API response, error message) leaks the private key.
+
+**Fix:** Add `#[serde(skip)]` to `secret_key_hex` field, or split `ApActor` into `ApActorPublic` (serializable) and `ApActorWithKey` (internal only).
+
+### 0.5 Summary
+
+| Item | Effort | Risk | File |
+|------|--------|------|------|
+| SEC-6 XSS escape | LOW | HIGH | `auth.rs` |
+| SEC-7 Atomic writes | LOW | HIGH | `keychain.rs` |
+| SEC-4 SSRF URL validation | LOW | HIGH | `connectors/bluesky.rs` |
+| SEC-5 Enforce HTTPS | LOW | MEDIUM | `connectors/mastodon.rs` |
+| SEC-13 Refresh mutex | MEDIUM | HIGH | `auth.rs` |
+| SEC-1 OS keyring | MEDIUM | HIGH | `keychain.rs` |
+| SEC-2 Random recovery code | LOW | MEDIUM | `lib.rs` / identity init |
+| SEC-3 Zeroize secrets | MEDIUM | MEDIUM | `keychain.rs`, `auth.rs`, `activitypub/` |
+| clear_all_data gaps | LOW | HIGH (privacy) | `db.rs` |
+| AP key leak | LOW | HIGH | `activitypub/types.rs` |
+
+**Tests for P0.5:**
+- `test_html_escape_special_chars` — verify `<script>` is escaped
+- `test_keychain_atomic_write_survives_crash` — write to temp path, verify rename
+- `test_pds_url_rejects_private_ip` — verify 127.0.0.1, 10.x, 169.254.x rejected
+- `test_mastodon_rejects_http_url` — verify `http://` URL fails
+- `test_session_refresh_under_concurrency` — spawn 10 concurrent refresh attempts, verify only 1 refresh occurs
+- `test_clear_all_data_clears_all_tables` — verify every defined table is empty after clear
 
 ---
 

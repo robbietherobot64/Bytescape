@@ -10,7 +10,9 @@
 - Random gaps between feed posts, images inconsistently sized (sometimes correct, sometimes 1/3 height)
 - Forums tab shows only mock data (already documented — sprint v13 P1/P5 address this)
 
-**HEAD:** `46c5777` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass.
+**HEAD:** `25dc29f` on `main`. **Build:** 0 tsc errors, 250 frontend tests pass.
+
+> **📋 Technical Debt Audit (2026-04-02):** A comprehensive audit surfaced 432 issues across 162 files. Frontend-relevant findings (Batches 8–14) are mostly structural/refactoring — god-components, monolithic hooks, duplicated logic. These are tracked in ROADMAP Open Issues and deferred to a dedicated **frontend refactoring sprint (v15)**. One item noted for awareness: `prefetchBlobUrls.ts` has a broken import (Audit 10.1) that would break builds under strict type-checking. See `.github/docs/technical-debt-audit.md`.
 
 ---
 
@@ -308,3 +310,4 @@ Add loading spinners/skeletons:
 - **Events & Calendar UI** (sprint v14+)
 - **RSS subscription management** (sprint v14+)
 - **Deep profile customization** (sprint v14+)
+- **Frontend structural refactoring** (sprint v15) — breaking up god-components (ChatScreen, SettingsScreen, ComposeBox, FeedEntryCard, useUnifiedFeed), splitting `store/index.ts` into domain stores, cleaning up `DataProvider` 100+ method interface, fixing unbounded `resolvedUrlCache` in `useBlobUrl`. All tracked in ROADMAP Open Issues per Technical Debt Audit Batches 8–14.

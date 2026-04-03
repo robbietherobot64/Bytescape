@@ -2223,3 +2223,63 @@ Once available, the frontend fix is one line: `const convoId = await invoke('get
 - **pnpm test**: ✅ 250/250 passing
 - **Working tree**: Clean
 - **HEAD**: `e067671` on `main`
+
+---
+
+## PM — Technical Debt Audit Review (2026-04-03)
+
+### What Happened
+The Systems Agent completed a comprehensive technical debt audit (`technical-debt-audit.md`) of the entire codebase — 162 files, ~53,780 lines, 14 batches. Found **432 issues**: 86 HIGH, 207 MEDIUM, 139 LOW.
+
+### Triage Decisions
+
+**Absorbed into Sprint v13 Backend (new P0.5 section — 10 items):**
+- SEC-6: XSS in OAuth error page (auth.rs) — LOW effort, HIGH risk
+- SEC-7: Non-atomic keychain writes (keychain.rs) — LOW effort, HIGH risk
+- SEC-4: SSRF via JWT `aud` claim (bluesky.rs) — LOW effort, HIGH risk
+- SEC-5: HTTP Mastodon URLs accepted (mastodon.rs) — LOW effort, MEDIUM risk
+- SEC-13: JWT refresh race condition (auth.rs) — MEDIUM effort, HIGH risk
+- SEC-1: Master key as plaintext file (keychain.rs) — MEDIUM effort, HIGH risk
+- SEC-2: Hardcoded recovery code — LOW effort, MEDIUM risk
+- SEC-3: Secrets never zeroized (keychain.rs, auth.rs) — MEDIUM effort, MEDIUM risk
+- clear_all_data misses 8 tables (db.rs) — LOW effort, HIGH privacy risk
+- AP private key leak risk (activitypub types) — LOW effort, HIGH risk
+
+**Deferred to Sprint v14 (Backend — DB Perf + Connector Fixes + AP Security):**
+- SEC-8: SSRF in AP inbox (fetch_actor_public_key)
+- SEC-9: No AP Digest verification
+- SEC-10: Hand-rolled SHA-256
+- SEC-11: AP private key on Serialize struct
+- SEC-12: SSRF in link unfurl
+- Database full table scans (15+ methods, needs schema redesign)
+- Facebook encoding drops non-Latin Unicode
+- Facebook timezone-unaware timestamps
+- Bluesky post parsing duplicated 4×
+- Bluesky follows N+1 API bomb
+- AP media attachments dropped on federate
+- Mastodon publish drops attachments
+- import.rs god file split (2,900 lines → 5-6 submodules)
+- No AP delivery retry/queue
+- No AP clock skew check
+- Stale header cache after clear
+- Unbounded HeadersCache memory
+
+**Deferred to Sprint v15 (Frontend — Structural Refactoring):**
+- useUnifiedFeed monolithic hook (640 lines)
+- ChatScreen, SettingsScreen, ComposeBox god-components
+- store/index.ts 6 stores in one file
+- DataProvider 100+ method flat interface
+- Unbounded resolvedUrlCache in useBlobUrl
+- prefetchBlobUrls broken import
+- App.tsx duplicated callbacks
+- VideoPlaybackManager DOM mutations outside React
+
+### Files Modified
+- `ROADMAP.md`: Expanded Security Hardening (SEC-1 through SEC-13), added 16 new Open Issues from audit
+- `backend-sprint-v13.md`: Updated HEAD to `25dc29f`, added P0.5 section (10 security quick-wins with implementation details and tests)
+- `frontend-sprint-v13.md`: Updated HEAD to `25dc29f`, added audit awareness note, added deferred refactoring items to "Not Included" section
+- `progress.md`: This entry
+
+### Build Status
+- No source code changes — documentation/planning only
+- **HEAD**: `25dc29f` on `main` (pre-commit)

@@ -1,6 +1,6 @@
 # Bytescape Technical Debt Audit
 
-> **Date**: 2026-04-01
+> **Date**: 2026-04-02
 > **Scope**: Batches 1–14 (162 source files · ~53,780 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
@@ -9,13 +9,38 @@
 
 ## Executive Summary
 
-A systematic audit of all 14 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, Large Frontend Components, Medium Frontend Components, **Feed/Lenses/Widgets/Small Components**) uncovered **412 issues** across 162 files:
+A systematic audit of all 14 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, Large Frontend Components, Medium Frontend Components, **Feed/Lenses/Widgets/Small Components**) uncovered **432 issues** across 162 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 80 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 204 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 128 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 86 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 207 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 139 | Code smells, dead code, naming issues |
+
+### Meta-Audit (Audit-of-Audit) — 2026-04-02
+
+The full issue inventory was re-verified for structural integrity and classification consistency.
+
+#### Verification Results (All 432 issue rows reviewed)
+
+| Check | Result |
+|---|---|
+| Unique issue IDs | ✅ 432/432 unique |
+| Batch numbering continuity | ✅ All batches contiguous (`X.1 … X.n`) |
+| Severity section assignment | ✅ 432/432 rows attached to explicit HIGH/MEDIUM/LOW section |
+| Row schema integrity | ✅ High/Medium rows have Impact column; Low rows use 3-column format |
+| File reference validity | ✅ 432/432 resolvable; 22 use intentional shorthand paths (for component-local context) |
+
+#### Classification QA Outcome
+
+- **Confirmed totals after recount and correction**: 86 HIGH / 207 MEDIUM / 139 LOW (432 total).
+- **Applied severity corrections** (promoted to HIGH due data-loss / security / crash risk): `3.7`, `3.11`, `4.16`, `4.21`, `14.12`.
+- **Evidence quality pass**: all rows include concrete impact language; strongest confidence is in rows naming concrete functions/commands and quantifying runtime cost.
+
+#### Notes
+
+- This meta-audit validates **coverage and classification hygiene** of the debt register.
+- It does **not** replace implementation-level reproduction tests per issue; those should be handled in fix sprints using targeted regression tests.
 
 The top systemic concerns are:
 
@@ -138,17 +163,17 @@ The top systemic concerns are:
 | 3.3 | `keychain_encrypted.rs` | **Master encryption key stored as plaintext file** — `.master_key` on disk as base64 | Any user-level process can read it and decrypt entire keychain |
 | 3.4 | `keychain_encrypted.rs` | **Secrets in memory never zeroized** — `master_key`, JWT fields are plain `String` | Key material persists in freed heap memory indefinitely |
 | 3.5 | `oauth.rs` | **Silently dropped save errors** — `let _ = keychain.save_session(...)` | User thinks they're logged in but session lost on restart |
+| 3.7 | `keychain_encrypted.rs` | **Non-atomic file writes** — direct `fs::write` | Crash mid-write corrupts keychain → total credential loss |
+| 3.11 | `oauth.rs` | **XSS in OAuth error HTML page** — unescaped `error_description` | Code injection via crafted OAuth redirect |
 
 ### 🟡 MEDIUM
 
 | # | File | Issue | Impact |
 |---|------|-------|--------|
 | 3.6 | `keychain_encrypted.rs` | **Mutex held across blocking file I/O** — blocks Tokio thread | Thread starvation under concurrent auth checks |
-| 3.7 | `keychain_encrypted.rs` | **Non-atomic file writes** — direct `fs::write` | Crash mid-write corrupts keychain → total credential loss |
 | 3.8 | `keychain_encrypted.rs` | **Argon2id uses minimal parameters** — 19 MiB / 2 iterations | Insufficient for at-rest encryption; OWASP recommends 47+ MiB |
 | 3.9 | `lib.rs` | **Unbounded `HeadersCache` with no eviction** — grows without limit | Memory leak over long sessions with diverse feeds |
 | 3.10 | `oauth.rs` | **Single-read TCP parsing for OAuth callback** — may truncate with proxies | OAuth authentication fails silently on certain network configs |
-| 3.11 | `oauth.rs` | **XSS in OAuth error HTML page** — unescaped `error_description` | Code injection via crafted OAuth redirect |
 | 3.12 | `keychain_encrypted.rs` | **Recovery code minimum 8 chars** — ~41 bits entropy | Brute-forceable with modern GPU |
 | 3.13 | `auth.rs` | **`needs_refresh` uses wall clock instead of JWT `exp`** — heuristic can be wrong | Unnecessary refreshes or missed refreshes |
 | 3.14 | `oauth.rs` | **No retry on session refresh** — single attempt, then fail | Brief network glitch forces full re-authentication |
@@ -183,6 +208,8 @@ The top systemic concerns are:
 | 4.4 | `facebook.rs` | **`fix_facebook_encoding` silently drops non-Latin-1 Unicode** — chars ≥ U+0100 filtered out | Posts containing emoji, CJK, Cyrillic lose characters silently |
 | 4.5 | `facebook.rs` | **Timezone-unaware timestamp parsing** — treats local dates as UTC | Every imported timestamp off by user's UTC offset (up to ±12 hours) |
 | 4.6 | `mastodon.rs` | **HTTP URLs accepted for instance** — tokens sent in plaintext `Authorization` headers | Credential leakage over unencrypted connections |
+| 4.16 | `facebook.rs` | Media files loaded entirely into memory | Multi-GB videos cause OOM |
+| 4.21 | `instagram.rs` | Media files loaded entirely into memory | Same OOM risk as Facebook |
 
 ### 🟡 MEDIUM
 
@@ -197,12 +224,10 @@ The top systemic concerns are:
 | 4.13 | `facebook.rs` | Old-format message parser is dead code — never creates records | Old-format Facebook exports lose all Messenger history |
 | 4.14 | `facebook.rs` | Recursive JSON extraction creates duplicate posts | Parent and child objects both become posts with overlapping media |
 | 4.15 | `facebook.rs` | O(n²) whitespace collapse with `while contains / replace` | Quadratic for strings with many spaces |
-| 4.16 | `facebook.rs` | Media files loaded entirely into memory | Multi-GB videos cause OOM |
 | 4.17 | `mastodon.rs` | `get_follows` / `get_followers` don't paginate — single page only | Users with >80 follows silently truncated |
 | 4.18 | `mastodon.rs` | Mastodon status URL mapped to `preview_img` | Frontend may render spurious link cards on every Mastodon post |
 | 4.19 | `mastodon.rs` | `follow_user` / `unfollow_user` bypass rate limiter | Rapid actions trigger instance rate limits |
 | 4.20 | `mastodon.rs` | Rate limiter only retries once on 429 | Aggressive instances cause failures during batch operations |
-| 4.21 | `instagram.rs` | Media files loaded entirely into memory | Same OOM risk as Facebook |
 | 4.22 | `instagram.rs` | `app_handle` parameter unused — no progress events emitted | Large imports give zero user feedback |
 | 4.23 | `instagram.rs` | Wrong log prefix "facebook" in Instagram module | Copy-paste error; confuses debugging |
 | 4.24 | `instagram.rs` | DM conversation ID derived from display name | Name changes create duplicate conversations |
@@ -278,8 +303,8 @@ These issues represent real vulnerability surface:
 | 3.4 Secrets never zeroized | 🔴 | Low — add `zeroize` crate |
 | 4.3 SSRF via JWT `aud` | 🔴 | Low — URL validation |
 | 4.6 HTTP instance URLs accepted | 🔴 | Low — enforce HTTPS |
-| 3.11 XSS in OAuth error page | 🟡 | Low — HTML-escape |
-| 3.7 Non-atomic file writes | 🟡 | Low — write-then-rename |
+| 3.11 XSS in OAuth error page | 🔴 | Low — HTML-escape |
+| 3.7 Non-atomic file writes | 🔴 | Low — write-then-rename |
 
 ### Priority 2: Database Performance Sprint 🗄️
 
@@ -304,7 +329,7 @@ Data integrity issues in platform connectors:
 | 4.5 Facebook timezone handling | 🔴 | Medium — detect/ask timezone |
 | 4.1 Bluesky parsing duplicated 4× | 🔴 | Medium — unify to `parse_api_post` |
 | 4.2 N+1 API bomb in follows | 🔴 | Medium — add rate limiter + cap |
-| 4.16/4.21 OOM from large media files | 🟡 | Medium — stream to disk |
+| 4.16/4.21 OOM from large media files | 🔴 | Medium — stream to disk |
 
 ### Priority 4: Auth Resilience Sprint 🔑
 
@@ -841,7 +866,7 @@ Batch 13 covers modals, pickers, and mid-size interaction components. Main patte
 ## Batch 14 — Feed Subcomponents, Lenses, Widgets & Small Components
 
 **Scope:** 32 files · ~2,652 lines in `src/components/feed/`, `src/components/lenses/`, `src/components/widgets/`, and small shared components
-**Findings:** 32 issues (5 HIGH · 18 MEDIUM · 9 LOW)
+**Findings:** 32 issues (6 HIGH · 17 MEDIUM · 9 LOW)
 
 This final batch closes out the leaf-component layer. The dominant concern is fragmentation: many small components each carry local policy choices that are not centralized.
 
@@ -854,6 +879,7 @@ This final batch closes out the leaf-component layer. The dominant concern is fr
 | 14.3 | `lenses/Lightbox.tsx` | **Imperative state correction path in render-adjacent flow** | Fragile behavior around slide edge-cases |
 | 14.4 | `RichText.tsx` | **Interactive mention/hashtag rendering semantics not fully aligned with accessibility expectations** | Inconsistent keyboard/screen-reader interaction |
 | 14.5 | `TabBar.tsx` | **Nested interaction pattern (tab button + close action) without stronger interaction contract** | Event-propagation and accessibility edge-case risk |
+| 14.12 | `widgets/MusicPlayerWidget.tsx` | **Read-modify-write widget persistence can race across concurrent saves** | Last-write-wins data loss risk |
 
 ### 🟡 MEDIUM
 
@@ -865,7 +891,6 @@ This final batch closes out the leaf-component layer. The dominant concern is fr
 | 14.9 | `feed/ThreadReplies.tsx` | **No virtualization/paging strategy for deep reply trees** | Performance degradation on large threads |
 | 14.10 | `feed/index.ts` | **Barrel export surface does not fully align with feed-local ownership** | Import inconsistency across feature boundaries |
 | 14.11 | `lenses/ReaderLens.tsx` | **Article extraction/render paths colocated with UI state logic** | Reduced cohesion and readability |
-| 14.12 | `widgets/MusicPlayerWidget.tsx` | **Read-modify-write widget persistence can race across concurrent saves** | Last-write-wins data loss risk |
 | 14.13 | `widgets/GuestbookWidget.tsx` | **Reload-after-mutation pattern without pagination** | Costly operations as entry count grows |
 | 14.14 | `widgets/FriendsListWidget.tsx` | **One-shot fetch model produces stale widget state** | Data freshness issues until manual refresh/remount |
 | 14.15 | `widgets/PostFeedWidget.tsx` | **Hardcoded query/paging constants in widget layer** | Reuse/configurability limitations |
