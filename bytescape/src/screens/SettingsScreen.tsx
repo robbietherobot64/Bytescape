@@ -52,16 +52,18 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
     const [exportStatus, setExportStatus] = useState<string | null>(null);
 
     // Link account state (shared)
-    const [showLinkBluesky, setShowLinkBluesky] = useState(false);
     const [linkIdentifier, setLinkIdentifier] = useState("");
     const [linkLoading, setLinkLoading] = useState(false);
     const [linkError, setLinkError] = useState("");
+
+    // Platform picker state (unified "Connect Account" flow)
+    const [showPlatformPicker, setShowPlatformPicker] = useState(false);
+    const [selectedPlatform, setSelectedPlatform] = useState<'bluesky' | 'mastodon' | null>(null);
 
     // Bluesky OAuth pending state
     const [blueskyOauthPending, setBlueskyOauthPending] = useState(false);
 
     // Mastodon OAuth pending state
-    const [showLinkMastodon, setShowLinkMastodon] = useState(false);
     const [mastodonInstance, setMastodonInstance] = useState("");
     const [mastodonOauthPending, setMastodonOauthPending] = useState(false);
 
@@ -93,7 +95,8 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         listen<AuthStatus>('oauth-complete', (_event) => {
             setBlueskyOauthPending(false);
             setLinkLoading(false);
-            setShowLinkBluesky(false);
+            setSelectedPlatform(null);
+            setShowPlatformPicker(false);
             setLinkIdentifier('');
             clearTimeout(timeoutId);
             loadLinkedAccounts();
@@ -132,7 +135,8 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
         listen<AuthStatus>('mastodon-auth-complete', (_event) => {
             setMastodonOauthPending(false);
             setLinkLoading(false);
-            setShowLinkMastodon(false);
+            setSelectedPlatform(null);
+            setShowPlatformPicker(false);
             setMastodonInstance('');
             clearTimeout(timeoutId);
             loadLinkedAccounts();
@@ -421,64 +425,85 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                         </div>
                     ))}
 
-                    {/* Green Plus — Connect Account */}
-                    {!showLinkBluesky && !showLinkMastodon ? (
-                        <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
-                            <div style={{ display: 'flex', gap: 10 }}>
-                                <button
-                                    onClick={() => setShowLinkBluesky(true)}
-                                    style={{
-                                        flex: 1,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 8,
-                                        padding: '12px',
-                                        background: 'rgba(34, 197, 94, 0.1)',
-                                        border: '2px dashed #22c55e',
-                                        cursor: 'pointer',
-                                        fontFamily: 'inherit',
-                                        fontSize: '0.9rem',
-                                        fontWeight: 600,
-                                        color: '#22c55e',
-                                        transition: 'background 0.15s',
-                                    }}
-                                >
-                                    ＋ Connect Bluesky
-                                </button>
-                                <button
-                                    onClick={() => setShowLinkMastodon(true)}
-                                    style={{
-                                        flex: 1,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 8,
-                                        padding: '12px',
-                                        background: 'rgba(34, 197, 94, 0.1)',
-                                        border: '2px dashed #22c55e',
-                                        cursor: 'pointer',
-                                        fontFamily: 'inherit',
-                                        fontSize: '0.9rem',
-                                        fontWeight: 600,
-                                        color: '#22c55e',
-                                        transition: 'background 0.15s',
-                                    }}
-                                >
-                                    ＋ Connect Mastodon
-                                </button>
-                            </div>
+                    {/* Unified Connect Account — single green button + platform picker */}
+                    {!selectedPlatform ? (
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => setShowPlatformPicker(!showPlatformPicker)}
+                                style={{
+                                    width: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 8,
+                                    padding: '14px',
+                                    background: 'rgba(34, 197, 94, 0.1)',
+                                    border: '2px dashed #22c55e',
+                                    cursor: 'pointer',
+                                    fontFamily: 'inherit',
+                                    fontSize: '0.9rem',
+                                    fontWeight: 600,
+                                    color: '#22c55e',
+                                    transition: 'background 0.15s',
+                                } as React.CSSProperties}
+                            >
+                                ＋ Connect Account
+                            </button>
+                            {showPlatformPicker && (
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    left: 0,
+                                    right: 0,
+                                    marginTop: 4,
+                                    background: 'var(--bg-panel, #e0d8c8)',
+                                    border: '1px solid #999',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                                    zIndex: 50,
+                                } as React.CSSProperties}>
+                                    <div style={{ padding: '8px 12px', borderBottom: '1px solid #ccc', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase' } as React.CSSProperties}>
+                                        SELECT PLATFORM
+                                    </div>
+                                    {[
+                                        { id: 'bluesky' as const, emoji: '🦋', label: 'Bluesky' },
+                                        { id: 'mastodon' as const, emoji: '🐘', label: 'Mastodon' },
+                                    ].map(p => (
+                                        <button
+                                            key={p.id}
+                                            onClick={() => { setSelectedPlatform(p.id); setShowPlatformPicker(false); setLinkError(''); }}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 10,
+                                                width: '100%',
+                                                padding: '10px 14px',
+                                                background: 'none',
+                                                border: 'none',
+                                                borderBottom: '1px solid #ddd',
+                                                cursor: 'pointer',
+                                                fontFamily: 'inherit',
+                                                fontSize: '0.88rem',
+                                                color: 'var(--text-primary)',
+                                                textAlign: 'left',
+                                            } as React.CSSProperties}
+                                        >
+                                            <span style={{ fontSize: '1.2rem' }}>{p.emoji}</span>
+                                            {p.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    ) : showLinkBluesky ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                    ) : selectedPlatform === 'bluesky' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' } as React.CSSProperties}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>🦋 Link Bluesky</strong>
-                                <button className="btn btn-ghost" onClick={() => { setShowLinkBluesky(false); setBlueskyOauthPending(false); setLinkLoading(false); setLinkError(''); invoke('cancel_bluesky_oauth').catch(() => {}); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                <button className="btn btn-ghost" onClick={() => { setSelectedPlatform(null); setBlueskyOauthPending(false); setLinkLoading(false); setLinkError(''); invoke('cancel_bluesky_oauth').catch(() => {}); }} style={{ padding: '2px 8px', fontSize: '0.8rem' } as React.CSSProperties}>
                                     Cancel
                                 </button>
                             </div>
                             {blueskyOauthPending ? (
-                                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                                <div style={{ textAlign: 'center', padding: '16px 0' } as React.CSSProperties}>
                                     <p style={{ fontSize: '0.9rem', margin: '0 0 8px' }}>⏳ Waiting for Bluesky authorization...</p>
                                     <p className="text-xs text-muted" style={{ margin: 0 }}>Complete the login in your browser. This will update automatically.</p>
                                 </div>
@@ -504,15 +529,15 @@ export function SettingsScreen({ auth, archiveCount, onLogout, onAuthUpdated }: 
                             {linkError && <p className="text-sm" style={{ color: 'var(--accent-red)', margin: 0 }}>{linkError}</p>}
                         </div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: 'var(--bg-panel)', border: 'var(--border-default)' } as React.CSSProperties}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>🐘 Link Mastodon</strong>
-                                <button className="btn btn-ghost" onClick={() => { setShowLinkMastodon(false); setMastodonOauthPending(false); setLinkLoading(false); setLinkError(''); setMastodonInstance(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' }}>
+                                <button className="btn btn-ghost" onClick={() => { setSelectedPlatform(null); setMastodonOauthPending(false); setLinkLoading(false); setLinkError(''); setMastodonInstance(''); }} style={{ padding: '2px 8px', fontSize: '0.8rem' } as React.CSSProperties}>
                                     Cancel
                                 </button>
                             </div>
                             {mastodonOauthPending ? (
-                                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                                <div style={{ textAlign: 'center', padding: '16px 0' } as React.CSSProperties}>
                                     <p style={{ fontSize: '0.9rem', margin: '0 0 8px' }}>⏳ Waiting for Mastodon authorization...</p>
                                     <p className="text-xs text-muted" style={{ margin: 0 }}>Complete the login in your browser. This will update automatically.</p>
                                 </div>
