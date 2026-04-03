@@ -1,8 +1,23 @@
 /**
  * Friends List Widget (B2.4)
  *
- * Shows the user's P2P peers with online status indicators.
- * Reads from the peers list via Tauri and the peer store for live status.
+ * PURPOSE
+ * - Show the user's known peers in a compact profile widget.
+ * - Indicate live online/offline state using peer presence store.
+ *
+ * HOW IT WORKS
+ * - Fetches persisted peer metadata once from backend `list_peers`.
+ * - Reads real-time presence from `usePeerStore().peerStatuses`.
+ * - Combines static peer identity + live status in render.
+ *
+ * RELATED FILES
+ * - `src/store/*` (`usePeerStore` presence updates)
+ * - `src-tauri/src/lib.rs` (`list_peers` command)
+ * - `src/screens/FriendsScreen.tsx` (peer management flow)
+ *
+ * Cross-system note (profile/widget data boundary):
+ * - This widget is read-only and does not persist into profile `WidgetData`.
+ *   Peer identity and status are sourced from engine/store subsystems.
  */
 
 import { useState, useEffect } from 'react';
@@ -20,18 +35,27 @@ interface FriendsListWidgetProps {
     editable?: boolean;
 }
 
+/**
+ * `FriendsListWidget`
+ *
+ * Exported profile widget component for rendering known peers and live presence.
+ */
 export function FriendsListWidget({ editable: _editable = false }: FriendsListWidgetProps) {
+    // ===== Section: Local component state =====
     const [peers, setPeers] = useState<PeerInfo[]>([]);
     const peerStatuses = usePeerStore(s => s.peerStatuses);
 
+    // ===== Section: Data loading =====
     useEffect(() => {
         invoke<PeerInfo[]>('list_peers')
             .then(setPeers)
             .catch(() => {});
     }, []);
 
+    // ===== Section: Derived view helpers =====
     const isPeerOnline = (nodeId: string) => peerStatuses[nodeId] === 'online';
 
+    // ===== Section: Render =====
     return (
         <div style={{
             background: 'var(--bg-secondary)',

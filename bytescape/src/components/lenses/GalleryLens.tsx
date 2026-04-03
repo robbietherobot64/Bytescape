@@ -4,11 +4,35 @@ import { SourceBadge } from '../SourceBadge';
 import { Lightbox } from './Lightbox';
 import { FeedEntry } from '../../types';
 
+/**
+ * PURPOSE:
+ * Media-first lens that presents normalized feed media in a dense masonry gallery.
+ *
+ * HOW IT WORKS:
+ * - Filters `FeedEntry` inputs to items that contain media.
+ * - Applies optional per-source filtering in the toolbar.
+ * - Flattens each entry's media array into tile cards and opens `Lightbox` for focused viewing.
+ *
+ * RELATED FILES:
+ * - src/components/lenses/Lightbox.tsx
+ * - src/components/BlobImage.tsx
+ * - src/components/VideoPlayer.tsx
+ * - src/types/index.ts (`FeedEntry`)
+ *
+ * CROSS-SYSTEM NOTES:
+ * The `media_urls`, `media_kinds`, and `media_thumbnails` arrays are engine-normalized.
+ * This component assumes index alignment between those arrays and does not mutate payloads.
+ */
+
 interface GalleryLensProps {
     entries: FeedEntry[];
     mediaDir?: string;
     resolveMediaPath?: (p: string) => string;
 }
+
+// ============================================================================
+// Utility helpers
+// ============================================================================
 
 /** Extract unique source values from a list of entries */
 function extractSources(entries: FeedEntry[]): string[] {
@@ -29,6 +53,10 @@ function mediaCount(entry: FeedEntry): number {
  *
  * Shows only entries that have media. Renders them in a responsive
  * CSS-columns masonry layout with source filtering and lightbox expand.
+ *
+ * Exported symbol docs:
+ * - `GalleryLens` is a view-layer lens and expects upstream code to provide
+ *   already-normalized `FeedEntry` arrays.
  */
 export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLensProps) {
     const [sourceFilter, setSourceFilter] = useState<string>('all');
@@ -66,6 +94,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
 
     return (
         <div className="gallery-lens">
+            {/* ==================== Toolbar ==================== */}
             {/* Toolbar */}
             <div className="gallery-lens-toolbar">
                 <div className="gallery-lens-stats">
@@ -86,6 +115,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                 </div>
             </div>
 
+            {/* ==================== Empty state ==================== */}
             {/* Empty state */}
             {galleryEntries.length === 0 && (
                 <div className="gallery-lens-empty">
@@ -99,6 +129,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                 </div>
             )}
 
+            {/* ==================== Masonry tiles ==================== */}
             {/* Masonry Grid */}
             <div className="gallery-masonry">
                 {galleryEntries.map((entry, entryIdx) => (
@@ -136,6 +167,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                                     />
                                 )}
 
+                                {/* ==================== Tile overlay metadata ==================== */}
                                 {/* Hover overlay */}
                                 <div className="gallery-masonry-overlay">
                                     <SourceBadge source={entry.source} />
@@ -154,6 +186,7 @@ export function GalleryLens({ entries, mediaDir, resolveMediaPath }: GalleryLens
                 ))}
             </div>
 
+            {/* ==================== Focused lightbox overlay ==================== */}
             {/* Lightbox */}
             {lightboxOpen && (
                 <Lightbox

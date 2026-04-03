@@ -3,6 +3,14 @@ import { sanitizeHtml } from '../utils/sanitize';
 import { markdownToHtml, countWords, readingTime } from '../utils/markdown';
 import { linkifyFacetsInHtml } from '../utils/richtext';
 
+/**
+ * Props for `ArticleReader`.
+ *
+ * Cross-system note:
+ * - Input `content` is markdown-like text normalized from engine data models.
+ * - Rendering pipeline (`markdownToHtml` -> `sanitizeHtml` -> facet linkify)
+ *   keeps output safe while preserving rich text affordances.
+ */
 export interface ArticleReaderProps {
     title: string;
     content: string;        // Markdown string
@@ -11,14 +19,20 @@ export interface ArticleReaderProps {
     updatedAt?: number;      // Unix timestamp
 }
 
+/**
+ * Exported article-view component with reading metrics and scroll progress.
+ */
 export function ArticleReader({ title, content, source, createdAt, updatedAt }: ArticleReaderProps) {
+    // ===== Section: local UI state =====
     const [scrollProgress, setScrollProgress] = useState(0);
     const contentRef = useRef<HTMLDivElement>(null);
 
+    // ===== Section: derived content metadata =====
     const html = linkifyFacetsInHtml(sanitizeHtml(markdownToHtml(content)));
     const wc = countWords(content);
     const rt = readingTime(wc);
 
+    // ===== Section: scroll progress tracking =====
     useEffect(() => {
         const handleScroll = () => {
             if (!contentRef.current) return;
@@ -42,6 +56,7 @@ export function ArticleReader({ title, content, source, createdAt, updatedAt }: 
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
+    // ===== Section: formatting helpers =====
     const formatDate = (ts: number) => {
         return new Date(ts * 1000).toLocaleDateString('en-US', {
             year: 'numeric',
@@ -52,11 +67,14 @@ export function ArticleReader({ title, content, source, createdAt, updatedAt }: 
 
     return (
         <>
+            {/* ===== Section: top reading progress bar ===== */}
             <div
                 className="article-scroll-progress"
                 style={{ width: `${scrollProgress}%` } as React.CSSProperties}
                 data-testid="scroll-progress"
             />
+
+            {/* ===== Section: article frame + body ===== */}
             <div className="article-reader" ref={contentRef}>
                 <div className="win98-box" style={{ padding: 24 } as React.CSSProperties}>
                     <h1 style={{ fontSize: 32, marginBottom: 8, color: 'var(--text-primary)' } as React.CSSProperties}>

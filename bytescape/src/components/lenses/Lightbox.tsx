@@ -5,6 +5,26 @@ import { VideoPlayer } from '../VideoPlayer';
 import { SourceBadge } from '../SourceBadge';
 import { FeedEntry } from '../../types';
 
+/**
+ * PURPOSE:
+ * Fullscreen media inspector for gallery-style navigation across feed entries.
+ *
+ * HOW IT WORKS:
+ * - Receives item-grouped media and flattens it into a single ordered slide list.
+ * - Tracks focused slide index and supports keyboard navigation.
+ * - Renders in a portal so overlay layering is decoupled from parent layout stacking.
+ *
+ * RELATED FILES:
+ * - src/components/lenses/GalleryLens.tsx
+ * - src/components/VideoPlayer.tsx
+ * - src/components/BlobImage.tsx
+ * - src/types/index.ts (`FeedEntry`)
+ *
+ * CROSS-SYSTEM NOTES:
+ * `FeedEntry` values originate from Rust-side normalization and connector ingestion.
+ * This component does not resolve/transform data; it only projects normalized media metadata.
+ */
+
 interface LightboxProps {
     items: FeedEntry[];
     /** Index of the initially focused item's media */
@@ -20,8 +40,17 @@ interface LightboxProps {
  *
  * Flattens all media from the provided items into a single navigable list.
  * Shows item metadata (source, date, caption) in a footer.
+ *
+ * Exported symbol docs:
+ * - `Lightbox` is controlled externally via `onClose` and initial positioning props.
+ * - It is intentionally stateless regarding parent filters/sorting and only manages
+ *   local viewer cursor state.
  */
 export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, mediaDir }: LightboxProps) {
+    // ========================================================================
+    // Slide list derivation
+    // ========================================================================
+
     // Flatten all media across items into a navigable list
     interface MediaSlide {
         url: string;
@@ -50,6 +79,10 @@ export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, 
     const [current, setCurrent] = useState(startSlideIndex);
     const slide = slides[current];
 
+    // ========================================================================
+    // Navigation actions
+    // ========================================================================
+
     const goNext = useCallback(() => {
         setCurrent(prev => Math.min(prev + 1, slides.length - 1));
     }, [slides.length]);
@@ -57,6 +90,10 @@ export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, 
     const goPrev = useCallback(() => {
         setCurrent(prev => Math.max(prev - 1, 0));
     }, []);
+
+    // ========================================================================
+    // Keyboard + page interaction lifecycle
+    // ========================================================================
 
     // Keyboard navigation
     useEffect(() => {
@@ -101,6 +138,7 @@ export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, 
     return createPortal(
         <div className="lightbox-overlay" onClick={onClose}>
             <div className="lightbox-content" onClick={e => e.stopPropagation()}>
+                {/* ==================== Header controls ==================== */}
                 {/* Close button */}
                 <button className="lightbox-close" onClick={onClose} title="Close (Esc)">✕</button>
 
@@ -116,6 +154,7 @@ export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, 
                     </button>
                 )}
 
+                {/* ==================== Media stage ==================== */}
                 {/* Media */}
                 <div className="lightbox-media">
                     {slide.kind === 'video' ? (
@@ -135,6 +174,7 @@ export function Lightbox({ items, initialIndex, initialMediaIndex = 0, onClose, 
                     )}
                 </div>
 
+                {/* ==================== Footer metadata ==================== */}
                 {/* Footer metadata */}
                 <div className="lightbox-footer">
                     <div className="lightbox-footer-left">

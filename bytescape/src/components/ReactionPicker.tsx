@@ -1,7 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
 
+/**
+ * UI-visible emoji set for the lightweight reaction picker.
+ *
+ * Cross-system note:
+ * - Backend like-state currently supports binary like/unlike semantics.
+ * - Emoji choice is frontend display metadata layered on top of that state.
+ */
 const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '😡', '👍', '🔥', '🎉'] as const;
 
+/** Props for `ReactionPicker`. */
 interface ReactionPickerProps {
     /** Currently selected reaction, if any */
     currentReaction?: string;
@@ -15,12 +23,16 @@ interface ReactionPickerProps {
  * ReactionPicker — small popup emoji grid that appears on hover/click
  * over the React (heart) button. Maps to Bluesky like_post on the backend.
  * Locally tracks which emoji was chosen for Bytescape-specific display.
+ *
+ * Exported symbol used by feed engagement surfaces.
  */
 export function ReactionPicker({ currentReaction, onReact, disabled }: ReactionPickerProps) {
+     // ===== Section: local popup state =====
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Close on outside click
+     // ===== Section: side effects =====
+     // Close on outside click.
     useEffect(() => {
         if (!open) return;
         const handler = (e: MouseEvent) => {
@@ -42,6 +54,7 @@ export function ReactionPicker({ currentReaction, onReact, disabled }: ReactionP
         return () => document.removeEventListener('keydown', handler);
     }, [open]);
 
+    // ===== Section: interaction handlers =====
     const handleToggle = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (disabled) return;
@@ -62,6 +75,7 @@ export function ReactionPicker({ currentReaction, onReact, disabled }: ReactionP
     };
 
     return (
+        // ===== Section: trigger + popup composition =====
         <div className="reaction-picker-container" ref={containerRef}>
             <button
                 className={`engagement-btn btn-like ${currentReaction ? 'active' : ''}`}

@@ -1,8 +1,23 @@
 /**
  * Away Message Widget (B2.4)
  *
- * Displays an away/status message with configurable status (online/away/busy/offline).
- * In editable mode, provides controls to change status, message text, and enable/disable.
+ * PURPOSE
+ * - Show a profile status + away text for visitors.
+ * - In edit mode, provide controls for status, text, and visibility toggle.
+ *
+ * HOW IT WORKS
+ * - Initializes local state from optional `config` prop.
+ * - Debounces config writes and notifies parent through `onUpdate`.
+ * - Persists config to profile widget payload via `get_widget_data` + `save_widget_data`.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (`AwayMessageConfig`, `WidgetData`)
+ * - `src-tauri/src/lib.rs` (`get_widget_data`, `save_widget_data` commands)
+ * - `src/screens/ProfileScreen.tsx` (widget composition/host surface)
+ *
+ * Cross-system note (profile/widget data boundary):
+ * - This widget owns only `WidgetData.away_message` and should preserve all
+ *   other widget entries during save.
  */
 
 import { useState, useEffect } from 'react';
@@ -15,17 +30,26 @@ interface AwayMessageWidgetProps {
     onUpdate?: (config: AwayMessageConfig) => void;
 }
 
+/**
+ * `AwayMessageWidget`
+ *
+ * Exported profile widget component for viewing/editing status + away message.
+ */
 export function AwayMessageWidget({ config, editable = false, onUpdate }: AwayMessageWidgetProps) {
+    // ===== Section: Local component state =====
     const [text, setText] = useState(config?.text || 'Currently offline. Leave me a message in the guestbook! BRB ✌️');
     const [status, setStatus] = useState<AwayMessageConfig['status']>(config?.status || 'away');
     const [enabled, setEnabled] = useState(config?.enabled ?? true);
 
+    // ===== Section: Persistence effect =====
     // Persist changes
     useEffect(() => {
         if (!onUpdate) return;
         const timeout = setTimeout(() => {
             const newConfig: AwayMessageConfig = { text, status, enabled };
             onUpdate(newConfig);
+            // Cross-system boundary: only mutate `away_message` and preserve
+            // all sibling keys in shared `WidgetData`.
             // Auto-save to backend
             invoke('get_widget_data').then((raw) => {
                 const data: WidgetData = raw ? JSON.parse(raw as string) : {};
@@ -52,6 +76,7 @@ export function AwayMessageWidget({ config, editable = false, onUpdate }: AwayMe
         offline: '⚫',
     };
 
+    // ===== Section: Render =====
     return (
         <div style={{
             background: 'var(--bg-secondary)',

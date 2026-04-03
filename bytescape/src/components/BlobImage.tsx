@@ -2,6 +2,15 @@ import { useMemo } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 
+/**
+ * Props for `BlobImage`.
+ *
+ * Cross-system note:
+ * - `blob:` identifiers are resolved through frontend hooks that call Tauri
+ *   commands backed by Rust media/blob storage.
+ * - Filesystem paths are converted with `convertFileSrc` for webview-safe URL
+ *   loading in the Tauri runtime.
+ */
 interface BlobImageProps {
     src: string | undefined;
     alt?: string;
@@ -24,8 +33,11 @@ interface BlobImageProps {
  *
  * URL resolution is synchronous (useMemo) so cached blob URLs render on
  * the very first frame — no dark placeholder flash.
+ *
+ * Exported symbol used by feed cards, galleries, and article/media surfaces.
  */
 export function BlobImage({ src, alt = '', mediaDir, className, style, loading = 'lazy', onError, displayVariant }: BlobImageProps) {
+     // ===== Section: source normalization =====
     // When displayVariant is requested and src is a blob: hash, transform to
     // blob-display: prefix so useBlobUrl invokes the display-size command.
     const effectiveSrc = useMemo(() => {
@@ -39,8 +51,10 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
         return src;
     }, [src, displayVariant]);
 
+    // ===== Section: lazy blob URL resolution =====
     const [containerRef, blobUrl, , error] = useLazyBlobUrl(effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:') ? effectiveSrc : undefined);
 
+    // ===== Section: final URL resolution =====
     // Synchronous URL resolution — eliminates the useState+useEffect gap
     // that caused a 1-2 frame dark placeholder flash on every mount.
     const resolvedUrl = useMemo(() => {
@@ -66,6 +80,7 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
         return convertFileSrc(src);
     }, [src, effectiveSrc, blobUrl, mediaDir]);
 
+    // ===== Section: stable image element strategy =====
     // Always render <img> to avoid DOM element type switching (img↔div) that
     // causes WebKitGTK repaints and visible flicker on virtualizer remount.
     // Use a transparent 1x1 GIF as placeholder when loading/errored.

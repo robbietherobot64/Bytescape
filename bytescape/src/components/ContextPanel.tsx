@@ -6,6 +6,18 @@ import {
     BsPersonFill
 } from 'react-icons/bs';
 
+/**
+ * ContextPanel
+ *
+ * Right-side contextual surface for the active screen.
+ *
+ * Cross-system note:
+ * - `feedActiveTab`/`activeLens` are UI-level selectors that align with
+ *   the unified feed orchestration in `useUnifiedFeed`.
+ * - This component is intentionally presentation-centric and does not invoke
+ *   backend commands directly.
+ */
+
 interface ContextPanelProps {
     screen: Screen;
     /** Feed tab state — only relevant when screen === 'feed' */
@@ -29,12 +41,16 @@ const SCREEN_LABELS: Partial<Record<Screen, { icon: React.ReactNode; label: stri
     profile: { icon: <BsPersonFill />, label: 'Profile' },
 };
 
+/**
+ * Exported UI component for rendering contextual controls per active screen.
+ */
 export function ContextPanel({ screen, feedActiveTab, setFeedActiveTab, activeLens, setActiveLens, contextContent }: ContextPanelProps) {
+    // ===== Section: derived UI state =====
     const screenInfo = SCREEN_LABELS[screen];
 
     return (
         <div className="context-panel">
-            {/* Panel Header */}
+            {/* ===== Section: panel header ===== */}
             <div className="context-panel-header">
                 {screenInfo && (
                     <>
@@ -44,7 +60,7 @@ export function ContextPanel({ screen, feedActiveTab, setFeedActiveTab, activeLe
                 )}
             </div>
 
-            {/* Feed-specific: Tab navigation + Lens picker */}
+            {/* ===== Section: feed-only controls (tabs + lens) ===== */}
             {screen === 'feed' && feedActiveTab && setFeedActiveTab && (
                 <div className="context-panel-section">
                     <div className="context-panel-section-label">View</div>
@@ -92,7 +108,7 @@ export function ContextPanel({ screen, feedActiveTab, setFeedActiveTab, activeLe
                 </div>
             )}
 
-            {/* Screen-specific context content */}
+            {/* ===== Section: screen-provided context content ===== */}
             {contextContent && (
                 <div className="context-panel-content">
                     {contextContent}

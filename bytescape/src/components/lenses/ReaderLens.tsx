@@ -3,11 +3,35 @@ import { SourceBadge } from '../SourceBadge';
 import { BlobImage } from '../BlobImage';
 import { FeedEntry } from '../../types';
 
+/**
+ * PURPOSE:
+ * Reader-focused lens for long-form content in the unified feed.
+ *
+ * HOW IT WORKS:
+ * - Filters incoming normalized `FeedEntry` records to article-like content.
+ * - Renders each record through `ReaderArticle` with metadata, hero media, and source link.
+ * - Adds reading ergonomics (reading-time estimate, truncation, optional expanded scroll progress).
+ *
+ * RELATED FILES:
+ * - src/components/lenses/FeedItemRenderer.tsx
+ * - src/components/FeedEntryCard.tsx
+ * - src/types/index.ts (`FeedEntry`)
+ * - src-tauri/src/db.rs (engine-side normalized item schema)
+ *
+ * CROSS-SYSTEM NOTES:
+ * `timestamp`, `item_type`, media fields, and source identity are produced by
+ * engine/connector normalization. This lens intentionally treats those values as read-only UI input.
+ */
+
 interface ReaderLensProps {
     entries: FeedEntry[];
     mediaDir?: string;
     resolveMediaPath?: (p: string) => string;
 }
+
+// ============================================================================
+// Utility helpers
+// ============================================================================
 
 /** Estimate reading time in minutes from word count */
 function estimateReadingTime(text: string): number {
@@ -24,8 +48,12 @@ function formatDate(ts: number): string {
 }
 
 /**
- * ReaderArticle — renders a single Article-type entry in clean
- * typography with reading time and scroll progress.
+ * Internal row renderer used by `ReaderLens`.
+ *
+ * HOW IT WORKS:
+ * - Displays hero media + article metadata.
+ * - Supports collapsed/expanded reading modes for long content.
+ * - Tracks per-article read progress while expanded.
  */
 function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
     entry: FeedEntry;
@@ -61,6 +89,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
 
     return (
         <article className={`reader-article ${expanded ? 'expanded' : ''}`}>
+            {/* ==================== Expanded mode progress ==================== */}
             {/* Scroll progress bar (visible when expanded) */}
             {expanded && (
                 <div className="reader-progress-track">
@@ -71,6 +100,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
                 </div>
             )}
 
+            {/* ==================== Header media ==================== */}
             {/* Hero image */}
             {heroImage && (
                 <div className="reader-hero">
@@ -84,6 +114,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
                 </div>
             )}
 
+            {/* ==================== Title + metadata ==================== */}
             {/* Article header */}
             <div className="reader-header">
                 <h2 className="reader-title">
@@ -104,6 +135,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
                 )}
             </div>
 
+            {/* ==================== Body + source link ==================== */}
             {/* Article body */}
             <div
                 className={`reader-body ${!expanded && isLong ? 'truncated' : ''}`}
@@ -129,6 +161,7 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
                 )}
             </div>
 
+            {/* ==================== Expansion control ==================== */}
             {/* Read more / collapse toggle */}
             {isLong && (
                 <button
@@ -147,6 +180,10 @@ function ReaderArticle({ entry, mediaDir, resolveMediaPath }: {
  *
  * Clean typography, reading-time estimate, scroll progress indicator.
  * Filters to only Article-type items or items with significant text content.
+ *
+ * Exported symbol docs:
+ * - `ReaderLens` is a presentational lens component; data loading and normalization
+ *   are owned by parent feed orchestration + backend connectors.
  */
 export function ReaderLens({ entries, mediaDir, resolveMediaPath }: ReaderLensProps) {
     const [sourceFilter, setSourceFilter] = useState<string>('all');
@@ -176,6 +213,7 @@ export function ReaderLens({ entries, mediaDir, resolveMediaPath }: ReaderLensPr
 
     return (
         <div className="reader-lens">
+            {/* ==================== Toolbar ==================== */}
             {/* Toolbar */}
             <div className="reader-lens-toolbar">
                 <div className="reader-lens-stats">
@@ -195,6 +233,7 @@ export function ReaderLens({ entries, mediaDir, resolveMediaPath }: ReaderLensPr
                 </div>
             </div>
 
+            {/* ==================== Empty state ==================== */}
             {/* Empty state */}
             {articleEntries.length === 0 && (
                 <div className="reader-lens-empty">
@@ -208,6 +247,7 @@ export function ReaderLens({ entries, mediaDir, resolveMediaPath }: ReaderLensPr
                 </div>
             )}
 
+            {/* ==================== Article list ==================== */}
             {/* Article list */}
             <div className="reader-article-list">
                 {articleEntries.map(entry => (

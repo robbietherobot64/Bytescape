@@ -25,8 +25,8 @@
 | 11 | Frontend Screens | 16 | 7,604 | ✅ Complete |
 | 12 | Frontend Components (Large) | 13 | 6,072 | ✅ Complete |
 | 13 | Frontend Components (Medium) | 13 | 2,146 | ✅ Complete |
-| 14 | Feed, Lenses, Widgets & Small Components | 33 | 2,698 | ⬜ Not started |
-| **Total** | | **161** | **~55,140** | |
+| 14 | Feed, Lenses, Widgets & Small Components | 32 | 2,652 | ✅ Complete |
+| **Total** | | **162** | **~57,312** | |
 
 *Note: 3 trivial files (vite-env.d.ts, setupTests.ts, main.rs) excluded from batching.*
 
@@ -312,53 +312,52 @@
 ### Feed Subcomponents
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/feed/VirtualizedFeedList.tsx` | 139 | ⬜ | Virtual scrolling feed list |
-| `src/components/feed/EngagementBar.tsx` | 114 | ⬜ | Like/repost/reply action bar |
-| `src/components/feed/helpers.ts` | 68 | ⬜ | Feed utility functions |
-| `src/components/feed/MediaGrid.tsx` | 67 | ⬜ | Multi-image grid layout |
-| `src/components/feed/ThreadReplies.tsx` | 52 | ⬜ | Thread reply tree |
-| `src/components/feed/icons.tsx` | 49 | ⬜ | Feed SVG icons |
-| `src/components/feed/GalleryOverlay.tsx` | 47 | ⬜ | Image gallery overlay |
-| `src/components/feed/FeedItemRenderer.tsx` | 46 | ⬜ | Feed item dispatch renderer |
-| `src/components/feed/index.ts` | 6 | ⬜ | Feed barrel exports |
+| `src/components/feed/VirtualizedFeedList.tsx` | 139 | ✅ | Header + virtualization flow docs, feed/lens boundary notes |
+| `src/components/feed/EngagementBar.tsx` | 114 | ✅ | Header + interaction docs, source-action boundary notes |
+| `src/components/feed/helpers.ts` | 68 | ✅ | Header + helper contract docs |
+| `src/components/feed/MediaGrid.tsx` | 67 | ✅ | Header + media-grid rendering/docs |
+| `src/components/feed/ThreadReplies.tsx` | 52 | ✅ | Header + recursive reply render docs |
+| `src/components/feed/icons.tsx` | 49 | ✅ | Header + icon export docs |
+| `src/components/feed/GalleryOverlay.tsx` | 47 | ✅ | Header + overlay interaction docs, accessibility caveat notes |
+| `src/components/feed/index.ts` | 6 | ✅ | Header + barrel export docs |
 
 ### Lenses
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/lenses/ReaderLens.tsx` | 224 | ⬜ | Article/reader view mode |
-| `src/components/lenses/GalleryLens.tsx` | 169 | ⬜ | Gallery/photo view mode |
-| `src/components/lenses/Lightbox.tsx` | 159 | ⬜ | Full-screen image viewer |
-| `src/components/lenses/FeedItemRenderer.tsx` | 46 | ⬜ | Lens-specific feed item renderer |
+| `src/components/lenses/ReaderLens.tsx` | 224 | ✅ | Header + article extraction/render docs |
+| `src/components/lenses/GalleryLens.tsx` | 169 | ✅ | Header + gallery tile pipeline docs |
+| `src/components/lenses/Lightbox.tsx` | 159 | ✅ | Header + lightbox lifecycle/docs |
+| `src/components/lenses/FeedItemRenderer.tsx` | 46 | ✅ | Header + lens dispatch docs |
 
 ### Widgets (Profile Page Builder)
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/widgets/MusicPlayerWidget.tsx` | 299 | ⬜ | Embeddable music player widget |
-| `src/components/widgets/GuestbookWidget.tsx` | 195 | ⬜ | Visitor guestbook widget |
-| `src/components/widgets/AwayMessageWidget.tsx` | 153 | ⬜ | Away/status message widget |
-| `src/components/widgets/FriendsListWidget.tsx` | 104 | ⬜ | Friends list profile widget |
-| `src/components/widgets/MediaGridWidget.tsx` | 102 | ⬜ | Media gallery profile widget |
-| `src/components/widgets/PostFeedWidget.tsx` | 79 | ⬜ | Recent posts profile widget |
-| `src/components/widgets/VisitorCounterWidget.tsx` | 55 | ⬜ | MySpace-style visitor counter |
-| `src/components/widgets/index.ts` | 31 | ⬜ | Widget registry & barrel exports |
+| `src/components/widgets/MusicPlayerWidget.tsx` | 299 | ✅ | Header + player/data persistence docs |
+| `src/components/widgets/GuestbookWidget.tsx` | 195 | ✅ | Header + guestbook load/mutation docs |
+| `src/components/widgets/AwayMessageWidget.tsx` | 153 | ✅ | Header + status map/render docs |
+| `src/components/widgets/FriendsListWidget.tsx` | 104 | ✅ | Header + peer list widget docs |
+| `src/components/widgets/MediaGridWidget.tsx` | 102 | ✅ | Header + media grid widget docs |
+| `src/components/widgets/PostFeedWidget.tsx` | 79 | ✅ | Header + post feed widget docs |
+| `src/components/widgets/VisitorCounterWidget.tsx` | 55 | ✅ | Header + counter math docs |
+| `src/components/widgets/index.ts` | 31 | ✅ | Header + widget registry docs |
 
 ### Small Components (<100 lines)
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `src/components/ContextPanel.tsx` | 103 | ⬜ | Side context panel |
-| `src/components/TopBar.tsx` | 99 | ⬜ | Window title bar |
-| `src/components/Win98Box.tsx` | 96 | ⬜ | Windows 98 themed container |
-| `src/components/BlobImage.tsx` | 94 | ⬜ | Content-addressed image display |
-| `src/components/ArticleReader.tsx` | 94 | ⬜ | Article reading view |
-| `src/components/ReactionPicker.tsx` | 93 | ⬜ | Reaction emoji picker |
-| `src/components/AppLayout.tsx` | 91 | ⬜ | Root layout wrapper |
-| `src/components/RichText.tsx` | 78 | ⬜ | Rich text renderer |
-| `src/components/RelayStatusBadge.tsx` | 62 | ⬜ | P2P relay status indicator |
-| `src/components/TabBar.tsx` | 40 | ⬜ | Browser-style tab bar |
-| `src/components/StatusBar.tsx` | 25 | ⬜ | Bottom status bar |
-| `src/components/SourceBadge.tsx` | 21 | ⬜ | Platform source indicator |
+| `src/components/ContextPanel.tsx` | 103 | ✅ | Header + lens/tab policy docs |
+| `src/components/TopBar.tsx` | 99 | ✅ | Header + omnibar/dropdown control docs |
+| `src/components/Win98Box.tsx` | 96 | ✅ | Header + themed container docs |
+| `src/components/BlobImage.tsx` | 94 | ✅ | Header + blob/url resolution docs |
+| `src/components/ArticleReader.tsx` | 94 | ✅ | Header + markdown sanitize/linkify docs |
+| `src/components/ReactionPicker.tsx` | 93 | ✅ | Header + reaction interaction docs |
+| `src/components/AppLayout.tsx` | 91 | ✅ | Header + root layout orchestration docs |
+| `src/components/RichText.tsx` | 78 | ✅ | Header + facet rendering docs |
+| `src/components/RelayStatusBadge.tsx` | 62 | ✅ | Header + relay status fetch docs |
+| `src/components/TabBar.tsx` | 40 | ✅ | Header + tab action/render docs |
+| `src/components/StatusBar.tsx` | 25 | ✅ | Header + status display docs |
+| `src/components/SourceBadge.tsx` | 21 | ✅ | Header + source style map docs |
 
-**Subtotal**: 33 files · 2,698 lines
+**Subtotal**: 32 files · 2,652 lines
 
 ---
 

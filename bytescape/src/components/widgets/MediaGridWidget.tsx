@@ -3,6 +3,11 @@
  *
  * Displays a grid of images from the user's vault.
  * Fetches image files and renders thumbnails via the media server.
+ *
+ * Cross-system note:
+ * - Data and media are resolved through Tauri command bridges into Rust Engine services.
+ * - `get_media_server_port` provides the local media HTTP endpoint.
+ * - `vault_list_files` provides vault metadata used for image filtering.
  */
 
 import { useState, useEffect } from 'react';
@@ -15,10 +20,17 @@ interface VaultFile {
     size: number;
 }
 
+/**
+ * Renders a compact image grid for profile/widget surfaces.
+ *
+ * Exported for widget hydration by the profile rendering pipeline.
+ */
 export function MediaGridWidget() {
+    // --- Local widget state ---
     const [images, setImages] = useState<VaultFile[]>([]);
     const [mediaPort, setMediaPort] = useState<number | null>(null);
 
+    // --- Initial data hydration ---
     useEffect(() => {
         invoke<number>('get_media_server_port').then(setMediaPort).catch(() => {});
         invoke<VaultFile[]>('vault_list_files')
@@ -32,6 +44,7 @@ export function MediaGridWidget() {
             .catch(() => {});
     }, []);
 
+    // --- Empty state ---
     if (images.length === 0) {
         return (
             <div style={{
@@ -48,6 +61,7 @@ export function MediaGridWidget() {
         );
     }
 
+    // --- Populated state ---
     return (
         <div style={{
             background: 'var(--bg-secondary)',

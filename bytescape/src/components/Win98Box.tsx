@@ -1,7 +1,19 @@
 import React from 'react';
 
+/**
+ * Supported visual treatments for the shared Win98 container primitive.
+ */
 export type Win98Variant = 'raised' | 'sunken' | 'pressed' | 'window' | 'flat';
 
+/**
+ * Props for `Win98Box`.
+ *
+ * Cross-system note:
+ * - This component is a pure presentational primitive and is reused by many
+ *   feature components across screens to keep retro theming consistent.
+ * - Drag/drop handlers are intentionally passthrough to support higher-level
+ *   features (e.g., vault/import surfaces) without coupling logic here.
+ */
 interface Win98BoxProps {
     variant?: Win98Variant;
     className?: string;
@@ -15,6 +27,7 @@ interface Win98BoxProps {
     onDragLeave?: (e: React.DragEvent) => void;
 }
 
+/** Mapping from variant enum to CSS class contract in App.css/theme files. */
 const VARIANT_CLASSES: Record<Win98Variant, string> = {
     raised: 'win98-raised',
     sunken: 'win98-sunken',
@@ -46,8 +59,10 @@ export function Win98Box({
     onDrop,
     onDragLeave,
 }: Win98BoxProps) {
+    // ===== Section: derived styling =====
     const variantClass = VARIANT_CLASSES[variant];
 
+    // ===== Section: window-chrome composition =====
     if (variant === 'window') {
         return (
             <div
@@ -81,6 +96,7 @@ export function Win98Box({
         );
     }
 
+    // ===== Section: generic container composition =====
     return (
         <div
             className={`win98-box ${variantClass} ${className}`}

@@ -1,9 +1,27 @@
 /**
  * Music Player Widget (B2.4)
  *
- * A retro-styled music player with playlist management.
- * Supports loading tracks from the vault (blob-based audio files)
- * and direct URL sources. Uses HTML5 Audio API for playback.
+ * PURPOSE
+ * - Render a profile-local music player with transport controls and playlist UI.
+ * - Support both remote URL tracks and vault-backed blob tracks.
+ *
+ * HOW IT WORKS
+ * - Initializes playlist from explicit props first, then falls back to persisted
+ *   widget payload from the backend (`get_widget_data`).
+ * - Resolves playable URLs from `url`/`src` directly, or from `blob_hash` via
+ *   local media server port (`get_media_server_port`).
+ * - Syncs playback state to a hidden `<audio>` element and auto-advances on `ended`.
+ * - Persists playlist updates by merging into widget payload and saving with
+ *   `save_widget_data`.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (`MusicTrack`, `WidgetData`)
+ * - `src-tauri/src/lib.rs` (`get_widget_data`, `save_widget_data`, `vault_list_files`, `get_media_server_port` commands)
+ * - `src/screens/ProfileScreen.tsx` (widget composition/host surface)
+ *
+ * Cross-system note (profile/widget data boundary):
+ * - This widget owns only `WidgetData.music_playlist`. It must not overwrite
+ *   sibling widget keys when persisting profile widget state.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -17,7 +35,13 @@ interface MusicPlayerWidgetProps {
     onUpdate?: (tracks: MusicTrack[]) => void;
 }
 
+/**
+ * `MusicPlayerWidget`
+ *
+ * Exported profile widget component for local music playback and playlist editing.
+ */
 export function MusicPlayerWidget({ tracks: initialTracks, editable = false, onUpdate }: MusicPlayerWidgetProps) {
+    // ===== Section: Local component state =====
     const [tracks, setTracks] = useState<MusicTrack[]>(initialTracks || []);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -35,6 +59,7 @@ export function MusicPlayerWidget({ tracks: initialTracks, editable = false, onU
         return null;
     }, [mediaPort]);
 
+    // ===== Section: Data bootstrap and playback effects =====
     // Get media server port on mount
     useEffect(() => {
         invoke<number>('get_media_server_port').then(setMediaPort).catch(() => {});
@@ -84,6 +109,7 @@ export function MusicPlayerWidget({ tracks: initialTracks, editable = false, onU
         return () => audio.removeEventListener('ended', onEnded);
     }, [currentIndex, tracks.length]);
 
+    // ===== Section: User actions =====
     const handlePlayPause = () => {
         if (tracks.length === 0) return;
         setIsPlaying(p => !p);
@@ -138,6 +164,8 @@ export function MusicPlayerWidget({ tracks: initialTracks, editable = false, onU
     };
 
     const persistTracks = useCallback((newTracks: MusicTrack[]) => {
+        // Cross-system boundary: only mutate `music_playlist` while preserving
+        // all other widget-owned keys in `WidgetData`.
         invoke('get_widget_data').then((raw) => {
             const data: WidgetData = raw ? JSON.parse(raw as string) : {};
             data.music_playlist = newTracks;
@@ -146,6 +174,7 @@ export function MusicPlayerWidget({ tracks: initialTracks, editable = false, onU
         onUpdate?.(newTracks);
     }, [onUpdate]);
 
+    // ===== Section: Render =====
     return (
         <div style={{
             background: 'var(--bg-secondary)',

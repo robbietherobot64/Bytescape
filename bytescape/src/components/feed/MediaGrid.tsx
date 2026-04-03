@@ -3,6 +3,22 @@ import { BlobImage } from '../BlobImage';
 import { VideoPlayer } from '../VideoPlayer';
 import { ExpandIcon } from './icons';
 
+/**
+ * PURPOSE:
+ * Displays up to four media items for a feed entry in a compact grid layout.
+ *
+ * HOW IT WORKS:
+ * - Renders inline video players for `video` media kinds.
+ * - Renders blob-aware images for non-video media.
+ * - Delegates fullscreen/gallery state to parent via `openGallery(index)`.
+ *
+ * RELATED FILES:
+ * - src/components/feed/GalleryOverlay.tsx
+ * - src/components/VideoPlayer.tsx
+ * - src/components/BlobImage.tsx
+ * - src/components/FeedEntryCard.tsx (parent composer)
+ */
+
 interface MediaGridProps {
     mediaUrls: string[];
     mediaKinds?: string[];
@@ -12,17 +28,26 @@ interface MediaGridProps {
     openGallery: (index: number) => void;
 }
 
+/**
+ * Exported feed media grid renderer.
+ *
+ * Cross-system note:
+ * Media URL hydration/resolution should be completed upstream (hook/store/provider)
+ * before values are passed to this component.
+ */
 export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSources, mediaDir, openGallery }: MediaGridProps) {
     if (mediaUrls.length === 0) return null;
 
     return (
         <div className={`post-media-grid items-${Math.min(mediaUrls.length, 4)}`}>
             {mediaUrls.slice(0, 4).map((_, i) => {
+                // ── Per-cell derived display values ───────────────────────────
                 const kind = (mediaKinds && mediaKinds[i]) || 'image';
                 const thumb = thumbnailSources[i] || mediaSources[i];
 
                 return (
                     <div key={i} className="media-item">
+                        {/* ── Inline video cell ───────────────────────────────── */}
                         {kind === 'video' ? (
                             /* Inline video player — plays directly in the feed */
                             <div onClick={(e) => e.stopPropagation()}>
@@ -41,6 +66,7 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                                 </button>
                             </div>
                         ) : (
+                            /* ── Image cell ───────────────────────────────────── */
                             /* Image */
                             <div onClick={(e) => { e.stopPropagation(); openGallery(i); }}>
                                 <BlobImage

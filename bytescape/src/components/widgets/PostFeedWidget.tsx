@@ -3,6 +3,10 @@
  *
  * Displays the user's most recent vault posts in a compact list format.
  * Used as a widget block in the GrapesJS profile builder.
+ *
+ * Cross-system note:
+ * - Uses the Tauri command `list_vault_posts_paged` to query Engine-side normalized items.
+ * - `BytescapeItem` shape must stay aligned with shared Rust serialization contracts.
  */
 
 import { useState, useEffect } from 'react';
@@ -14,20 +18,29 @@ interface PagedResult {
     total: number;
 }
 
+/**
+ * Renders the profile-level "Recent Posts" widget.
+ *
+ * Exported for dynamic widget hydration from GrapesJS-authored profile markup.
+ */
 export function PostFeedWidget() {
+    // --- Local widget state ---
     const [posts, setPosts] = useState<BytescapeItem[]>([]);
 
+    // --- Initial data hydration ---
     useEffect(() => {
         invoke<PagedResult>('list_vault_posts_paged', { offset: 0, limit: 5, sourceFilter: null })
             .then(result => setPosts(result.items))
             .catch(() => {});
     }, []);
 
+    // --- Display helpers ---
     const formatDate = (ts: number) => {
         const d = new Date(ts * 1000);
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
 
+    // --- Render ---
     return (
         <div style={{
             background: 'var(--bg-secondary)',

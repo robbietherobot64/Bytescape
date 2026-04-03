@@ -1,7 +1,7 @@
 # Bytescape Technical Debt Audit
 
 > **Date**: 2026-04-01
-> **Scope**: Batches 1–13 (130 source files · ~51,130 lines · Rust + TypeScript)
+> **Scope**: Batches 1–14 (162 source files · ~53,780 lines · Rust + TypeScript)
 > **Auditor**: Systems Agent
 > **Purpose**: Identify bugs, hacks, security issues, and architectural debt for PM sprint planning
 
@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A systematic audit of the first 13 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, Large Frontend Components, **Medium Frontend Components**) uncovered **380 issues** across 130 files:
+A systematic audit of all 14 documentation batches (Core Types, Database, Backend Core, Platform Connectors, P2P/Sync, ActivityPub Federation, Tauri Commands, Frontend Foundation, Frontend Hooks, Frontend Utils, Frontend Screens, Large Frontend Components, Medium Frontend Components, **Feed/Lenses/Widgets/Small Components**) uncovered **412 issues** across 162 files:
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| 🔴 HIGH | 75 | Bugs, data loss, security vulnerabilities, panics |
-| 🟡 MEDIUM | 186 | Performance traps, architectural hacks, missing features |
-| 🔵 LOW | 119 | Code smells, dead code, naming issues |
+| 🔴 HIGH | 80 | Bugs, data loss, security vulnerabilities, panics |
+| 🟡 MEDIUM | 204 | Performance traps, architectural hacks, missing features |
+| 🔵 LOW | 128 | Code smells, dead code, naming issues |
 
 The top systemic concerns are:
 
@@ -31,6 +31,7 @@ The top systemic concerns are:
 10. **Screen-layer orchestration overload** — multiple top-level screens (`FeedScreen`, `ChatScreen`, `SettingsScreen`, `ProfileBuilderScreen`, `WebViewScreen`) combine transport calls, state orchestration, and rendering in monolithic components, increasing coupling and making defects harder to isolate.
 11. **Component-layer monoliths** — large UI components (ComposeBox, FeedEntryCard, Omnibar, ProfileBioSections) now absorb both domain orchestration and rendering concerns, causing very large files with brittle state transitions and limited reuse.
 12. **Modal contract drift** — medium-sized components (modals/pickers) frequently duplicate validation, inline styling, and backend-call patterns with weakly typed command boundaries. This creates many small divergence points that are hard to standardize over time.
+13. **Leaf-component fragmentation** — final batch components are individually small but repeatedly reimplement local policies (formatting, style maps, event contracts, sentinel states) with limited shared primitives, creating broad low/medium maintenance drag.
 
 ---
 
@@ -837,6 +838,62 @@ Batch 13 covers modals, pickers, and mid-size interaction components. Main patte
 
 ---
 
+## Batch 14 — Feed Subcomponents, Lenses, Widgets & Small Components
+
+**Scope:** 32 files · ~2,652 lines in `src/components/feed/`, `src/components/lenses/`, `src/components/widgets/`, and small shared components
+**Findings:** 32 issues (5 HIGH · 18 MEDIUM · 9 LOW)
+
+This final batch closes out the leaf-component layer. The dominant concern is fragmentation: many small components each carry local policy choices that are not centralized.
+
+### 🔴 HIGH
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 14.1 | `feed/GalleryOverlay.tsx` | **Overlay lacks robust keyboard/focus management (focus trap / arrow nav / escape handling depth)** | Accessibility and usability regressions for keyboard users |
+| 14.2 | `lenses/GalleryLens.tsx` | **Dense nested media tile rendering and qualification logic inside one component** | Hard to optimize safely; high rendering complexity |
+| 14.3 | `lenses/Lightbox.tsx` | **Imperative state correction path in render-adjacent flow** | Fragile behavior around slide edge-cases |
+| 14.4 | `RichText.tsx` | **Interactive mention/hashtag rendering semantics not fully aligned with accessibility expectations** | Inconsistent keyboard/screen-reader interaction |
+| 14.5 | `TabBar.tsx` | **Nested interaction pattern (tab button + close action) without stronger interaction contract** | Event-propagation and accessibility edge-case risk |
+
+### 🟡 MEDIUM
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 14.6 | `feed/VirtualizedFeedList.tsx` | **Cross-folder dependency on lens renderer** | Ownership boundary blur between feed and lens layers |
+| 14.7 | `feed/EngagementBar.tsx` | **Large callback prop contract with source-string branching** | Harder API evolution and testing |
+| 14.8 | `feed/MediaGrid.tsx` | **Parallel array index coupling for media URLs/kinds/thumbnails** | Drift risk if arrays desynchronize |
+| 14.9 | `feed/ThreadReplies.tsx` | **No virtualization/paging strategy for deep reply trees** | Performance degradation on large threads |
+| 14.10 | `feed/index.ts` | **Barrel export surface does not fully align with feed-local ownership** | Import inconsistency across feature boundaries |
+| 14.11 | `lenses/ReaderLens.tsx` | **Article extraction/render paths colocated with UI state logic** | Reduced cohesion and readability |
+| 14.12 | `widgets/MusicPlayerWidget.tsx` | **Read-modify-write widget persistence can race across concurrent saves** | Last-write-wins data loss risk |
+| 14.13 | `widgets/GuestbookWidget.tsx` | **Reload-after-mutation pattern without pagination** | Costly operations as entry count grows |
+| 14.14 | `widgets/FriendsListWidget.tsx` | **One-shot fetch model produces stale widget state** | Data freshness issues until manual refresh/remount |
+| 14.15 | `widgets/PostFeedWidget.tsx` | **Hardcoded query/paging constants in widget layer** | Reuse/configurability limitations |
+| 14.16 | `widgets/index.ts` | **Stringly-typed widget registry IDs with manual mapping** | Drift risk between renderer and registry |
+| 14.17 | `ContextPanel.tsx` | **Local feed-tab policy map duplicates upstream navigation semantics** | Contract drift across UI layers |
+| 14.18 | `TopBar.tsx` | **Dropdown interaction model is mostly pointer-oriented** | Accessibility and keyboard UX gap |
+| 14.19 | `BlobImage.tsx` | **URL resolution policy concentrated in component heuristics** | Behavior divergence from other media paths |
+| 14.20 | `ArticleReader.tsx` | **Markdown→HTML→sanitize→linkify pipeline recomputed in render flow** | Avoidable processing cost |
+| 14.21 | `ReactionPicker.tsx` | **UI supports rich reactions while backing interaction model remains coarse** | Product-model mismatch risk |
+| 14.22 | `AppLayout.tsx` | **Global layout state and local lens controls loosely coupled by props** | Layout behavior drift risk |
+| 14.23 | `RelayStatusBadge.tsx` | **One-shot status fetch without robust live-update contract** | Stale relay status indicator |
+
+### 🔵 LOW
+
+| # | File | Issue | Impact |
+|---|------|-------|--------|
+| 14.24 | `feed/helpers.ts` | **Formatting fallbacks are implicit and distributed** | Minor consistency drift |
+| 14.25 | `feed/icons.tsx` | **Icon contract not centralized (size/stroke/accessibility attrs)** | Styling/accessibility inconsistency |
+| 14.26 | `lenses/FeedItemRenderer.tsx` | **Source-to-style map remains local and string-based** | Minor taxonomy drift risk |
+| 14.27 | `widgets/AwayMessageWidget.tsx` | **Local status-map persistence model uses generic records** | Reduced compile-time guarantees |
+| 14.28 | `widgets/MediaGridWidget.tsx` | **Inline style object duplication in compact widget** | Styling maintenance overhead |
+| 14.29 | `widgets/VisitorCounterWidget.tsx` | **Magic offset constant in render path** | Minor readability/config debt |
+| 14.30 | `Win98Box.tsx` | **Container markup duplicated across mode branches** | Small compositional redundancy |
+| 14.31 | `StatusBar.tsx` | **Status model represented as plain text only** | Limited extensibility for richer status metadata |
+| 14.32 | `SourceBadge.tsx` | **Source taxonomy map is local and manually maintained** | Small drift risk as sources evolve |
+
+---
+
 ## Appendix: Full Issue Count by File
 
 | File | 🔴 | 🟡 | 🔵 | Total |
@@ -972,4 +1029,36 @@ Batch 13 covers modals, pickers, and mid-size interaction components. Main patte
 | `src/components/GroupPickerModal.tsx` | 0 | 1 | 2 | 3 |
 | `src/components/ThemePicker.tsx` | 0 | 1 | 2 | 3 |
 | `src/components/Sidebar.tsx` | 0 | 2 | 1 | 3 |
-| **TOTAL** | **75** | **186** | **119** | **380** |
+| `src/components/feed/VirtualizedFeedList.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/feed/EngagementBar.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/feed/helpers.ts` | 0 | 0 | 1 | 1 |
+| `src/components/feed/MediaGrid.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/feed/ThreadReplies.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/feed/icons.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/feed/GalleryOverlay.tsx` | 1 | 0 | 0 | 1 |
+| `src/components/feed/index.ts` | 0 | 1 | 0 | 1 |
+| `src/components/lenses/ReaderLens.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/lenses/GalleryLens.tsx` | 1 | 0 | 0 | 1 |
+| `src/components/lenses/Lightbox.tsx` | 1 | 0 | 0 | 1 |
+| `src/components/lenses/FeedItemRenderer.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/widgets/MusicPlayerWidget.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/widgets/GuestbookWidget.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/widgets/AwayMessageWidget.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/widgets/FriendsListWidget.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/widgets/MediaGridWidget.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/widgets/PostFeedWidget.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/widgets/VisitorCounterWidget.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/widgets/index.ts` | 0 | 1 | 0 | 1 |
+| `src/components/ContextPanel.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/TopBar.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/Win98Box.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/BlobImage.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/ArticleReader.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/ReactionPicker.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/AppLayout.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/RichText.tsx` | 1 | 0 | 0 | 1 |
+| `src/components/RelayStatusBadge.tsx` | 0 | 1 | 0 | 1 |
+| `src/components/TabBar.tsx` | 1 | 0 | 0 | 1 |
+| `src/components/StatusBar.tsx` | 0 | 0 | 1 | 1 |
+| `src/components/SourceBadge.tsx` | 0 | 0 | 1 | 1 |
+| **TOTAL** | **80** | **204** | **128** | **412** |

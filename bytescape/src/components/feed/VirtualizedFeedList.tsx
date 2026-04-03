@@ -4,6 +4,24 @@ import { FeedEntry } from '../../types';
 import { FeedItemRenderer } from '../lenses/FeedItemRenderer';
 import { prefetchBlobUrls } from '../../utils/prefetchBlobUrls';
 
+/**
+ * PURPOSE:
+ * Renders long feed collections with viewport virtualization to keep scrolling smooth
+ * and memory usage bounded.
+ *
+ * HOW IT WORKS:
+ * - Uses `@tanstack/react-virtual` to mount only visible rows + overscan.
+ * - Caches measured row heights to improve estimate accuracy after first render.
+ * - Prefetches blob URLs only for the visible window (+ small lookahead) to avoid
+ *   issuing IPC/media resolution work for the entire feed at once.
+ *
+ * RELATED FILES:
+ * - src/components/lenses/FeedItemRenderer.tsx (per-entry renderer)
+ * - src/utils/prefetchBlobUrls.ts (viewport-aware media prefetch helper)
+ * - src/hooks/useUnifiedFeed.ts (typical upstream provider of `entries`)
+ * - src/store/* and src/providers/* (upstream feed state orchestration)
+ */
+
 interface VirtualizedFeedListProps {
     entries: FeedEntry[];
     resolveMediaPath?: (path: string) => string;
@@ -21,9 +39,13 @@ interface VirtualizedFeedListProps {
 }
 
 /**
- * Virtualized feed list using @tanstack/react-virtual.
- * Only renders visible entries + overscan, reducing DOM nodes from 500-2000+
- * to ~50-100 for smooth 60fps scrolling.
+ * Exported feed virtualization container.
+ *
+ * Notes:
+ * - This component is intentionally presentation-focused; data loading,
+ *   pagination, and source selection are handled by upstream hooks/stores.
+ * - `entries` ordering and identity stability are expected to be handled by
+ *   the calling layer.
  */
 export function VirtualizedFeedList({
     entries,
@@ -33,6 +55,9 @@ export function VirtualizedFeedList({
     groupBadge,
     overscan: overscanProp,
 }: VirtualizedFeedListProps) {
+    // ──────────────────────────────────────────────────────────────────────────
+    // Row height measurement cache
+    // ──────────────────────────────────────────────────────────────────────────
     const measurementCache = useRef<Map<number, number>>(new Map());
 
     // Clear stale measurements when feed content changes (e.g., tab switch,
@@ -74,6 +99,9 @@ export function VirtualizedFeedList({
 
     const virtualItems = virtualizer.getVirtualItems();
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Viewport-aware blob prefetch
+    // ──────────────────────────────────────────────────────────────────────────
     // ── Viewport-aware blob prefetch ──
     // Instead of resolving ALL blob URLs for ALL feed entries on load
     // (which hammered the backend with hundreds of IPC calls), only prefetch
@@ -97,6 +125,9 @@ export function VirtualizedFeedList({
 
     if (entries.length === 0) return null;
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Virtualized render surface
+    // ──────────────────────────────────────────────────────────────────────────
     return (
         <div
             style={{

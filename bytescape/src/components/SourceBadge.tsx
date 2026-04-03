@@ -1,8 +1,26 @@
+/**
+ * SourceBadge
+ *
+ * Compact provenance pill for normalized content items.
+ *
+ * Cross-system note:
+ * - Source labels map to connector-origin data normalized by the engine (e.g., Bluesky,
+ *   Facebook, Instagram), then surfaced in lens UI records.
+ */
 
+/** Props for the exported `SourceBadge` component. */
 interface SourceBadgeProps {
+    /** Normalized source key (connector/provider identifier). */
     source: string;
 }
 
+// ============================================================
+// Source Styling Lookup
+// ============================================================
+
+/**
+ * Exported badge component for showing a source key with visual identity.
+ */
 export function SourceBadge({ source }: SourceBadgeProps) {
     const config: Record<string, { emoji: string; bg: string; color: string; border: string }> = {
         bluesky: { emoji: "🦋", bg: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "rgba(59,130,246,0.3)" },
@@ -12,7 +30,10 @@ export function SourceBadge({ source }: SourceBadgeProps) {
         bytescape: { emoji: "✨", bg: "rgba(168,85,247,0.15)", color: "#a855f7", border: "rgba(168,85,247,0.3)" },
         dtp: { emoji: "🔄", bg: "rgba(16,185,129,0.15)", color: "#34d399", border: "rgba(16,185,129,0.3)" },
     };
+
+    // Fallback styling for unknown or future connector keys.
     const c = config[source] || { emoji: "📝", bg: "rgba(136,136,168,0.15)", color: "var(--text-muted)", border: "var(--border)" };
+
     return (
         <span className="source-badge" style={{ background: c.bg, color: c.color, borderColor: c.border }}>
             {c.emoji} {source}

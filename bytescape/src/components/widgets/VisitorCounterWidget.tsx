@@ -3,6 +3,10 @@
  *
  * A retro-styled visitor counter using the vault stats total as a base.
  * Displays the count in a classic LED-style font.
+ *
+ * Cross-system note:
+ * - Reads aggregate vault metrics from the Rust Engine through `get_vault_stats`.
+ * - Optional `count` prop allows external systems (tests/previews) to override Engine-derived value.
  */
 
 import { useState, useEffect } from 'react';
@@ -16,9 +20,16 @@ interface VaultStatsResult {
     total: number;
 }
 
+/**
+ * Renders a nostalgic visitor counter for profile surfaces.
+ *
+ * Exported for use in widget registry hydration and direct composition scenarios.
+ */
 export function VisitorCounterWidget({ count: overrideCount }: VisitorCounterWidgetProps) {
+    // --- Local widget state ---
     const [count, setCount] = useState(overrideCount || 0);
 
+    // --- Engine-backed hydration (unless overridden) ---
     useEffect(() => {
         if (overrideCount !== undefined) return;
         invoke<VaultStatsResult>('get_vault_stats')
@@ -26,8 +37,10 @@ export function VisitorCounterWidget({ count: overrideCount }: VisitorCounterWid
             .catch(() => setCount(1337));
     }, [overrideCount]);
 
+    // --- Display formatting ---
     const display = String(count).padStart(7, '0');
 
+    // --- Render ---
     return (
         <div style={{
             background: '#111',

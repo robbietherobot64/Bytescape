@@ -1,5 +1,20 @@
 /* ─── SVG Icons for FeedEntryCard sub-components ─── */
 
+/**
+ * PURPOSE:
+ * Centralized SVG icon primitives for feed subcomponents.
+ *
+ * HOW IT WORKS:
+ * - Exposes small stateless React components that inherit `currentColor`.
+ * - Keeps icon definitions colocated with feed UI building blocks.
+ *
+ * RELATED FILES:
+ * - src/components/feed/EngagementBar.tsx
+ * - src/components/feed/MediaGrid.tsx
+ * - src/components/feed/index.ts
+ */
+
+/** Exported reply/comment icon. */
 export function ReplyIcon() {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -8,6 +23,7 @@ export function ReplyIcon() {
     );
 }
 
+/** Exported repost/reshare icon. */
 export function RepostIcon() {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -19,6 +35,7 @@ export function RepostIcon() {
     );
 }
 
+/** Exported generic share icon. */
 export function ShareIcon() {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -29,6 +46,7 @@ export function ShareIcon() {
     );
 }
 
+/** Exported like/favorite icon. */
 export function HeartIcon() {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -37,6 +55,7 @@ export function HeartIcon() {
     );
 }
 
+/** Exported fullscreen/expand icon. */
 export function ExpandIcon() {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">

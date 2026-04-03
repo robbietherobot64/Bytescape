@@ -1,6 +1,19 @@
+/**
+ * RelayStatusBadge
+ *
+ * Compact connectivity indicator for relay synchronization state.
+ *
+ * Cross-system note:
+ * - Pulls status through the data provider abstraction, which bridges to engine-facing
+ *   command implementations (Tauri / backend adapter).
+ */
 import { useState, useEffect } from 'react';
 import { useDataProvider } from '../providers';
 import type { RelayStatus } from '../providers';
+
+// ============================================================
+// Status Display Configuration
+// ============================================================
 
 const STATUS_CONFIG: Record<RelayStatus, { icon: string; label: string; color: string }> = {
   connected: { icon: '🟢', label: 'Connected', color: 'var(--accent-green, #22c55e)' },
@@ -9,16 +22,22 @@ const STATUS_CONFIG: Record<RelayStatus, { icon: string; label: string; color: s
 };
 
 /**
+ * Exported badge used in persistent chrome regions (e.g., sidebar footer).
+ *
  * Small status badge showing relay connectivity.
  * Placed in the sidebar footer — visible but unobtrusive.
  *
  * Initially always shows "Offline" until the relay backend is deployed.
  */
 export function RelayStatusBadge() {
+  // Provider resolves platform-specific transport/state details.
   const provider = useDataProvider();
+
+  // UI state reflects the latest async relay status snapshot.
   const [status, setStatus] = useState<RelayStatus>('offline');
   const [detail, setDetail] = useState<string>('Checking…');
 
+  // One-shot fetch on provider change; guarded for unmount race safety.
   useEffect(() => {
     let cancelled = false;
     provider.relaySyncStatus().then(result => {
@@ -37,6 +56,7 @@ export function RelayStatusBadge() {
     return () => { cancelled = true; };
   }, [provider]);
 
+  // View model lookup for icon/label/color.
   const cfg = STATUS_CONFIG[status];
 
   return (

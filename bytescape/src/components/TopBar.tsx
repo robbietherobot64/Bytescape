@@ -6,6 +6,17 @@ import {
 } from 'react-icons/bs';
 import { Omnibar } from './Omnibar';
 
+/**
+ * TopBar
+ *
+ * Primary navigation and global search entry point.
+ *
+ * Cross-system note:
+ * - Navigation drives lens/screen composition in app-level state.
+ * - Search submits through `onSearchSubmit`, which may trigger frontend
+ *   filtering and/or backend-backed query flows depending on the active screen.
+ */
+
 interface TopBarProps {
     activeSidebar: SidebarItem;
     onNavigate: (item: SidebarItem) => void;
@@ -17,6 +28,10 @@ interface TopBarProps {
     avatarInitial?: string;
 }
 
+/**
+ * Static menu model for dropdown navigation.
+ * Kept local to avoid coupling display order to store definitions.
+ */
 const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
     { id: 'forums', icon: <BsListUl />, label: 'Forums' },
@@ -27,11 +42,16 @@ const NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
+/**
+ * Exported top navigation shell used across desktop and responsive layouts.
+ */
 export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitial }: TopBarProps) {
+    // ===== Section: local interaction state =====
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
 
-    // Close menu on outside click
+    // ===== Section: side effects =====
+    // Close menu on outside click.
     useEffect(() => {
         if (!menuOpen) return;
         const handler = (e: MouseEvent) => {
@@ -43,6 +63,7 @@ export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitia
         return () => document.removeEventListener('mousedown', handler);
     }, [menuOpen]);
 
+    // ===== Section: event handlers =====
     const handleNavClick = (id: SidebarItem) => {
         setMenuOpen(false);
         onNavigate(id);
@@ -50,7 +71,7 @@ export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitia
 
     return (
         <div className="topbar">
-            {/* Left: Profile Icon */}
+            {/* ===== Section: left rail action (profile) ===== */}
             <button
                 className="topbar-profile-btn"
                 onClick={() => handleNavClick('profile')}
@@ -61,10 +82,10 @@ export function TopBar({ activeSidebar, onNavigate, onSearchSubmit, avatarInitia
                 </div>
             </button>
 
-            {/* Center: Omnibar (B10.3) — browser-style address bar + search */}
+            {/* ===== Section: center omnibar (global search/address) ===== */}
             <Omnibar onSearchSubmit={onSearchSubmit} />
 
-            {/* Right: Hamburger Menu */}
+            {/* ===== Section: right dropdown menu ===== */}
             <div className="topbar-menu-container" ref={menuRef}>
                 <button
                     className={`topbar-hamburger ${menuOpen ? 'open' : ''}`}

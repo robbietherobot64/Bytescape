@@ -1,3 +1,12 @@
+/**
+ * AppLayout
+ *
+ * Root shell composition for lens-side navigation chrome.
+ *
+ * Cross-system note:
+ * - This component is UI-only and does not invoke engine commands directly.
+ * - Effective content is still driven by engine-backed state (tabs/routes) via stores/providers.
+ */
 import React from 'react';
 import { TopBar } from './TopBar';
 import { TabBar } from './TabBar';
@@ -23,6 +32,10 @@ interface AppLayoutProps {
     avatarInitial?: string;
 }
 
+// ============================================================
+// Mobile Navigation Composition
+// ============================================================
+
 /** Bottom navigation items for mobile. */
 const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string }[] = [
     { id: 'feed', icon: <BsHouseFill />, label: 'Feed' },
@@ -34,6 +47,13 @@ const BOTTOM_NAV_ITEMS: { id: SidebarItem; icon: React.ReactNode; label: string 
     { id: 'settings', icon: <BsGearFill />, label: 'Settings' },
 ];
 
+/**
+ * Exported shell component that composes:
+ * - `TabBar` for multi-tab workspace state
+ * - `TopBar` for search + global actions
+ * - Main content viewport
+ * - Mobile bottom navigation
+ */
 /** Application shell: tab bar + top bar + main content + mobile bottom nav. */
 export function AppLayout({
     children,
@@ -48,7 +68,10 @@ export function AppLayout({
 
     return (
         <div className="app-layout">
+            {/* Desktop/Web top tab strip */}
             <TabBar />
+
+            {/* Global top chrome: nav trigger, search, profile affordances */}
             <TopBar
                 activeSidebar={activeSidebar}
                 onNavigate={onNavigate}
@@ -57,6 +80,8 @@ export function AppLayout({
                 onSearchSubmit={onSearchSubmit}
                 avatarInitial={avatarInitial}
             />
+
+            {/* Main viewport: rendered child route/screen or empty-tab placeholder */}
             <div className="app-body">
                 <main className="main-content">
                     {tabs.length === 0 ? (

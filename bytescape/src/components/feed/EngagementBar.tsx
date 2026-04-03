@@ -2,6 +2,22 @@ import React from 'react';
 import { HeartIcon, ReplyIcon, RepostIcon, ShareIcon } from './icons';
 import { formatCount } from './helpers';
 
+/**
+ * PURPOSE:
+ * Renders post-level engagement controls (like, reply, repost, thread toggle, share).
+ *
+ * HOW IT WORKS:
+ * - Receives all interaction state and handlers from parent scope.
+ * - Stays stateless to keep orchestration in feature hooks/store layers.
+ * - Conditionally renders source-specific actions (for example Bluesky quote/thread).
+ *
+ * RELATED FILES:
+ * - src/components/feed/icons.tsx (button icons)
+ * - src/components/feed/helpers.ts (counter formatting)
+ * - src/components/FeedEntryCard.tsx (caller that wires handlers/state)
+ * - src/hooks/*, src/store/*, src/providers/* (upstream interaction state)
+ */
+
 interface EngagementBarProps {
     isInteractive: boolean;
     source: string;
@@ -23,6 +39,13 @@ interface EngagementBarProps {
     onShareClick: (e: React.MouseEvent) => void;
 }
 
+/**
+ * Exported action bar used by feed item cards.
+ *
+ * Cross-system note:
+ * Command/invoke side effects are expected to be handled by callback props,
+ * not directly by this component.
+ */
 export function EngagementBar({
     isInteractive,
     source,
@@ -45,6 +68,7 @@ export function EngagementBar({
 }: EngagementBarProps) {
     return (
         <div className="engagement-bar">
+            {/* ── Like ───────────────────────────────────────────────────────── */}
             <button
                 className={`engagement-btn btn-like ${liked ? 'active' : ''}`}
                 title={liked ? 'Unlike' : 'Like'}
@@ -55,6 +79,7 @@ export function EngagementBar({
                 <span className="count">{formatCount(likeCount)}</span>
             </button>
 
+            {/* ── Reply toggle ───────────────────────────────────────────────── */}
             <button
                 className={`engagement-btn btn-reply ${replyOpen ? 'active' : ''}`}
                 title="Comment"
@@ -65,6 +90,7 @@ export function EngagementBar({
                 <span className="count">{formatCount(replyCount)}</span>
             </button>
 
+            {/* ── Repost + contextual menu ──────────────────────────────────── */}
             <div className="repost-btn-container">
                 <button
                     className={`engagement-btn btn-repost ${reposted ? 'active' : ''}`}
@@ -94,6 +120,7 @@ export function EngagementBar({
                 )}
             </div>
 
+            {/* ── Optional thread toggle (platform-specific) ────────────────── */}
             {source === 'bluesky' && replyCount && replyCount > 0 ? (
                 <button
                     className={`engagement-btn btn-thread ${threadOpen ? 'active' : ''}`}
@@ -104,6 +131,7 @@ export function EngagementBar({
                 </button>
             ) : null}
 
+            {/* ── Share ──────────────────────────────────────────────────────── */}
             <button className="engagement-btn btn-share" title="Share" style={{ marginLeft: 'auto' } as React.CSSProperties}
                 onClick={onShareClick}
             >

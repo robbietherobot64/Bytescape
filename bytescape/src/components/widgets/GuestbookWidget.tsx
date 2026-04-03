@@ -1,8 +1,23 @@
 /**
  * Guestbook Widget (B2.4)
  *
- * Allows visitors to sign the profile guestbook.
- * Entries are stored via Tauri commands and displayed in reverse chronological order.
+ * PURPOSE
+ * - Let visitors write profile guestbook entries.
+ * - Display persisted entries with optional delete controls.
+ *
+ * HOW IT WORKS
+ * - Loads entries via backend command `list_guestbook_entries`.
+ * - Creates new entries with `add_guestbook_entry` and refreshes list.
+ * - Deletes entries with `delete_guestbook_entry` in editable mode.
+ *
+ * RELATED FILES
+ * - `src/types/index.ts` (`GuestbookEntry`)
+ * - `src-tauri/src/lib.rs` (guestbook command handlers)
+ * - `src/screens/ProfileScreen.tsx` (widget composition/host surface)
+ *
+ * Cross-system note (profile/widget data boundary):
+ * - Guestbook entries are not stored in profile `WidgetData`; they live in
+ *   dedicated backend guestbook storage and APIs.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -14,12 +29,19 @@ interface GuestbookWidgetProps {
     editable?: boolean;
 }
 
+/**
+ * `GuestbookWidget`
+ *
+ * Exported profile widget component for listing/signing/removing guestbook entries.
+ */
 export function GuestbookWidget({ editable = false }: GuestbookWidgetProps) {
+    // ===== Section: Local component state =====
     const [entries, setEntries] = useState<GuestbookEntry[]>([]);
     const [newAuthor, setNewAuthor] = useState('');
     const [newMessage, setNewMessage] = useState('');
     const [submitting, setSubmitting] = useState(false);
 
+    // ===== Section: Data loading =====
     const loadEntries = useCallback(async () => {
         try {
             const result = await invoke<GuestbookEntry[]>('list_guestbook_entries');
@@ -33,6 +55,7 @@ export function GuestbookWidget({ editable = false }: GuestbookWidgetProps) {
         loadEntries();
     }, [loadEntries]);
 
+    // ===== Section: User actions =====
     const handleSign = async () => {
         if (!newAuthor.trim() || !newMessage.trim()) return;
         setSubmitting(true);
@@ -71,6 +94,7 @@ export function GuestbookWidget({ editable = false }: GuestbookWidgetProps) {
         });
     };
 
+    // ===== Section: Render =====
     return (
         <div style={{
             background: 'var(--bg-secondary)',

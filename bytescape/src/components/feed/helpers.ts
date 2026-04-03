@@ -1,6 +1,30 @@
 import { TaggedPerson, FeedEntry } from '../../types';
 import { stripHtml } from '../../utils/sanitize';
 
+/**
+ * PURPOSE:
+ * Houses pure, reusable formatting/parsing helpers used by feed components.
+ *
+ * HOW IT WORKS:
+ * - Keeps UI components lean by centralizing deterministic display logic.
+ * - Provides compatibility parsing for legacy and current data shapes.
+ * - Contains feed-specific sanitization and URI resolution helpers.
+ *
+ * RELATED FILES:
+ * - src/components/feed/EngagementBar.tsx
+ * - src/components/feed/ThreadReplies.tsx
+ * - src/components/FeedEntryCard.tsx
+ * - src/types/index.ts (shape contracts for `FeedEntry`, `TaggedPerson`)
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tagged people helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Exported parser for tagged-people metadata.
+ * Supports both typed arrays and legacy JSON-string payloads.
+ */
 export function parseTaggedPeople(input?: TaggedPerson[] | string): TaggedPerson[] {
     if (!input) return [];
     // New typed format: already an array
@@ -13,6 +37,9 @@ export function parseTaggedPeople(input?: TaggedPerson[] | string): TaggedPerson
     }
 }
 
+/**
+ * Exported human-readable formatter for tagged-people labels.
+ */
 export function renderTaggedPeople(tags: TaggedPerson[]): string | null {
     if (tags.length === 0) return null;
     const names = tags.map(t => t.linked_handle ? `@${t.linked_handle}` : '👤');
@@ -21,6 +48,13 @@ export function renderTaggedPeople(tags: TaggedPerson[]): string | null {
     return `with ${names[0]} and ${names.length - 1} others`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Display formatting helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Exported relative timestamp formatter for feed UIs.
+ */
 export function formatTimestamp(ts: number): string {
     const date = new Date(ts * 1000);
     const now = new Date();
@@ -38,6 +72,9 @@ export function formatTimestamp(ts: number): string {
     return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Exported compact number formatter (K/M) for engagement counters.
+ */
 export function formatCount(n?: number): string {
     if (!n || n === 0) return '';
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -45,6 +82,13 @@ export function formatCount(n?: number): string {
     return n.toString();
 }
 
+/**
+ * Exported display sanitizer for user/imported post text.
+ *
+ * Cross-system note:
+ * This is a presentation-level guard; ingestion/store layers should still
+ * validate and normalize content at write time.
+ */
 export function sanitizeDisplayContent(raw: string): string {
     // Strip all HTML to prevent XSS from imported archive content (HIGH-3)
     const cleaned = stripHtml(raw);
@@ -56,6 +100,9 @@ export function sanitizeDisplayContent(raw: string): string {
 
 /** Resolve the AT-URI for a FeedEntry. Live posts use entry.id (already an AT-URI),
  *  but vault items store the CID as id and the AT-URI in original_url / syndicated_uri. */
+/**
+ * Exported AT-URI resolver for mixed-origin feed entries.
+ */
 export function resolveAtUri(entry: FeedEntry): string {
     // AT-URIs start with 'at://'
     if (entry.id.startsWith('at://')) return entry.id;
