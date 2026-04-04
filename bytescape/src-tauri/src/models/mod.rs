@@ -657,3 +657,18 @@ pub struct FeedEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_url: Option<String>,
 }
+
+/// Standardized pagination response for all feed commands.
+///
+/// Every feed-returning Tauri command wraps its results in this struct so the
+/// frontend can rely on a single response shape regardless of which tab or
+/// source produced the data.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FeedPage {
+    /// The feed items for this page, sorted newest-first.
+    pub items: Vec<FeedEntry>,
+    /// Opaque cursor for fetching the next page. `None` = no more pages.
+    pub cursor: Option<String>,
+    /// Whether more items exist beyond this page.
+    pub has_more: bool,
+}

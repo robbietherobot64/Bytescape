@@ -37,9 +37,8 @@
 
 use tauri::State;
 use crate::AppState;
-use crate::models::{FeedEntry, BytescapeItem, Audience, audiences_from_legacy, classify_feed_entry};
+use crate::models::{FeedEntry, FeedPage, BytescapeItem, Audience, audiences_from_legacy, classify_feed_entry};
 use crate::connectors::bluesky::BlueskyImportedPost;
-use serde::{Serialize, Deserialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Type Conversions — Source-specific types → universal FeedEntry
@@ -237,19 +236,9 @@ impl From<BytescapeItem> for FeedEntry {
 // Response Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Response payload for the `get_timeline_unified` Tauri command.
-///
-/// Contains the merged, deduplicated, sorted list of feed items and an optional
-/// cursor for Bluesky-style cursor-based pagination of the live timeline.
-/// Note: vault pagination uses a separate `vault_offset` parameter on the request.
-#[derive(Serialize, Deserialize)]
-pub struct UnifiedFeedResponse {
-    /// The merged feed items, sorted newest-first and deduplicated.
-    pub items: Vec<FeedEntry>,
-    /// Opaque cursor for fetching the next page of the Bluesky live timeline.
-    /// `None` when no more pages are available or when only vault items remain.
-    pub next_cursor: Option<String>,
-}
+// Response type: FeedPage (defined in crate::models)
+// Replaces the old UnifiedFeedResponse with a standardized shape
+// shared across all feed commands: { items, cursor, has_more }.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Main Aggregation Command
@@ -302,7 +291,7 @@ pub async fn get_timeline_unified(
     cursor: Option<String>,
     vault_offset: Option<usize>,
     source_filter: Option<String>,
-) -> Result<UnifiedFeedResponse, String> {
+) -> Result<FeedPage, String> {
     #[cfg(debug_assertions)]
     let t_start = std::time::Instant::now();
 
@@ -552,8 +541,10 @@ pub async fn get_timeline_unified(
     #[cfg(debug_assertions)]
     println!("get_timeline_unified: total pipeline took {:?}, returning {} items", t_start.elapsed(), feed.len());
 
-    Ok(UnifiedFeedResponse {
+    let has_more = next_cursor.is_some() || !feed.is_empty();
+    Ok(FeedPage {
         items: feed,
-        next_cursor,
+        cursor: next_cursor,
+        has_more,
     })
 }

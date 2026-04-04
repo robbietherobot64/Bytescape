@@ -34,6 +34,7 @@
 use tauri::State;
 use crate::AppState;
 use crate::models::groups::*;
+use crate::models::{FeedEntry, FeedPage};
 use crate::db::DbManager;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -996,7 +997,7 @@ pub async fn get_groups_feed(
     state: State<'_, AppState>,
     limit: usize,
     cursor: Option<String>,
-) -> Result<Vec<crate::models::BytescapeItem>, String> {
+) -> Result<FeedPage, String> {
     let db = require_db(&state).await?;
     let user_did = current_user_did(&state).await?;
 
@@ -1048,7 +1049,7 @@ pub async fn get_groups_feed(
         .collect();
 
     if all_group_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(FeedPage { items: Vec::new(), cursor: None, has_more: false });
     }
 
     // 4. Fetch recent GroupPost entries from all groups
@@ -1072,14 +1073,22 @@ pub async fn get_groups_feed(
     all_posts.sort_by(|a, b| b.posted_at.cmp(&a.posted_at));
     all_posts.truncate(limit);
 
-    // 6. Hydrate with BytescapeItem data
-    let mut items = Vec::new();
-    for gp in all_posts {
+    // 6. Hydrate with BytescapeItem data and convert to FeedEntry
+    let mut items: Vec<FeedEntry> = Vec::new();
+    let mut last_ts: Option<u64> = None;
+    for gp in &all_posts {
         if let Some(item) = db.get_item_by_id(&gp.item_id).await? {
-            items.push(item);
+            items.push(FeedEntry::from(item));
+            last_ts = Some(gp.posted_at);
         }
     }
-    Ok(items)
+    let has_more = all_posts.len() == limit;
+    let next_cursor = if has_more {
+        last_ts.map(|ts| ts.to_string())
+    } else {
+        None
+    };
+    Ok(FeedPage { items, cursor: next_cursor, has_more })
 }
 
 // ═══════════════════════════════════════════════════════════════════
