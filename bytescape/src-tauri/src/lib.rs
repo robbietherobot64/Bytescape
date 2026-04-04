@@ -22,6 +22,7 @@ pub mod blob_hash;
 pub mod richtext;
 pub mod collab;
 pub mod activitypub;
+pub mod security;
 
 mod auth;
 use auth::AuthManager;

@@ -16,12 +16,9 @@
 //! - `commands/bluesky.rs` — `publish_post_v2` uses `LinkCard` for `app.bsky.embed.external`
 //! - `types/index.ts` — TypeScript `LinkCard` interface mirrors this Rust struct
 //!
-//! ## SECURITY NOTE
-//! ⚠ No private-IP / SSRF filtering is applied to user-provided URLs.
-//! A malicious URL like `http://169.254.169.254/...` (cloud metadata endpoint) or
-//! `http://localhost:8080/admin` would be fetched from the user's machine.
-//! This is acceptable for a local-first desktop app (the user controls their own
-//! network), but MUST be addressed before any server-side unfurling is added.
+//! ## SECURITY
+//! SEC-12 fix applied: `validate_public_url()` rejects private-IP, loopback,
+//! link-local, and cloud metadata addresses before any fetch occurs.
 
 use tauri::State;
 use serde::Serialize;
@@ -52,12 +49,13 @@ pub async fn unfurl_link(
     _state: State<'_, AppState>,
 ) -> Result<LinkCard, String> {
     // Validate URL
-    // SSRF NOTE: No private-IP filtering — see module-level security note above.
+    // SEC-12: SSRF protection — reject private/loopback/link-local addresses
     let parsed = reqwest::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
         return Err("Only http/https URLs are supported".to_string());
     }
+    crate::security::validate_public_url(&url, false)?;
 
     // Fetch with safety limits
     let client = reqwest::Client::builder()

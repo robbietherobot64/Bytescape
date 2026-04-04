@@ -28,12 +28,15 @@
 //!
 //! ## SECURITY
 //!
-//! `fetch_actor_public_key()` fetches arbitrary URLs derived from untrusted
-//! `Signature` headers with no allowlist — this is a potential SSRF vector.
-//! A production deployment should restrict outbound fetches to known-good domains
-//! or at minimum block private/loopback ranges.
+//! - SEC-8: `fetch_actor_public_key()` validates URLs against private/loopback
+//!   addresses via `security::validate_public_url()` before fetching.
+//! - SEC-9: `verify_body_digest()` validates the `Digest` header against the
+//!   actual body hash to prevent body substitution attacks.
+//! - Clock skew: `validate_date_header()` rejects requests with Date headers
+//!   more than ±5 minutes from server time to prevent replay attacks.
 
 use super::signatures::{parse_signature_header, verify_ed25519_signature};
+use base64::Engine;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // INBOX RESULT TYPES
@@ -63,10 +66,12 @@ pub enum InboxResult {
 /// Process an incoming inbox POST.
 ///
 /// Steps:
-/// 1. Parse the Signature header
-/// 2. Fetch the sender's public key (via key_id URL)
-/// 3. Verify the HTTP signature
-/// 4. Dispatch the activity by type
+/// 1. Validate clock skew on the Date header (±5 min tolerance)
+/// 2. Verify body digest against the Digest header (SEC-9)
+/// 3. Parse the Signature header
+/// 4. Fetch the sender's public key (with SSRF protection — SEC-8)
+/// 5. Verify the HTTP signature
+/// 6. Dispatch the activity by type
 pub async fn process_inbox(
     body: &[u8],
     signature_header: &str,
@@ -77,10 +82,18 @@ pub async fn process_inbox(
     request_path: &str,
     http_client: &reqwest::Client,
 ) -> Result<InboxResult, String> {
+    // SEC-9: Verify body digest before any other processing
+    if let Some(digest_val) = digest_header {
+        verify_body_digest(body, digest_val)?;
+    }
+
+    // AP Clock Skew: reject requests with Date header more than ±5 minutes off
+    validate_date_header(date)?;
+
     // Parse the Signature header
     let sig = parse_signature_header(signature_header)?;
 
-    // Fetch the remote actor's public key
+    // Fetch the remote actor's public key (SEC-8: with SSRF protection)
     let public_key_pem = fetch_actor_public_key(http_client, &sig.key_id).await?;
 
     // Build the signing string from the declared headers
@@ -168,12 +181,12 @@ fn build_inbox_signing_string(
 /// Dereferences the `key_id` URL (stripping the `#fragment`) to retrieve the
 /// actor document, then extracts `publicKey.publicKeyPem`.
 ///
-/// # Security
+/// # Security (SEC-8)
 ///
-/// This function fetches an arbitrary URL derived from the untrusted `Signature`
-/// header. There is currently no allowlist or private-range block — **SSRF risk**.
+/// Validates that the URL is HTTPS and does not point to private/loopback
+/// addresses to prevent SSRF attacks. Uses a 10-second timeout.
 ///
-/// → Cross-system call: outbound HTTP GET to any URL the sender specifies.
+/// → Cross-system call: outbound HTTP GET to the sender's actor URL.
 pub async fn fetch_actor_public_key(
     http_client: &reqwest::Client,
     key_id: &str,
@@ -181,9 +194,13 @@ pub async fn fetch_actor_public_key(
     // The key_id is typically `{actor_url}#main-key`
     let actor_url = key_id.split('#').next().unwrap_or(key_id);
 
+    // SEC-8: Validate URL against SSRF (require HTTPS, block private IPs)
+    crate::security::validate_public_url(actor_url, true)?;
+
     let response = http_client
         .get(actor_url)
         .header("Accept", "application/activity+json")
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|e| format!("Failed to fetch actor: {}", e))?;
@@ -203,6 +220,63 @@ pub async fn fetch_actor_public_key(
         .and_then(|pem| pem.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "Actor document missing publicKey.publicKeyPem".to_string())
+}
+
+/// Verify that the request body matches the `Digest` header (SEC-9).
+///
+/// Computes `SHA-256(body)` and compares against the `Digest: SHA-256=...`
+/// header value. Rejects requests where the body has been tampered after signing.
+fn verify_body_digest(body: &[u8], digest_header: &str) -> Result<(), String> {
+    // Extract the base64-encoded hash from "SHA-256=<base64>"
+    let expected_b64 = digest_header
+        .strip_prefix("SHA-256=")
+        .or_else(|| digest_header.strip_prefix("sha-256="))
+        .ok_or_else(|| format!("Unsupported digest algorithm (expected SHA-256): {}", digest_header))?;
+
+    let expected = base64::engine::general_purpose::STANDARD
+        .decode(expected_b64)
+        .map_err(|e| format!("Invalid base64 in Digest header: {}", e))?;
+
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(body);
+    let actual = hasher.finalize();
+
+    if actual.as_slice() != expected.as_slice() {
+        return Err("Digest verification failed: body hash does not match Digest header".to_string());
+    }
+
+    Ok(())
+}
+
+/// Validate that the Date header is within ±5 minutes of server time.
+///
+/// Prevents replay attacks where a signed request is re-sent hours or days later.
+/// Uses RFC 2822 / HTTP date format parsing.
+fn validate_date_header(date: &str) -> Result<(), String> {
+    use chrono::{DateTime, Utc, Duration};
+
+    // Try HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
+    let parsed = DateTime::parse_from_rfc2822(date)
+        .or_else(|_| {
+            // Try alternative HTTP date format
+            chrono::NaiveDateTime::parse_from_str(date, "%a, %d %b %Y %H:%M:%S GMT")
+                .map(|naive| naive.and_utc().fixed_offset())
+        })
+        .map_err(|e| format!("Cannot parse Date header '{}': {}", date, e))?;
+
+    let now = Utc::now();
+    let skew = now.signed_duration_since(parsed);
+    let max_skew = Duration::minutes(5);
+
+    if skew > max_skew || skew < -max_skew {
+        return Err(format!(
+            "Clock skew too large: Date header is {} seconds off (max ±300s)",
+            skew.num_seconds()
+        ));
+    }
+
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -915,5 +989,77 @@ mod tests {
         assert!(db.get_group_member("undo-group", "https://mastodon.social/@alice").await.unwrap().is_none());
         // Count decremented
         assert_eq!(db.get_group("undo-group").await.unwrap().unwrap().member_count, 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SEC-8: AP key fetch SSRF protection
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_ap_key_fetch_rejects_private_ip() {
+        // Verify that private IPs are rejected at the URL validation level
+        assert!(crate::security::validate_public_url("https://127.0.0.1/actor", true).is_err());
+        assert!(crate::security::validate_public_url("https://10.0.0.5/actor", true).is_err());
+        assert!(crate::security::validate_public_url("https://192.168.1.100/actor", true).is_err());
+        assert!(crate::security::validate_public_url("https://169.254.169.254/latest", true).is_err());
+        assert!(crate::security::validate_public_url("http://mastodon.social/actor", true).is_err()); // non-HTTPS
+        assert!(crate::security::validate_public_url("https://mastodon.social/actor", true).is_ok());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SEC-9: Digest verification
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_ap_digest_verification_valid() {
+        use sha2::Digest as _;
+        let body = b"{\"type\":\"Create\"}";
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(body);
+        let hash = hasher.finalize();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(hash);
+        let digest_header = format!("SHA-256={}", b64);
+
+        assert!(verify_body_digest(body, &digest_header).is_ok());
+    }
+
+    #[test]
+    fn test_ap_digest_verification_rejects_tampered_body() {
+        use sha2::Digest as _;
+        let original_body = b"{\"type\":\"Create\"}";
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(original_body);
+        let hash = hasher.finalize();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(hash);
+        let digest_header = format!("SHA-256={}", b64);
+
+        // Different body — digest should fail
+        let tampered_body = b"{\"type\":\"Delete\"}";
+        assert!(verify_body_digest(tampered_body, &digest_header).is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AP Clock Skew
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_ap_clock_skew_accepts_current_date() {
+        let now = chrono::Utc::now();
+        let date = now.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert!(validate_date_header(&date).is_ok());
+    }
+
+    #[test]
+    fn test_ap_clock_skew_rejects_stale_date() {
+        let old = chrono::Utc::now() - chrono::Duration::hours(1);
+        let date = old.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert!(validate_date_header(&date).is_err());
+    }
+
+    #[test]
+    fn test_ap_clock_skew_accepts_within_tolerance() {
+        let recent = chrono::Utc::now() - chrono::Duration::minutes(3);
+        let date = recent.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert!(validate_date_header(&date).is_ok());
     }
 }
