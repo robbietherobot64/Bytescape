@@ -40,16 +40,34 @@ import { blobCacheUrl } from '../utils/mediaServer';
  * The files on disk are also cached (the Rust side writes once to blob_cache/),
  * but this avoids the IPC round-trip entirely for repeat renders.
  *
+ * Capped at 500 entries with FIFO eviction to prevent unbounded growth
+ * during long sessions.
+ *
  * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
  */
+const RESOLVED_URL_CACHE_MAX = 500;
 export const resolvedUrlCache = new Map<string, string>();
 
 /**
- * Write a resolved URL into the shared cache.
+ * Write a resolved URL into the shared cache with FIFO eviction.
  * Used by `prefetchBlobUrls()` to pre-seed cache entries in bulk.
  */
 export function cacheResolvedUrl(hash: string, url: string): void {
+    if (resolvedUrlCache.size >= RESOLVED_URL_CACHE_MAX) {
+        const firstKey = resolvedUrlCache.keys().next().value;
+        if (firstKey !== undefined) resolvedUrlCache.delete(firstKey);
+    }
     resolvedUrlCache.set(hash, url);
+}
+
+/** Clear the entire resolved URL cache. Call on view/filter changes to free memory. */
+export function clearResolvedUrlCache(): void {
+    resolvedUrlCache.clear();
+}
+
+/** Current number of cached resolved URLs (for diagnostics). */
+export function resolvedUrlCacheSize(): number {
+    return resolvedUrlCache.size;
 }
 
 // ═══ Path Resolution Helpers ═══════════════════════════════════════════════
@@ -159,7 +177,7 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
                     if (cancelled) return;
                     // Use local HTTP server to bypass WebKitGTK asset:// bugs
                     const httpUrl = await blobCacheUrl(filePath);
-                    resolvedUrlCache.set(hash, httpUrl);
+                    cacheResolvedUrl(hash, httpUrl);
                     setUrl(httpUrl);
                 })
                 .catch((e) => {

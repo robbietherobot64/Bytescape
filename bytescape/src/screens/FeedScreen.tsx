@@ -11,6 +11,9 @@ import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
+import { clearVideoUrlCache, videoUrlCacheSize } from '../components/VideoPlayer';
+import { clearResolvedUrlCache, resolvedUrlCacheSize } from '../hooks/useBlobUrl';
 
 /**
  * PURPOSE
@@ -77,6 +80,28 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const [isPosting, setIsPosting] = useState(false);
     const [postStatus, setPostStatus] = useState<string>('');
     const [mediaDir, setMediaDir] = useState<string>('');
+
+    // ═══ P0.1: Release GStreamer pipelines on media filter change ═══
+    // Without this, switching from Video→All leaves 8-13 video decoder
+    // pipelines alive (100-500 MB each). Same pattern as PeerProfileScreen.
+    const prevMediaFilterRef = useRef(mediaFilter);
+    useEffect(() => {
+        if (prevMediaFilterRef.current !== mediaFilter) {
+            VideoPlaybackManager.releaseAll();
+            clearVideoUrlCache();
+            clearResolvedUrlCache();
+            prevMediaFilterRef.current = mediaFilter;
+
+            // P0.6: Dev-mode memory diagnostics
+            if (import.meta.env.DEV) {
+                console.log('[Memory] Filter changed to:', mediaFilter);
+                console.log('[Memory] Active <video> elements:', document.querySelectorAll('video').length);
+                console.log('[Memory] VideoPlaybackManager registered:', VideoPlaybackManager.count);
+                console.log('[Memory] videoUrlCache size:', videoUrlCacheSize());
+                console.log('[Memory] resolvedUrlCache size:', resolvedUrlCacheSize());
+            }
+        }
+    }, [mediaFilter]);
 
     // === Pull-to-Refresh State ===
     const [pullDistance, setPullDistance] = useState(0);
@@ -512,6 +537,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
                                 scrollContainerRef={scrollContainerRef}
+                                overscan={mediaFilter === 'video' ? 1 : 5}
                             />
                         )}
 

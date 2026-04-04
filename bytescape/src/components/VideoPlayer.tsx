@@ -29,7 +29,27 @@ interface VideoPlayerProps {
     autoPlay?: boolean;
 }
 
+const VIDEO_URL_CACHE_MAX = 100;
 const videoUrlCache = new Map<string, string>();
+
+function setVideoUrlCache(key: string, value: string): void {
+    if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
+        // Evict oldest entry (first key in Map insertion order)
+        const firstKey = videoUrlCache.keys().next().value;
+        if (firstKey !== undefined) videoUrlCache.delete(firstKey);
+    }
+    videoUrlCache.set(key, value);
+}
+
+/** Clear the entire video URL cache. Call on filter/view changes to free memory. */
+export function clearVideoUrlCache(): void {
+    videoUrlCache.clear();
+}
+
+/** Current number of cached video URLs (for diagnostics). */
+export function videoUrlCacheSize(): number {
+    return videoUrlCache.size;
+}
 
 /**
  * Standard, native VideoPlayer component for Bytescape.
@@ -65,10 +85,18 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
         }
     }, []);
 
-    // Cleanup on unmount
+    // Cleanup on unmount — unregister AND release the GStreamer pipeline.
+    // Without removeAttribute('src') + load(), the WebKitGTK media backend
+    // keeps the decoder pipeline (100-500 MB) alive even after the element is
+    // removed from the DOM.
     useEffect(() => {
         return () => {
             if (videoRef.current) {
+                try {
+                    videoRef.current.pause();
+                    videoRef.current.removeAttribute('src');
+                    videoRef.current.load(); // forces GStreamer pipeline release
+                } catch (_) { /* ignore cleanup errors */ }
                 VideoPlaybackManager.unregister(videoRef.current);
             }
         };
@@ -131,7 +159,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         if (filename) {
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
-                            videoUrlCache.set(src, assetUrl);
+                            setVideoUrlCache(src, assetUrl);
                             setResolvedUrl(assetUrl);
                         }
                     }
@@ -147,7 +175,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         if (filename) {
                             const port = await getMediaPort();
                             const assetUrl = `http://127.0.0.1:${port}/${filename}`;
-                            videoUrlCache.set(src, assetUrl);
+                            setVideoUrlCache(src, assetUrl);
                             setResolvedUrl(assetUrl);
                         }
                     }
