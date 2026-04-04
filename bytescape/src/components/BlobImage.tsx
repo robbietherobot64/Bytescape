@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 
@@ -19,6 +19,8 @@ interface BlobImageProps {
     style?: React.CSSProperties;
     loading?: 'lazy' | 'eager';
     onError?: () => void;
+    /** Called when the image finishes loading — used by virtualizer to re-measure row heights */
+    onLoad?: () => void;
     /** When true, blob: URLs are resolved through get_media_blob_display
      *  (1200px max-dimension WebP) instead of the full-resolution original.
      *  Reduces WebKitGTK decoded bitmap memory from ~48 MB to ~5 MB per image.
@@ -36,7 +38,7 @@ interface BlobImageProps {
  *
  * Exported symbol used by feed cards, galleries, and article/media surfaces.
  */
-export function BlobImage({ src, alt = '', mediaDir, className, style, loading = 'lazy', onError, displayVariant }: BlobImageProps) {
+export function BlobImage({ src, alt = '', mediaDir, className, style, loading = 'lazy', onError, onLoad, displayVariant }: BlobImageProps) {
      // ===== Section: source normalization =====
     // When displayVariant is requested and src is a blob: hash, transform to
     // blob-display: prefix so useBlobUrl invokes the display-size command.
@@ -80,6 +82,14 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
         return convertFileSrc(src);
     }, [src, effectiveSrc, blobUrl, mediaDir]);
 
+    // ===== Section: image load handler =====
+    // When the image loads, notify parent (and the virtualizer) that dimensions
+    // may have changed — this lets the virtualizer re-measure without clearing
+    // the entire height cache.
+    const handleLoad = useCallback(() => {
+        onLoad?.();
+    }, [onLoad]);
+
     // ===== Section: stable image element strategy =====
     // Always render <img> to avoid DOM element type switching (img↔div) that
     // causes WebKitGTK repaints and visible flicker on virtualizer remount.
@@ -95,7 +105,8 @@ export function BlobImage({ src, alt = '', mediaDir, className, style, loading =
             className={className}
             style={style}
             loading={loading || 'lazy'}
-            decoding="auto"
+            decoding="async"
+            onLoad={handleLoad}
             onError={() => {
                 if (resolvedUrl) {
                     console.error('Image failed to load:', src);

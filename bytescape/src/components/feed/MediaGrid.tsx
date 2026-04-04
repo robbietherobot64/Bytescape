@@ -11,6 +11,8 @@ import { ExpandIcon } from './icons';
  * - Renders inline video players for `video` media kinds.
  * - Renders blob-aware images for non-video media.
  * - Delegates fullscreen/gallery state to parent via `openGallery(index)`.
+ * - Fires no custom events — the virtualizer's built-in ResizeObserver on
+ *   measured row elements automatically detects height changes when images load.
  *
  * RELATED FILES:
  * - src/components/feed/GalleryOverlay.tsx
@@ -74,7 +76,7 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                                     alt=""
                                     mediaDir={mediaDir}
                                     displayVariant
-                                    style={{ width: '100%', height: '100%', display: 'block' } as React.CSSProperties}
+                                    style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' } as React.CSSProperties}
                                 />
                                 <button
                                     className="media-expand-btn"

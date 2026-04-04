@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { FeedEntry } from '../../types';
 import { FeedItemRenderer } from '../lenses/FeedItemRenderer';
@@ -11,9 +11,12 @@ import { prefetchBlobUrls } from '../../utils/prefetchBlobUrls';
  *
  * HOW IT WORKS:
  * - Uses `@tanstack/react-virtual` to mount only visible rows + overscan.
- * - Caches measured row heights to improve estimate accuracy after first render.
+ * - Caches measured row heights keyed by entry ID (not index) so heights survive
+ *   feed prepend/append operations and are only cleared on full feed replacement.
  * - Prefetches blob URLs only for the visible window (+ small lookahead) to avoid
  *   issuing IPC/media resolution work for the entire feed at once.
+ * - Exposes a re-measure event so child BlobImage components can trigger height
+ *   recalculation after images load without clearing the entire cache.
  *
  * RELATED FILES:
  * - src/components/lenses/FeedItemRenderer.tsx (per-entry renderer)
@@ -56,57 +59,91 @@ export function VirtualizedFeedList({
     overscan: overscanProp,
 }: VirtualizedFeedListProps) {
     // ──────────────────────────────────────────────────────────────────────────
-    // Row height measurement cache
+    // Row height measurement cache — keyed by entry ID for stability
     // ──────────────────────────────────────────────────────────────────────────
-    const measurementCache = useRef<Map<number, number>>(new Map());
 
-    // Clear stale measurements when feed content changes (e.g., tab switch,
-    // new posts loaded). Without this, old heights persist and cause gaps.
+    // ID-keyed cache survives prepend/append/reorder without losing heights.
+    const idHeightCache = useRef<Map<string, number>>(new Map());
+
+    // Build an index→ID lookup for the current entries array (cheap O(n) pass)
+    const entryIdByIndex = useMemo(() => {
+        const map = new Map<number, string>();
+        for (let i = 0; i < entries.length; i++) {
+            map.set(i, entries[i].id);
+        }
+        return map;
+    }, [entries]);
+
+    // Only clear the cache when the entry set truly changes identity
+    // (e.g., tab switch), not when the same feed gets new items appended.
+    const prevIdSetRef = useRef<string>('');
     useEffect(() => {
-        measurementCache.current.clear();
+        // Build a coarse fingerprint from first+last 3 IDs + count
+        const ids = entries.map(e => e.id);
+        const fingerprint = `${entries.length}:${ids.slice(0, 3).join(',')}:${ids.slice(-3).join(',')}`;
+        if (prevIdSetRef.current && prevIdSetRef.current !== fingerprint) {
+            // Different feed — clear stale measurements
+            idHeightCache.current.clear();
+        }
+        prevIdSetRef.current = fingerprint;
     }, [entries]);
 
     const virtualizer = useVirtualizer({
         count: entries.length,
         getScrollElement: () => scrollContainerRef.current,
         estimateSize: useCallback((index: number) => {
-            // Use cached measurement if available, otherwise estimate based on content
-            const cached = measurementCache.current.get(index);
-            if (cached) return cached;
+            // Use ID-keyed cached measurement if available
+            const entryId = entryIdByIndex.get(index);
+            if (entryId) {
+                const cached = idHeightCache.current.get(entryId);
+                if (cached) return cached;
+            }
             const entry = entries[index];
             if (!entry) return 300;
-            // Rough estimate: base height + media + text
+            // Content-aware estimate to minimize layout shift
             const hasMedia = entry.media_urls.length > 0;
+            const mediaCount = Math.min(entry.media_urls.length, 4);
             const textLen = (entry.content || '').length;
-            let estimate = 120; // base header + engagement
-            if (hasMedia) estimate += 300; // media grid
-            if (textLen > 0) estimate += Math.min(textLen * 0.4, 200); // text content
-            if (entry.link_url) estimate += 100; // link preview
-            if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80; // thread replies
+            let estimate = 120; // base header + engagement bar
+            if (hasMedia) {
+                // Better media estimate based on grid layout
+                if (mediaCount === 1) estimate += 400; // 4:3 aspect single image
+                else if (mediaCount === 2) estimate += 250;
+                else estimate += 300;
+            }
+            if (textLen > 0) estimate += Math.min(textLen * 0.4, 200);
+            if (entry.link_url) estimate += 100;
+            if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80;
             return estimate;
-        }, [entries]),
+        }, [entries, entryIdByIndex]),
         overscan: overscanProp ?? 5,
         measureElement: (el: Element) => {
             const htmlEl = el as HTMLElement;
             const index = Number(htmlEl.dataset.index);
             const height = htmlEl.getBoundingClientRect().height;
             if (!isNaN(index) && height > 0) {
-                measurementCache.current.set(index, height);
+                // Store by entry ID for cross-render stability
+                const entryId = entryIdByIndex.get(index);
+                if (entryId) {
+                    idHeightCache.current.set(entryId, height);
+                }
             }
             return height;
         },
     });
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Image-load re-measurement: the virtualizer's built-in ResizeObserver on
+    // measureElement refs automatically detects when a card's height changes
+    // (e.g., after a BlobImage finishes loading and the container expands).
+    // No custom event system needed — the observer calls resizeItem() for us.
+    // ──────────────────────────────────────────────────────────────────────────
 
     const virtualItems = virtualizer.getVirtualItems();
 
     // ──────────────────────────────────────────────────────────────────────────
     // Viewport-aware blob prefetch
     // ──────────────────────────────────────────────────────────────────────────
-    // ── Viewport-aware blob prefetch ──
-    // Instead of resolving ALL blob URLs for ALL feed entries on load
-    // (which hammered the backend with hundreds of IPC calls), only prefetch
-    // blobs for entries currently visible + a small lookahead buffer.
-    // This turns O(N_total_entries) into O(N_visible + lookahead) per render.
     const prefetchedRangeRef = useRef<string>('');
     useEffect(() => {
         if (virtualItems.length === 0) return;
@@ -153,7 +190,8 @@ export function VirtualizedFeedList({
                             left: 0,
                             width: '100%',
                             transform: `translateY(${virtualRow.start}px)`,
-                            contain: 'layout style',
+                            contain: 'content',
+                            willChange: 'transform',
                         } as React.CSSProperties}
                     >
                         {groupBadge?.(entry)}

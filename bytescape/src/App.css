@@ -1152,6 +1152,18 @@ a:hover {
     overflow: hidden;
     box-shadow: 1px 1px 0 var(--border-color, #666);
     transition: none;
+    /* P0 feed stability: isolate each card to its own compositor layer
+       so reflow/repaint in one card does NOT propagate to siblings */
+    contain: content;
+    will-change: transform;
+}
+
+/* Kill ALL transitions inside feed cards during scroll — prevents flicker */
+.feed-entry-card *,
+.feed-entry-card *::before,
+.feed-entry-card *::after {
+    transition: none !important;
+    animation: none !important;
 }
 
 /* hover effects removed — user feedback: images must not react to mouseover */
@@ -1314,13 +1326,17 @@ a:hover {
     position: relative;
     overflow: hidden;
     cursor: pointer;
-    background: #ddd;
+    background: var(--bg-toolbar, #ddd);
     aspect-ratio: 16 / 9;
-    contain: layout style;
+    contain: layout style paint;
+    will-change: transform;
 }
 
 .post-media-grid.items-1 .media-item {
-    aspect-ratio: auto;
+    /* P0 feed stability: use fixed aspect ratio instead of auto
+       so the container has a stable height BEFORE the image loads.
+       This prevents virtualizer gaps from 0-height → expanded-height jumps. */
+    aspect-ratio: 4 / 3;
     min-height: 200px;
     max-height: 600px;
 }
@@ -1361,6 +1377,7 @@ a:hover {
 }
 
 .media-item:hover .media-expand-btn { opacity: 1; }
+.media-expand-btn { transition: none !important; }
 
 .inline-video-container { width: 100%; height: 100%; }
 .inline-video-container video { width: 100%; height: 100%; object-fit: contain; }
@@ -3215,29 +3232,10 @@ textarea::placeholder {
     50% { opacity: 1; color: var(--accent-orange); }
 }
 
-/* Rainbow divider on card headers — static by default, animates on hover */
-.feed-entry-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg,
-        #ff0000, #ff7700, #ffff00, #00ff00, #0000ff, #8b00ff, #ff0000
-    );
-    background-size: 200% 100%;
-    opacity: 0.4;
-}
-/* hover animation removed — user feedback: images must not react to mouseover */
+/* Rainbow divider removed — caused cross-card repaints during scroll (P0 feed stability) */
 
 .feed-entry-header {
     position: relative;
-}
-
-@keyframes rainbow-slide {
-    0% { background-position: 0% 0; }
-    100% { background-position: 200% 0; }
 }
 
 /* Animated "new" badge on status pill */
