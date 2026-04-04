@@ -249,19 +249,293 @@ Control shifts from the platform to the user.
 
 ### 6.1 Anti-Patterns (What We Don't Do)
 - **No Algorithmic Discovery:** Content only appears if explicitly subscribed
-- **No Infinite Scroll:** Feeds have a definitive end; UI signals completion
+- **No Infinite Scroll by Default:** Feeds load a finite page with an explicit "Load More" button; infinite scroll is an opt-in setting. State is hard-capped at 150 entries to prevent unbounded memory growth.
 - **No "Starter Packs":** Onboarding avoids mass-following strangers
 - **Strict Chronology:** Timelines sort by timestamp, not engagement
 
-### 6.2 The Feed: Six Tabs
-The timeline is segmented to protect high-signal relationships from high-volume topics:
+### 6.2 The Feed — Ground-Up Rebuild Specification (v2, 2026-04-04)
 
-1.  **All (The River):** Merged view of every source — live timeline, custom feeds, vault items — sorted strictly by timestamp. Friend posts are visually elevated above topic posts.
-2.  **Following (The Inner Circle):** Strict chronological feed of posts from followed DIDs. No algorithms, no boosts, no injected content.
-3.  **Feeds:** Subscribed Bluesky custom feed generators, selectable individually or merged.
-4.  **#Hashtags (The Window):** Posts matching subscribed hashtags across all bridged networks. Each tag has a "Volume Knob" (Quiet/Normal/Loud) to throttle high-traffic tags.
-5.  **RSS:** Atom/RSS feed subscriptions from blogs, newsletters, and podcasts. Stored and served from the Willow vault.
-6.  **Archives:** Read-only view of locally imported content (Facebook, Instagram, etc.). Filterable by source.
+> **Context:** The feed's **content retrieval and display pipeline** is being rebuilt from scratch due to unfixable memory issues (30+ GB consumption from WebKitGTK decoded bitmaps, unbounded state accumulation, and broken media resolution pipelines). This specification defines the requirements for that pipeline.
+>
+> **Rebuild scope — what changes:** The data fetching hook (`useUnifiedFeed`), feed state management, media resolution pipeline (`prefetchBlobUrls`, blob URL resolution), virtualized list renderer (`VirtualizedFeedList`), video playback lifecycle (`VideoPlaybackManager`), and feed cache store.
+>
+> **What stays:** The FeedScreen layout (three-column shell with sidebars), tab bar, ComposeBox, FeedEntryCard (individual card rendering and interactions), feed sub-components (`MediaGrid`, `EngagementBar`, `GalleryOverlay`, `ThreadReplies`), `FeedRightPanel`, `FriendsPanel`, `Sidebar`, and all card formatting/styling. These are working correctly and are not the source of the memory issues.
+>
+> Every design decision in this spec must prioritize memory safety and rendering stability above all else.
+
+#### 6.2.1 Design Philosophy
+
+| Principle | Rule |
+|-----------|------|
+| **Memory budget** | Feed must stay under **500 MB total** (JS heap + decoded bitmaps + IPC buffers) with 200+ items loaded. No exceptions. |
+| **No Infinite Scroll by default** | Feed loads a finite page of items. User explicitly clicks "Load More" or enables infinite scroll in settings. |
+| **Strict Chronology** | All content sorted by timestamp. No engagement-based ranking. No algorithmic injection. |
+| **Lazy Everything** | Media does not load until it enters the viewport. Videos do not initialize playback pipelines until user taps. Audio does not buffer until user taps. |
+| **Bounded State** | Feed state has a hard cap. When new items are loaded, the oldest items beyond the cap are evicted from React state and the DOM. |
+| **Direct URLs** | Bluesky CDN image/video URLs are used directly in `<img>`/`<video>` tags where possible. The blob resolution pipeline is only for vault/archive items with `blob:HASH` references. |
+| **Fail Gracefully** | A failed image load shows a styled placeholder, not a broken image icon. A failed video load shows a poster frame with a retry button. Nothing crashes the feed. |
+
+#### 6.2.2 Feed Tabs
+
+The feed is organized into tabs that protect high-signal relationships from high-volume content:
+
+| Tab | Content | Source | Default |
+|-----|---------|--------|---------|
+| **All** | Merged, deduplicated union of Following + Feeds + Archives | All connected sources | ✅ Default tab |
+| **Following** | Posts from followed accounts across **all linked platforms**. Source toggles at the top of the tab allow filtering by platform (e.g. show only Mastodon, only Bluesky, etc.). No boosts, no injected content. | Bluesky timeline, Mastodon home, Pixelfed feed, PeerTube subscriptions, all linked AP instances | |
+| **Feeds** | Subscribed custom feed generators. Dropdown to select individual or merged. | Bluesky saved feeds, future: AP relays | |
+| **Groups** | Posts from joined groups and subscribed topics. | Local group system + federated AP Groups | Future placeholder |
+
+> **Removed: "You" tab.** Viewing your own posts is handled by the Posts section on the Profile screen. A dedicated feed tab for self-posts is redundant. If there's future demand for a "conversations on my posts" view, it can be added as a Profile sub-tab rather than a feed tab.
+
+**Source toggles (Following tab):** A row of toggle pills at the top of the Following tab, one per linked account/platform. Each toggle shows the platform icon and can be on/off independently. When all toggles are on, all sources merge. When only one is on, it filters to that platform. This gives users control over their Following feed without needing separate tabs per platform.
+
+Future tabs (not in initial rebuild):
+- **#Hashtags** — Posts matching subscribed hashtags (Volume Knob: Quiet/Normal/Loud)
+- **RSS** — Atom/RSS subscriptions from blogs, newsletters, podcasts
+- **Archives** — Read-only imported content (Facebook, Instagram), filterable by source
+
+#### 6.2.3 Content Types & Card Layouts
+
+Every `FeedEntry` has an `item_type` classification. The card layout adapts based on content type:
+
+| Content Type | Classification Rule | Card Layout |
+|-------------|-------------------|-------------|
+| **Status** | Short text, <500 chars, no dominant media | Text block, optional small inline image thumbnail |
+| **Gallery** | ≥1 image, image is the primary content | Responsive image grid (1-4 images). Tap to expand gallery overlay. |
+| **Video** | Has video URL/blob | 16:9 poster frame with play button overlay. Click-to-play only. Vertical videos display with aspect-preserving black bars (pillarbox). |
+| **Article** | Long text >500 chars, or `BytescapeType::Article` | Headline + excerpt (first 200 chars) + reading time estimate + optional thumbnail |
+| **Link** | Has `link_url` with no other dominant media | Link preview card (title + description + domain + optional thumbnail) |
+| **Audio** | Has audio attachment (`audio/*` MIME) | Compact inline audio player (waveform/progress bar + play/pause). No auto-play. |
+
+**Mixed content**: Posts with text + images show both. Posts with text + video show text + video poster. The highest-priority media type determines the primary card variant.
+
+#### 6.2.4 Content-Type Filters
+
+Toolbar filter chips allow slicing the feed by content type. Filters are **combinable** and apply as a client-side filter on the current tab's data:
+
+`📝 Text · 📸 Images · 🎬 Video · 📰 Articles · 🔗 Links · 🎵 Audio`
+
+Additionally, a **Source filter** dropdown:
+`🌐 All Sources · Bluesky · Mastodon · Pixelfed · PeerTube · Other AP · Local Vault · Facebook Archives · Instagram Archives`
+
+When a content-type filter is active, the card layout optimizes for that type:
+- **Images filter** → Larger thumbnails, masonry-style grid
+- **Video filter** → Larger poster frames, 1 column
+- **Articles filter** → Headline + excerpt list, no media prominence
+- **Text filter** → Compact text-only cards
+
+#### 6.2.5 Media Display Standards
+
+##### Images
+- **Feed card**: Display at a **maximum decoded resolution of 600px** on the longest edge. Use Bluesky CDN `thumb` URLs (~500px) directly; for vault blobs, request display-variant thumbnails.
+- **Gallery overlay**: On tap/click, load the full-resolution image. Gallery shows one image at a time with left/right navigation, pinch-to-zoom on mobile.
+- **Aspect ratio**: Preserve original aspect ratio. Never stretch, never crop in feed cards. Images wider than the card get `width: 100%; height: auto`. Tall images get `max-height: 400px; object-fit: contain`.
+- **Grid layout**: 1 image = full width. 2 images = side-by-side 50/50. 3 images = 1 large + 2 small. 4 images = 2×2 grid. 5+ = show 4 + "+N" overlay badge.
+- **Loading**: `loading="lazy"` on all `<img>` tags. Placeholder: solid color swatch (extracted from image dominant color if available, else `var(--bg-secondary)`).
+- **Error state**: On load failure, show a styled "Image unavailable" placeholder. Never show the browser's broken image icon.
+
+##### Video
+- **Click-to-play only**: Videos display as a poster frame (first frame or Bluesky thumbnail) with a centered ▶ play button overlay. **No auto-play. No preload. No pipeline initialization until user clicks.**
+- **Aspect ratio**: Preserve original aspect ratio always. Responsive behavior adapts to viewport:
+  - **Desktop viewport (>768px):**
+    - **Landscape** (16:9, 4:3, etc.): Fill the card width, height determined by aspect ratio.
+    - **Portrait/vertical** (9:16, phone videos): Display with **black pillarbox bars** on left and right. The video is centered and its native height/width ratio is preserved. Never stretch vertical video to fill horizontal space.
+    - **Square** (1:1): Center in card with natural sizing.
+    - Max dimensions: `max-width: 100%; max-height: 500px`.
+  - **Mobile viewport (≤768px):**
+    - **Portrait/vertical**: Fill the card width edge-to-edge. Height determined by aspect ratio. No pillarbox bars — the video naturally fills the narrow viewport.
+    - **Landscape**: Fill width, maintain aspect ratio. May appear small — this is expected.
+    - **Square**: Fill width.
+    - Max dimensions: `max-width: 100%; max-height: 80vh`.
+  - Video player scales down to fit the container, never scales up beyond native resolution.
+- **Pipeline lifecycle**: GStreamer/`<video>` pipeline is created on play, destroyed when:
+  - User scrolls the card out of the viewport (IntersectionObserver)
+  - User pauses and scrolls away
+  - User switches tabs
+- **Simultaneous limit**: Maximum **1** active video pipeline at a time. Starting a new video pauses/destroys the previous one.
+- **Error state**: On playback failure, show poster frame with "Video unavailable" text and a retry button.
+
+##### Audio (Future)
+- **Inline player**: Compact bar within the feed card (not full-width). Shows: title, artist (if available), progress bar, play/pause, duration.
+- **No auto-play**. Click to start. One audio stream at a time (starting new audio pauses the old one).
+- **Supported embeds** (future): Bandcamp, SoundCloud, Spotify (via oEmbed/iframe). Displayed as an inline card with play button, not a full embed.
+
+##### Documents (Future)
+- **PDF**: Thumbnail preview of first page + "View PDF" button → opens in full-screen viewer.
+- **Other documents**: File icon + name + size + "Download" button.
+
+#### 6.2.6 Pagination & State Management
+
+| Setting | Default | Configurable |
+|---------|---------|-------------|
+| **Items per page** | 30 | User setting: 15 / 30 / 50 |
+| **Maximum items in state** | 150 | Hard cap. Not user-configurable. |
+| **Load More behavior** | Manual "Load More" button at bottom | Setting: enable auto-load on scroll (infinite scroll), off by default |
+| **Cache TTL** | 120 seconds per tab | — |
+| **Auto-refresh** | Every 60 seconds, replaces current page (does not grow state) | Setting: 30s / 60s / 5m / off |
+
+**State eviction**: When `feedEntries.length` exceeds the maximum cap (150), the oldest entries beyond the cap are dropped from React state. The user can scroll back to load them again via "Load Previous." This is a **hard memory boundary**.
+
+**Feed cache store**: Keyed by `tab:source_filter`. Each cache entry stores `{ entries: FeedEntry[], cursor: string | null, timestamp: number }`. Caches are independent per tab. Stale caches are served immediately while a background refresh runs (stale-while-revalidate).
+
+**Tab preservation**: Switching tabs does NOT destroy the current tab's state. Each tab maintains its own `feedEntries[]`, `cursor`, and scroll position. Tabs that haven't been visited in >5 minutes are evicted on next tab switch.
+
+#### 6.2.7 Media Sources & Resolution Pipeline
+
+Media in the feed comes from three distinct sources, each with a different resolution strategy:
+
+| Source | URL Pattern | Resolution | Memory Concern |
+|--------|------------|------------|----------------|
+| **Bluesky CDN** | `https://cdn.bsky.app/img/feed_thumbnail/...` | Direct `<img src>`. Browser handles caching. | WebKitGTK bitmap cache — use `thumb` URLs (500px) exclusively in feed. |
+| **Mastodon / Pixelfed** | `https://instance.social/media/...` | Direct `<img src>`. Use `small` or `preview` variant from API. | Same as Bluesky — use smallest available variant. |
+| **PeerTube** | `https://instance.tube/static/thumbnails/...` | Direct `<img src>`. Use thumbnail URL from API. | Video thumbnails only; actual video streams are click-to-play. |
+| **Other AP instances** | Varies by instance | Direct `<img src>` from `attachment[].url`. | Use smallest available variant from `mediaAttachments`. |
+| **Vault blobs** | `blob:HASH` | Resolve via IPC → local media server `http://127.0.0.1:{port}/HASH.ext` | Resolved only for visible + ±3 items. Max 20 concurrent resolutions. |
+
+**Resolution rules:**
+1. HTTP/HTTPS URLs → pass through directly to `<img>`/`<video>` `src`. No IPC. No blob resolution. No Object URLs.
+2. `blob:HASH` → check `resolvedUrlCache` (capped at 300 entries, LRU eviction) → if miss, invoke `resolve_blob_url` via IPC → backend exports to `blob_cache/` → returns local media server URL.
+3. `blob-display:HASH` → normalize to `blob:HASH`, resolve as above. Display variant may serve a resized version in the future.
+4. Filesystem paths (legacy) → convert via `convertFileSrc()`.
+
+**Prefetch strategy**: The virtualizer reports which items are visible. A viewport-aware prefetch resolves blob URLs for **visible items ± 3 items** in each direction. Maximum batch size: 20. Blob resolution is **never** triggered for the entire feed — only the viewport neighborhood.
+
+#### 6.2.8 Feed Card Anatomy
+
+Every feed card has a consistent structure:
+
+```
+┌─────────────────────────────────────────┐
+│  👤 Author avatar · Author name · @handle · · timestamp
+│  🔗 Source badge (Bsky / Mdon / Vault / FB / IG)
+├─────────────────────────────────────────┤
+│                                         │
+│  [Content text — rich text with facets  │
+│   @mentions, #hashtags, hyperlinks]     │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  [Media area — adapts to content type:  │
+│   Image grid / Video poster / Link card │
+│   / Audio player / Article excerpt]     │
+│                                         │
+├─────────────────────────────────────────┤
+│  [Quoted post — if present, nested card │
+│   with same structure, visually inset]  │
+├─────────────────────────────────────────┤
+│  ♥ Like · 💬 Reply · 🔁 Repost · ⋯ More│
+│  [Engagement bar — counts + actions]    │
+└─────────────────────────────────────────┘
+```
+
+**Card sizing:**
+- Cards have a **fixed max-width** of the content column (fluid, responsive). No narrow cards.
+- Card height is determined by content — no fixed aspect ratio on the card itself.
+- Images display at ~4:3 or natural aspect ratio (not cropped to square).
+- Minimum card height: ~80px (text-only status). Maximum: ~600px (video + text). Content beyond 600px is truncated with "Show more."
+
+**Thread replies**: If a post has `owner_replies[]` (self-replies forming a thread), they are displayed as visually connected cards below the parent with a thread line on the left edge. Maximum 3 inline replies; "Show full thread" link after.
+
+#### 6.2.9 Rendering Architecture
+
+The new feed uses a **simplified rendering pipeline** designed to prevent the memory and stability issues of the old implementation:
+
+```
+FeedScreen
+ └─ FeedToolbar (tab switcher + content filters + source filter)
+ └─ FeedList (the core rendering component)
+     ├─ Uses CSS `overflow-y: auto` with `content-visibility: auto` for native browser virtualization
+     ├─ OR @tanstack/react-virtual with fixed overscan of 2 and stable height estimation
+     ├─ Each item rendered by <FeedCard /> — a single, focused component
+     └─ "Load More" button at bottom (or IntersectionObserver trigger if infinite scroll enabled)
+```
+
+**Key architectural decisions:**
+1. **`content-visibility: auto`** (preferred approach): Instead of JavaScript-based virtualization, use CSS `content-visibility: auto` with `contain-intrinsic-size`. This lets the browser natively skip layout/paint for off-screen items while keeping them in the DOM. Benefits: no height estimation bugs, no scroll position jumps, no flash-of-content on scroll direction change. Fallback to @tanstack/react-virtual if `content-visibility` performance is insufficient.
+
+2. **Single `<FeedCard>` component**: One component handles all content types via conditional rendering. No god-component — the card delegates to sub-components (`<MediaGrid>`, `<VideoPlayer>`, `<LinkPreview>`, `<EngagementBar>`, `<QuotedPost>`) but the entry point is one focused component. Each sub-component is `React.memo`'d.
+
+3. **No simultaneous tab rendering**: Only the active tab's content is in the DOM. Inactive tabs store their state in Zustand but **do not render**. This prevents hidden tabs from holding decoded bitmaps, video pipelines, or blob resolution state.
+
+4. **Stable keys**: Each `<FeedCard>` uses `entry.id` as its React key. IDs are stable across refreshes (Bluesky URI, vault item key, archive item hash). No index-based keys.
+
+5. **CSS containment**: Every feed card has `contain: content` to prevent layout recalculations from propagating up/down the feed.
+
+#### 6.2.10 Interactions & Engagement
+
+| Action | Behavior | Backend Command |
+|--------|----------|----------------|
+| **Like** | Optimistic UI update → invoke backend → rollback on failure | `like_post` / `unlike_post` |
+| **Reply** | Opens ComposeBox in reply mode with `reply_parent_uri` set | `publish_post_v2` with reply context |
+| **Repost** | Confirmation modal → invoke backend | `repost` / `unrepost` |
+| **Quote** | Opens ComposeBox with quoted post embedded | `publish_post_v2` with quote embed |
+| **Share to Group** | Group picker modal → `share_to_group` | `share_to_group` |
+| **Copy Link** | Copies Bluesky/AP/vault URL to clipboard | Client-side |
+| **Open Original** | Opens post on source platform (Bluesky, Mastodon, etc.) | Client-side URL open |
+| **Report** | Report modal (future) | `report_content` (future) |
+
+All engagement actions must work across content sources:
+- **Bluesky posts**: Full like/reply/repost/quote support via Bluesky API
+- **ActivityPub posts**: Like/reply via AP (when federated)
+- **Vault/archive posts**: Like (local), reply (local or syndicated), share to group
+- **P2P peer posts**: React (local), reply (P2P message)
+
+#### 6.2.11 Performance Targets
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| **Time to First Paint** | <200ms from tab switch | React render + CSS paint |
+| **Time to Interactive** | <500ms from tab switch | First card clickable |
+| **Cold load (API fetch)** | <2s including network | From empty cache to rendered cards |
+| **Warm load (cache hit)** | <100ms | From cached data to rendered cards |
+| **Memory (30 items, images)** | <200 MB total process RSS | Measured with `ps aux` |
+| **Memory (150 items, mixed)** | <500 MB total process RSS | Hard ceiling |
+| **Scroll FPS** | 60fps | No jank, no layout thrashing |
+| **Image load** | <100ms from viewport entry | Using Bluesky CDN thumb URLs |
+| **Blob resolution** | <300ms from viewport entry | IPC round-trip for vault items |
+
+#### 6.2.12 Accessibility
+
+- All images have `alt` text (use post content as fallback)
+- Video poster frames are keyboard-focusable with Enter to play
+- Feed is navigable via Tab key (card → card) and Arrow keys (within card)
+- Like/Reply/Repost buttons have `aria-label` with current state
+- "Load More" button has `aria-live="polite"` announcement
+- Content-type filters are `role="toolbar"` with `aria-pressed` states
+- Reduced motion: respect `prefers-reduced-motion` — disable all transitions, use instant show/hide
+
+#### 6.2.13 Supported Media Formats
+
+| Format | Support Level | Notes |
+|--------|-------------|-------|
+| **JPEG/JPG** | ✅ Full | Primary image format |
+| **PNG** | ✅ Full | Transparency preserved |
+| **WebP** | ✅ Full | Preferred for thumbnails |
+| **GIF** | ✅ Full | Animated GIFs play inline (static poster on `prefers-reduced-motion`) |
+| **AVIF** | ✅ Full | Modern format, WebKitGTK supports it |
+| **SVG** | ⚠️ Sanitized | DOMPurify sanitization required before rendering |
+| **MP4 (H.264)** | ✅ Full | Primary video format |
+| **MP4 (H.265/HEVC)** | ⚠️ Platform-dependent | GStreamer decodes on Linux; may need transcoding |
+| **WebM (VP9)** | ✅ Full | Open video format |
+| **HLS (m3u8)** | ✅ Via conversion | Bluesky videos: backend converts HLS→MP4 via FFmpeg |
+| **MP3** | ✅ Full (future) | Audio player embed |
+| **AAC/M4A** | ✅ Full (future) | Audio player embed |
+| **OGG/Opus** | ✅ Full (future) | Open audio format |
+| **PDF** | ⚠️ Preview only (future) | First-page thumbnail + download |
+
+#### 6.2.14 Future Extensibility
+
+The feed architecture must support these future additions without structural changes:
+
+1. **New content sources**: RSS/Atom, Threads, email digests — each produces `FeedEntry` via an adapter. No feed component changes needed.
+2. **New media types**: Audio embeds (Bandcamp, SoundCloud), document previews (PDF), map embeds — each is a new sub-component inside the media area.
+3. **Rich embeds**: oEmbed protocol for third-party content (YouTube, Spotify, Bandcamp). Sandboxed `<iframe>` with explicit user opt-in per domain.
+4. **Network state events**: "Alice updated her profile theme" / "Bob joined a webring" — rendered as a distinct, compact card type in the feed.
+5. **Polls**: AP `Question` type — rendered as radio/checkbox options with vote counts.
+6. **Events**: Calendar item cards with RSVP buttons — rendered inline in feed.
+7. **Collaborative articles**: Yjs-backed articles with "N people editing" indicator.
+8. **Reactions beyond like**: Emoji reactions, custom reactions — engagement bar extends.
 
 ### 6.3 Profile Customization
 
@@ -468,9 +742,11 @@ This document defines the end-to-end data flow and storage architecture for:
 ## 2) Display Interfaces
 
 ## Feed screen tabs
-- Following: people/profile timeline only (Bluesky following timeline)
-- Feeds: all followed custom feeds combined, with dropdown to select one feed or all
-- All: merged + deduplicated union of Following + Feeds
+> **See §6.2 for the comprehensive feed rebuild specification (v2, 2026-04-04).**
+> Summary: All (merged) · Following (social graph) · Feeds (custom generators) · You (own posts) · Groups (communities).
+> Content-type filters: Text · Images · Video · Articles · Links · Audio.
+> Source filter: All / Bluesky / ActivityPub / Vault / FB / IG.
+> Default 30 items/page, max 150 in state, manual "Load More" (infinite scroll opt-in via settings).
 
 ## Vault screen
 - File-first media browser from Iroh Docs metadata (`vault/file/*`)
@@ -511,12 +787,15 @@ This document defines the end-to-end data flow and storage architecture for:
 ## 4) End-to-End Flow
 
 ## A. Post cloning + feed rendering
-1. Fetch from Bluesky timeline and saved feeds, parse Facebook archive posts.
+> **See §6.2 for the comprehensive feed rebuild specification (v2, 2026-04-04).**
+1. Fetch from all linked accounts: Bluesky timeline, Mastodon home, Pixelfed feed, PeerTube subscriptions, saved feeds, and archive posts.
 2. Normalize to `BytescapeItem` and save to `ITEMS_TABLE`.
-3. Feed UI composes views:
-   - Following = timeline
-   - Feeds = `get_unified_feed` over selected/all followed feeds
-   - All = merge(Following, Feeds), sort by timestamp, dedupe by URI/CID
+3. Frontend adapter converts to `FeedEntry` (unified display type).
+4. Feed UI loads **one page** (default 30 items) per tab.
+5. Media URLs: HTTP/HTTPS CDN URLs used directly in `<img>`. Vault `blob:HASH` resolved lazily for visible items ± 3 only.
+6. Bluesky images: use `thumb` URLs (500px) in feed. Fullsize loaded on gallery tap. AP instances: use `small`/`preview` variants.
+7. State hard-capped at 150 items. Oldest evicted when cap exceeded.
+8. Tab data stored in Zustand; only active tab renders to DOM. Source toggles in Following tab filter by platform.
 
 ## B. Media extraction to Vault
 1. Import connectors detect media paths/URLs.
