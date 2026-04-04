@@ -28,7 +28,7 @@
 //! - `db.rs` — `upsert_item` persists syndication metadata
 //! - Frontend: `src/screens/ComposeBox.tsx` invokes `syndicate_vault_item`
 
-use tauri::State;
+use tauri::{State, Manager};
 
 use serde_json::json;
 use crate::AppState;
@@ -106,6 +106,14 @@ pub async fn syndicate_vault_item(
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref().ok_or("Sync manager not initialized")?;
 
+    // Prepare cache directory for streaming blob exports (avoids full-blob memory reads)
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| format!("App data dir error: {}", e))?;
+    let cache_dir = app_data_dir.join("blob_cache");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Cache dir error: {}", e))?;
+
     for (i, blob_hash_str) in item.media_blobs.iter().enumerate() {
         // We only support images for now. Check mime if available.
         if let Some(mime) = item.media_mimes.get(i) {
@@ -124,15 +132,25 @@ pub async fn syndicate_vault_item(
             }
         };
 
-        // Fetch from Iroh
-        let data = sync.get_media(hash).await
-            .map_err(|e| format!("Failed to fetch blob {} from vault: {}", blob_hash_str, e))?;
+        // Stream blob to cache file, then read once for upload (halves peak memory
+        // vs. get_media which holds entire blob in Iroh's Bytes + a .to_vec() copy).
+        let normalized = blob_hash::normalize_blob_ref(blob_hash_str);
+        let header = sync.get_media_header(hash, 12).await
+            .map_err(|e| format!("Failed to read header for blob {}: {}", blob_hash_str, e))?;
+        let ext = super::media::detect_extension_from_bytes(&header);
+        let cache_path = cache_dir.join(format!("{}.{}", &normalized, ext));
+        if !cache_path.exists() {
+            sync.export_media_to_file(hash, &cache_path).await
+                .map_err(|e| format!("Failed to export blob {} to cache: {}", blob_hash_str, e))?;
+        }
+        let data = std::fs::read(&cache_path)
+            .map_err(|e| format!("Failed to read cached blob {}: {}", blob_hash_str, e))?;
 
         let mime = item.media_mimes.get(i).cloned().unwrap_or_else(|| "image/jpeg".to_string());
 
         // Upload to Bluesky PDS
         let upload_url = format!("{}/com.atproto.repo.uploadBlob", pds_base);
-        let resp = client.post_blob(&upload_url, &mime, data.to_vec()).await?;
+        let resp = client.post_blob(&upload_url, &mime, data).await?;
         
         if !resp.status().is_success() {
             let err_body = resp.text().await.unwrap_or_default();

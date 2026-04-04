@@ -30,7 +30,7 @@
 //! - Frontend: `src/components/PostCard.tsx` — like/repost/reply UI triggers
 //! - Frontend: `src/components/ThreadView.tsx` — thread display
 
-use tauri::State;
+use tauri::{State, Manager};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use crate::AppState;
@@ -301,6 +301,14 @@ pub async fn reply_to_post(
         let sync_guard = state.sync_manager.lock().await;
         let sync = sync_guard.as_ref().ok_or("Sync manager not initialized")?;
 
+        // Prepare cache directory for streaming blob exports
+        let app_data_dir = state.app_handle.path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?;
+        let cache_dir = app_data_dir.join("blob_cache");
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| e.to_string())?;
+
         for attachment in &attachments {
             let mime = attachment.mime_type.clone().unwrap_or_else(|| "image/jpeg".to_string());
 
@@ -324,7 +332,16 @@ pub async fn reply_to_post(
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&hash_bytes);
                 let hash = crate::sync::Hash::from_bytes(arr);
-                sync.get_media(hash).await.map_err(|e| e.to_string())?.to_vec()
+                // Stream blob to cache, then read (avoids Iroh double-buffer)
+                let header = sync.get_media_header(hash, 12).await
+                    .map_err(|e| e.to_string())?;
+                let ext = super::media::detect_extension_from_bytes(&header);
+                let cache_path = cache_dir.join(format!("{}.{}", &normalized, ext));
+                if !cache_path.exists() {
+                    sync.export_media_to_file(hash, &cache_path).await
+                        .map_err(|e| e.to_string())?;
+                }
+                std::fs::read(&cache_path).map_err(|e| e.to_string())?
             } else if let Some(path_str) = &attachment.path {
                 let path = std::path::Path::new(path_str);
                 if !path.exists() { continue; }

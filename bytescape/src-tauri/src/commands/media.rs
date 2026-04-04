@@ -1450,7 +1450,7 @@ fn md5_hash(input: &str) -> u64 {
 ///
 /// Supports JPEG, PNG, WebP, GIF, MP4/MOV (ISO BMFF `ftyp`), and WebM/Matroska
 /// (EBML header). Returns `"bin"` for unrecognised formats.
-fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
+pub(crate) fn detect_extension_from_bytes(bytes: &[u8]) -> &'static str {
     if bytes.len() < 4 {
         return "bin";
     }

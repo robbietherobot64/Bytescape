@@ -36,7 +36,7 @@
 //! - [`models.rs`] — `BytescapeItem`, `SyndicationStatus`, `Audience`
 //! - [`blob_hash.rs`] — blob hash parsing for vault media references
 
-use tauri::State;
+use tauri::{State, Manager};
 use serde::Deserialize;
 use serde_json::json;
 use crate::AppState;
@@ -299,6 +299,14 @@ pub async fn publish_post_v2(
         let sync_guard = state.sync_manager.lock().await;
         let sync = sync_guard.as_ref().ok_or("Sync manager not initialized")?;
 
+        // Prepare cache directory for streaming blob exports (avoids full-blob memory reads)
+        let app_data_dir = state.app_handle.path()
+            .app_data_dir()
+            .map_err(|e| format!("App data dir error: {}", e))?;
+        let cache_dir = app_data_dir.join("blob_cache");
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| format!("Cache dir error: {}", e))?;
+
         for (i, blob_hash_str) in media_blobs.iter().enumerate() {
             let mime = media_mimes.get(i).cloned().unwrap_or_else(|| "image/jpeg".to_string());
             
@@ -310,8 +318,24 @@ pub async fn publish_post_v2(
                 }
             };
 
-            if let Ok(data) = sync.get_media(hash).await {
-                if let Ok(upload_res) = state.xrpc_upload_blob(data.to_vec(), &mime).await {
+            if let Ok(header) = sync.get_media_header(hash, 12).await {
+                let ext = super::media::detect_extension_from_bytes(&header);
+                let normalized = blob_hash::normalize_blob_ref(blob_hash_str);
+                let cache_path = cache_dir.join(format!("{}.{}", &normalized, ext));
+                if !cache_path.exists() {
+                    if let Err(e) = sync.export_media_to_file(hash, &cache_path).await {
+                        println!("posting: failed to export blob {}: {}", blob_hash_str, e);
+                        continue;
+                    }
+                }
+                let data = match std::fs::read(&cache_path) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        println!("posting: failed to read cached blob {}: {}", blob_hash_str, e);
+                        continue;
+                    }
+                };
+                if let Ok(upload_res) = state.xrpc_upload_blob(data, &mime).await {
                     if let Some(blob_ref) = upload_res.get("blob") {
                         if mime.starts_with("video/") {
                             video_embed = Some(json!({

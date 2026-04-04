@@ -39,7 +39,7 @@
 //!   slices in Rust; push limit/offset into the redb query.
 
 use bytes::Bytes;
-use tauri::State;
+use tauri::{State, Manager};
 
 use crate::error::BytescapeError;
 use crate::sync::{VaultFile, VaultFileStats, Hash, NamespaceId};
@@ -246,10 +246,27 @@ pub async fn vault_get_file_data(file_id: String, state: State<'_, AppState>) ->
         Err(e) => return Err(e.to_string()),
     };
     
-    let bytes = sync.get_media(hash).await
+    // Stream blob to cache file, then read once (avoids Iroh double-buffer
+    // where get_media holds entire blob in Bytes + .to_vec() creates a copy).
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let cache_dir = app_data_dir.join("blob_cache");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| e.to_string())?;
+
+    let header = sync.get_media_header(hash, 12).await
+        .map_err(|e| e.to_string())?;
+    let ext = super::media::detect_extension_from_bytes(&header);
+    let cache_path = cache_dir.join(format!("{}.{}", &file.blob_hash, ext));
+    if !cache_path.exists() {
+        sync.export_media_to_file(hash, &cache_path).await
+            .map_err(|e| e.to_string())?;
+    }
+    let data = std::fs::read(&cache_path)
         .map_err(|e| e.to_string())?;
     
-    Ok(bytes.to_vec())
+    Ok(data)
 }
 
 /// Get the thumbnail bytes for a vault file.
