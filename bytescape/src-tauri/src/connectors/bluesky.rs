@@ -954,10 +954,15 @@ pub fn extract_image_urls_from_view(embed: &serde_json::Value, urls: &mut Vec<St
     // images view: { "$type": "app.bsky.embed.images#view", "images": [{ "thumb": "...", "fullsize": "..." }] }
     if let Some(images) = embed.get("images").and_then(|i| i.as_array()) {
         for img in images {
-            // Prefer fullsize, fallback to thumb
-            if let Some(url) = img.get("fullsize").and_then(|u| u.as_str()) {
+            // MEMORY-CRITICAL: Prefer thumb (500px) over fullsize (2000-4000px).
+            // WebKitGTK decodes every image to a full RGBA bitmap in memory.
+            // fullsize (4032x3024) = 48 MB per image.  thumb (500x375) = 0.75 MB.
+            // In a feed with 50+ images, this is the difference between 2.4 GB
+            // and 37 MB of decoded bitmap memory.
+            // The gallery overlay can use fullsize when the user expands.
+            if let Some(url) = img.get("thumb").and_then(|u| u.as_str()) {
                 urls.push(url.to_string());
-            } else if let Some(url) = img.get("thumb").and_then(|u| u.as_str()) {
+            } else if let Some(url) = img.get("fullsize").and_then(|u| u.as_str()) {
                 urls.push(url.to_string());
             }
         }

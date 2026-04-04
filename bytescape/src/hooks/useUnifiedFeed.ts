@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { AuthStatus, BlueskyPost, FeedEntry, GeneratorView, LinkedAccount, ProfileView } from '../types';
 import { adaptBlueskyPost, adaptBytescapeItem, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
-import { prefetchBlobUrls } from '../utils/prefetchBlobUrls';
 import { useDataProvider } from '../providers';
 
 /**
@@ -258,8 +257,7 @@ export function useUnifiedFeed({
                 setFeedEntries(deduped);
                 setCursor(nextCursor);
                 setCache(cacheKey, deduped, nextCursor);
-                // Batch-prefetch blob URLs for images (P6)
-                prefetchBlobUrls(deduped).catch(() => {});
+                // Blob URL prefetch handled by VirtualizedFeedList viewport-aware prefetch
                 await fetchFollowingList(auth.did);
 
             } else if (tab === 'you') {
@@ -299,8 +297,7 @@ export function useUnifiedFeed({
                 setFeedEntries(dedupedYou);
                 setCursor(bskyCursor);
                 setCache(cacheKey, dedupedYou, bskyCursor);
-                // Batch-prefetch blob URLs for images (P6)
-                prefetchBlobUrls(dedupedYou).catch(() => {});
+                // Blob URL prefetch handled by VirtualizedFeedList viewport-aware prefetch
 
             } else if (tab === 'subscribed') {
                 // ── Subscribed tab: show content from user's saved/subscribed feeds ──
@@ -372,8 +369,7 @@ export function useUnifiedFeed({
                         setFeedEntries(deduped);
                         setCursor(nextCur);
                         setCache(cacheKey, deduped, nextCur);
-                        // Batch-prefetch blob URLs for images (P6)
-                        prefetchBlobUrls(deduped).catch(() => {});
+                        // Blob URL prefetch handled by VirtualizedFeedList viewport-aware prefetch
                     } catch (e: any) {
                         console.error('get_unified_feed failed for subscribed tab:', e);
                         if (!isStale()) {
@@ -430,8 +426,7 @@ export function useUnifiedFeed({
                     setCursor(response.next_cursor);
                     setCache(cacheKey, deduped, response.next_cursor);
                     setArchiveOffset(200);
-                    // Batch-prefetch blob URLs for images (P6)
-                    prefetchBlobUrls(deduped).catch(() => {});
+                    // Blob URL prefetch handled by VirtualizedFeedList viewport-aware prefetch
                 } catch (e) {
                     console.error('get_timeline_unified/list_saved_feeds failed:', e);
                     if (isStale()) return;
@@ -459,7 +454,7 @@ export function useUnifiedFeed({
                 setFeedEntries(deduped);
                 setCursor(null); // Groups feed uses timestamp cursors internally
                 setCache(cacheKey, deduped, null);
-                prefetchBlobUrls(deduped).catch(() => {});
+                // Blob URL prefetch handled by VirtualizedFeedList viewport-aware prefetch
             }
         } catch (e) {
             console.error('Failed to fetch feed:', e);

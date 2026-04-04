@@ -122,8 +122,12 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
     // that causes images to flash a dark placeholder for 1-2 frames on mount.
     const [url, setUrl] = useState<string | null>(() => {
         if (!path) return null;
-        if (path.startsWith('blob:')) {
-            const hash = extractBlobHash(path);
+        // Handle blob-display: prefix (display-variant images from BlobImage)
+        // Falls through to the same resolution as blob: since no dedicated
+        // backend command exists yet. The key insight is: the hash is the same,
+        // so cache lookups work with the normalized hash.
+        if (path.startsWith('blob-display:') || path.startsWith('blob:')) {
+            const hash = extractBlobHash(path.startsWith('blob-display:') ? `blob:${path.slice(13)}` : path);
             if (hash === null) return path; // browser Object URL — pass through
             return resolvedUrlCache.get(hash) ?? null;
         }
@@ -138,9 +142,15 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
             return;
         }
 
+        // Handle blob-display: prefix identically to blob: for now.
+        // Normalizes blob-display:HASH → blob:HASH so extractBlobHash works.
+        const effectivePath = path.startsWith('blob-display:')
+            ? `blob:${path.slice(13)}`
+            : path;
+
         // Check if it's a blob reference
-        if (path.startsWith('blob:')) {
-            const hash = extractBlobHash(path);
+        if (effectivePath.startsWith('blob:')) {
+            const hash = extractBlobHash(effectivePath);
 
             // Browser Object URLs pass through directly
             if (hash === null) {
@@ -266,6 +276,11 @@ export function useLazyBlobUrl(path: string | undefined): [
     // resolved this blob, we can return the URL synchronously without waiting for
     // the IntersectionObserver to fire.
     const isCached = path ? (() => {
+        if (path.startsWith('blob-display:')) {
+            // blob-display: shares the same cache as blob: (hash is the key)
+            const hash = extractBlobHash(`blob:${path.slice(13)}`);
+            return hash !== null && resolvedUrlCache.has(hash);
+        }
         if (!path.startsWith('blob:')) return false;
         const hash = extractBlobHash(path);
         return hash !== null && resolvedUrlCache.has(hash);
