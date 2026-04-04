@@ -3050,6 +3050,30 @@ textarea::placeholder {
     background: #fffff0;
 }
 
+/* Big green import button — user feedback: "big and green so it stands out" */
+.import-btn-primary {
+    background: #22c55e !important;
+    color: #fff !important;
+    font-size: 1.15rem !important;
+    padding: 14px 32px !important;
+    border: 2px solid #16a34a !important;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.35);
+}
+.import-btn-primary:hover:not(:disabled) {
+    background: #16a34a !important;
+    box-shadow: 0 3px 12px rgba(34, 197, 94, 0.5);
+}
+.import-btn-primary:disabled {
+    background: #555 !important;
+    border-color: #444 !important;
+    color: #999 !important;
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
 .drop-icon { font-size: 24px; margin-bottom: 6px; }
 .drop-hint { font-size: 10px; color: var(--text-muted); margin-top: 4px; font-style: italic; }
 

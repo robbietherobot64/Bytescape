@@ -245,10 +245,9 @@ export function ImportScreen({
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                         {/* Bluesky — instant (requires linked Bluesky account) */}
                         <button
-                            className="btn btn-primary btn-block"
+                            className="btn btn-block import-btn-primary"
                             onClick={onImportBluesky}
                             disabled={isImporting || !isBlueskyLinked}
-                            style={{ padding: "14px 20px", fontSize: "0.95rem" }}
                         >
                             🦋 Import from Bluesky
                         </button>

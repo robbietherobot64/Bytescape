@@ -53,18 +53,26 @@ export function IdentitySetupModal({ auth, onComplete }: IdentitySetupModalProps
         setUsername(suggested);
     }, [auth.handle, auth.source]);
 
-    function deriveUsername(handle: string, source: string): string {
-        if (source === 'bluesky') {
-            // "lovingisliving.bsky.social" → "lovingisliving"
-            // "user.custom.domain" → "user"
-            const parts = handle.split('.');
-            return sanitize(parts[0] || '');
+    function deriveUsername(handle: string, _source: string): string {
+        // Strip any leading '@'
+        let raw = handle.replace(/^@+/, '');
+
+        // For local placeholder handles, clear entirely
+        if (raw.startsWith('local:')) return '';
+
+        // Universal: extract username before first '.' or '@'
+        // Handles: "user.bsky.social" → "user"
+        //          "user@instance.social" → "user"
+        //          "Name (@user@instance.social)" → "user" (Mastodon display format)
+        // First try to extract from Mastodon display format: "Name (@user@domain)"
+        const mastodonMatch = raw.match(/@?([\w.-]+)@[\w.-]+\.[a-z]+/i);
+        if (mastodonMatch) {
+            return sanitize(mastodonMatch[1]);
         }
-        // For local or other sources, strip the "local:" prefix if present
-        if (handle.startsWith('local:')) {
-            return '';
-        }
-        return sanitize(handle);
+
+        // Split on '.' or '@' and take the first segment
+        const firstSegment = raw.split(/[.@]/)[0] || '';
+        return sanitize(firstSegment);
     }
 
     function sanitize(raw: string): string {
