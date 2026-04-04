@@ -57,9 +57,9 @@ export function customFeedUris(feeds: GeneratorView[]): string[] {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MAX_ENTRIES = 150;        // Hard cap per tab — prevents WebKitGTK RGBA bitmap accumulation
-const DEFAULT_PAGE_SIZE = 30;   // Configurable via settings
+const DEFAULT_PAGE_SIZE = 50;   // Configurable via settings — larger for richer initial load
 const STALE_THRESHOLD_MS = 120_000; // 2 minutes — render cached, then background refresh
-const AUTO_REFRESH_MS = 60_000;     // 1 minute auto-refresh interval
+const AUTO_REFRESH_MS = 120_000;    // 2 minutes auto-refresh — slower to avoid disrupting video playback
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Utility: nest owner replies under parent posts
@@ -230,6 +230,8 @@ export function useUnifiedFeed({
   }, [feedCache, activeTab]);
 
   // ── Core fetch: load first page or refresh ──
+  // On refresh, MERGES new items with existing cache so auto-refresh
+  // doesn't wipe the feed while the user is reading/watching video.
   const fetchFeed = useCallback(async () => {
     if (fetchingRef.current || !mountedRef.current) return;
     fetchingRef.current = true;
@@ -240,11 +242,14 @@ export function useUnifiedFeed({
       const page = await fetchPage(activeTab, null, pageSize);
       if (!mountedRef.current) return;
 
-      const deduped = deduplicateFeedEntries(page.items);
+      // Merge with existing cache — prepend new items, deduplicate
+      const existing = feedCache.getCache(activeTab, Infinity)?.entries ?? [];
+      const merged = [...page.items, ...existing];
+      const deduped = deduplicateFeedEntries(merged);
       const nested = nestOwnerReplies(deduped);
       const capped = nested.slice(0, MAX_ENTRIES);
 
-      feedCache.setCache(activeTab, capped, page.cursor);
+      feedCache.setCache(activeTab, capped, page.cursor ?? feedCache.getCache(activeTab, Infinity)?.cursor ?? null);
     } catch (err) {
       if (mountedRef.current) {
         setFeedError(err instanceof Error ? err.message : String(err));

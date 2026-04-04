@@ -102,6 +102,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
+    const isPlayingRef = useRef(false);
 
     // Click-to-play: video src is only set after user interaction.
     // This prevents GStreamer pipeline creation during passive scrolling.
@@ -140,6 +141,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
 
     const handlePlay = () => {
         // Destroy previous video's GStreamer pipeline, activate this one
+        isPlayingRef.current = true;
         if (videoRef.current) {
             activateVideo(videoRef.current);
         }
@@ -170,16 +172,15 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     }, []);
 
     // Observer 2: Continuous visibility tracking — unload pipeline when far from viewport.
-    // When the video leaves the viewport (+ 100px margin), we force-unload its src to
-    // destroy the GStreamer pipeline. This ensures pipeline memory is reclaimed promptly
-    // even if React's virtualizer hasn't unmounted the component yet.
+    // Only tears down when the video is NOT actively playing AND is far from viewport.
+    // rootMargin 500px gives generous buffer so minor scrolls don't kill playback.
     useEffect(() => {
         if (!containerRef.current) return;
 
         const visibilityObserver = new IntersectionObserver(
             ([entry]) => {
-                if (!entry.isIntersecting && userActivated) {
-                    // Video has scrolled out of view — tear down the pipeline
+                if (!entry.isIntersecting && userActivated && !isPlayingRef.current) {
+                    // Video has scrolled far out of view and is not playing — tear down
                     if (videoRef.current) {
                         try {
                             videoRef.current.pause();
@@ -188,10 +189,11 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         } catch (_) { /* ignore */ }
                         deactivateVideo(videoRef.current);
                     }
+                    isPlayingRef.current = false;
                     setUserActivated(false);
                 }
             },
-            { rootMargin: '100px' }
+            { rootMargin: '500px' }
         );
 
         visibilityObserver.observe(containerRef.current);
@@ -327,7 +329,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             )}
 
             {/* Click-to-play overlay — shown when video is not yet activated.
-                Prevents GStreamer pipeline creation during passive scrolling. */}
+                Prevents GStreamer pipeline creation during passive scrolling.
+                When no poster is available, shows a film strip icon so the card
+                isn't just a black rectangle. */}
             {showPlayOverlay && (
                 <div
                     onClick={handleActivate}
@@ -335,13 +339,20 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                         position: 'absolute',
                         inset: 0,
                         display: 'flex',
+                        flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
                         zIndex: 3,
                         cursor: 'pointer',
-                        background: 'rgba(0,0,0,0.15)',
+                        background: resolvedPoster ? 'rgba(0,0,0,0.15)' : 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
                     }}
                 >
+                    {!resolvedPoster && (
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ marginBottom: 8, opacity: 0.5 }}>
+                            <rect x="2" y="4" width="20" height="16" rx="2" stroke="white" strokeWidth="1.5" fill="none"/>
+                            <path d="M2 8h20M2 16h20M6 4v16M18 4v16" stroke="white" strokeWidth="0.5" opacity="0.3"/>
+                        </svg>
+                    )}
                     <div style={{
                         width: 56,
                         height: 56,
@@ -374,8 +385,9 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 loop
                 playsInline
                 preload={videoSrc ? 'metadata' : 'none'}
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 onPlay={handlePlay}
+                onPause={() => { isPlayingRef.current = false; }}
                 onError={(e) => {
                     if (videoSrc) {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);

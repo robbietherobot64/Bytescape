@@ -45,7 +45,10 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
             {mediaUrls.slice(0, 4).map((_, i) => {
                 // ── Per-cell derived display values ───────────────────────────
                 const kind = (mediaKinds && mediaKinds[i]) || 'image';
-                const thumb = thumbnailSources[i] || mediaSources[i];
+                // For videos without a dedicated thumbnail, use the video source itself.
+                // VideoPlayer will resolve blob:hash → local HTTP URL, and the browser
+                // can extract a poster frame from the video with preload="metadata".
+                const thumb = thumbnailSources[i] || (kind === 'video' ? undefined : mediaSources[i]);
 
                 return (
                     <div key={i} className="media-item">

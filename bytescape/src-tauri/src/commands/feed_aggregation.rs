@@ -243,6 +243,10 @@ impl From<BytescapeItem> for FeedEntry {
             item.thumbnail_blobs.into_iter().map(|b| {
                 if b.starts_with("blob:") || b.starts_with("http") || b.contains('/') { b } else { format!("blob:{}", b) }
             }).collect()
+        } else if let Some(ref img) = item.preview_img {
+            // Vault items rarely have thumbnail_blobs. Fall back to preview_img
+            // (the item's preview image from the original platform, if any).
+            if !img.is_empty() { vec![img.clone()] } else { vec![] }
         } else {
             vec![]
         };
