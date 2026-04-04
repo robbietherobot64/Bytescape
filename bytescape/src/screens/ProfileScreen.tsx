@@ -1,6 +1,7 @@
 import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { appDataDir } from '@tauri-apps/api/path';
 import { AuthStatus, BytescapeItem } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ProfileRenderer } from '../components/ProfileRenderer';
@@ -64,8 +65,30 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [error, setError] = useState<string | null>(null);
     const [hasCustomLayout, setHasCustomLayout] = useState(false);
     const [profileTab, setProfileTab] = useState<ProfileTab>('wall');
+    const [mediaDir, setMediaDir] = useState<string>('');
     const offsetRef = useRef(0);
     const { setScreen, setActiveSidebar } = useNavStore();
+
+    /* ════════════════════ Media path resolution (mirrors FeedScreen) ════════════════════ */
+    useEffect(() => {
+        appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
+    }, []);
+
+    const resolveMediaPath = (src: string) => {
+        if (!src) return '';
+        if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('asset://') || src.startsWith('tauri://') || src.startsWith('blob:')) return src;
+        if (mediaDir) {
+            if (src.startsWith('media/')) {
+                const filename = src.replace(/^media\//, '');
+                return convertFileSrc(`${mediaDir}/${filename}`);
+            }
+            if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) {
+                return convertFileSrc(src);
+            }
+            return convertFileSrc(`${mediaDir}/${src}`);
+        }
+        return src;
+    };
 
     /* ════════════════════ Initialization/data loading ════════════════════ */
     // Check for custom profile layout
@@ -264,7 +287,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
                         {!loading && items.map(item => (
                             <div key={item.id} style={{ marginBottom: 10 } as React.CSSProperties}>
-                                <FeedEntryCard entry={adaptBytescapeItem(item)} />
+                                <FeedEntryCard
+                                    entry={adaptBytescapeItem(item)}
+                                    resolveMediaPath={resolveMediaPath}
+                                    mediaDir={mediaDir}
+                                />
                             </div>
                         ))}
 
