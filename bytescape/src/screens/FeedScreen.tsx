@@ -537,7 +537,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
                                 scrollContainerRef={scrollContainerRef}
-                                overscan={mediaFilter === 'video' ? 1 : 5}
+                                overscan={mediaFilter === 'video' ? 0 : 2}
                             />
                         )}
 

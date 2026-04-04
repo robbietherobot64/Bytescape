@@ -3,10 +3,24 @@
  * - Render Bytescape video media with progressive UX and backend-assisted URL resolution.
  *
  * HOW IT WORKS
- * - Defers heavy resolution until the component is near viewport via `IntersectionObserver`.
- * - Resolves sources by strategy: HLS playlist -> backend native file, vault blob hash -> backend media path, or direct URL passthrough.
+ * - **Click-to-play**: No GStreamer pipeline is created until the user explicitly taps
+ *   the play overlay. This prevents passive scrolling from accumulating 100-500 MB
+ *   decoder pipelines per video in WebKitGTK.
+ * - **Visibility unloading**: When the video scrolls out of the viewport, its source
+ *   is unloaded (`src='' + load()`) to force GStreamer to tear down the pipeline.
+ *   This ensures at most 1 active pipeline at a time regardless of scroll speed.
+ * - Resolves sources by strategy: HLS playlist -> backend native file, vault blob
+ *   hash -> backend media path, or direct URL passthrough.
  * - Uses global playback coordination so only one video actively plays at a time.
  * - Caches resolved URLs in-memory to avoid repeated backend work for the same source.
+ *
+ * MEMORY MODEL (why click-to-play is critical):
+ * Each `<video>` element with a src in WebKitGTK creates a GStreamer decoder pipeline
+ * that holds 100-500 MB of native memory (decoded frames, demuxer buffers). Even with
+ * `preload="metadata"`, GStreamer allocates a partial pipeline. In a virtualized feed
+ * with overscan, 4-9 pipelines can exist simultaneously, consuming 1-4 GB. If pipeline
+ * teardown is slow (common in WebKitGTK), this accumulates to 10-20+ GB during fast
+ * scrolling, causing OOM. Click-to-play limits active pipelines to exactly 1.
  *
  * RELATED FILES
  * - `src/hooks/useBlobUrl.ts` (poster blob URL resolution)
@@ -34,7 +48,6 @@ const videoUrlCache = new Map<string, string>();
 
 function setVideoUrlCache(key: string, value: string): void {
     if (videoUrlCache.size >= VIDEO_URL_CACHE_MAX) {
-        // Evict oldest entry (first key in Map insertion order)
         const firstKey = videoUrlCache.keys().next().value;
         if (firstKey !== undefined) videoUrlCache.delete(firstKey);
     }
@@ -53,7 +66,9 @@ export function videoUrlCacheSize(): number {
 
 /**
  * Standard, native VideoPlayer component for Bytescape.
- * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict drop-dead media restrictions.
+ * Uses click-to-play to prevent GStreamer pipeline accumulation in WebKitGTK.
+ * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict
+ * drop-dead media restrictions.
  */
 export function VideoPlayer({ src, poster, className, style, autoPlay = false }: VideoPlayerProps) {
     // ═══════════════════════════════════════════════════════════════════════
@@ -65,6 +80,10 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
+
+    // Click-to-play: video src is only set after user interaction.
+    // This prevents GStreamer pipeline creation during passive scrolling.
+    const [userActivated, setUserActivated] = useState(false);
 
     // Cross-system note: poster rendering uses hook-level blob decoding; this component only consumes resolved output.
     // Smoothly resolve the poster if it's a blob:hash
@@ -109,33 +128,65 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     };
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Visibility gating
+    // Visibility gating — dual IntersectionObserver
     // ═══════════════════════════════════════════════════════════════════════
-    // Intersection observer for lazy loading metadata bounds
+    // Observer 1: Trigger lazy URL resolution when near viewport (one-shot for initial entry).
+    // Observer 2: Continuous monitoring — unload video src when scrolled far out of view
+    //             to force GStreamer pipeline teardown. This is the primary memory defense.
     useEffect(() => {
-        const observer = new IntersectionObserver(
+        const entryObserver = new IntersectionObserver(
             ([entry]) => {
                 if (entry.isIntersecting) {
                     setIsVisible(true);
-                    observer.disconnect();
+                    entryObserver.disconnect();
                 }
             },
             { rootMargin: '200px' }
         );
 
         if (containerRef.current) {
-            observer.observe(containerRef.current);
+            entryObserver.observe(containerRef.current);
         }
 
-        return () => observer.disconnect();
+        return () => entryObserver.disconnect();
     }, []);
+
+    // Observer 2: Continuous visibility tracking — unload pipeline when far from viewport.
+    // When the video leaves the viewport (+ 100px margin), we force-unload its src to
+    // destroy the GStreamer pipeline. This ensures pipeline memory is reclaimed promptly
+    // even if React's virtualizer hasn't unmounted the component yet.
+    useEffect(() => {
+        if (!containerRef.current) return;
+
+        const visibilityObserver = new IntersectionObserver(
+            ([entry]) => {
+                if (!entry.isIntersecting && userActivated) {
+                    // Video has scrolled out of view — tear down the pipeline
+                    if (videoRef.current) {
+                        try {
+                            videoRef.current.pause();
+                            videoRef.current.removeAttribute('src');
+                            videoRef.current.load();
+                        } catch (_) { /* ignore */ }
+                    }
+                    setUserActivated(false);
+                }
+            },
+            { rootMargin: '100px' }
+        );
+
+        visibilityObserver.observe(containerRef.current);
+        return () => visibilityObserver.disconnect();
+    }, [userActivated]);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Source resolution pipeline (includes Tauri invoke bridge)
     // ═══════════════════════════════════════════════════════════════════════
-    // Cross-system note: all native/media resolution calls are bridged through Tauri commands.
+    // MEMORY-CRITICAL: URL resolution only starts when userActivated is true.
+    // Before that, no src is set on the <video> element, so no GStreamer
+    // pipeline is created. This is the core of the click-to-play strategy.
     useEffect(() => {
-        if (!src || !isVisible) return;
+        if (!src || !isVisible || !userActivated) return;
 
         let cancelled = false;
 
@@ -206,7 +257,26 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 invoke('cancel_video_resolve', { url: src }).catch(() => {});
             }
         };
-    }, [src, isVisible]);
+    }, [src, isVisible, userActivated]);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Click-to-play handler
+    // ═══════════════════════════════════════════════════════════════════════
+    const handleActivate = useCallback(() => {
+        setUserActivated(true);
+    }, []);
+
+    // Determine whether the video element should have a src.
+    // autoPlay prop (used in GalleryOverlay) bypasses click-to-play.
+    const videoSrc = (userActivated || autoPlay) ? (resolvedUrl || undefined) : undefined;
+    const showPlayOverlay = !userActivated && !autoPlay && !error;
+
+    // Auto-activate resolution for autoPlay mode (gallery overlay)
+    useEffect(() => {
+        if (autoPlay && isVisible) {
+            setUserActivated(true);
+        }
+    }, [autoPlay, isVisible]);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Render
@@ -220,7 +290,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             )}
 
             {/* Loading indicator — overlaid on poster, not replacing it */}
-            {isLoading && !resolvedUrl && (
+            {isLoading && !resolvedUrl && userActivated && (
                 <div style={{
                     position: 'absolute',
                     bottom: 8,
@@ -237,24 +307,58 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 </div>
             )}
 
+            {/* Click-to-play overlay — shown when video is not yet activated.
+                Prevents GStreamer pipeline creation during passive scrolling. */}
+            {showPlayOverlay && (
+                <div
+                    onClick={handleActivate}
+                    style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 3,
+                        cursor: 'pointer',
+                        background: 'rgba(0,0,0,0.15)',
+                    }}
+                >
+                    <div style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: '50%',
+                        background: 'rgba(0,0,0,0.55)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backdropFilter: 'blur(4px)',
+                    }}>
+                        <svg width="24" height="28" viewBox="0 0 24 28" fill="none">
+                            <path d="M22 14L2 26V2L22 14Z" fill="white" fillOpacity="0.9"/>
+                        </svg>
+                    </div>
+                </div>
+            )}
+
             {/*
-               Progressive playback: render the video element immediately
-               with the poster so the user sees a frame right away.
-               Once resolvedUrl is ready, it becomes the src and playback begins.
+               Click-to-play video element:
+               - src is undefined until the user taps the play overlay (or autoPlay is set)
+               - preload="none" prevents GStreamer from creating even a metadata pipeline
+               - When src is set, autoPlay starts playback immediately
             */}
             <video
                 ref={videoRefCallback}
-                src={resolvedUrl || undefined}
+                src={videoSrc}
                 poster={resolvedPoster || undefined}
-                controls={!!resolvedUrl}
-                autoPlay={autoPlay && !!resolvedUrl}
+                controls={!!videoSrc}
+                autoPlay={!!videoSrc}
                 loop
                 playsInline
-                preload="metadata"
+                preload={videoSrc ? 'metadata' : 'none'}
                 style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                 onPlay={handlePlay}
                 onError={(e) => {
-                    if (resolvedUrl) {
+                    if (videoSrc) {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
                     }
                 }}

@@ -924,6 +924,21 @@ pub fn run() {
                 }
             });
 
+            // Background: periodic malloc_trim to return freed pages to the OS.
+            // On Linux, glibc's allocator keeps freed pages in the process address
+            // space for reuse. After large Iroh blob exports or FFmpeg processing,
+            // RSS stays inflated even though the memory is logically free. This task
+            // calls malloc_trim(0) every 30s to force page return, preventing the
+            // RSS from creeping upward during long sessions.
+            #[cfg(target_os = "linux")]
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    // Safety: malloc_trim is thread-safe in glibc and always safe to call.
+                    unsafe { libc::malloc_trim(0); }
+                }
+            });
+
             // Background: clean up mis-imported syndicated duplicates
             let cleanup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

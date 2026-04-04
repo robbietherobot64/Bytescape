@@ -116,7 +116,11 @@ export function VirtualizedFeedList({
             if (entry.owner_replies?.length) estimate += entry.owner_replies.length * 80;
             return estimate;
         }, [entries, entryIdByIndex]),
-        overscan: overscanProp ?? 5,
+        // MEMORY: Reduced from 5 to 2. Each overscan row with media holds
+        // decoded images (48 MB each) or video posters. Lower overscan means
+        // fewer concurrent media elements, at the cost of slightly more
+        // visible mount latency during fast scrolling.
+        overscan: overscanProp ?? 2,
         measureElement: (el: Element) => {
             const htmlEl = el as HTMLElement;
             const index = Number(htmlEl.dataset.index);
