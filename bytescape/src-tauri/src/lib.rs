@@ -491,6 +491,7 @@ pub fn run() {
             commands::import::get_timeline,
             commands::import::get_author_feed,
             commands::feed_aggregation::get_timeline_unified,
+            commands::feed_aggregation::get_linked_feed_sources,
             commands::import::import_vault_messages,
             commands::import::import_archive_messages,
             commands::import::send_bsky_dm,

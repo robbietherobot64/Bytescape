@@ -882,8 +882,10 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
 
     let text_content = strip_html(&effective.content);
 
+    // MEMORY-CRITICAL: Prefer preview_url (small variant, ~200-400px) over url
+    // (full resolution). WebKitGTK decodes every image to RGBA bitmap in memory.
     let media_urls: Vec<String> = effective.media_attachments.iter()
-        .map(|m| m.url.clone())
+        .map(|m| m.preview_url.clone().unwrap_or_else(|| m.url.clone()))
         .collect();
 
     let has_image = effective.media_attachments.iter()
@@ -1041,9 +1043,11 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
     let text_content = strip_html(&effective.content);
     let instance_host = instance.replace("https://", "").replace("http://", "");
 
+    // MEMORY-CRITICAL: Prefer preview_url (small variant) over full-resolution url.
+    // WebKitGTK decodes every <img> to a full RGBA bitmap in process memory.
     let image_urls: Vec<String> = effective.media_attachments.iter()
         .filter(|m| m.media_type == "image" || m.media_type == "gifv")
-        .map(|m| m.url.clone())
+        .map(|m| m.preview_url.clone().unwrap_or_else(|| m.url.clone()))
         .collect();
 
     let video_url = effective.media_attachments.iter()

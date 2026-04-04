@@ -36,9 +36,90 @@
 //! - `db/vault.rs` — `list_my_items_paged()` vault query used by the vault future
 
 use tauri::State;
+use serde::Serialize;
 use crate::AppState;
 use crate::models::{FeedEntry, FeedPage, BytescapeItem, Audience, audiences_from_legacy, classify_feed_entry};
 use crate::connectors::bluesky::BlueskyImportedPost;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Linked Feed Sources — Platform connection status for source toggle pills
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A connected platform that can contribute to the Following tab feed.
+#[derive(Debug, Serialize, Clone)]
+pub struct LinkedFeedSource {
+    /// Platform identifier ("bluesky", "mastodon")
+    pub id: String,
+    /// Human-readable label ("Bluesky", "Mastodon")
+    pub label: String,
+    /// User handle on this platform ("@user.bsky.social" or "@user@mastodon.social")
+    pub handle: String,
+    /// Whether the platform has a valid, active session
+    pub connected: bool,
+}
+
+/// Returns all platform connections available for feed source filtering.
+///
+/// The frontend uses this to render source toggle pills on the Following tab.
+/// Each entry indicates whether the platform is connected and the user's handle.
+///
+/// # IPC
+/// Frontend: `invoke('get_linked_feed_sources')`
+#[tauri::command]
+pub async fn get_linked_feed_sources(
+    state: State<'_, AppState>,
+) -> Result<Vec<LinkedFeedSource>, String> {
+    let mut sources = Vec::new();
+
+    // Bluesky
+    match state.keychain.load_session() {
+        Ok(Some((did, _jwt))) => {
+            // Try to get the handle from the DID
+            let handle = if did.starts_with("did:plc:") {
+                // Use DID as fallback; the frontend can resolve the handle
+                did.clone()
+            } else {
+                did.clone()
+            };
+            sources.push(LinkedFeedSource {
+                id: "bluesky".into(),
+                label: "Bluesky".into(),
+                handle: format!("@{}", handle),
+                connected: true,
+            });
+        }
+        _ => {
+            sources.push(LinkedFeedSource {
+                id: "bluesky".into(),
+                label: "Bluesky".into(),
+                handle: String::new(),
+                connected: false,
+            });
+        }
+    }
+
+    // Mastodon
+    match crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        Ok(session) => {
+            sources.push(LinkedFeedSource {
+                id: "mastodon".into(),
+                label: "Mastodon".into(),
+                handle: format!("@{}", session.acct),
+                connected: true,
+            });
+        }
+        Err(_) => {
+            sources.push(LinkedFeedSource {
+                id: "mastodon".into(),
+                label: "Mastodon".into(),
+                handle: String::new(),
+                connected: false,
+            });
+        }
+    }
+
+    Ok(sources)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Type Conversions — Source-specific types → universal FeedEntry
