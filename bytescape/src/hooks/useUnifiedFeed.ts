@@ -256,15 +256,42 @@ export function useUnifiedFeed({
       }
 
       case 'subscribed': {
-        // Backend returns tuple [BlueskyPost[], cursor] — use effective feed URIs + tags
-        const [posts, nextCursor] = await provider.getUnifiedFeed({
-          tags: effectiveTags,
-          feedUris: effectiveFeedUris,
-          limit,
-          cursor,
-        });
-        const items = posts.map(adaptBlueskyPost);
-        return { items, cursor: nextCursor, has_more: nextCursor != null };
+        // Bluesky custom feeds + Mastodon hashtag timelines, merged
+        const results: FeedEntry[] = [];
+        const promises: Promise<void>[] = [];
+
+        // Bluesky custom feeds (if any feed URIs exist)
+        if (effectiveFeedUris.length > 0) {
+          promises.push(
+            provider.getUnifiedFeed({
+              tags: effectiveTags,
+              feedUris: effectiveFeedUris,
+              limit,
+              cursor,
+            }).then(([posts]) => {
+              results.push(...posts.map(adaptBlueskyPost));
+            }).catch(() => {})
+          );
+        }
+
+        // Mastodon hashtag timelines — fetch for each followed hashtag
+        for (const tag of effectiveTags) {
+          promises.push(
+            provider.mastodonGetHashtagTimeline({ hashtag: tag, limit: Math.min(limit, 20) })
+              .then(posts => {
+                results.push(...posts.map(adaptBlueskyPost));
+              })
+              .catch(() => {}) // Mastodon may not be connected
+          );
+        }
+
+        await Promise.all(promises);
+
+        // Sort merged results by timestamp descending
+        results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        const deduped = deduplicateFeedEntries(results);
+
+        return { items: deduped.slice(0, limit), cursor: null, has_more: false };
       }
 
       case 'groups': {
@@ -458,6 +485,16 @@ export function useUnifiedFeed({
   const currentCursor = cached?.cursor ?? null;
   const hasMore = currentCursor != null;
 
+  // ── Merge vault sources with linked platform sources for filter dropdown ──
+  const mergedSources = useMemo(() => {
+    const sources = new Set(vaultSources);
+    // Add connected platform names so the filter shows all available sources
+    for (const ls of linkedSources) {
+      if (ls.connected) sources.add(ls.label);
+    }
+    return Array.from(sources).sort();
+  }, [vaultSources, linkedSources]);
+
   // ── Legacy compat setFeedEntries — writes directly to cache ──
   const setFeedEntries: React.Dispatch<React.SetStateAction<FeedEntry[]>> = useCallback((action) => {
     const current = feedCache.getCache(activeTab, Infinity)?.entries ?? [];
@@ -483,7 +520,7 @@ export function useUnifiedFeed({
     followingList,
     followedHashtags,
     setFollowedHashtags,
-    vaultSources,
+    vaultSources: mergedSources,
     archiveTotal,
     fetchFeed,
     handleLoadMore: loadMore,

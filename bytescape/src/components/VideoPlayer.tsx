@@ -387,7 +387,16 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 preload={videoSrc ? 'metadata' : 'none'}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 onPlay={handlePlay}
-                onPause={() => { isPlayingRef.current = false; }}
+                onPlaying={() => { isPlayingRef.current = true; }}
+                onPause={(e) => {
+                    // Only clear isPlayingRef if user-initiated pause (not buffering/stall).
+                    // Check: if the video has ended or the user clicked pause (readyState >= 2).
+                    // Buffering fires pause but readyState is typically 1 (HAVE_METADATA).
+                    const vid = e.currentTarget;
+                    if (vid.ended || vid.readyState >= 3) {
+                        isPlayingRef.current = false;
+                    }
+                }}
                 onError={(e) => {
                     if (videoSrc) {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);

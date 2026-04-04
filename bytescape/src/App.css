@@ -1305,8 +1305,12 @@ a:hover {
     gap: 2px;
     overflow: hidden;
     margin-top: 6px;
-    max-width: 100%;
-    border: 2px solid #999;
+    /* Break out of .feed-entry-body padding so media fills full card width */
+    margin-left: -10px;
+    margin-right: -10px;
+    max-width: calc(100% + 20px);
+    border-top: 2px solid #999;
+    border-bottom: 2px solid #999;
     box-shadow: var(--bevel-sunken);
 }
 

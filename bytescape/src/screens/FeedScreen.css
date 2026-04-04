@@ -99,8 +99,10 @@
     contain: layout style;
 }
 
-/* Cap feed images to prevent WebKitGTK RGBA bitmap accumulation */
-.feed-card-wrapper img {
+/* Cap feed images to prevent WebKitGTK RGBA bitmap accumulation.
+   Exclude media-item images (they should fill their grid cell). */
+.feed-card-wrapper > .feed-entry-card > .feed-entry-body > .post-text img,
+.feed-card-wrapper .link-preview-card img {
     max-width: 600px;
     max-height: 400px;
     object-fit: contain;

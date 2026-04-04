@@ -150,6 +150,11 @@ export interface MastodonGetTimelineParams {
   limit?: number;
 }
 
+export interface MastodonGetHashtagTimelineParams {
+  hashtag: string;
+  limit?: number;
+}
+
 export interface ListVaultPostsPagedParams {
   limit: number;
   offset: number;
@@ -507,6 +512,7 @@ export interface DataProvider {
   mastodonGetFollowing(): Promise<ProfileView[]>;
   listContacts(): Promise<ProfileView[]>;
   mastodonGetTimeline(params: MastodonGetTimelineParams): Promise<FeedEntry[]>;
+  mastodonGetHashtagTimeline(params: MastodonGetHashtagTimelineParams): Promise<BlueskyPost[]>;
 
   /** Vault — local vault CRUD for posts, files, stats, and data export. */
   // ═══ Vault ════════════════════════════════════════════════════

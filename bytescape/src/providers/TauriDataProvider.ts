@@ -47,6 +47,7 @@ import type {
   ListFollowsParams,
   ListFollowersParams,
   MastodonGetTimelineParams,
+  MastodonGetHashtagTimelineParams,
   ListVaultPostsPagedParams,
   VaultFileDataParams,
   VaultUploadFromPathsParams,
@@ -299,6 +300,10 @@ export class TauriDataProvider implements DataProvider {
 
   async mastodonGetTimeline(params: MastodonGetTimelineParams): Promise<FeedEntry[]> {
     return invoke('mastodon_get_timeline', { ...params });
+  }
+
+  async mastodonGetHashtagTimeline(params: MastodonGetHashtagTimelineParams): Promise<BlueskyPost[]> {
+    return invoke('mastodon_get_hashtag_timeline', { ...params });
   }
 
   // ═══ Vault ══════════════════════════════════════════════════════

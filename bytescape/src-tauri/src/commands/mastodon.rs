@@ -982,6 +982,57 @@ pub async fn send_ap_unfollow(
 }
 
 // ═══════════════════════════════════════════════════
+// Mastodon Hashtag Timeline
+// ═══════════════════════════════════════════════════
+
+/// Fetch posts from a Mastodon hashtag timeline.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_hashtag_timeline', { hashtag, limit })`
+///
+/// # Parameters
+/// - `hashtag` — the hashtag name without the `#` prefix (e.g. `"rust"`)
+/// - `limit` — maximum posts to return (default 20, max 40)
+///
+/// # Returns
+/// Array of feed entries (serialized as BlueskyImportedPost-compatible JSON).
+/// Returns empty array if no Mastodon session is active.
+#[tauri::command]
+pub async fn mastodon_get_hashtag_timeline(
+    state: State<'_, AppState>,
+    hashtag: String,
+    limit: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    let session = match get_active_session(&state).await {
+        Ok(s) => s,
+        Err(_) => return Ok(serde_json::Value::Array(vec![])),
+    };
+
+    let cache_key = format!(
+        "mastodon_hashtag:{}:{}",
+        hashtag,
+        limit.unwrap_or(20),
+    );
+
+    // 30s cache TTL
+    if let Some(cached) = state.feed_cache.get(&cache_key, std::time::Duration::from_secs(30)).await {
+        return Ok(cached);
+    }
+
+    let items = mastodon::get_hashtag_timeline_as_bsky(
+        &state.http_client,
+        &session,
+        &hashtag,
+        limit,
+    ).await?;
+
+    let json = serde_json::to_value(&items)
+        .map_err(|e| format!("Serialize error: {}", e))?;
+    state.feed_cache.set(&cache_key, json.clone()).await;
+    Ok(json)
+}
+
+// ═══════════════════════════════════════════════════
 // Hashtag follow / unfollow (Mastodon C2S API)
 // ═══════════════════════════════════════════════════
 
