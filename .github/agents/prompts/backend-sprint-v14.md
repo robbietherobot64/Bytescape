@@ -1,204 +1,232 @@
-# Backend Sprint v14 — Memory Leak & CPU Spike Investigation, AP Security, Moderation Commands (Track A)
+# Backend Sprint v14 — EMERGENCY: Memory Leak Eradication (Track A)
 
-**Sprint Goal:** **Investigate and fix two CRITICAL performance regressions** that have persisted for 2 sprints without any investigation, complete the remaining AP security fixes from the tech debt audit, and deliver the group moderation commands that were scoped for v13 but not delivered.
+**Sprint Goal:** **FIX THE MEMORY LEAK.** Nothing else matters this sprint. The user has reported 32+ GB memory usage when filtering the feed by video for THREE consecutive sprints. Commit `6d04f1e` claimed to fix it but **only fixed the cache-HIT path** (reads 12 header bytes instead of the full file for extension detection). The cache-MISS path — which is the actual leak — still reads entire video blobs (50–500 MB each) into memory via `sync.get_media(hash)`. This sprint is 100% dedicated to eradicating every memory leak source. **NO feature work. NO security fixes. NO connector fixes.**
 
-**Context:** Sprint v13 delivered 10 security hardening fixes (SEC-1/2/3/4/5/6/7/11/13, clear_all_data, willow cleanup) but **did NOT investigate the two highest-priority user issues**: the memory leak and CPU spike. These have been reported as CRITICAL by the user since Sprint v12 (2026-03-28) and confirmed STILL CRITICAL in the latest feedback (2026-04-03). The user explicitly marked these with "STILL AN ISSUE - CRITICAL." They must be the top priority this sprint — no new features until these are resolved.
+**Context:** PM investigation identified **10 distinct memory leak sources** across backend and frontend. This prompt covers the 6 backend sources. The frontend prompt covers the remaining 4. Combined, these explain the observed 32+ GB memory consumption.
 
-Additionally, the user reports Instagram images **do not load on the feed** (they load fine in the vault) — this is a regression from the prior report of "slow initial load."
-
-**HEAD:** `7ba4c4a` on `main`. **Build:** 0 tsc errors, 272 frontend tests, 216 Rust tests pass, cargo check clean.
+**HEAD:** `d242546` on `main`. **Build:** 0 tsc errors, 272 frontend tests, cargo check clean.
 
 ---
 
-## P0: Critical Performance Investigations (🔥🔥🔥 USER-REPORTED, 2 SPRINTS OVERDUE)
+## The Root Cause (Read This First)
 
-**Priority:** 🔥🔥🔥 ABSOLUTE HIGHEST — these are user-observed production issues that have persisted for 2 full sprints. No other work should begin until these have been investigated and either fixed or root-caused with a clear remediation plan.
+The primary leak is in `get_media_blob()` (commands/media.rs line ~202):
 
-### 0.1 Memory Leak on Video Filter
+```rust
+// Line ~246 — THE LEAK: reads ENTIRE blob into heap memory
+let bytes = sync.get_media(hash).await   // ← calls reader.read_to_end()
+    .map_err(|e| BytescapeError::BlobStorage(e))?;
+```
 
-**Symptoms:** User filters feed to "Video" → only Instagram archive videos show up (not Bluesky/Mastodon video embeds) → videos attempt to load but never complete → memory usage climbs to 32+ GB.
+`sync.get_media()` (sync.rs line ~327) calls `reader.read_to_end(&mut buf)` which materializes the ENTIRE blob in memory. For a 200 MB video, that is a 200 MB heap allocation. When the user filters by Video, `resolve_blob_urls_batch` triggers `get_media_blob` for every uncached video — 10-20 concurrent fetches × 50-500 MB = **0.5-10 GB instantaneous heap allocation**.
 
-**Investigation path (follow this sequence):**
-1. **Reproduce first.** Launch app, navigate to feed, click Video filter. Monitor memory with `MALLOC_CONF=stats_print:true` or `heaptrack`. Document baseline memory and growth rate.
-2. **Check video source filtering.** In `get_unified_feed` / `get_timeline_unified` — does the `Video` content filter correctly include videos from all sources (Bluesky embeds, Mastodon media, vault imports), or only Instagram archives? If only Instagram, the filter logic is broken.
-3. **Check FFmpeg process lifecycle.** Are HLS conversion child processes being spawned per video element and never killed? Check `convert_to_hls` and related functions — is there a timeout? Are temp files accumulating in the HLS cache directory?
-4. **Check blob fetching for video.** Is `get_media_blob` loading entire video files into memory without streaming? For a 100MB video, this would consume 100MB of heap per concurrent fetch. Check if videos are being fetched in parallel without limits.
-5. **Check React-side video element lifecycle.** Are `<video>` elements being created by the virtualizer, scrolled out of view, and never destroyed? Each active `<video>` element holds a media source buffer. If 50+ video elements accumulate, that's the leak.
-6. **Check HLS cache eviction.** Is there a `video_cache` / `hls_cache` with size limits? If not, converted HLS segments accumulate on disk and may also be held in memory.
-
-**Fix requirements:**
-- Video filter must show videos from ALL sources, not just Instagram archives
-- Video loading must be streaming, not full-file-in-memory
-- FFmpeg processes must have timeouts (30s max) and cleanup on abort
-- Video cache must have size limits (max 500MB disk, 200MB memory) and LRU eviction
-- Concurrent video blob fetches limited to 3
-- Memory must stay under 2 GB under normal usage, including with video filter active
-- Add `tracing::warn!` for any single allocation >50MB
-
-### 0.2 CPU Spike on Launch
-
-**Symptoms:** CPU hits ~100% when app first launches, causing UI lag for several seconds.
-
-**Investigation path:**
-1. **Add timing instrumentation.** Wrap each startup phase in `tracing::info_span!` with timing: identity init, Iroh node start, blob consistency check, seed_default_topics, Bluesky session restore, timeline pre-fetch.
-2. **Check `seed_default_topics()`** — does it run on EVERY launch or only first run? If it re-creates/updates topics every time, add an early-exit check.
-3. **Check the blob consistency check** (10s delay task) — does it scan ALL blobs? If the user has 10,000+ items with media, this is O(n) on every launch. Consider: skip if last check was <24h ago, or check only items modified since last check.
-4. **Check Iroh node bootstrap** — is DHT discovery CPU-intensive? Consider deferring non-essential P2P operations until 10s after UI is interactive.
-5. **Check Bluesky session restore** — is `restore_oauth_session` doing network calls synchronously during setup? Move to background.
-
-**Fix requirements:**
-- `seed_default_topics()` must check if topics exist and return early in <1ms
-- Blob consistency check should be skipped if last check was <24h ago
-- App must be interactive (UI responsive) within 2 seconds of launch
-- All startup phases must log their duration via `tracing::info!`
-- No single startup phase should take >500ms on the main thread
-
-### 0.3 Instagram Images Not Loading on Feed
-
-**Symptoms:** Instagram images do not load at all on the feed — just broken/empty placeholders. They load fine in the vault. This was previously reported as "slow initial load" but has worsened.
-
-**Investigation path:**
-1. Check how Instagram archive items store their `media_blobs` / `media_paths` — are the blob hashes correct?
-2. Check if `get_media_blob` resolves Instagram blob hashes differently in feed context vs. vault context
-3. Check if the frontend's `useBlobUrl` hook handles Instagram source items differently
-4. Check if the Instagram connector stores paths relative to the archive root vs. absolute paths
-
-**Fix requirements:**
-- Instagram images must load on the feed identically to how they load in the vault
-- No special-casing by source — the blob resolution path should be source-agnostic
+**The fix already exists but is not used:** `sync.export_media_to_file()` (sync.rs line ~340) streams blobs directly to disk with **zero memory buffering** via `self.blobs.export(hash, target)`. The `get_media_header()` method (sync.rs line ~349) reads only the first N bytes for MIME detection (32 bytes instead of 500 MB).
 
 ---
 
-## P1: AP Security Fixes from Tech Debt Audit (🔥 Security-Critical)
+## P0.1: Fix `get_media_blob` Cache-Miss Path (🔥🔥🔥 THE PRIMARY LEAK)
 
-**Priority:** 🔥 High — these are exploitable vulnerabilities in the ActivityPub federation layer. Must be fixed before any public AP federation deployment.
+**File:** `src-tauri/src/commands/media.rs`, function `get_media_blob` (line ~202)
 
-> **Source:** `.github/docs/technical-debt-audit.md` (Audit items 6.2, 6.3, 6.4, 7.39). Full security tracker in ROADMAP → Security Hardening (SEC-8, SEC-9, SEC-10, SEC-12).
+**Current broken code (lines ~240-260):**
+```rust
+// Not cached — fetch from Iroh blob store
+let sync_guard = state.sync_manager.lock().await;
+let sync = sync_guard.as_ref()
+    .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+let hash = parse_hash_safe(&normalized_hash)?;
 
-### 1.1 SEC-8: SSRF in AP Inbox *(Audit 6.2)*
+let bytes = sync.get_media(hash).await          // ← READS ENTIRE BLOB INTO MEMORY
+    .map_err(|e| BytescapeError::BlobStorage(e))?;
 
-`fetch_actor_public_key()` fetches arbitrary URLs from untrusted `keyId` field in HTTP Signature headers. No private-IP check, no timeout.
+let ext = detect_extension_from_bytes(&bytes);   // ← Only needs 12 bytes, has entire blob
 
-**Fix:**
-1. Add the same private-IP blocklist from SEC-4 (already implemented in `connectors/bluesky.rs`) to AP key fetching
-2. Add a 10-second timeout on the HTTP client request
-3. Validate that the URL scheme is `https://`
+std::fs::create_dir_all(&cache_dir)
+    .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
+std::fs::write(&cache_path, &bytes)              // ← Writes from memory to disk (wasteful)
+    .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+```
 
-### 1.2 SEC-9: No AP Digest Verification *(Audit 6.3)*
+**Required fix — replace with streaming export:**
+1. Use `sync.get_media_header(hash, 12)` to read only the first 12 bytes for extension detection
+2. Use `sync.export_media_to_file(hash, &cache_path)` to stream directly to disk with zero memory buffering
+3. The function signature stays the same (returns `Result<String, String>` — the cache file path)
 
-Inbox receives `digest_header` but never verifies it against the actual body hash — allows body substitution attacks where the signature is valid but the body has been tampered.
+**Pseudocode for the fix:**
+```rust
+// Not cached — stream from Iroh blob store directly to disk
+let sync_guard = state.sync_manager.lock().await;
+let sync = sync_guard.as_ref()
+    .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+let hash = parse_hash_safe(&normalized_hash)?;
 
-**Fix:**
-1. After reading the body, compute `SHA-256(body)` using the `sha2` crate
-2. Compare against the `Digest: SHA-256=...` header value
-3. Reject if mismatch (401 Unauthorized)
+// Step 1: Read ONLY header bytes for extension detection (12 bytes, not 500 MB)
+let header = sync.get_media_header(hash, 12).await
+    .map_err(|e| BytescapeError::BlobStorage(e))?;
+let ext = detect_extension_from_bytes(&header);
 
-### 1.3 SEC-10: Hand-Rolled SHA-256 *(Audit 6.4)*
+// Step 2: Stream blob directly to cache file (zero memory buffering)
+std::fs::create_dir_all(&cache_dir)
+    .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
+sync.export_media_to_file(hash, &cache_path).await
+    .map_err(|e| BytescapeError::BlobStorage(e))?;
+```
 
-120+ lines of custom SHA-256 implementation instead of using the well-tested `sha2` crate.
-
-**Fix:**
-1. Replace the hand-rolled implementation with `sha2::Sha256` from the `sha2` crate
-2. Verify all call sites produce identical output
-3. Remove the custom SHA-256 code entirely
-
-### 1.4 SEC-12: SSRF in Link Unfurl *(Audit 7.39)*
-
-`unfurl_link` fetches user-provided URLs with no private IP or localhost check — allows scanning internal networks.
-
-**Fix:**
-1. Extract the private-IP validation from SEC-4 into a shared `validate_public_url()` utility
-2. Call it before any fetch in `unfurl_link`
-3. Also add a 5-second timeout
-
-### 1.5 AP Clock Skew Check *(Audit 6.5)*
-
-Inbound AP signature verification doesn't validate the `Date` header — replay attacks possible indefinitely.
-
-**Fix:**
-1. Parse the `Date` header from inbound AP requests
-2. Reject if the date is more than ±5 minutes from server time
-3. Log rejected requests at `tracing::warn!` level
-
-### P1 Tests
-- `test_ap_key_fetch_rejects_private_ip` — verify 127.0.0.1, 10.x, 169.254.x rejected
-- `test_ap_digest_verification_rejects_tampered_body`
-- `test_sha256_matches_sha2_crate` — before removing hand-rolled, verify output equivalence
-- `test_unfurl_link_rejects_private_ip`
-- `test_ap_clock_skew_rejects_stale_date`
+**Memory impact:** Reduces per-blob memory from 50-500 MB to ~12 bytes. This single fix eliminates the primary leak.
 
 ---
 
-## P2: Group Moderation Commands (High — Carried from v13)
+## P0.2: Fix `get_media_blob_bytes` Cache-Miss Path
 
-**Priority:** High — Closed groups can't function without member approval. Private groups can't function without invites. This was P1 in sprint v13 but was not delivered.
+**File:** `src-tauri/src/commands/media.rs`, function `get_media_blob_bytes` (line ~270)
 
-**Task:** Add the remaining membership management commands to `commands/groups.rs`.
+**Same pattern as P0.1** — the cache-miss path (line ~300) calls `sync.get_media(hash).await` and loads the entire blob into memory. Then it returns the bytes via IPC, doubling memory (one copy in Rust, one serialized for IPC).
 
-### 2.1 Commands to Implement
+**Required fix:**
+1. Stream to cache file first using `export_media_to_file` (same as P0.1)
+2. Then read from the cache file to return bytes via IPC
+3. Add a `tracing::warn!` if the file is >50 MB being sent over IPC
 
-| Command | Signature | Authorization |
-|---------|-----------|---------------|
-| `approve_member` | `(group_id, member_did) -> ()` | Owner or Moderator |
-| `reject_member` | `(group_id, member_did) -> ()` | Owner or Moderator |
-| `invite_member` | `(group_id, member_did) -> ()` | Owner or Moderator |
-| `accept_invite` | `(group_id) -> ()` | Current user (must be Invited) |
-| `ban_member` | `(group_id, member_did) -> ()` | Owner only |
-| `set_member_role` | `(group_id, member_did, role) -> ()` | Owner only |
-| `pin_group_post` | `(group_id, item_id) -> ()` | Owner or Moderator |
-| `unpin_group_post` | `(group_id, item_id) -> ()` | Owner or Moderator |
-| `remove_group_post` | `(group_id, item_id) -> ()` | Owner/Mod (any post), Member (own post) |
-| `get_pending_members` | `(group_id) -> Vec<GroupMember>` | Owner or Moderator |
-
-### 2.2 Business Rules
-- `approve_member`: Target must have `status: Pending`. Sets to `Active`, increments `member_count`.
-- `reject_member`: Deletes the Pending `GroupMember` record entirely.
-- `invite_member`: Creates `GroupMember` with `status: Invited`, `role: Member`. Error if member already exists.
-- `accept_invite`: Current user must be `Invited`. Sets to `Active`, increments `member_count`.
-- `ban_member`: Cannot ban the Owner. Sets `status: Banned`, decrements `member_count` if was Active. Banned members cannot re-join (enforce in `join_group`).
-- `set_member_role`: Cannot change own role. Member must be Active.
-- `pin_group_post` / `unpin_group_post`: Updates `GroupPost.pinned`. `get_group_feed` should return pinned posts first.
-- `remove_group_post`: Deletes `GroupPost` record (not underlying BytescapeItem).
-
-### 2.3 Tests
-- `test_approve_member_flow` — create Pending, approve, verify Active + count
-- `test_reject_member_removes_record` — create Pending, reject, verify deleted
-- `test_invite_accept_flow` — invite, accept, verify Active + count
-- `test_ban_prevents_rejoin` — ban Active member, try join_group, verify error
-- `test_pin_unpin_post` — pin post, verify pinned=true, unpin, verify pinned=false
-- `test_role_change` — set_member_role Member→Mod, verify
-- `test_ban_owner_fails` — attempt to ban owner, verify error
-
-Register all new commands in `lib.rs` invoke_handler.
-
-**Key files:**
-- `src-tauri/src/commands/groups.rs`
-- `src-tauri/src/db/groups.rs`
-- `src-tauri/src/lib.rs` (command registration)
+**Minimum fix:** Replace `sync.get_media(hash)` with export-to-file + `std::fs::read(&cache_path)`. This still loads the file into memory for IPC return, but at least the blob is not held in memory simultaneously with the Iroh read buffer.
 
 ---
 
-## P3: Connector Correctness Fixes (Medium)
+## P0.3: Fix `resolve_blob_urls_batch` Concurrent Fetches
 
-**Priority:** Medium — data integrity issues that affect import quality. Address if time permits after P0-P2.
+**File:** `src-tauri/src/commands/media.rs`, function `resolve_blob_urls_batch` (line ~1490+)
 
-### 3.1 Facebook Encoding Drops Non-Latin Unicode *(Audit 4.4)*
+**Current broken pattern:** When uncached blobs are found, the batch resolver falls through to `get_media_blob()` in two places:
+- Line ~1516: `match get_media_blob(trimmed.to_string(), state.clone()).await`
+- Line ~1578: `match get_media_blob(trimmed.to_string(), state.clone()).await`
 
-`fix_facebook_encoding` silently drops characters ≥ U+0100 — emoji, CJK, Cyrillic lost from imported posts.
+Even after P0.1 fixes the streaming, the batch function has no concurrency limit — it can trigger 20+ simultaneous blob exports, saturating disk I/O.
 
-**Fix:** Rewrite `fix_facebook_encoding` to properly handle Facebook's double-encoded UTF-8 (they encode UTF-8 bytes as Latin-1 escape sequences). Use `encoding_rs` or manual byte-level decoding that preserves all Unicode code points.
+**Required fix:**
+1. Add a semaphore to limit concurrent blob exports to **3** maximum
+2. Use `tokio::sync::Semaphore` with 3 permits — store in `AppState` or use `std::sync::LazyLock`
+3. Acquire a permit before each `get_media_blob` call in the batch, release after
 
-### 3.2 Facebook Timezone-Unaware Timestamps *(Audit 4.5)*
+**Implementation note:** Check if `once_cell` is already in Cargo.toml. If using Rust 1.80+, prefer `std::sync::LazyLock`. Otherwise add the semaphore to `AppState`.
 
-Local dates treated as UTC — every imported timestamp off by user's UTC offset (up to ±12 hours).
+---
 
-**Fix:** Add a `timezone_offset` parameter to the Facebook import command. Apply the offset to all parsed timestamps. Default to UTC if not provided, but prompt the user to select their timezone during import.
+## P0.4: Fix `backfill_media_mimes` Full Blob Reads
 
-### 3.3 Stale Header Cache After Clear *(Audit 2.1)*
+**File:** `src-tauri/src/lib.rs`, lines ~882-895 (inside the backfill spawn block)
 
-`HeadersCache` not invalidated after `clear_all_data` / `remove_syndicated_duplicates`.
+**Current broken code:**
+```rust
+// Path hint inconclusive — fetch blob for magic bytes
+match sync.get_media(hash).await {     // ← READS ENTIRE BLOB for MIME detection
+    Ok(data) => {
+        mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+    }
+    Err(_) => mimes.push("application/octet-stream".to_string()),
+}
+```
 
-**Fix:** Add `headers_cache.invalidate_all()` calls after any operation that modifies the items table.
+When the path hint is inconclusive (no file extension), the backfill reads the ENTIRE blob just to check magic bytes. For a 500 MB video, this reads 500 MB when only 32 bytes are needed.
+
+**Required fix:** Replace `sync.get_media(hash)` with `sync.get_media_header(hash, 32)`:
+```rust
+match sync.get_media_header(hash, 32).await {
+    Ok(header) => {
+        mimes.push(crate::commands::media::mime_from_magic_bytes(&header));
+    }
+    Err(_) => mimes.push("application/octet-stream".to_string()),
+}
+```
+
+**Memory impact:** Reduces from potentially gigabytes to a few hundred bytes total.
+
+---
+
+## P0.5: Add FFmpeg Process Timeout
+
+**File:** `src-tauri/src/commands/media.rs`, all FFmpeg strategy functions
+
+**Problem:** FFmpeg conversion processes use `.wait_with_output()` which blocks indefinitely. A hung FFmpeg process holds the source video in memory and the output buffer grows without bound.
+
+**Investigation:** Search for all `.wait_with_output()` calls in media.rs. Each one needs a timeout wrapper.
+
+**Required fix:**
+1. Replace all `child.wait_with_output()` calls with a timeout wrapper:
+   ```rust
+   let output = tokio::time::timeout(
+       std::time::Duration::from_secs(60),
+       tokio::task::spawn_blocking(move || child.wait_with_output())
+   ).await
+   .map_err(|_| "FFmpeg timed out after 60s".to_string())?
+   .map_err(|e| e.to_string())?
+   .map_err(|e| e.to_string())?;
+   ```
+2. On timeout, kill the child process explicitly
+3. Clean up any partial output files on timeout
+
+**Also fix `cancel_video_resolve`** (line ~683): Currently stores PIDs and uses shell `kill` command (Linux-only). Store `Child` handles instead (or `Arc<Mutex<Option<Child>>>`) and call `.kill()` directly — this is cross-platform and more reliable.
+
+---
+
+## P0.6: Add `blob_cache/` Eviction Policy
+
+**File:** `src-tauri/src/commands/media.rs` (new function)
+
+**Problem:** The `blob_cache/` directory grows without bound. The docstring at line ~199 acknowledges this as tech debt. Over time, cached video files accumulate gigabytes of disk space.
+
+**Required fix — add LRU eviction:**
+1. Create a function `enforce_blob_cache_limit(cache_dir: &Path, max_bytes: u64)`
+2. List all files in `blob_cache/`, sort by last access time (or modified time)
+3. If total size exceeds `max_bytes` (default: 500 MB), delete oldest files until under limit
+4. Call this function after each successful `get_media_blob` cache write (debounced — at most once per 60 seconds using an `Instant` check)
+5. Also call on app startup (in the delayed background task area)
+
+---
+
+## P0.7: Add Memory Guard Logging
+
+**File:** `src-tauri/src/commands/media.rs`
+
+Add `tracing::warn!` or `println!` logging for any operation that would allocate large memory:
+1. In `get_media_blob` and `get_media_blob_bytes`: if the blob size (from header or export) exceeds 50 MB, log a warning
+2. In `resolve_blob_urls_batch`: log the total number of uncached blobs that need Iroh export
+3. In `backfill_media_mimes`: log when falling through to blob fetch (should be rare after P0.4 fix)
+
+This provides observability for future memory issues.
+
+---
+
+## Also Check: Other `sync.get_media()` Call Sites
+
+Search the entire `src-tauri/src/` for all remaining `sync.get_media(` calls. Each one is a potential full-blob memory load. Known call sites beyond what is already covered above:
+
+| File | Line | Context | Risk |
+|------|------|---------|------|
+| `commands/media.rs` ~462 | Video preview | Medium — single blob |
+| `commands/media.rs` ~560 | HLS fallback | Medium — single blob |
+| `commands/vault.rs` ~249 | Vault export | Low — user-initiated |
+| `commands/vault.rs` ~274 | Vault batch | Medium — multiple blobs |
+| `commands/interactions.rs` ~327 | Attachment fetch | Low — typically small |
+| `commands/posting.rs` ~313 | Post attachment | Low — user-initiated |
+| `commands/import.rs` ~1219 | Import validation | Low — runs once |
+| `sync.rs` ~505 | Consistency check | High — iterates all blobs |
+| `sync.rs` ~535, ~713 | Sync operations | Medium |
+
+For each HIGH/MEDIUM risk call site: if the blob could be a video (>10 MB), replace with streaming export or header-only read as appropriate. Low-risk sites (user-initiated, single small blob) can be left for now.
+
+---
+
+## Verification Checklist
+
+After implementing all fixes:
+
+1. **Memory test:** Launch app → filter feed by Video → monitor RSS memory for 60 seconds. Must stay under 2 GB.
+2. **Streaming verification:** Add a temporary `println!` in `get_media_blob` cache-miss path to confirm `export_media_to_file` is called (not `get_media`). Remove after verification.
+3. **Batch concurrency:** Filter by Video with 20+ uncached videos → verify no more than 3 concurrent blob exports
+4. **FFmpeg timeout:** Test with a large video file (>100 MB) to verify FFmpeg completes or times out within 60s
+5. **Cache eviction:** Import several large videos, verify `blob_cache/` does not exceed 500 MB
+6. **Build:** `cargo check` — 0 errors, `cargo test` — all pass
 
 ---
 
@@ -206,18 +234,13 @@ Local dates treated as UTC — every imported timestamp off by user's UTC offset
 
 - **Track boundary:** Only modify files in `src-tauri/src/`. Do NOT touch `src/` (frontend files).
 - **Build verification:** Run `cargo check` + `cargo test` before EVERY commit. Zero errors.
-- **Command registration:** Register all new commands in `lib.rs` invoke_handler.
-- **Commit format:** `feat(track-a): description` or `fix(track-a): description`.
+- **Commit format:** `fix(track-a): description`
 - **No TODOs in code.** Implement fully.
-- **P0 FIRST.** Do not begin P1/P2/P3 until P0 memory leak and CPU spike have been investigated and either fixed or root-caused with specific findings documented.
+- **MEMORY LEAK ONLY.** Do not fix any other bugs, add any features, or address any other tech debt. Every line of code you write this sprint must reduce memory usage.
 - **Update `progress.md`** with deliverables when done.
 
 ---
 
-## What This Sprint Does NOT Include (Future)
+## What This Sprint Does NOT Include
 
-- **AP Group Actor / Group Federation** (sprint v15+) — deferred until moderation commands are verified working
-- **Lemmy Compatibility Layer** (sprint v15+)
-- **Database schema redesign** (sprint v15+) — full table scan elimination requires major refactor
-- **import.rs god file split** (sprint v15+) — structural refactor, no user-facing impact
-- **Bluesky post parsing deduplication** (sprint v15+)
+Everything else. No AP security. No moderation commands. No connector fixes. No encoding fixes. No feature work of any kind. The ONLY goal is to make the app use <2 GB of RAM under all conditions.

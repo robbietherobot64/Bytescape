@@ -4,6 +4,47 @@
 
 ---
 
+## 📋 PM — EMERGENCY Sprint Rewrite: Memory Leak Eradication (2026-04-04)
+
+**Trigger:** User reports memory leak STILL NOT FIXED after Sprint v14 agents delivered 8 commits. Commit `6d04f1e` claimed to fix it but only addressed the cache-HIT path (extension detection reads 12 header bytes instead of full file). The cache-MISS path — the actual primary leak — still reads entire video blobs (50-500 MB each) into memory via `sync.get_media(hash)` → `reader.read_to_end()`.
+
+### Root Cause Analysis (10 Leak Sources Identified)
+
+| # | Source | File | Severity | Memory Per-Incident |
+|---|--------|------|----------|-------------------|
+| 1 | `get_media_blob` cache-miss reads full blob | `commands/media.rs:246` | 🔴 CRITICAL | 50-500 MB per video |
+| 2 | `resolve_blob_urls_batch` triggers concurrent full-blob reads | `commands/media.rs:1516,1578` | 🔴 CRITICAL | 0.5-10 GB (10-20 videos) |
+| 3 | `get_media_blob_bytes` same pattern + IPC doubling | `commands/media.rs:300` | 🔴 CRITICAL | 100-1000 MB |
+| 4 | `backfill_media_mimes` reads full blob for MIME detection | `lib.rs:889` | 🔴 HIGH | Unbounded |
+| 5 | FeedScreen doesn't release GStreamer pipelines on filter change | `FeedScreen.tsx` | 🟡 HIGH | 0.8-6.5 GB |
+| 6 | VirtualizedFeedList overscan=5 for video feeds | `VirtualizedFeedList.tsx` | 🟡 MEDIUM | 0.5-2.5 GB |
+| 7 | `videoUrlCache` unbounded, never cleared | `VideoPlayer.tsx:32` | 🟡 LOW | Grows indefinitely |
+| 8 | `resolvedUrlCache` unbounded, no eviction | `useBlobUrl.ts:45` | 🟡 LOW | Grows indefinitely |
+| 9 | `blob_cache/` directory no eviction | `commands/media.rs` | 🟡 MEDIUM | Unbounded disk |
+| 10 | FFmpeg no timeout, hung processes | `commands/media.rs` | 🟡 MEDIUM | 100+ MB per process |
+
+**Key finding:** `sync.export_media_to_file()` (sync.rs:340) and `sync.get_media_header()` (sync.rs:349) already exist as streaming alternatives, but `get_media_blob` doesn't use them.
+
+### Actions Taken
+
+1. **Rewrote `backend-sprint-v14.md`**: 100% focused on memory leak — P0.1 through P0.7 covering streaming blob export, batch concurrency limiting, backfill header-only reads, FFmpeg timeouts, blob_cache eviction, memory guard logging. NO feature work, NO security fixes.
+2. **Rewrote `frontend-sprint-v14.md`**: 100% focused on memory leak — P0.1 through P0.6 covering GStreamer pipeline cleanup on filter change, overscan reduction for video feeds, videoUrlCache eviction, resolvedUrlCache eviction, video element unmount cleanup, memory diagnostics.
+3. **Updated ROADMAP.md**: Memory Leak open issue updated with 10-source diagnosis and sprint v14 rewrite note. CPU Spike marked resolved (fixed in `6d04f1e`).
+
+### Sprint v14 Delivery Status (Pre-Rewrite)
+
+8 commits delivered by agents before this rewrite:
+- `e77d9a1` fix(track-b): P0 feed stability overhaul — CSS containment, measurement cache, pre-sizing
+- `8c6ba6b` fix(track-b): P1 profile image previews
+- `6d04f1e` fix(track-a): P0 critical performance fixes — ⚠️ only partially fixed memory leak
+- `6291ad1` fix(track-b): P2 username suggestion + big green import button
+- `509d113` feat(track-a): P1 AP security fixes — SEC-8/9/10/12, clock skew
+- `bead8e3` feat(track-b): wire up Groups feed tab with backend data
+- `c61d6c9` feat(track-a): P2 register 10 group moderation commands
+- `d242546` fix(track-a): P3 Facebook encoding + timezone corrections
+
+---
+
 ## 📋 PM — Comprehensive User Feedback Review (2026-03-28)
 
 **Source**: `user-feedback` file — user performed a thorough review of the app and documented all observations.
