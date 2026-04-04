@@ -358,7 +358,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
                     <div className="tabs">
-                        {(['all', 'following', 'subscribed', 'you'] as FeedTab[]).map(tab => (
+                        {(['all', 'following', 'subscribed', 'you', 'groups'] as FeedTab[]).map(tab => (
                             <button
                                 key={tab}
                                 className={`tab ${activeTab === tab ? 'active' : ''}`}
@@ -496,7 +496,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             </div>
                         )}
 
-                        {activeTab === 'groups' && (
+                        {!isLoading && feedEntries.length === 0 && !feedError && activeTab === 'groups' && (
                             <div className="empty-state">
                                 <div className="empty-icon">📋</div>
                                 <div className="empty-title">No group subscriptions yet</div>

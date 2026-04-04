@@ -443,6 +443,23 @@ export function useUnifiedFeed({
                 }
 
                 await fetchFollowingList(auth.did);
+
+            } else if (tab === 'groups') {
+                // ── Groups tab: aggregated feed from joined groups + subscribed topics ──
+                // Cross-system: provider.getGroupsFeed() -> backend get_groups_feed command
+                // which unions direct group memberships with topic-subscribed groups.
+                const rawItems = await provider.getGroupsFeed({ limit: 50, cursor: null });
+                if (isStale()) return;
+
+                const adapted = rawItems.map(adaptBytescapeItem);
+                const filtered = archiveSourceFilter
+                    ? adapted.filter(item => item.source.toLowerCase() === archiveSourceFilter.toLowerCase())
+                    : adapted;
+                const deduped = deduplicateFeedEntries(filtered);
+                setFeedEntries(deduped);
+                setCursor(null); // Groups feed uses timestamp cursors internally
+                setCache(cacheKey, deduped, null);
+                prefetchBlobUrls(deduped).catch(() => {});
             }
         } catch (e) {
             console.error('Failed to fetch feed:', e);
