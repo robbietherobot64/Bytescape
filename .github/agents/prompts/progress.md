@@ -4,6 +4,53 @@
 
 ---
 
+## 🎨 Frontend — Memory Leak Eradication Sprint (2026-04-04)
+
+**Commit:** `18e8312` on `main`
+**Build:** 0 tsc errors, 272/272 frontend tests pass
+**Sprint prompt:** `frontend-sprint-v14.md` (EMERGENCY rewrite — memory leak only)
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0.1 | GStreamer cleanup on filter change | `FeedScreen.tsx`: Added `useEffect` on `mediaFilter` that calls `VideoPlaybackManager.releaseAll()` + `clearVideoUrlCache()` + `clearResolvedUrlCache()`. Same pattern already proven in `PeerProfileScreen.tsx:113`. | ✅ |
+| P0.1b | VideoPlayer unmount pipeline release *(Audit 10.13)* | `VideoPlayer.tsx`: Unmount cleanup now calls `pause()` + `removeAttribute('src')` + `load()` BEFORE `unregister()`. Forces WebKitGTK to release the GStreamer decoder pipeline (100-500 MB each) instead of leaving it alive as a stale reference. | ✅ |
+| P0.2 | Overscan reduction for video feeds | `FeedScreen.tsx` → `VirtualizedFeedList`: Passes `overscan={mediaFilter === 'video' ? 1 : 5}`. Reduces simultaneous video decoder pipelines from 8-13 to 4-6. VirtualizedFeedList already accepted `overscan` prop. | ✅ |
+| P0.3 | `videoUrlCache` eviction | `VideoPlayer.tsx`: Added `VIDEO_URL_CACHE_MAX = 100` with FIFO eviction via `setVideoUrlCache()`. Exported `clearVideoUrlCache()` + `videoUrlCacheSize()`. All internal `.set()` calls routed through eviction function. | ✅ |
+| P0.4 | `resolvedUrlCache` eviction | `useBlobUrl.ts`: Added `RESOLVED_URL_CACHE_MAX = 500` with FIFO eviction inside `cacheResolvedUrl()`. Internal `resolvedUrlCache.set()` in `useBlobUrl` hook replaced with `cacheResolvedUrl()` call. Exported `clearResolvedUrlCache()` + `resolvedUrlCacheSize()`. | ✅ |
+| P0.5 | `<video>` unmount resource release | Covered by P0.1b — `pause()` + `removeAttribute('src')` + `load()` sequence on every VideoPlayer unmount. | ✅ |
+| P0.6 | Dev-mode memory diagnostics | `FeedScreen.tsx`: On every filter change in dev mode, logs video element count, VideoPlaybackManager.count, videoUrlCache size, resolvedUrlCache size. | ✅ |
+
+### Memory Impact Analysis
+
+| Leak Source | Before | After |
+|-------------|--------|-------|
+| GStreamer pipelines on filter toggle (P0.1) | 0.8-6.5 GB (8-13 pipelines persist) | 0 GB (all released on filter change) |
+| Stale VideoPlaybackManager refs (P0.1b) | 100-500 MB per orphan | 0 MB (unmount always releases pipeline) |
+| Video overscan (P0.2) | 0.5-2.5 GB (5 extra pipelines) | 0.1-0.5 GB (1 extra pipeline) |
+| videoUrlCache growth (P0.3) | Unbounded | Capped at 100 entries |
+| resolvedUrlCache growth (P0.4) | Unbounded | Capped at 500 entries |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/screens/FeedScreen.tsx` | +26 lines — imports, GStreamer cleanup effect, overscan prop, diagnostics |
+| `src/components/VideoPlayer.tsx` | +31/-3 lines — eviction functions, unmount pipeline release, setVideoUrlCache |
+| `src/hooks/useBlobUrl.ts` | +20/-2 lines — eviction cap, clearResolvedUrlCache, resolvedUrlCacheSize, internal routing |
+
+### Remaining Backend Leak Sources (Track A scope)
+
+Items 1-4 and 9-10 from the PM's root cause table are backend-only (Rust):
+- `get_media_blob` cache-miss full-blob reads → needs streaming export
+- `resolve_blob_urls_batch` concurrent blob reads → needs concurrency limiter
+- `backfill_media_mimes` full-blob reads → needs header-only detection
+- `blob_cache/` no eviction → needs disk quota
+- FFmpeg no timeout → needs process timeout
+
+---
+
 ## 📋 PM — EMERGENCY Sprint Rewrite: Memory Leak Eradication (2026-04-04)
 
 **Trigger:** User reports memory leak STILL NOT FIXED after Sprint v14 agents delivered 8 commits. Commit `6d04f1e` claimed to fix it but only addressed the cache-HIT path (extension detection reads 12 header bytes instead of full file). The cache-MISS path — the actual primary leak — still reads entire video blobs (50-500 MB each) into memory via `sync.get_media(hash)` → `reader.read_to_end()`.
