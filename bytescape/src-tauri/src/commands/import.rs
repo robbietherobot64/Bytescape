@@ -231,11 +231,19 @@ pub async fn migrate_willow_paths(state: State<'_, AppState>) -> std::result::Re
 /// `commit_memories` is called, allowing the user to review before committing.
 /// Parsing runs in `spawn_blocking` because the ZIP library is synchronous.
 ///
+/// # Params
+/// - `path` — absolute path to the Facebook export ZIP file.
+/// - `timezone_offset_seconds` — optional UTC offset **in seconds** (east-positive).
+///   E.g. UTC+3 → 10800, UTC-5 → -18000. Facebook exports may store timestamps
+///   in the user's local time. Providing this offset allows Bytescape to convert
+///   them to true UTC. Defaults to 0 (UTC) if omitted.
+///
 /// # IPC
-/// Frontend: `invoke<ParseResult>('import_facebook_zip', { path })`
+/// Frontend: `invoke<ParseResult>('import_facebook_zip', { path, timezoneOffsetSeconds })`
 #[tauri::command]
 pub async fn import_facebook_zip(
     path: String,
+    timezone_offset_seconds: Option<i64>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ParseResult, String> {
     let zip_path = std::path::PathBuf::from(path);
@@ -246,12 +254,13 @@ pub async fn import_facebook_zip(
 
     let app_handle = state.app_handle.clone();
     let sync_manager = state.sync_manager.lock().await.clone();
+    let tz_offset = timezone_offset_seconds.unwrap_or(0);
 
     // Capture the tokio runtime handle BEFORE entering spawn_blocking
     let rt_handle = tokio::runtime::Handle::current();
 
     let result = tokio::task::spawn_blocking(move || {
-        facebook::parse_facebook_zip(zip_path, media_dir, &app_handle, sync_manager, rt_handle)
+        facebook::parse_facebook_zip(zip_path, media_dir, &app_handle, sync_manager, rt_handle, tz_offset)
     })
     .await
     .map_err(|e| BytescapeError::Internal(format!("Parser task failed: {}", e)))?
@@ -566,7 +575,7 @@ pub async fn import_archive_auto(
 
     let parsed_result = match detected.as_str() {
         "facebook" => {
-            import_facebook_zip(path, state.clone()).await?
+            import_facebook_zip(path, None, state.clone()).await?
         }
         "instagram" => {
             import_instagram_zip(path, state.clone()).await?

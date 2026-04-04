@@ -438,25 +438,69 @@ pub use crate::models::TaggedPerson;
 /// Facebook exports encode non-ASCII text as escaped UTF-8 byte sequences,
 /// e.g. "café" becomes "\u00c3\u00a9" (each UTF-8 byte as a \u00XX escape).
 /// This function detects and fixes that encoding.
+///
+/// Handles three cases:
+/// 1. Pure ASCII (no chars ≥ 0x80) → return as-is
+/// 2. All chars < 256 (pure double-encoded) → re-interpret all as bytes → UTF-8
+/// 3. Mixed: some chars ≥ 256 (already correct), some < 256 (possibly
+///    double-encoded) → flush byte segments as UTF-8, pass through ≥256 directly
 pub fn decode_facebook_text(text: &str) -> String {
-    // Check if the string contains the characteristic \u00XX pattern
-    // by looking for bytes in the 0x80-0xFF range (high bytes from UTF-8)
-    let bytes: Vec<u8> = text.chars()
-        .map(|c| c as u32)
-        .filter(|&c| c < 256)
-        .map(|c| c as u8)
-        .collect();
-    
-    if bytes.len() == text.len() {
-        // All chars fit in a single byte — try re-interpreting as UTF-8
-        if let Ok(decoded) = String::from_utf8(bytes.clone()) {
-            if decoded != text && decoded.chars().any(|c| !c.is_ascii()) {
+    // Quick bail: no high bytes in the Latin-1 supplement range means no
+    // double-encoding to fix.
+    if !text.chars().any(|c| {
+        let cp = c as u32;
+        cp >= 0x80 && cp <= 0xFF
+    }) {
+        return text.to_string();
+    }
+
+    // Fast path: all chars < 256 — pure double-encoded content.
+    if text.chars().all(|c| (c as u32) < 256) {
+        let bytes: Vec<u8> = text.chars().map(|c| c as u8).collect();
+        if let Ok(decoded) = String::from_utf8(bytes) {
+            if decoded != text {
                 return decoded;
             }
         }
+        return text.to_string();
     }
-    
-    text.to_string()
+
+    // Slow path: mixed content. Some chars are already-valid Unicode (≥ 256),
+    // some are raw byte values (< 256) from double-encoding.
+    // Accumulate chars < 256 as raw bytes. When we hit a char ≥ 256 or end of
+    // string, flush the byte buffer as UTF-8 and append the char directly.
+    let mut result = String::with_capacity(text.len());
+    let mut byte_buf: Vec<u8> = Vec::new();
+
+    for c in text.chars() {
+        let cp = c as u32;
+        if cp < 256 {
+            byte_buf.push(cp as u8);
+        } else {
+            // Flush accumulated bytes as UTF-8
+            if !byte_buf.is_empty() {
+                match String::from_utf8(std::mem::take(&mut byte_buf)) {
+                    Ok(decoded) => result.push_str(&decoded),
+                    Err(e) => {
+                        result.push_str(&String::from_utf8_lossy(e.as_bytes()));
+                        byte_buf.clear();
+                    }
+                }
+            }
+            // Append the already-correct character
+            result.push(c);
+        }
+    }
+
+    // Flush any remaining bytes
+    if !byte_buf.is_empty() {
+        match String::from_utf8(byte_buf) {
+            Ok(decoded) => result.push_str(&decoded),
+            Err(e) => result.push_str(&String::from_utf8_lossy(e.as_bytes())),
+        }
+    }
+
+    if result != text { result } else { text.to_string() }
 }
 
 /// Check if a file path within a Facebook export ZIP is known non-post data.
@@ -776,6 +820,9 @@ pub fn detect_photo_change_label(content: &str, title: Option<&str>) -> Option<S
 /// - `app_handle`: Tauri app handle for emitting progress events
 /// - `sync_manager`: Optional Iroh sync manager for blob storage
 /// - `rt_handle`: Tokio runtime handle for async operations within sync context
+/// - `timezone_offset_seconds`: UTC offset in seconds (east-positive) to correct
+///   local timestamps. E.g. UTC+3 → 10800. Applied as `ts - offset` to convert
+///   local timestamps to true UTC. Pass 0 for no correction.
 ///
 /// ## Returns
 /// A `ParseResult` containing parsed posts, tracker entries, and messages.
@@ -785,6 +832,7 @@ pub fn parse_facebook_zip(
     app_handle: &AppHandle,
     sync_manager: Option<Arc<SyncManager>>,
     rt_handle: tokio::runtime::Handle,
+    timezone_offset_seconds: i64,
 ) -> Result<ParseResult, String> {
     let file = std::fs::File::open(&zip_path)
         .map_err(|e| format!("Failed to open ZIP: {}", e))?;
@@ -1438,6 +1486,28 @@ pub fn parse_facebook_zip(
     #[cfg(debug_assertions)]
     println!("facebook: Import complete — {} posts, {} photos, {} videos, {} trackers",
         posts.len(), total_photos, total_videos, trackers.len());
+
+    // Apply timezone offset correction: Facebook exports may store timestamps
+    // in the user's local time. Convert to true UTC: utc = local - offset.
+    if timezone_offset_seconds != 0 {
+        for post in &mut posts {
+            if post.timestamp > 0 {
+                post.timestamp -= timezone_offset_seconds;
+            }
+        }
+        for msg in &mut messages {
+            // VaultMessage.sent_at is an RFC3339 string — parse, adjust, re-format
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&msg.sent_at) {
+                let adjusted = dt.timestamp() - timezone_offset_seconds;
+                if let Some(naive) = chrono::DateTime::from_timestamp(adjusted, 0) {
+                    msg.sent_at = naive.to_rfc3339();
+                }
+            }
+        }
+        #[cfg(debug_assertions)]
+        println!("facebook: Applied timezone offset of {}s to {} posts and {} messages",
+            timezone_offset_seconds, posts.len(), messages.len());
+    }
 
     Ok(ParseResult {
         posts,
@@ -2762,4 +2832,65 @@ fn parse_html_messages(html: &str, file_name: &str) -> Vec<crate::models::VaultM
     }
 
     messages
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_pure_ascii() {
+        assert_eq!(decode_facebook_text("Hello, world!"), "Hello, world!");
+    }
+
+    #[test]
+    fn test_decode_double_encoded_latin() {
+        // "café" in UTF-8 is [63 61 66 C3 A9]. Facebook stores each byte as
+        // a \u00XX escape, which the JSON parser turns into chars U+0063,
+        // U+0061, U+0066, U+00C3, U+00A9 (i.e. "cafÃ©").
+        let input = "caf\u{00c3}\u{00a9}";
+        assert_eq!(decode_facebook_text(input), "café");
+    }
+
+    #[test]
+    fn test_decode_double_encoded_emoji() {
+        // 😀 (U+1F600) = UTF-8 [F0 9F 98 80]. Double-encoded as \u00f0\u009f\u0098\u0080.
+        let input = "\u{00f0}\u{009f}\u{0098}\u{0080}";
+        assert_eq!(decode_facebook_text(input), "😀");
+    }
+
+    #[test]
+    fn test_decode_double_encoded_cjk() {
+        // 中 (U+4E2D) = UTF-8 [E4 B8 AD]. Double-encoded as \u00e4\u00b8\u00ad.
+        let input = "\u{00e4}\u{00b8}\u{00ad}";
+        assert_eq!(decode_facebook_text(input), "中");
+    }
+
+    #[test]
+    fn test_decode_double_encoded_cyrillic() {
+        // Й (U+0419) = UTF-8 [D0 99]. Double-encoded as \u00d0\u0099.
+        let input = "\u{00d0}\u{0099}";
+        assert_eq!(decode_facebook_text(input), "Й");
+    }
+
+    #[test]
+    fn test_decode_mixed_content_preserves_existing_unicode() {
+        // Mixed: already-correct emoji 😀 (U+1F600, ≥ 256) plus
+        // double-encoded "café" (\u00c3\u00a9).
+        // The old code would drop 😀 silently. The new code preserves it.
+        let input = format!("{} caf\u{00c3}\u{00a9}", "😀");
+        assert_eq!(decode_facebook_text(&input), "😀 café");
+    }
+
+    #[test]
+    fn test_decode_already_correct_unicode_passthrough() {
+        // Already-correct non-Latin text should pass through unchanged.
+        let input = "Hello 世界 🌍";
+        assert_eq!(decode_facebook_text(input), "Hello 世界 🌍");
+    }
+
+    #[test]
+    fn test_decode_empty_string() {
+        assert_eq!(decode_facebook_text(""), "");
+    }
 }
