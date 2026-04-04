@@ -19,7 +19,7 @@
  * - src/providers/DataProvider.ts — backend command bridge
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type {
   AuthStatus,
   FeedEntry,
@@ -27,6 +27,7 @@ import type {
   FeedTab,
   GeneratorView,
   LinkedFeedSource,
+  ProfileView,
 } from '../types';
 import { LIVE_TABS } from '../types';
 import { adaptBlueskyPost, deduplicateFeedEntries } from '../utils/adapters';
@@ -121,7 +122,7 @@ interface UseUnifiedFeedReturn {
   // Legacy compat — kept so FeedScreen destructuring doesn't break
   cursor: string | null;
   isFetchingMore: boolean;
-  followingList: never[];
+  followingList: ProfileView[];
   followedHashtags: string[];
   setFollowedHashtags: (tags: string[]) => void;
   vaultSources: string[];
@@ -138,8 +139,9 @@ interface UseUnifiedFeedReturn {
 export function useUnifiedFeed({
   auth,
   activeTab,
-  selectedFeedUris: _selectedFeedUris,
+  selectedFeedUris,
   pageSize = DEFAULT_PAGE_SIZE,
+  selectedHashtagsFilter,
   archiveSourceFilter,
   autoRefreshFeeds = true,
 }: UseUnifiedFeedOptions): UseUnifiedFeedReturn {
@@ -154,6 +156,9 @@ export function useUnifiedFeed({
   const [linkedSources, setLinkedSources] = useState<LinkedFeedSource[]>([]);
   const [sourceToggles, setSourceTogglesState] = useState<Record<string, boolean>>({});
   const [followedHashtags, setFollowedHashtags] = useState<string[]>([]);
+  const [vaultSources, setVaultSources] = useState<string[]>([]);
+  const [followingList, setFollowingList] = useState<ProfileView[]>([]);
+  const [archiveTotal, setArchiveTotal] = useState<number>(0);
 
   // Ref to prevent concurrent fetches
   const fetchingRef = useRef(false);
@@ -165,6 +170,26 @@ export function useUnifiedFeed({
     return () => { mountedRef.current = false; };
   }, []);
 
+  // ── Resolve effective source filter ──
+  const effectiveSourceFilter = archiveSourceFilter && archiveSourceFilter !== FEED_FILTER_ALL
+    ? archiveSourceFilter : undefined;
+
+  // ── Resolve effective tags from followed hashtags + active hashtag filters ──
+  const effectiveTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const t of followedHashtags) tags.add(t);
+    if (selectedHashtagsFilter) {
+      for (const t of selectedHashtagsFilter) tags.add(t);
+    }
+    return Array.from(tags);
+  }, [followedHashtags, selectedHashtagsFilter]);
+
+  // ── Resolve effective feed URIs (user-selected or all saved) ──
+  const effectiveFeedUris = useMemo(() => {
+    if (selectedFeedUris.length > 0) return selectedFeedUris;
+    return customFeedUris(savedFeeds);
+  }, [selectedFeedUris, savedFeeds]);
+
   // ── Fetch a single page from the backend ──
   const fetchPage = useCallback(async (
     tab: FeedTab,
@@ -173,35 +198,68 @@ export function useUnifiedFeed({
   ): Promise<FeedPage> => {
     switch (tab) {
       case 'all': {
-        // Backend returns FeedPage directly
-        const sourceFilter = archiveSourceFilter && archiveSourceFilter !== FEED_FILTER_ALL
-          ? archiveSourceFilter : undefined;
+        // Backend returns FeedPage directly — pass tags + source filter
         return provider.getTimelineUnified({
-          tags: [],
-          feedUris: customFeedUris(savedFeeds),
+          tags: effectiveTags,
+          feedUris: effectiveFeedUris,
           limit,
           cursor,
           vaultOffset: 0,
-          sourceFilter,
+          sourceFilter: effectiveSourceFilter,
         });
       }
 
       case 'following': {
-        // Backend returns tuple [BlueskyPost[], cursor] — normalize to FeedPage
-        const [posts, nextCursor] = await provider.getTimeline({
-          limit,
-          cursor: cursor ?? undefined,
-        });
-        const items = posts.map(adaptBlueskyPost);
-        return { items, cursor: nextCursor, has_more: nextCursor != null };
+        // Bluesky timeline + Mastodon home timeline, merged
+        const results: FeedEntry[] = [];
+        const enabledSources = Object.entries(sourceToggles)
+          .filter(([, enabled]) => enabled)
+          .map(([id]) => id);
+
+        // If no toggles loaded yet, fetch all; otherwise respect toggles
+        const fetchBluesky = enabledSources.length === 0 || enabledSources.includes('bluesky');
+        const fetchMastodon = enabledSources.length === 0 || enabledSources.includes('mastodon');
+
+        const promises: Promise<void>[] = [];
+
+        if (fetchBluesky) {
+          promises.push(
+            provider.getTimeline({ limit, cursor: cursor ?? undefined })
+              .then(([posts, _nextCursor]) => {
+                results.push(...posts.map(adaptBlueskyPost));
+              })
+              .catch(() => {}) // non-critical — Bluesky may not be connected
+          );
+        }
+
+        if (fetchMastodon) {
+          promises.push(
+            provider.mastodonGetTimeline({ limit })
+              .then(entries => {
+                results.push(...entries);
+              })
+              .catch(() => {}) // non-critical — Mastodon may not be connected
+          );
+        }
+
+        await Promise.all(promises);
+
+        // Sort merged results by timestamp descending
+        results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        // Apply source filter if set
+        const filtered = effectiveSourceFilter
+          ? results.filter(e => e.source === effectiveSourceFilter)
+          : results;
+
+        return { items: filtered.slice(0, limit), cursor: null, has_more: false };
       }
 
       case 'subscribed': {
-        // Backend returns tuple [BlueskyPost[], cursor] — normalize to FeedPage
-        const uris = customFeedUris(savedFeeds);
+        // Backend returns tuple [BlueskyPost[], cursor] — use effective feed URIs + tags
         const [posts, nextCursor] = await provider.getUnifiedFeed({
-          tags: [],
-          feedUris: uris,
+          tags: effectiveTags,
+          feedUris: effectiveFeedUris,
           limit,
           cursor,
         });
@@ -222,7 +280,7 @@ export function useUnifiedFeed({
       default:
         return { items: [], cursor: null, has_more: false };
     }
-  }, [provider, savedFeeds, archiveSourceFilter]);
+  }, [provider, effectiveFeedUris, effectiveTags, effectiveSourceFilter, sourceToggles]);
 
   // ── Get cached state for active tab ──
   const getCachedState = useCallback(() => {
@@ -327,7 +385,34 @@ export function useUnifiedFeed({
     provider.listFollowedHashtags()
       .then(tags => { if (mountedRef.current) setFollowedHashtags(tags); })
       .catch(() => {});
+
+    // Load vault sources for platform filter dropdown
+    provider.listVaultSources()
+      .then(sources => { if (mountedRef.current) setVaultSources(sources); })
+      .catch(() => {});
+
+    // Load following list (contacts) for the side panel
+    provider.listContacts()
+      .then(contacts => { if (mountedRef.current) setFollowingList(contacts); })
+      .catch(() => {});
+
+    // Load archive total
+    provider.countArchivePosts()
+      .then(count => { if (mountedRef.current) setArchiveTotal(count); })
+      .catch(() => {});
   }, [auth, provider]);
+
+  // ── Re-fetch when savedFeeds resolves (fixes race where fetchFeed fires before feeds load) ──
+  const savedFeedsLoadedRef = useRef(false);
+  useEffect(() => {
+    if (savedFeeds.length > 0 && !savedFeedsLoadedRef.current) {
+      savedFeedsLoadedRef.current = true;
+      // Saved feeds just loaded — re-fetch subscribed/all tabs if active
+      if (activeTab === 'subscribed' || activeTab === 'all') {
+        fetchFeed();
+      }
+    }
+  }, [savedFeeds, activeTab, fetchFeed]);
 
   // ── Fetch on tab switch (stale-while-revalidate) ──
   useEffect(() => {
@@ -395,11 +480,11 @@ export function useUnifiedFeed({
     // Legacy compat
     cursor: currentCursor,
     isFetchingMore: isLoadingMore,
-    followingList: [] as never[],
+    followingList,
     followedHashtags,
     setFollowedHashtags,
-    vaultSources: [],
-    archiveTotal: 0,
+    vaultSources,
+    archiveTotal,
     fetchFeed,
     handleLoadMore: loadMore,
     setFeedEntries,
