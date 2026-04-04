@@ -58,21 +58,27 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
 
     let route = warp::fs::dir(cache_dir.clone())
         .map(|file: warp::fs::File| {
-            // MEMORY-CRITICAL: no-store for ALL media types.
-            // Videos: prevents GStreamer double-buffering (pipeline + HTTP cache = 2×).
-            // Images: prevents WebKitGTK from caching decoded bitmaps (48 MB each
-            //         full-res image). With hundreds of images in a feed, the old
-            //         max-age=300 policy caused multi-GB bitmap cache growth.
-            // Re-request cost is zero since we serve from localhost disk cache.
+            // Content-type-aware cache headers:
+            // - Videos: no-store to prevent GStreamer double-buffering (each
+            //   pipeline + HTTP cache = 2× the memory). Re-request cost is
+            //   zero since we serve from localhost.
+            // - Images: max-age=300 + immutable so WebKitGTK reuses the
+            //   decoded bitmap across virtualizer remount/unmount cycles.
+            //   Without this, scrolling re-decodes full-res images at ~48 MB
+            //   each, causing IMMEDIATE multi-GB RSS spikes. Blob cache files
+            //   are content-addressed (hash-named) so immutable is correct.
             let mut resp = file.into_response();
+            let is_video = resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.starts_with("video/"))
+                .unwrap_or(false);
 
-            // MEMORY-CRITICAL: ALL media types use no-store.
-            // Previously images used max-age=300,immutable which caused
-            // WebKitGTK to accumulate decoded bitmaps (48 MB each for
-            // full-res images). Over hundreds of images in a feed, this
-            // grew to multi-GB. The blob_cache/ on disk prevents redundant
-            // Iroh fetches, so HTTP caching is unnecessary.
-            let cache_val = "no-store, no-cache, must-revalidate";
+            let cache_val = if is_video {
+                "no-store, no-cache, must-revalidate"
+            } else {
+                "public, max-age=300, immutable"
+            };
 
             resp.headers_mut().insert(
                 "cache-control",
