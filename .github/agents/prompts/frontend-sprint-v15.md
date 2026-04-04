@@ -91,26 +91,29 @@ export interface LinkedFeedSource {
 
 **File:** `src/hooks/useUnifiedFeed.ts` (or the new replacement)
 
+The 'subscribed' tab stays as-is — it's a good catchall for feeds, hashtags, lists, etc. (anything that isn't a direct follow). Remove 'you' tab. Add 'rss' as a placeholder.
+
 ```typescript
-// Remove 'you' tab, rename 'subscribed' to 'feeds' for clarity
-export type FeedTab = 'all' | 'following' | 'feeds' | 'groups';
+// Remove 'you' tab, add 'rss' placeholder
+export type FeedTab = 'all' | 'following' | 'subscribed' | 'groups' | 'rss';
 
 export const FEED_TAB_LABELS: Record<FeedTab, string> = {
   all: 'All',
   following: 'Following',
-  feeds: 'Feeds',
+  subscribed: 'Subscribed',
   groups: 'Groups',
+  rss: 'RSS',
 };
 ```
 
-**IMPORTANT:** The 'subscribed' tab is being renamed to 'feeds'. Update all references:
-- `FeedScreen.tsx` tab rendering
-- `FeedRightPanel.tsx` (imports `FeedTab`)
-- `ContextPanel.tsx` (imports `FeedTab`, `FEED_TAB_LABELS`)
-- `store/index.ts` (NavStore `activeFeedTab` default)
-- Any other file importing `FeedTab`
+**Tab definitions:**
+- **all** = Combined view of Following + Subscribed + Groups + RSS. NOT a global firehose — only YOUR connections/subscriptions.
+- **following** = Accounts you follow across all linked platforms (Bluesky, Mastodon, Pixelfed, PeerTube). Source toggles filter by platform.
+- **subscribed** = Bluesky custom feeds, Mastodon lists, subscribed hashtags (Bluesky + Mastodon). Anything you subscribe to that isn't a direct follow.
+- **groups** = Lemmy communities, Piefed groups, Bytescape local groups. Future placeholder for now.
+- **rss** = RSS/Atom feed subscriptions. Future placeholder — render empty state with "RSS feeds coming soon" message.
 
-Run `grep -rn "'subscribed'\|subscribed:" src/` to find all references. Also `grep -rn "'you'" src/` to find and remove 'you' tab references.
+**IMPORTANT:** Remove 'you' tab references. Run `grep -rn "'you'" src/` to find and remove 'you' tab references. The 'subscribed' tab is NOT being renamed — keep all existing 'subscribed' references.
 
 ### Phase 1.3: Rewrite `useUnifiedFeed` hook
 
@@ -159,8 +162,9 @@ interface UseUnifiedFeedReturn {
 |-----|----------------|--------|
 | `all` | `get_timeline_unified` | `{ limit, cursor, source_filter: null }` |
 | `following` | `get_timeline` | `{ limit, cursor, source_filter: activeToggles }` |
-| `feeds` | `get_unified_feed` | `{ limit, cursor, feed_uris: selectedFeedUris }` |
+| `subscribed` | `get_unified_feed` | `{ limit, cursor, feed_uris: selectedFeedUris }` |
 | `groups` | `get_groups_feed` | `{ limit, cursor }` |
+| `rss` | (future) | Render empty placeholder: "RSS feeds coming soon" |
 
 **Response handling:**
 ```typescript
@@ -202,7 +206,7 @@ interface FeedCacheState {
 
 **Bounded invariants:**
 - Each tab's `entries` array: max 150 items. `appendTabEntries` enforces this by evicting oldest if over cap.
-- Total tabs: 4 (all, following, feeds, groups). No dynamic tab keys.
+- Total tabs: 5 (all, following, subscribed, groups, rss). No dynamic tab keys.
 - `savedFeeds`: max 100 items.
 
 ### Phase 1.5: Wire into FeedScreen
@@ -213,7 +217,7 @@ interface FeedCacheState {
 2. Remove `archiveSourceFilter`, `selectedHashtagsFilter`, `hashtagInput` state (moved into hook/store).
 3. Replace `handleLoadMore` call with `loadMore()` from new hook.
 4. Keep: ComposeBox, pull-to-refresh, tab bar, filter toolbar, three-column layout.
-5. Update tab rendering to use new `FeedTab` type (no 'you', 'subscribed' → 'feeds').
+5. Update tab rendering to use new `FeedTab` type (remove 'you' tab, add 'rss' placeholder tab).
 6. Wire source toggles into Following tab header.
 
 ### Phase 1 Memory Gate 🧪
@@ -224,7 +228,7 @@ Test procedure:
 1. `npx tsc --noEmit` — 0 errors
 2. `pnpm test -- --run` — all tests pass (update/remove tests that reference deleted code)
 3. Launch app with `pnpm tauri dev`
-4. Switch between all 4 tabs
+4. Switch between all 5 tabs (All, Following, Subscribed, Groups, RSS)
 5. Load 3 pages on the All tab (click Load More twice)
 6. Check: `entries.length` must be ≤150 at all times
 7. Check: RSS memory must be <300 MB (no media loaded yet, just text data)
@@ -559,7 +563,7 @@ These import `FeedTab` and `FEED_TAB_LABELS`. Update them to use the new types (
 
 Search the entire `src/` directory for:
 - References to deleted files (`prefetchBlobUrls`, `feedAnalytics`, `VideoPlaybackManager`)
-- References to removed tab values (`'subscribed'`, `'you'`)
+- References to removed tab value `'you'` (the 'subscribed' tab is KEPT — do not remove those references)
 - References to old hook exports that no longer exist (`FEED_FILTER_ALL`, `ARCHIVE_PAGE_SIZE`, `customFeedUris` if unused)
 - Unused imports in `FeedScreen.tsx` (the rewrite will have changed many)
 
@@ -567,7 +571,7 @@ Search the entire `src/` directory for:
 
 **Files:** `src/` test files
 
-1. **Update existing tests** that reference `FeedTab = 'subscribed'` → `'feeds'`
+1. **Update existing tests** that reference `FeedTab = 'you'` — remove those. 'subscribed' tests stay as-is.
 2. **Add new tests:**
    - `useUnifiedFeed.test.ts`: test 150-item cap enforcement, cursor pagination, tab isolation
    - `FeedList.test.tsx`: test that content-visibility wrapper renders correctly
@@ -602,7 +606,8 @@ Test procedure:
    - Launch app
    - All tab: load 5 pages (150 items). Scroll through entire feed.
    - Following tab: toggle source filters. Verify filtering works.
-   - Feeds tab: select a custom feed. Load 2 pages.
+   - Subscribed tab: select a custom feed. Load 2 pages.
+   - RSS tab: verify placeholder renders correctly.
    - Groups tab: verify placeholder or content loads.
    - Switch between all tabs rapidly (10 times).
 4. **Memory ceiling:** RSS must stay under **500 MB** at all times during the above workflow
@@ -641,8 +646,8 @@ ps aux | grep bytescape | grep -v grep | awk '{print $6/1024 " MB", $11}'
 # Dead code check
 grep -rn "prefetchBlobUrls\|VideoPlaybackManager\|feedAnalytics" src/ --include="*.ts" --include="*.tsx"
 
-# Deleted tab references
-grep -rn "'subscribed'\|'you'" src/ --include="*.ts" --include="*.tsx"
+# Deleted tab references ('you' only — 'subscribed' stays)
+grep -rn "'you'" src/ --include="*.ts" --include="*.tsx" | grep -i feedtab
 ```
 
 ---

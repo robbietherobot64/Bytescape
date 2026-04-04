@@ -281,18 +281,17 @@ The feed is organized into tabs that protect high-signal relationships from high
 
 | Tab | Content | Source | Default |
 |-----|---------|--------|---------|
-| **All** | Merged, deduplicated union of Following + Feeds + Archives | All connected sources | ✅ Default tab |
-| **Following** | Posts from followed accounts across **all linked platforms**. Source toggles at the top of the tab allow filtering by platform (e.g. show only Mastodon, only Bluesky, etc.). No boosts, no injected content. | Bluesky timeline, Mastodon home, Pixelfed feed, PeerTube subscriptions, all linked AP instances | |
-| **Feeds** | Subscribed custom feed generators. Dropdown to select individual or merged. | Bluesky saved feeds, future: AP relays | |
-| **Groups** | Posts from joined groups and subscribed topics. | Local group system + federated AP Groups | Future placeholder |
+| **All** | Merged, deduplicated union of Following + Subscribed + Groups + RSS. This is NOT a global/public firehose — it is the combined view of **your** connections and subscriptions only. | All connected sources | ✅ Default tab |
+| **Following** | Posts from accounts you follow across **all linked platforms**. Source toggles at the top of the tab allow filtering by platform (e.g. show only Mastodon, only Bluesky, etc.). No boosts, no injected content. | Bluesky timeline, Mastodon home, Pixelfed feed, PeerTube subscriptions, all linked AP instances | |
+| **Subscribed** | Content from things you subscribe to that aren't direct follows: Bluesky custom feed generators, Mastodon lists, subscribed hashtags (Bluesky + Mastodon), future topic feeds. Dropdown to select individual subscription or merged view. | Bluesky saved feeds, Mastodon lists, subscribed hashtags, future: AP relays | |
+| **Groups** | Posts from groups you have joined on Lemmy, Piefed, or Bytescape's local group system. | Lemmy communities, Piefed groups, Bytescape local groups, federated AP Groups | Future placeholder |
+| **RSS** | Content from RSS/Atom feed subscriptions. Sources: manually added RSS subscriptions, imported OPML from Facebook/Instagram/AP account data exports, discovered feeds from linked accounts. | RSS/Atom feeds | Future placeholder |
 
 > **Removed: "You" tab.** Viewing your own posts is handled by the Posts section on the Profile screen. A dedicated feed tab for self-posts is redundant. If there's future demand for a "conversations on my posts" view, it can be added as a Profile sub-tab rather than a feed tab.
 
 **Source toggles (Following tab):** A row of toggle pills at the top of the Following tab, one per linked account/platform. Each toggle shows the platform icon and can be on/off independently. When all toggles are on, all sources merge. When only one is on, it filters to that platform. This gives users control over their Following feed without needing separate tabs per platform.
 
 Future tabs (not in initial rebuild):
-- **#Hashtags** — Posts matching subscribed hashtags (Volume Knob: Quiet/Normal/Loud)
-- **RSS** — Atom/RSS subscriptions from blogs, newsletters, podcasts
 - **Archives** — Read-only imported content (Facebook, Instagram), filterable by source
 
 #### 6.2.3 Content Types & Card Layouts
