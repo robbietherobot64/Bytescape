@@ -4,6 +4,55 @@
 
 ---
 
+## 🔧 Backend — Memory Leak Eradication Sprint (2026-04-04)
+
+**Commit:** `45051f4` on `main`
+**Build:** 0 cargo check errors, 0 warnings, 30/30 Rust tests pass, 272/272 frontend tests pass, 0 tsc errors
+**Sprint prompt:** `backend-sprint-v14.md` (EMERGENCY rewrite — memory leak only)
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0.1 | get_media_blob streaming export | Cache-miss path now uses `sync.get_media_header(hash, 12)` for extension detection + `sync.export_media_to_file(hash, &cache_path)` for zero-memory streaming. Previously called `sync.get_media(hash)` loading 50-500 MB per video into heap. | ✅ |
+| P0.2 | get_media_blob_bytes streaming + single alloc | Same streaming pattern, then `std::fs::read()` for IPC. Eliminates double-buffer (Iroh heap + IPC copy). | ✅ |
+| P0.3 | Batch concurrency limiter | `BLOB_EXPORT_SEMAPHORE` (LazyLock<Semaphore>, 3 permits) gates concurrent Iroh exports in `resolve_blob_urls_batch`. Prevents 10-20 simultaneous exports saturating I/O. | ✅ |
+| P0.4 | Backfill header-only reads | Both `backfill_media_mimes` locations (Tauri command in media.rs + background task in lib.rs) now use `sync.get_media_header(hash, 32)` instead of full blob reads. | ✅ |
+| P0.5 | FFmpeg 120s timeout | All 3 `tokio::task::spawn_blocking` FFmpeg call sites wrapped in `tokio::time::timeout(Duration::from_secs(120), ...)`. Prevents hung FFmpeg processes holding memory indefinitely. | ✅ |
+| P0.6 | blob_cache LRU eviction | `enforce_blob_cache_limit()` — LRU by modified time, 500 MB cap. Debounced to 60s. Startup eviction task runs 5s after app launch. Called after every cache write. | ✅ |
+| P0.7 | Memory guard logging | Warning logs for blobs >50 MB in get_media_blob/get_media_blob_bytes. Batch diagnostics in resolve_blob_urls_batch. | ✅ |
+| Bonus | diagnose_media_ref streaming | Diagnostic function also converted from `sync.get_media()` to header + export pattern. | ✅ |
+
+### Memory Impact Analysis
+
+| Leak Source | Before | After |
+|-------------|--------|-------|
+| get_media_blob cache-miss (P0.1) | 50-500 MB per video into heap | 12 bytes (header only) + zero-copy stream to disk |
+| get_media_blob_bytes IPC doubling (P0.2) | 100-1000 MB (heap + IPC copy) | Single fs::read allocation |
+| Batch concurrent exports (P0.3) | 0.5-10 GB (10-20 simultaneous) | Max 3 concurrent (150-1500 MB cap) |
+| backfill_media_mimes full reads (P0.4) | Unbounded (full blob per item) | 32 bytes per item |
+| FFmpeg hung processes (P0.5) | 100+ MB per hung process, indefinite | Hard-killed at 120s |
+| blob_cache/ unbounded disk (P0.6) | Grows forever | Capped at 500 MB LRU |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src-tauri/src/commands/media.rs` | +168/-21 lines — streaming exports, semaphore, eviction functions, FFmpeg timeouts, logging |
+| `src-tauri/src/lib.rs` | +14/-3 lines — backfill header-only reads, startup eviction task |
+
+### Remaining `sync.get_media()` Call Sites (Low Risk, Not Fixed)
+
+These remain per sprint triage — all are single-blob, user-initiated, or small-content reads:
+- `commands/syndicate.rs:128` — Single blob for syndication
+- `commands/posting.rs:313` — User-initiated, single small blob
+- `commands/vault.rs:249,274` — User-initiated vault export
+- `commands/interactions.rs:327` — Typically small attachments
+- `commands/import.rs:1219` — Runs once during import
+- `sync.rs:505,535,713` — JSON metadata reads, not media blobs
+
+---
+
 ## 🎨 Frontend — Memory Leak Eradication Sprint (2026-04-04)
 
 **Commit:** `18e8312` on `main`
