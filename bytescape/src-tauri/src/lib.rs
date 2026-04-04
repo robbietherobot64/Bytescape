@@ -799,11 +799,27 @@ pub fn run() {
             });
 
             // Background: backfill media_mimes for existing items
+            // P0.2 fix: only run if last backfill was >24h ago to avoid CPU spike on every launch
             let backfill_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Short delay to let the rest of setup complete
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 let state = backfill_handle.state::<AppState>();
+
+                // Check timestamp guard — skip if backfill ran within the last 24 hours
+                let app_data_dir = match state.app_handle.path().app_data_dir() {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                let marker_path = app_data_dir.join("blob_cache").join(".last_backfill");
+                if let Ok(meta) = std::fs::metadata(&marker_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(24 * 3600) {
+                            println!("backfill_media_mimes: skipped — last run was less than 24h ago");
+                            return;
+                        }
+                    }
+                }
 
                 // Clone DbManager and SyncManager out of the locks so we don't
                 // hold them during the (potentially long) backfill loop.
@@ -838,22 +854,35 @@ pub fn run() {
                         _ => continue,
                     };
 
+                    // P0.1 fix: try path-hint based MIME detection first to avoid
+                    // fetching entire blobs from Iroh just for magic-byte sniffing.
                     let mut mimes = Vec::with_capacity(item.media_blobs.len());
-                    for blob_ref in &item.media_blobs {
-                        let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
-                            Ok(h) => h,
-                            Err(_) => {
-                                mimes.push("application/octet-stream".to_string());
-                                continue;
+                    let mut needs_blob_fetch = false;
+                    for (i, blob_ref) in item.media_blobs.iter().enumerate() {
+                        // Try path hint first (zero I/O cost)
+                        let hint = item.media_paths.get(i).map(|s| s.as_str()).unwrap_or("");
+                        let hint_mime = crate::commands::media::mime_from_path_hint(hint);
+                        if hint_mime != "application/octet-stream" {
+                            mimes.push(hint_mime);
+                        } else {
+                            // Path hint inconclusive — fetch blob for magic bytes
+                            let hash = match crate::blob_hash::parse_blob_hash(blob_ref) {
+                                Ok(h) => h,
+                                Err(_) => {
+                                    mimes.push("application/octet-stream".to_string());
+                                    continue;
+                                }
+                            };
+                            match sync.get_media(hash).await {
+                                Ok(data) => {
+                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+                                }
+                                Err(_) => mimes.push("application/octet-stream".to_string()),
                             }
-                        };
-                        match sync.get_media(hash).await {
-                            Ok(data) => {
-                                mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
-                            }
-                            Err(_) => mimes.push("application/octet-stream".to_string()),
+                            needs_blob_fetch = true;
                         }
                     }
+                    let _ = needs_blob_fetch; // suppress unused warning
                     item.media_mimes = mimes;
                     if db.upsert_item(&item).await.is_ok() {
                         updated += 1;
@@ -865,6 +894,10 @@ pub fn run() {
                 if updated > 0 {
                     println!("backfill_media_mimes: updated {} items on startup", updated);
                 }
+
+                // Write timestamp marker so we skip the next 24h
+                let _ = std::fs::create_dir_all(marker_path.parent().unwrap_or(&app_data_dir));
+                let _ = std::fs::write(&marker_path, format!("{}", chrono::Utc::now().timestamp()));
             });
 
             // Background: clean up mis-imported syndicated duplicates
@@ -891,12 +924,28 @@ pub fn run() {
             // Background: cross-store blob consistency check (P7)
             // Verifies that all blob hashes referenced in BytescapeItem.media_blobs
             // actually exist in the Iroh blob store. Logs orphans and broken references.
+            // P0.2 fix: only run if last check was >24h ago to avoid CPU spike on every launch.
             let consistency_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Wait 10s so startup, session restore, and other background jobs finish first
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
                 let state = consistency_handle.state::<AppState>();
+
+                // Check timestamp guard — skip if consistency check ran within 24 hours
+                let app_data_dir = match state.app_handle.path().app_data_dir() {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                let marker_path = app_data_dir.join("blob_cache").join(".last_consistency");
+                if let Ok(meta) = std::fs::metadata(&marker_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(24 * 3600) {
+                            println!("consistency_check: skipped — last run was less than 24h ago");
+                            return;
+                        }
+                    }
+                }
 
                 let db = {
                     let guard = state.db_manager.read().await;
@@ -1002,6 +1051,10 @@ pub fn run() {
                         headers.iter().filter(|h| h.media_blob_count > 0).count()
                     );
                 }
+
+                // Write timestamp marker so we skip the next 24h
+                let _ = std::fs::create_dir_all(marker_path.parent().unwrap_or(&app_data_dir));
+                let _ = std::fs::write(&marker_path, format!("{}", chrono::Utc::now().timestamp()));
             });
 
             Ok(())

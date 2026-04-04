@@ -208,17 +208,29 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
     let cache_dir = app_data_dir.join("blob_cache");
 
     // Check if cached file already exists (try common extensions)
+    // P0.1 fix: read only the first 12 bytes for magic-byte extension detection
+    // instead of loading the entire file (could be 200+ MB for videos).
     for ext in &["mp4", "mov", "webm", "mkv", "jpg", "png", "webp", "gif", "bin"] {
         let cached = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
         if cached.exists() {
-            if let Ok(bytes) = std::fs::read(&cached) {
-                let detected_ext = detect_extension_from_bytes(&bytes);
-                let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if detected_ext != current_ext {
-                    let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
-                    let _ = std::fs::write(&corrected, &bytes);
-                    return Ok(corrected.to_string_lossy().to_string());
+            // Read only the header bytes needed for magic detection (max 12)
+            let detected_ext = {
+                use std::io::Read;
+                match std::fs::File::open(&cached) {
+                    Ok(mut f) => {
+                        let mut header = [0u8; 12];
+                        let n = f.read(&mut header).unwrap_or(0);
+                        detect_extension_from_bytes(&header[..n])
+                    }
+                    Err(_) => *ext, // can't open — assume current ext is fine
                 }
+            };
+            let current_ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if detected_ext != current_ext {
+                let corrected = cache_dir.join(format!("{}.{}", &normalized_hash, detected_ext));
+                // Rename instead of read-all + write-all to avoid loading entire file
+                let _ = std::fs::rename(&cached, &corrected);
+                return Ok(corrected.to_string_lossy().to_string());
             }
             return Ok(cached.to_string_lossy().to_string());
         }
@@ -1422,6 +1434,24 @@ pub async fn resolve_media_url(src: String, state: State<'_, AppState>) -> std::
         app_data_dir.join("media").join(trimmed)
     };
 
+    if resolved.exists() {
+        let url = tauri::Url::from_file_path(&resolved)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", resolved.display()));
+        return Ok(url);
+    }
+
+    // P0.3 fix: handle raw hash strings without blob: prefix.
+    // Imported media stores blob hashes without the prefix in media_blobs.
+    if crate::blob_hash::parse_blob_hash(trimmed).is_ok() {
+        let cache_path = get_media_blob(trimmed.to_string(), state).await?;
+        let url = tauri::Url::from_file_path(&cache_path)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("file://{}", cache_path));
+        return Ok(url);
+    }
+
+    // Fallback: resolve relative path even if file doesn't exist
     let url = tauri::Url::from_file_path(&resolved)
         .map(|u| u.to_string())
         .unwrap_or_else(|_| format!("file://{}", resolved.display()));
@@ -1524,6 +1554,36 @@ pub async fn resolve_blob_urls_batch(
             if let Some(filename) = resolved.file_name() {
                 let url = format!("http://127.0.0.1:{}/{}", state.media_port, filename.to_string_lossy());
                 results.insert(src.clone(), url);
+            }
+            continue;
+        }
+
+        // P0.3 fix: handle raw hash strings without blob: prefix.
+        // commit_memories stores media_blobs as raw base32/hex hashes from vault_add_file.
+        // Without this, imported Instagram/Facebook media silently fails to resolve.
+        if crate::blob_hash::parse_blob_hash(trimmed).is_ok() {
+            let normalized = normalize_blob_hash_input(trimmed);
+            let mut found = false;
+            for ext in &["jpg", "png", "webp", "gif", "mp4", "mov", "webm", "bin"] {
+                let cached = cache_dir.join(format!("{}.{}", &normalized, ext));
+                if cached.exists() {
+                    let url = format!("http://127.0.0.1:{}/{}.{}", state.media_port, &normalized, ext);
+                    results.insert(src.clone(), url);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                // Export from Iroh to cache
+                match get_media_blob(trimmed.to_string(), state.clone()).await {
+                    Ok(cache_path) => {
+                        if let Some(filename) = std::path::Path::new(&cache_path).file_name() {
+                            let url = format!("http://127.0.0.1:{}/{}", state.media_port, filename.to_string_lossy());
+                            results.insert(src.clone(), url);
+                        }
+                    }
+                    Err(_) => {} // skip failed blobs
+                }
             }
         }
     }
