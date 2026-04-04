@@ -305,7 +305,7 @@ describe('B10.2 — Navigation History Stack', () => {
         const store = useLocationStore.getState();
         // Navigate 55 times (beyond max of 50)
         for (let i = 0; i < 55; i++) {
-            store.navigate(`byte://feed/${i % 3 === 0 ? 'all' : i % 3 === 1 ? 'following' : 'you'}`);
+            store.navigate(`byte://feed/${i % 3 === 0 ? 'all' : i % 3 === 1 ? 'following' : 'subscribed'}`);
         }
 
         const state = useLocationStore.getState();

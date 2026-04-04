@@ -429,12 +429,6 @@ export interface PagedVaultResult {
   total: number;
 }
 
-export interface UnifiedFeedResult {
-  items: FeedEntry[];
-  next_cursor: string | null;
-  warnings?: string[];
-}
-
 export interface SyncDocResult {
   ticket: string;
   namespace_id: string;

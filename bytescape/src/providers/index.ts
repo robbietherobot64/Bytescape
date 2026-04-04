@@ -18,7 +18,6 @@ export { useDataProvider, DataProviderRoot } from './DataProviderContext';
 
 // Re-export commonly used param/result types
 export type {
-  UnifiedFeedResult,
   PagedVaultResult,
   SyncDocResult,
   ExportVaultDataResult,

@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ProfileView, GeneratorView } from '../types';
-import { Win98Box } from './Win98Box';
 import { openProfile } from '../utils/openInApp';
-import { platformAbbrev } from '../utils/platform';
 import { FeedTab } from '../hooks/useUnifiedFeed';
 
 /**
@@ -75,10 +73,10 @@ export function FeedRightPanel({
     handleRemoveHashtag,
     selectedHashtagsFilter,
     setSelectedHashtagsFilter,
-    archiveSourceFilter,
-    setArchiveSourceFilter,
-    vaultSources,
-    archiveTotal,
+    archiveSourceFilter: _archiveSourceFilter,
+    setArchiveSourceFilter: _setArchiveSourceFilter,
+    vaultSources: _vaultSources,
+    archiveTotal: _archiveTotal,
     position = 'right',
     onNavigateTab,
 }: FeedRightPanelProps) {
@@ -142,7 +140,8 @@ export function FeedRightPanel({
     const panelTitle =
         activeTab === 'following' ? 'Following' :
         activeTab === 'subscribed' ? 'Subscriptions' :
-        activeTab === 'you' ? 'Your Posts' :
+        activeTab === 'groups' ? 'Groups' :
+        activeTab === 'rss' ? 'RSS Feeds' :
         'Discovery Tools';
 
     return (
@@ -247,29 +246,8 @@ export function FeedRightPanel({
                     </div>
                 )}
 
-                {/* ═══ YOU ════════════════════════════════════════════════ */}
-                {activeTab === 'you' && (
-                    <div>
-                        <div className="panel-section">
-                            <div className="panel-section-label">Filter by source</div>
-                            <select
-                                className="input-field"
-                                value={archiveSourceFilter}
-                                onChange={e => setArchiveSourceFilter(e.target.value)}
-                            >
-                                <option value="">All sources</option>
-                                {vaultSources.map(s => <option key={s} value={s}>{platformAbbrev(s)}</option>)}
-                            </select>
-                        </div>
-                        <Win98Box variant="sunken" className="panel-stat-box">
-                            <div className="panel-section-label">Your Posts</div>
-                            <div className="panel-stat-value">{archiveTotal} <span className="panel-stat-unit">items</span></div>
-                        </Win98Box>
-                    </div>
-                )}
-
-                {/* ═══ ALL ════════════════════════════════════════════════ */}
-                {activeTab !== 'following' && activeTab !== 'subscribed' && activeTab !== 'you' && (
+                {/* ═══ ALL / GROUPS / RSS ═══════════════════════════════ */}
+                {activeTab !== 'following' && activeTab !== 'subscribed' && (
                     <div>
                         <FollowingSection followingList={followingList} max={12} />
                         {followingList.length > 12 && (
