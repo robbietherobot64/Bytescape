@@ -886,9 +886,9 @@ pub fn run() {
                                     continue;
                                 }
                             };
-                            match sync.get_media(hash).await {
-                                Ok(data) => {
-                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&data));
+                            match sync.get_media_header(hash, 32).await {
+                                Ok(header) => {
+                                    mimes.push(crate::commands::media::mime_from_magic_bytes(&header));
                                 }
                                 Err(_) => mimes.push("application/octet-stream".to_string()),
                             }
@@ -911,6 +911,17 @@ pub fn run() {
                 // Write timestamp marker so we skip the next 24h
                 let _ = std::fs::create_dir_all(marker_path.parent().unwrap_or(&app_data_dir));
                 let _ = std::fs::write(&marker_path, format!("{}", chrono::Utc::now().timestamp()));
+            });
+
+            // Background: enforce blob_cache size limit on startup
+            let eviction_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let state = eviction_handle.state::<AppState>();
+                if let Ok(app_data_dir) = state.app_handle.path().app_data_dir() {
+                    let cache_dir = app_data_dir.join("blob_cache");
+                    crate::commands::media::enforce_blob_cache_limit_startup(&cache_dir, crate::commands::media::BLOB_CACHE_MAX_BYTES);
+                }
             });
 
             // Background: clean up mis-imported syndicated duplicates

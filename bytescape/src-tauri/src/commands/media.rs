@@ -43,6 +43,90 @@ use crate::sync::Hash;
 use crate::blob_hash;
 use crate::AppState;
 
+/// Maximum concurrent blob exports from Iroh to disk.
+/// Prevents saturating disk I/O when resolve_blob_urls_batch processes many uncached blobs.
+static BLOB_EXPORT_SEMAPHORE: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(3));
+
+/// Last time blob_cache eviction ran (debounce to at most once per 60s).
+static LAST_EVICTION: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Maximum blob_cache directory size in bytes (500 MB).
+/// Used by enforce_blob_cache_limit_debounced and startup eviction.
+pub const BLOB_CACHE_MAX_BYTES: u64 = 500_000_000;
+
+/// Enforce blob_cache size limit using LRU eviction (by modified time).
+/// Debounced to run at most once per 60 seconds.
+fn enforce_blob_cache_limit_debounced(cache_dir: &std::path::Path, max_bytes: u64) {
+    // Debounce check — skip if we ran within the last 60 seconds
+    {
+        let mut last = LAST_EVICTION.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(instant) = *last {
+            if instant.elapsed() < std::time::Duration::from_secs(60) {
+                return;
+            }
+        }
+        *last = Some(std::time::Instant::now());
+    }
+
+    // Spawn eviction on a background thread to avoid blocking the caller
+    let dir = cache_dir.to_path_buf();
+    std::thread::spawn(move || {
+        enforce_blob_cache_limit(&dir, max_bytes);
+    });
+}
+
+/// Enforce blob_cache size limit using LRU eviction (by modified time).
+/// Deletes oldest files until total size is under max_bytes.
+fn enforce_blob_cache_limit(cache_dir: &std::path::Path, max_bytes: u64) {
+    let entries: Vec<_> = match std::fs::read_dir(cache_dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+
+    let mut files: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    let mut total_size: u64 = 0;
+
+    for entry in entries {
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                let size = meta.len();
+                let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                total_size += size;
+                files.push((entry.path(), size, modified));
+            }
+        }
+    }
+
+    if total_size <= max_bytes {
+        return;
+    }
+
+    // Sort by modified time ascending (oldest first)
+    files.sort_by_key(|f| f.2);
+
+    let mut removed = 0usize;
+    for (path, size, _) in &files {
+        if total_size <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            total_size -= size;
+            removed += 1;
+        }
+    }
+
+    if removed > 0 {
+        println!("blob_cache eviction: removed {} files, cache now {:.1} MB",
+            removed, total_size as f64 / 1_048_576.0);
+    }
+}
+
+/// Public entry point for startup eviction (called from lib.rs background task).
+pub fn enforce_blob_cache_limit_startup(cache_dir: &std::path::Path, max_bytes: u64) {
+    enforce_blob_cache_limit(cache_dir, max_bytes);
+}
+
 /// Diagnostic snapshot of media reference resolution.
 ///
 /// Returned by [`diagnose_media_ref`] to help debug blob/hash/path issues
@@ -236,25 +320,37 @@ pub async fn get_media_blob(hash_str: String, state: State<'_, AppState>) -> std
         }
     }
 
-    // Not cached — fetch from Iroh blob store
+    // Not cached — stream from Iroh blob store directly to disk (zero memory buffering).
+    // Previous implementation used sync.get_media(hash) which reads the ENTIRE blob
+    // into memory (50-500 MB per video). Now we:
+    //  1. Read only 12 header bytes for extension detection
+    //  2. Stream blob to disk via export_media_to_file (zero heap allocation)
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    let bytes = sync.get_media(hash).await
+    // Step 1: Read ONLY header bytes for extension detection (12 bytes, not 500 MB)
+    let header = sync.get_media_header(hash, 12).await
         .map_err(|e| BytescapeError::BlobStorage(e))?;
+    let ext = detect_extension_from_bytes(&header);
 
-    // Detect extension from magic bytes
-    let ext = detect_extension_from_bytes(&bytes);
-
-    // Write to cache file
+    // Step 2: Stream blob directly to cache file (zero memory buffering)
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    std::fs::write(&cache_path, &bytes)
-        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+    let bytes_written = sync.export_media_to_file(hash, &cache_path).await
+        .map_err(|e| BytescapeError::BlobStorage(e))?;
+
+    if bytes_written > 50_000_000 {
+        println!("get_media_blob: WARNING — exported large blob {} ({:.1} MB) to cache",
+            &normalized_hash[..8.min(normalized_hash.len())],
+            bytes_written as f64 / 1_048_576.0);
+    }
+
+    // Enforce cache size limit (debounced — at most once per 60s)
+    enforce_blob_cache_limit_debounced(&cache_dir, BLOB_CACHE_MAX_BYTES);
 
     Ok(cache_path.to_string_lossy().to_string())
 }
@@ -290,25 +386,39 @@ pub async fn get_media_blob_bytes(hash_str: String, state: State<'_, AppState>) 
         }
     }
 
-    // Not cached — fetch from Iroh blob store
+    // Not cached — stream from Iroh to cache file first, then read from cache.
+    // Previous implementation held the full blob in Rust heap AND serialized it
+    // for IPC simultaneously (double memory). Now we stream to disk first.
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
 
     let hash = parse_hash_safe(&normalized_hash)?;
 
-    let bytes = sync.get_media(hash).await
+    // Step 1: detect extension from header bytes only
+    let header = sync.get_media_header(hash, 12).await
         .map_err(|e| BytescapeError::BlobStorage(e))?;
+    let ext = detect_extension_from_bytes(&header);
 
-    // Cache to disk for future use
-    let ext = detect_extension_from_bytes(&bytes);
+    // Step 2: stream blob to cache file (zero heap allocation)
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
     let cache_path = cache_dir.join(format!("{}.{}", &normalized_hash, ext));
-    let _ = std::fs::write(&cache_path, &bytes);
+    let bytes_written = sync.export_media_to_file(hash, &cache_path).await
+        .map_err(|e| BytescapeError::BlobStorage(e))?;
 
-    println!("get_media_blob_bytes: fetched from Iroh, cached as {} ({} bytes)", ext, bytes.len());
-    Ok(tauri::ipc::Response::new(bytes.to_vec()))
+    if bytes_written > 50_000_000 {
+        println!("get_media_blob_bytes: WARNING — sending large blob over IPC ({:.1} MB)",
+            bytes_written as f64 / 1_048_576.0);
+    }
+
+    // Step 3: read from cache for IPC return (single allocation, no Iroh buffer)
+    let bytes = std::fs::read(&cache_path)
+        .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+
+    println!("get_media_blob_bytes: streamed from Iroh, cached as {} ({} bytes)", ext, bytes.len());
+    enforce_blob_cache_limit_debounced(&cache_dir, BLOB_CACHE_MAX_BYTES);
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Get the media directory path for storing imported files.
@@ -459,19 +569,20 @@ pub async fn diagnose_media_ref(
         });
     };
 
-    match sync.get_media(hash).await {
-        Ok(bytes) => {
-            let ext = detect_extension_from_bytes(&bytes).to_string();
+    match sync.get_media_header(hash, 12).await {
+        Ok(header) => {
+            let ext = detect_extension_from_bytes(&header).to_string();
             let _ = std::fs::create_dir_all(&cache_dir);
             let cache_path = cache_dir.join(format!("{}.{}", &normalized, ext));
-            let _ = std::fs::write(&cache_path, &bytes);
+            let bytes_written = sync.export_media_to_file(hash, &cache_path).await
+                .unwrap_or(0);
 
             Ok(MediaRefDiagnostic {
                 input,
                 mode: "blob".to_string(),
                 normalized,
                 hash_parsed: true,
-                fetched_bytes: bytes.len(),
+                fetched_bytes: bytes_written as usize,
                 detected_ext: Some(ext),
                 cache_hit: false,
                 cache_path: Some(cache_path.to_string_lossy().to_string()),
@@ -554,12 +665,13 @@ pub async fn backfill_media_mimes(state: State<'_, AppState>) -> std::result::Re
                 continue;
             }
 
-            // Try to parse and fetch blob for MIME detection
+            // Try to parse and fetch blob header for MIME detection
             let hash_opt = decode_base32_hash_like(&hash_str);
             if let Some(hash) = hash_opt {
-                match sync.get_media(hash).await {
-                    Ok(bytes) => {
-                        mimes.push(mime_from_magic_bytes(bytes.as_ref()));
+                // Read only 32 bytes for magic detection, not the entire blob
+                match sync.get_media_header(hash, 32).await {
+                    Ok(header) => {
+                        mimes.push(mime_from_magic_bytes(&header));
                     }
                     Err(_) => {
                         // Fall back to path hint if available
@@ -773,7 +885,10 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             if meta.len() > 1000 {
                 let ts_for_stale = ts_path.clone();
                 let mp4_for_stale = mp4_path.clone();
-                if let Ok(Ok(remuxed)) = tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_stale, &mp4_for_stale)).await {
+                if let Ok(Ok(Ok(remuxed))) = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_stale, &mp4_for_stale))
+                ).await {
                     println!("resolve_hls_video: Remuxed existing TS → MP4 ({:.1} MB)",
                         std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
                     return Ok(remuxed);
@@ -791,7 +906,9 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     let playlist_for_ffmpeg = playlist_url.clone();
     let mp4_for_ffmpeg = mp4_path.clone();
     let ts_for_cleanup = ts_path.clone();
-    match tokio::task::spawn_blocking(move || {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        tokio::task::spawn_blocking(move || {
         // Strategy A: Stream copy — fastest (<1s, I/O bound)
         let mp4 = &mp4_for_ffmpeg;
         if let Ok(path) = ffmpeg_hls_stream_copy(&playlist_for_ffmpeg, mp4) {
@@ -819,18 +936,22 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
 
         // Strategy C: Full re-encode (5-20s, last resort)
         ffmpeg_hls_full_reencode(&playlist_for_ffmpeg, mp4)
-    }).await {
-        Ok(Ok(path)) => {
+    })
+    ).await {
+        Ok(Ok(Ok(path))) => {
             println!("resolve_hls_video: FFmpeg HLS → MP4 success ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
             let _ = std::fs::remove_file(&ts_for_cleanup); // clean any stale TS
             return Ok(path);
         }
-        Ok(Err(e)) => {
+        Ok(Ok(Err(e))) => {
             println!("resolve_hls_video: All FFmpeg HLS strategies failed ({}), falling back to manual download...", e);
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             println!("resolve_hls_video: FFmpeg task panicked ({}), falling back to manual download...", e);
+        }
+        Err(_) => {
+            println!("resolve_hls_video: FFmpeg timed out after 120s, falling back to manual download...");
         }
     }
 
@@ -970,18 +1091,25 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     // Tiered remux: stream copy → audio re-encode → full re-encode
     let ts_for_remux = ts_path.clone();
     let mp4_for_remux = mp4_path.clone();
-    match tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_remux, &mp4_for_remux)).await {
-        Ok(Ok(mp4)) => {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        tokio::task::spawn_blocking(move || tiered_ts_to_mp4(&ts_for_remux, &mp4_for_remux))
+    ).await {
+        Ok(Ok(Ok(mp4))) => {
             println!("resolve_hls_video: Remuxed to MP4 ({:.1} MB)",
                 std::fs::metadata(&mp4_path).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0));
             Ok(mp4)
         }
-        Ok(Err(e)) => {
+        Ok(Ok(Err(e))) => {
             println!("resolve_hls_video: FFmpeg remux failed ({}), returning raw TS", e);
             Ok(ts_path.to_string_lossy().into_owned())
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             println!("resolve_hls_video: Remux task panicked ({}), returning raw TS", e);
+            Ok(ts_path.to_string_lossy().into_owned())
+        }
+        Err(_) => {
+            println!("resolve_hls_video: FFmpeg remux timed out after 120s, returning raw TS");
             Ok(ts_path.to_string_lossy().into_owned())
         }
     }
@@ -1513,6 +1641,8 @@ pub async fn resolve_blob_urls_batch(
             }
             if !found {
                 // Fallback: try Iroh export (expensive, but needed for uncached blobs)
+                // Semaphore limits concurrent exports to 3 to prevent disk I/O saturation
+                let _permit = BLOB_EXPORT_SEMAPHORE.acquire().await;
                 match get_media_blob(trimmed.to_string(), state.clone()).await {
                     Ok(cache_path) => {
                         if let Some(filename) = std::path::Path::new(&cache_path).file_name() {
@@ -1574,7 +1704,8 @@ pub async fn resolve_blob_urls_batch(
                 }
             }
             if !found {
-                // Export from Iroh to cache
+                // Export from Iroh to cache (semaphore-gated, max 3 concurrent)
+                let _permit = BLOB_EXPORT_SEMAPHORE.acquire().await;
                 match get_media_blob(trimmed.to_string(), state.clone()).await {
                     Ok(cache_path) => {
                         if let Some(filename) = std::path::Path::new(&cache_path).file_name() {
@@ -1586,6 +1717,13 @@ pub async fn resolve_blob_urls_batch(
                 }
             }
         }
+    }
+
+    // P0.7: Memory guard logging — report how many items needed Iroh export
+    let uncached_count = sources.len().saturating_sub(results.len());
+    if uncached_count > 0 || sources.len() > 10 {
+        println!("resolve_blob_urls_batch: {} sources, {} resolved, {} required Iroh export",
+            sources.len(), results.len(), uncached_count);
     }
 
     Ok(results)
