@@ -596,6 +596,7 @@ pub fn run() {
             commands::mastodon::mastodon_unfollow,
             commands::mastodon::mastodon_follow_hashtag,
             commands::mastodon::mastodon_unfollow_hashtag,
+            commands::mastodon::mastodon_get_followed_tags,
             commands::mastodon::mastodon_get_hashtag_timeline,
             commands::mastodon::mastodon_get_following,
             commands::mastodon::mastodon_get_followers,

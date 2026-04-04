@@ -210,6 +210,10 @@ export class TauriDataProvider implements DataProvider {
     return invoke('remove_followed_hashtag', { ...params });
   }
 
+  async mastodonGetFollowedTags(): Promise<string[]> {
+    return invoke('mastodon_get_followed_tags');
+  }
+
   async getPostThread(params: GetPostThreadParams): Promise<ThreadReply[]> {
     return invoke('get_post_thread', { ...params });
   }

@@ -69,6 +69,12 @@ export function videoUrlCacheSize(): number {
 // ═══════════════════════════════════════════════════════════════════════════════
 let activeVideoElement: HTMLVideoElement | null = null;
 
+/** Returns true if any video is currently playing globally. */
+export function isAnyVideoPlaying(): boolean {
+    if (!activeVideoElement) return false;
+    return !activeVideoElement.paused && !activeVideoElement.ended;
+}
+
 function activateVideo(el: HTMLVideoElement): void {
     if (activeVideoElement && activeVideoElement !== el) {
         try {
@@ -203,11 +209,12 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // ═══════════════════════════════════════════════════════════════════════
     // Source resolution pipeline (includes Tauri invoke bridge)
     // ═══════════════════════════════════════════════════════════════════════
-    // MEMORY-CRITICAL: URL resolution only starts when userActivated is true.
-    // Before that, no src is set on the <video> element, so no GStreamer
-    // pipeline is created. This is the core of the click-to-play strategy.
+    // MEMORY-CRITICAL: URL resolution starts when VISIBLE (pre-resolves before click).
+    // But the <video src> is only set when userActivated is true (click-to-play),
+    // so no GStreamer pipeline is created until the user actually clicks play.
+    // This pre-resolution eliminates the multi-second delay on play.
     useEffect(() => {
-        if (!src || !isVisible || !userActivated) return;
+        if (!src || !isVisible) return;
 
         let cancelled = false;
 
@@ -278,7 +285,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 invoke('cancel_video_resolve', { url: src }).catch(() => {});
             }
         };
-    }, [src, isVisible, userActivated]);
+    }, [src, isVisible]);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Click-to-play handler
@@ -385,16 +392,26 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 loop
                 playsInline
                 preload={videoSrc ? 'metadata' : 'none'}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                style={{ width: '100%', height: '100%', display: 'block' }}
                 onPlay={handlePlay}
                 onPlaying={() => { isPlayingRef.current = true; }}
                 onPause={(e) => {
                     // Only clear isPlayingRef if user-initiated pause (not buffering/stall).
-                    // Check: if the video has ended or the user clicked pause (readyState >= 2).
-                    // Buffering fires pause but readyState is typically 1 (HAVE_METADATA).
+                    // Buffering fires pause with readyState 1 (HAVE_METADATA).
+                    // User pause or end fires with readyState >= 2 (has frame data).
                     const vid = e.currentTarget;
-                    if (vid.ended || vid.readyState >= 3) {
+                    if (vid.ended || vid.readyState >= 2) {
                         isPlayingRef.current = false;
+                    }
+                }}
+                onWaiting={() => {
+                    // Buffering started — keep isPlayingRef true so Observer 2
+                    // doesn't tear down the pipeline during a stall
+                }}
+                onCanPlay={() => {
+                    // Enough data buffered to resume — if we were playing, stay playing
+                    if (videoRef.current && !videoRef.current.paused) {
+                        isPlayingRef.current = true;
                     }
                 }}
                 onError={(e) => {

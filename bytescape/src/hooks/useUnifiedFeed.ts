@@ -33,6 +33,7 @@ import { LIVE_TABS } from '../types';
 import { adaptBlueskyPost, deduplicateFeedEntries } from '../utils/adapters';
 import { useFeedCacheStore } from '../store';
 import { useDataProvider } from '../providers';
+import { isAnyVideoPlaying } from '../components/VideoPlayer';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Re-exports for backward compatibility (consumers import from this file)
@@ -408,9 +409,28 @@ export function useUnifiedFeed({
         .catch(() => {}); // non-critical
     });
 
-    // Load followed hashtags
+    // Load followed hashtags from local DB, then sync from Mastodon
     provider.listFollowedHashtags()
-      .then(tags => { if (mountedRef.current) setFollowedHashtags(tags); })
+      .then(localTags => {
+        if (mountedRef.current) setFollowedHashtags(localTags);
+        // Sync followed tags from Mastodon instance → merge into local DB
+        return provider.mastodonGetFollowedTags()
+          .then(async remoteTags => {
+            if (!mountedRef.current || remoteTags.length === 0) return;
+            // Add any remote tags not already in local DB
+            const localSet = new Set(localTags.map(t => t.toLowerCase()));
+            const newTags = remoteTags.filter(t => !localSet.has(t.toLowerCase()));
+            for (const tag of newTags) {
+              await provider.addFollowedHashtag({ tag }).catch(() => {});
+            }
+            // Re-read the full list after sync
+            if (mountedRef.current && newTags.length > 0) {
+              const refreshed = await provider.listFollowedHashtags().catch(() => localTags);
+              if (mountedRef.current) setFollowedHashtags(refreshed);
+            }
+          })
+          .catch(() => {}); // Mastodon may not be connected
+      })
       .catch(() => {});
 
     // Load vault sources for platform filter dropdown
@@ -466,7 +486,9 @@ export function useUnifiedFeed({
     if (!auth || !autoRefreshFeeds || !LIVE_TABS.includes(activeTab)) return;
 
     autoRefreshTimerRef.current = setInterval(() => {
-      if (!fetchingRef.current && mountedRef.current) {
+      // Skip auto-refresh if a video is actively playing to prevent
+      // re-renders that cause choppy playback or pipeline teardown
+      if (!fetchingRef.current && mountedRef.current && !isAnyVideoPlaying()) {
         fetchFeed();
       }
     }, AUTO_REFRESH_MS);

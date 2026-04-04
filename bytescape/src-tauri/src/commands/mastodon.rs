@@ -1082,6 +1082,26 @@ pub async fn mastodon_unfollow_hashtag(
         .map(|_| ())
 }
 
+/// Fetch the list of hashtags the user follows on their Mastodon instance.
+///
+/// # Tauri IPC
+/// Invoked from frontend as: `invoke('mastodon_get_followed_tags')`
+///
+/// # Returns
+/// Array of lowercase hashtag name strings. Returns empty array if no
+/// Mastodon session is active.
+#[tauri::command]
+pub async fn mastodon_get_followed_tags(
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let session = match get_active_session(&state).await {
+        Ok(s) => s,
+        Err(_) => return Ok(vec![]),
+    };
+
+    mastodon::get_followed_tags(&state.http_client, &session).await
+}
+
 // ═══════════════════════════════════════════════════
 // Mastodon Interactions (Favourite, Reblog, Reply)
 // ═══════════════════════════════════════════════════

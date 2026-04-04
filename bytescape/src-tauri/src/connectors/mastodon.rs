@@ -734,6 +734,90 @@ pub async fn unfollow_hashtag(
         .map_err(|e| format!("Invalid hashtag unfollow response: {}", e))
 }
 
+/// A Mastodon tag entity returned by the followed-tags API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MastodonTag {
+    pub name: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub following: Option<bool>,
+}
+
+/// Fetch the list of hashtags the authenticated user follows on their Mastodon instance.
+///
+/// Mastodon API: `GET /api/v1/followed_tags`
+/// Paginates via Link header; this implementation follows up to 5 pages (200 tags max).
+pub async fn get_followed_tags(
+    http_client: &reqwest::Client,
+    session: &MastodonSession,
+) -> Result<Vec<String>, String> {
+    let mut tags: Vec<String> = Vec::new();
+    let mut url = Some(format!(
+        "{}/api/v1/followed_tags?limit=40",
+        session.instance,
+    ));
+    let max_pages = 5;
+
+    for _ in 0..max_pages {
+        let current_url = match &url {
+            Some(u) => u.clone(),
+            None => break,
+        };
+
+        let resp = rate_limit_request(
+            http_client
+                .get(&current_url)
+                .bearer_auth(&session.access_token),
+        ).await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Followed tags fetch failed ({}): {}", status, body));
+        }
+
+        // Parse Link header for next page
+        let next_url = resp.headers()
+            .get("link")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|link_header| {
+                // Parse Link: <url>; rel="next"
+                for part in link_header.split(',') {
+                    let trimmed = part.trim();
+                    if trimmed.contains("rel=\"next\"") {
+                        if let Some(start) = trimmed.find('<') {
+                            if let Some(end) = trimmed.find('>') {
+                                return Some(trimmed[start + 1..end].to_string());
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
+        let page_tags: Vec<MastodonTag> = resp.json().await
+            .map_err(|e| format!("Invalid followed tags response: {}", e))?;
+
+        if page_tags.is_empty() {
+            break;
+        }
+
+        for tag in &page_tags {
+            let name = tag.name.to_lowercase();
+            if !name.is_empty() {
+                tags.push(name);
+            }
+        }
+
+        url = next_url;
+    }
+
+    tags.sort();
+    tags.dedup();
+    Ok(tags)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 6: ACCOUNT LOOKUP & SOCIAL GRAPH
 // Finding accounts and listing follows/followers.

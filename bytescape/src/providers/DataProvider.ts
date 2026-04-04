@@ -483,6 +483,7 @@ export interface DataProvider {
   listFollowedHashtags(): Promise<string[]>;
   addFollowedHashtag(params: FollowedHashtagParams): Promise<string[]>;
   removeFollowedHashtag(params: FollowedHashtagParams): Promise<string[]>;
+  mastodonGetFollowedTags(): Promise<string[]>;
   getPostThread(params: GetPostThreadParams): Promise<ThreadReply[]>;
   verifySyndications(params: VerifySyndicationsParams): Promise<boolean>;
   getGroupsFeed(params: GetGroupsFeedParams): Promise<FeedPage>;

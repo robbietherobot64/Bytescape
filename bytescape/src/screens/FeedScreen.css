@@ -466,10 +466,13 @@
 }
 
 /* ─── Responsive video container ─── */
-/* Desktop: pillarbox for vertical video */
+/* Desktop: pillarbox for vertical video, centered */
 .video-player-responsive {
     max-height: 500px;
     width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .video-player-responsive video {
