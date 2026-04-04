@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { BytescapeItem, PeerFeedResponse, FeedEntry } from '../types';
 import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
 import { adaptBytescapeItem } from '../utils/adapters';
-import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import { useNavStore } from '../store';
 
 /**
@@ -110,7 +109,10 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
     const prevSourceFilterRef = useRef(sourceFilter);
     useEffect(() => {
         if (prevSourceFilterRef.current !== sourceFilter) {
-            VideoPlaybackManager.releaseAll();
+            // Release all video pipelines inline (replaces VideoPlaybackManager)
+            document.querySelectorAll('video').forEach(v => {
+                try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) {}
+            });
             prevSourceFilterRef.current = sourceFilter;
         }
     }, [sourceFilter]);
@@ -459,7 +461,6 @@ export function PeerProfileScreen({ nodeId, initialPeerName }: PeerProfileScreen
                 {!loading && feedEntries.length > 0 && (
                     <VirtualizedFeedList
                         entries={feedEntries}
-                        scrollContainerRef={scrollContainerRef}
                     />
                 )}
 

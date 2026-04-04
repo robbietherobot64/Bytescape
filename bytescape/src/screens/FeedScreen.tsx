@@ -7,11 +7,9 @@ import { platformAbbrev } from '../utils/platform';
 import { FeedRightPanel } from '../components/FeedRightPanel';
 import { FriendsPanel } from '../components/FriendsPanel';
 import { VirtualizedFeedList } from '../components/feed/VirtualizedFeedList';
-import { filterFacebookDuplicateImagePosts } from '../utils/feedAnalytics';
 import { useUnifiedFeed, FeedTab, FEED_FILTER_ALL, FEED_TAB_LABELS } from '../hooks/useUnifiedFeed';
 import { appDataDir } from '@tauri-apps/api/path';
 import { BsGlobe } from 'react-icons/bs';
-import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import { clearVideoUrlCache, videoUrlCacheSize } from '../components/VideoPlayer';
 import { clearResolvedUrlCache, resolvedUrlCacheSize } from '../hooks/useBlobUrl';
 
@@ -87,7 +85,10 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const prevMediaFilterRef = useRef(mediaFilter);
     useEffect(() => {
         if (prevMediaFilterRef.current !== mediaFilter) {
-            VideoPlaybackManager.releaseAll();
+            // Release all video pipelines inline (replaces VideoPlaybackManager)
+            document.querySelectorAll('video').forEach(v => {
+                try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) {}
+            });
             clearVideoUrlCache();
             clearResolvedUrlCache();
             prevMediaFilterRef.current = mediaFilter;
@@ -96,7 +97,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
             if (import.meta.env.DEV) {
                 console.log('[Memory] Filter changed to:', mediaFilter);
                 console.log('[Memory] Active <video> elements:', document.querySelectorAll('video').length);
-                console.log('[Memory] VideoPlaybackManager registered:', VideoPlaybackManager.count);
                 console.log('[Memory] videoUrlCache size:', videoUrlCacheSize());
                 console.log('[Memory] resolvedUrlCache size:', resolvedUrlCacheSize());
             }
@@ -268,7 +268,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
 
     // === Filtered + Deduped entries (memoized for virtualizer stability) ===
     const filteredEntries = useMemo(() => {
-        const deduped = filterFacebookDuplicateImagePosts(feedEntries);
+        const deduped = feedEntries;
         if (mediaFilter === 'all') return deduped;
         return deduped.filter(entry => {
             const hasImages = entry.media_urls.length > 0 && (!entry.media_kinds || entry.media_kinds.some(k => k === 'image'));
@@ -536,8 +536,6 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 entries={filteredEntries}
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
-                                scrollContainerRef={scrollContainerRef}
-                                overscan={mediaFilter === 'video' ? 0 : 2}
                             />
                         )}
 

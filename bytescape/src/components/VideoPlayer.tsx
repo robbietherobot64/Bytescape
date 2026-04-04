@@ -32,7 +32,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLazyBlobUrl } from '../hooks/useBlobUrl';
 import { getMediaPort } from '../utils/mediaServer';
-import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 
 interface VideoPlayerProps {
     src: string;
@@ -94,14 +93,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // ═══════════════════════════════════════════════════════════════════════
     // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
-        // Unregister previous element
-        if (videoRef.current) {
-            VideoPlaybackManager.unregister(videoRef.current);
-        }
         videoRef.current = el;
-        if (el) {
-            VideoPlaybackManager.register(el);
-        }
     }, []);
 
     // Cleanup on unmount — unregister AND release the GStreamer pipeline.
@@ -116,14 +108,18 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                     videoRef.current.removeAttribute('src');
                     videoRef.current.load(); // forces GStreamer pipeline release
                 } catch (_) { /* ignore cleanup errors */ }
-                VideoPlaybackManager.unregister(videoRef.current);
             }
         };
     }, []);
 
     const handlePlay = () => {
+        // Pause all other videos when this one plays (replaces VideoPlaybackManager)
         if (videoRef.current) {
-            VideoPlaybackManager.notifyPlay(videoRef.current);
+            document.querySelectorAll('video').forEach(v => {
+                if (v !== videoRef.current && !(v as HTMLVideoElement).paused) {
+                    (v as HTMLVideoElement).pause();
+                }
+            });
         }
     };
 

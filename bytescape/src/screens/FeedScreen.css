@@ -93,6 +93,19 @@
     width: 100%;
 }
 
+/* Feed card wrapper — content-visibility:auto for off-screen elision */
+.feed-card-wrapper {
+    /* content-visibility set inline; CSS fallback here */
+    contain: layout style;
+}
+
+/* Cap feed images to prevent WebKitGTK RGBA bitmap accumulation */
+.feed-card-wrapper img {
+    max-width: 600px;
+    max-height: 400px;
+    object-fit: contain;
+}
+
 .feed-compose {
     max-width: 100%;
     margin: 0 0 8px;

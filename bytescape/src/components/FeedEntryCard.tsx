@@ -9,7 +9,6 @@ import { ReplyCompose } from './ReplyCompose';
 import { QuoteRepostModal } from './QuoteRepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { RichText } from './RichText';
-import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
 import {
     RepostIcon,
     parseTaggedPeople,
@@ -148,7 +147,8 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
         }, {} as Record<string, string>);
 
     const openGallery = (index: number) => {
-        VideoPlaybackManager.pauseAll();
+        // Pause all videos when opening gallery (replaces VideoPlaybackManager)
+        document.querySelectorAll('video').forEach(v => { try { (v as HTMLVideoElement).pause(); } catch (_) {} });
         setGalleryIndex(index);
         setIsGalleryOpen(true);
     };
