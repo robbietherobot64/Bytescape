@@ -2,7 +2,7 @@
 
 **Sprint Goal:** **FIX THE MEMORY LEAK — FRONTEND SIDE.** The user has reported 32+ GB memory usage when filtering the feed by video for THREE consecutive sprints. The backend is fixing the primary leak (full-blob reads into memory), but the frontend has **4 distinct leak sources** that compound the problem: unreleased GStreamer pipelines, excessive overscan for video feeds, unbounded URL caches, and missing video element cleanup. This sprint is 100% dedicated to eradicating every frontend memory contributor. **NO feature work. NO styling fixes. NO new UI.**
 
-**Context:** PM investigation identified **10 distinct memory leak sources** across backend and frontend. The backend prompt covers 6 sources (streaming blob export, batch concurrency, FFmpeg timeouts, cache eviction). This prompt covers the remaining 4 frontend sources. The backend fixes will be most effective when paired with these frontend fixes.
+**Context:** PM investigation identified **10 distinct memory leak sources** across backend and frontend, corroborated by the systems agent audit (items 12.8, 9.5, 10.13 in `technical-debt-audit.md`). The backend prompt covers 6 sources (streaming blob export, batch concurrency, FFmpeg timeouts, cache eviction). This prompt covers the remaining **5** frontend sources. The backend fixes will be most effective when paired with these frontend fixes.
 
 **HEAD:** `d242546` on `main`. **Build:** 0 tsc errors, 272 frontend tests pass.
 
@@ -13,6 +13,8 @@
 Even after the backend switches to streaming blob exports (zero-copy to disk), the frontend still creates **GStreamer video pipelines** for every visible `<video>` element. Each GStreamer pipeline allocates 100-500 MB of memory for video decoding buffers. With an overscan of 5, filtering by Video creates 8-13 simultaneous pipelines (visible + overscan) = **0.8-6.5 GB of decoder memory**.
 
 When the user changes filters (e.g., from Video back to All), these pipelines are NOT released — FeedScreen does NOT trigger cleanup on filter change. They accumulate until the tab is switched or the app is restarted.
+
+Additionally, `VideoPlaybackManager.ts` (audit 10.13) is a **singleton with a global mutable `Set<HTMLVideoElement>`** that acts as a hidden lifecycle owner. If `unregister()` is skipped during unmount, stale element references persist indefinitely — each holding a GStreamer pipeline. `PeerProfileScreen` correctly calls `VideoPlaybackManager.releaseAll()` on navigation, but **FeedScreen does not call it on filter change**.
 
 ---
 
@@ -37,23 +39,48 @@ When the user changes filters (e.g., from Video back to All), these pipelines ar
 
 **Implementation approach:**
 ```typescript
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
+import { clearVideoUrlCache } from '../components/VideoPlayer';
+
 // In FeedScreen, after mediaFilter state:
 useEffect(() => {
-  // On filter change, pause all playing videos and clear their sources
-  // to release GStreamer pipelines
-  const feedContainer = document.querySelector('.feed-container'); // or use a ref
-  if (feedContainer) {
-    const videos = feedContainer.querySelectorAll('video');
-    videos.forEach(video => {
-      video.pause();
-      video.removeAttribute('src');
-      video.load(); // forces release of media resources
-    });
-  }
+  // On filter change, release all GStreamer pipelines via the
+  // existing VideoPlaybackManager singleton (same pattern PeerProfileScreen uses).
+  // This pauses all videos, removes src, calls load(), and clears the Set.
+  VideoPlaybackManager.releaseAll();
+  clearVideoUrlCache();
 }, [mediaFilter]);
 ```
 
+**Why use `VideoPlaybackManager.releaseAll()` instead of DIY DOM queries:**
+- The manager already tracks all registered `<video>` elements in its `Set`
+- `releaseAll()` calls `pause()` + `removeAttribute('src')` + `load()` on each — the exact sequence needed to release GStreamer pipelines
+- `PeerProfileScreen.tsx:113` already uses this pattern successfully
+- Avoids fragile `document.querySelectorAll('video')` DOM queries
+
 **Verification:** Switch between Video and All filters 10 times. Memory should return to baseline after each switch, not accumulate.
+
+---
+
+## P0.1b: Fix VideoPlaybackManager Stale Reference Leak *(Audit 10.13)*
+
+**File:** `src/utils/VideoPlaybackManager.ts` + `src/components/VideoPlayer.tsx`
+
+**Problem (audit 10.13):** The `VideoPlaybackManager` singleton holds a `Set<HTMLVideoElement>`. If a VideoPlayer component unmounts without calling `unregister()`, the stale `HTMLVideoElement` reference persists in the Set — and since the Set is process-global, it keeps the element (and its GStreamer pipeline, 100-500 MB each) alive indefinitely.
+
+The current `MAX_REGISTERED = 3` with `pruneDisconnected()` partially mitigates this, but pruning only runs when a *new* element is registered and the set exceeds 3. If no new videos are registered (e.g., user switches to a text-only filter), stale elements are never pruned.
+
+**Investigation:** Check `VideoPlayer.tsx` unmount logic:
+- Line ~60: `VideoPlaybackManager.unregister(videoRef.current)` — is this in a cleanup function?
+- Line ~64: `VideoPlaybackManager.register(el)` — is this paired with unregister?
+- Line ~72: Another `unregister` call — check if all code paths are covered
+
+**Required fixes:**
+1. **Ensure every `register()` has a paired `unregister()` in a useEffect cleanup.** The register/unregister should be in the same `useEffect` to guarantee the cleanup function captures the correct element reference.
+2. **Add a periodic prune or timer-based cleanup** to `VideoPlaybackManager`: after `releaseAll()`, ensure the set is definitively empty (it already calls `.clear()`, so verify no re-registration race).
+3. **Add `VideoPlaybackManager.count` to the P0.6 diagnostics** so we can verify the set isn't growing.
+
+**Verification:** After scrolling through 50 videos and switching filters 5 times, `VideoPlaybackManager.count` should be ≤ 3 (the MAX_REGISTERED cap).
 
 ---
 
@@ -196,9 +223,12 @@ Add a development-mode memory diagnostic that logs:
 Log this on every filter change. This helps verify the fixes are working and provides a diagnostic tool for future memory issues.
 
 ```typescript
+import { VideoPlaybackManager } from '../utils/VideoPlaybackManager';
+
 if (process.env.NODE_ENV === 'development') {
   console.log('[Memory] Filter changed to:', mediaFilter);
   console.log('[Memory] Active <video> elements:', document.querySelectorAll('video').length);
+  console.log('[Memory] VideoPlaybackManager registered:', VideoPlaybackManager.count);
   console.log('[Memory] videoUrlCache size:', videoUrlCache.size);
   console.log('[Memory] resolvedUrlCache size:', resolvedUrlCache.size);
 }

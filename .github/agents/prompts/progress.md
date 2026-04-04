@@ -17,6 +17,7 @@
 | 3 | `get_media_blob_bytes` same pattern + IPC doubling | `commands/media.rs:300` | 🔴 CRITICAL | 100-1000 MB |
 | 4 | `backfill_media_mimes` reads full blob for MIME detection | `lib.rs:889` | 🔴 HIGH | Unbounded |
 | 5 | FeedScreen doesn't release GStreamer pipelines on filter change | `FeedScreen.tsx` | 🟡 HIGH | 0.8-6.5 GB |
+| 5b | `VideoPlaybackManager` singleton stale refs *(Audit 10.13)* | `VideoPlaybackManager.ts:34` | 🟡 HIGH | 100-500 MB per stale ref |
 | 6 | VirtualizedFeedList overscan=5 for video feeds | `VirtualizedFeedList.tsx` | 🟡 MEDIUM | 0.5-2.5 GB |
 | 7 | `videoUrlCache` unbounded, never cleared | `VideoPlayer.tsx:32` | 🟡 LOW | Grows indefinitely |
 | 8 | `resolvedUrlCache` unbounded, no eviction | `useBlobUrl.ts:45` | 🟡 LOW | Grows indefinitely |
@@ -24,6 +25,8 @@
 | 10 | FFmpeg no timeout, hung processes | `commands/media.rs` | 🟡 MEDIUM | 100+ MB per process |
 
 **Key finding:** `sync.export_media_to_file()` (sync.rs:340) and `sync.get_media_header()` (sync.rs:349) already exist as streaming alternatives, but `get_media_blob` doesn't use them.
+
+**Systems agent audit cross-reference (2026-04-04):** Audit items 12.8 (`videoUrlCache` unbounded), 9.5 (`resolvedUrlCache` unbounded), and 10.13 (`VideoPlaybackManager` singleton stale refs) all confirmed as frontend leak contributors. Item 10.13 was missing from initial PM diagnosis — added as P0.1b in the frontend sprint rewrite. FeedScreen must call `VideoPlaybackManager.releaseAll()` on filter change (pattern already used by `PeerProfileScreen.tsx:113`).
 
 ### Actions Taken
 
