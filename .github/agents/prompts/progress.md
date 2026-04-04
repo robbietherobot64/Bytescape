@@ -2283,3 +2283,83 @@ The Systems Agent completed a comprehensive technical debt audit (`technical-deb
 ### Build Status
 - No source code changes — documentation/planning only
 - **HEAD**: `25dc29f` on `main` (pre-commit)
+
+---
+
+## PM — Sprint v13 Review & Sprint v14 Initialization (2026-04-03)
+
+### Sprint v13 Delivery Summary
+
+**Backend Agent (1 commit, `7ba4c4a`):**
+Delivered P0.5 Security Hardening (all 10 items):
+- ✅ SEC-1: Keychain file permissions 0o600 on Unix
+- ✅ SEC-2: Random 24-char recovery code (replaces hardcoded `"bytescape-auto-init"`)
+- ✅ SEC-3: `zeroize` crate for `master_password` (`Zeroizing<String>`)
+- ✅ SEC-4: SSRF validation for PDS URLs (private/loopback IP rejection)
+- ✅ SEC-5: HTTPS enforcement for Mastodon instances
+- ✅ SEC-6: `html_escape()` on OAuth error page
+- ✅ SEC-7: Atomic keychain writes (temp file + rename)
+- ✅ SEC-11 (listed as SEC-10): `#[serde(skip_serializing)]` on `ApActor.secret_key_hex`
+- ✅ SEC-13: Double-checked Mutex for session refresh race guard
+- ✅ `clear_all_user_data` expanded from 10 to 17 tables
+- ✅ Removed `willow_25` dep and feature flag remnants
+
+**NOT delivered by Backend (carried to v14):**
+- ❌ P0: Memory leak investigation (STILL CRITICAL in user feedback)
+- ❌ P0: CPU spike on launch (STILL CRITICAL)
+- ❌ P1: Moderation commands (approve/reject/invite/ban/pin)
+- ❌ P2: AP Group Actor Foundation
+- ❌ P3: AP Group Inbox Handlers
+- ❌ P4: Lemmy Compatibility Layer
+
+**Frontend Agent (6 commits, `bf3a6ef`→`6be4569`):**
+Delivered user feedback items + TSC fix:
+- ✅ `bf3a6ef`: Export `cacheResolvedUrl` from useBlobUrl (fixes TSC in prefetchBlobUrls)
+- ✅ `4d6b175`: 3-column profile bio layout (UF.9 — About/NowPlaying/Links | Guestbook | Connections)
+- ✅ `32c5332`: AccountSwitcher dropdown in TabBar (UF.17)
+- ✅ `a12346a`: Retro terminal import animation + auto-redirect (UF.12)
+- ✅ `35fe96a`: Unified green Connect Account button with platform picker (UF.11)
+- ✅ `6be4569`: Platform abbreviation convention `platformAbbrev()` + `platformEmoji()` (UF.18)
+
+**NOT delivered by Frontend (carried to v14):**
+- ❌ P0.1: Toggle/checkbox text misalignment (user removed from feedback — may be resolved)
+- ❌ P0.2: Image/UI blink on scroll (STILL CRITICAL in user feedback)
+- ❌ P0.3: Feed gap & image sizing
+- ❌ P1: Wire up Groups feed tab
+- ❌ P2: Share-to-Group menu
+- ❌ P3: Group badge on feed cards
+- ❌ P4: Moderation UI
+- ❌ P5: useGroupsData cleanup
+- ❌ P6: Forum/group screen polish
+
+### User Feedback Changes (2026-04-03)
+User updated feedback file. Key changes:
+1. **Removed** toggle/checkbox misalignment from critical (resolved or deprioritized)
+2. **Removed** 3-column profile layout request (delivered by 4d6b175)
+3. **Reworded** Instagram issue from "slow initial load" → "images not loading on feed at all, load fine in vault" (worse)
+4. **Added** username suggestion concatenation bug (new UF.22)
+5. **Added** "import button should be big and green" to UF.12
+6. Memory leak + CPU spike + UI blink remain marked STILL CRITICAL
+
+### Planning Decisions for Sprint v14
+- Backend P0: MUST address memory leak + CPU spike — these have been CRITICAL for 2 sprints without investigation
+- Backend P1: AP security (SEC-8/9/10/12 from audit) — these were scheduled for v14 in the roadmap
+- Backend P2: Moderation commands (carried from v13)
+- Frontend P0: Feed stability overhaul — blink, gaps, image sizing (user says "fundamental redesign needed")
+- Frontend P1: Instagram images not loading + profile image previews broken (user-visible bugs)
+- Frontend P2: Username suggestion fix, big green import button (small UX)
+- Frontend P3: Groups feed tab wiring (carried from v13)
+- Moderation UI deferred to v15 (depends on backend moderation commands from v14 P2)
+
+### Files Modified
+- `ROADMAP.md`: 11 security items marked complete, 5 UF items updated, 2 new UF items (22/23), tech debt tracker updated, open issues updated
+- `backend-sprint-v14.md`: New sprint prompt (replacing v13)
+- `frontend-sprint-v14.md`: New sprint prompt (replacing v13)
+- `progress.md`: This entry
+
+### Build Status
+- **npx tsc --noEmit**: ✅ 0 errors
+- **pnpm test**: ✅ 272/272 passing
+- **cargo check**: ✅ clean
+- **Working tree**: Clean (after commit)
+- **HEAD**: `7ba4c4a` on `main` (pre-commit)
