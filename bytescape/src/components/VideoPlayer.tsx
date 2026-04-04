@@ -63,6 +63,29 @@ export function videoUrlCacheSize(): number {
     return videoUrlCache.size;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Module-level singleton: only one video pipeline active at a time.
+// When a new video starts, the previous one is destroyed (not just paused).
+// ═══════════════════════════════════════════════════════════════════════════════
+let activeVideoElement: HTMLVideoElement | null = null;
+
+function activateVideo(el: HTMLVideoElement): void {
+    if (activeVideoElement && activeVideoElement !== el) {
+        try {
+            activeVideoElement.pause();
+            activeVideoElement.removeAttribute('src');
+            activeVideoElement.load(); // forces GStreamer pipeline release
+        } catch (_) { /* ignore cleanup errors */ }
+    }
+    activeVideoElement = el;
+}
+
+function deactivateVideo(el: HTMLVideoElement): void {
+    if (activeVideoElement === el) {
+        activeVideoElement = null;
+    }
+}
+
 /**
  * Standard, native VideoPlayer component for Bytescape.
  * Uses click-to-play to prevent GStreamer pipeline accumulation in WebKitGTK.
@@ -108,18 +131,15 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                     videoRef.current.removeAttribute('src');
                     videoRef.current.load(); // forces GStreamer pipeline release
                 } catch (_) { /* ignore cleanup errors */ }
+                deactivateVideo(videoRef.current);
             }
         };
     }, []);
 
     const handlePlay = () => {
-        // Pause all other videos when this one plays (replaces VideoPlaybackManager)
+        // Destroy previous video's GStreamer pipeline, activate this one
         if (videoRef.current) {
-            document.querySelectorAll('video').forEach(v => {
-                if (v !== videoRef.current && !(v as HTMLVideoElement).paused) {
-                    (v as HTMLVideoElement).pause();
-                }
-            });
+            activateVideo(videoRef.current);
         }
     };
 
@@ -164,6 +184,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             videoRef.current.removeAttribute('src');
                             videoRef.current.load();
                         } catch (_) { /* ignore */ }
+                        deactivateVideo(videoRef.current);
                     }
                     setUserActivated(false);
                 }
@@ -278,7 +299,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // Render
     // ═══════════════════════════════════════════════════════════════════════
     return (
-        <div ref={containerRef} className={className} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
+        <div ref={containerRef} className={`video-player-responsive ${className || ''}`} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
             {error && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center', zIndex: 2 }}>
                     <span style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {error}</span>

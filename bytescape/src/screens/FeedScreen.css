@@ -463,3 +463,27 @@
     display: flex;
 }
 
+/* ─── Responsive video container ─── */
+/* Desktop: pillarbox for vertical video */
+.video-player-responsive {
+    max-height: 500px;
+    width: 100%;
+}
+
+.video-player-responsive video {
+    max-height: 500px;
+    object-fit: contain;
+}
+
+/* Mobile: fill width, taller viewport allowance */
+@media (max-width: 768px) {
+    .video-player-responsive {
+        max-height: 80vh;
+    }
+
+    .video-player-responsive video {
+        max-height: 80vh;
+        width: 100%;
+        object-fit: contain;
+    }
+}

@@ -42,10 +42,39 @@ import { blobCacheUrl } from '../utils/mediaServer';
  *
  * Capped at 500 entries with FIFO eviction to prevent unbounded growth
  * during long sessions.
- *
- * Exported so that `prefetchBlobUrls()` can pre-populate it in bulk after feed loads.
  */
 const RESOLVED_URL_CACHE_MAX = 500;
+
+// ═══ Concurrency limiter for blob resolution ════════════════════════════════
+// Prevents flooding the IPC bridge when many images enter the viewport at once.
+// Max 5 concurrent get_media_blob calls; excess queued FIFO.
+const BLOB_RESOLVE_CONCURRENCY = 5;
+let activeBlobResolves = 0;
+const pendingBlobResolves: Array<() => void> = [];
+
+function runWithConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const execute = () => {
+            activeBlobResolves++;
+            fn()
+                .then(resolve)
+                .catch(reject)
+                .finally(() => {
+                    activeBlobResolves--;
+                    if (pendingBlobResolves.length > 0) {
+                        const next = pendingBlobResolves.shift()!;
+                        next();
+                    }
+                });
+        };
+
+        if (activeBlobResolves < BLOB_RESOLVE_CONCURRENCY) {
+            execute();
+        } else {
+            pendingBlobResolves.push(execute);
+        }
+    });
+}
 export const resolvedUrlCache = new Map<string, string>();
 
 /**
@@ -182,7 +211,8 @@ export function useBlobUrl(path: string | undefined): [string | null, boolean, s
             let cancelled = false;
 
             // Backend writes blob to disk cache and returns the file path
-            invoke<string>('get_media_blob', { hashStr: hash })
+            // Wrapped in concurrency limiter to prevent IPC flooding
+            runWithConcurrencyLimit(() => invoke<string>('get_media_blob', { hashStr: hash }))
                 .then(async (filePath) => {
                     if (cancelled) return;
                     // Use local HTTP server to bypass WebKitGTK asset:// bugs
