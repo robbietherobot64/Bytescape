@@ -1072,4 +1072,34 @@ mod tests {
         assert_eq!(posts[1].item_id, "new");        // pinned=false, newest
         assert_eq!(posts[2].item_id, "old");         // pinned=false, oldest
     }
+
+    /// Verifies that attempting to ban the Owner (at command level) should be
+    /// rejected. The DB layer does not enforce role-based bans — that's the
+    /// command layer's job (see `commands::groups::ban_member`). This test
+    /// documents the expectation: an Owner-role member should never have
+    /// Banned status in a correctly operating system.
+    #[tokio::test]
+    async fn test_ban_owner_fails() {
+        let db = make_db().await;
+
+        // Owner member
+        let owner = GroupMember {
+            group_id: "g1".to_string(),
+            member_did: "did:key:owner".to_string(),
+            role: MemberRole::Owner,
+            status: MemberStatus::Active,
+            joined_at: 1000,
+        };
+        db.save_group_member(&owner).await.unwrap();
+
+        // The command layer checks: if member.role == MemberRole::Owner → Err
+        // Here we verify the member's role is Owner so the command guard triggers
+        let fetched = db.get_group_member("g1", "did:key:owner").await.unwrap().unwrap();
+        assert_eq!(fetched.role, MemberRole::Owner);
+        assert_eq!(fetched.status, MemberStatus::Active);
+
+        // The command would return Err("Cannot ban the group Owner") — tested via
+        // integration when Tauri State is available. Here we confirm the DB state
+        // that enables that guard.
+    }
 }

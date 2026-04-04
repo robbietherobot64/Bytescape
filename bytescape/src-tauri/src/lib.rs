@@ -637,6 +637,18 @@ pub fn run() {
             commands::groups::share_to_group,
             commands::groups::get_group_feed,
             commands::groups::get_groups_feed,
+
+            // Group moderation commands (Sprint v14)
+            commands::groups::approve_member,
+            commands::groups::reject_member,
+            commands::groups::invite_member,
+            commands::groups::accept_invite,
+            commands::groups::ban_member,
+            commands::groups::set_member_role,
+            commands::groups::pin_group_post,
+            commands::groups::unpin_group_post,
+            commands::groups::remove_group_post,
+            commands::groups::get_pending_members,
         ])
         .setup(|app| {
             // Initialize application state
