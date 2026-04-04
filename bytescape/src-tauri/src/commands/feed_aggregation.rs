@@ -258,12 +258,21 @@ impl From<BytescapeItem> for FeedEntry {
         while media_kinds.len() < media_urls.len() {
             media_kinds.push("unknown".to_string());
         }
-        // Fallback: if item_type is Video but media_mimes was empty (Bluesky HLS
-        // videos don't get a MIME stored during import), inject "video" so the
-        // frontend video filter can find it. Without this, vault video items are
-        // invisible in the video lens.
-        if media_kinds.is_empty() && item.item_type == crate::models::BytescapeType::Video {
-            media_kinds.push("video".to_string());
+        // Override "unknown" entries for Video items — vault videos often have
+        // empty media_mimes (MIME wasn't stored during import), causing the
+        // while-loop above to fill media_kinds with "unknown". The frontend
+        // treats "unknown" as "image", making videos invisible. Fix: if the
+        // item_type is Video, promote all "unknown" slots to "video".
+        if item.item_type == crate::models::BytescapeType::Video {
+            for kind in &mut media_kinds {
+                if kind == "unknown" {
+                    *kind = "video".to_string();
+                }
+            }
+            // If media_kinds is still empty (no media_urls either), inject one
+            if media_kinds.is_empty() {
+                media_kinds.push("video".to_string());
+            }
         }
 
         FeedEntry {

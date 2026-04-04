@@ -52,7 +52,7 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                         {/* ── Inline video cell ───────────────────────────────── */}
                         {kind === 'video' ? (
                             /* Inline video player — plays directly in the feed */
-                            <div onClick={(e) => e.stopPropagation()}>
+                            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
                                 <VideoPlayer
                                     src={mediaSources[i]}
                                     poster={thumb}

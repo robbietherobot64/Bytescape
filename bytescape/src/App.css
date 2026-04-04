@@ -1382,15 +1382,6 @@ a:hover {
 .inline-video-container { width: 100%; height: 100%; }
 .inline-video-container video { width: 100%; height: 100%; object-fit: contain; }
 
-/* Cap single-video posts to a reasonable preview height */
-.post-media-grid.items-1 .media-item .inline-video-container {
-    max-height: 360px;
-}
-.post-media-grid.items-1 .media-item .inline-video-container video {
-    max-height: 360px;
-    object-fit: contain;
-}
-
 /* ─── 9. LINK PREVIEW — Article / External Link Card ─── */
 
 /* Small source link button for bare URLs without rich preview data */

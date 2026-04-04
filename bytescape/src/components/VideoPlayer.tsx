@@ -30,7 +30,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useLazyBlobUrl } from '../hooks/useBlobUrl';
+import useBlobUrl from '../hooks/useBlobUrl';
 import { getMediaPort } from '../utils/mediaServer';
 
 interface VideoPlayerProps {
@@ -107,9 +107,11 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // This prevents GStreamer pipeline creation during passive scrolling.
     const [userActivated, setUserActivated] = useState(false);
 
-    // Cross-system note: poster rendering uses hook-level blob decoding; this component only consumes resolved output.
-    // Smoothly resolve the poster if it's a blob:hash
-    const [, resolvedPoster] = useLazyBlobUrl(poster);
+    // Resolve poster URL — blob:hash → local HTTP, HTTPS → passthrough.
+    // Uses useBlobUrl directly (not useLazyBlobUrl) because the poster is a small
+    // thumbnail that doesn't need viewport gating, and useLazyBlobUrl requires a
+    // ref callback attached to a DOM element (which VideoPlayer doesn't wire up).
+    const [resolvedPoster] = useBlobUrl(poster);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Global playback coordination
@@ -299,7 +301,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // Render
     // ═══════════════════════════════════════════════════════════════════════
     return (
-        <div ref={containerRef} className={`video-player-responsive ${className || ''}`} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', minHeight: 120 }}>
+        <div ref={containerRef} className={`${className?.includes('inline-video-container') ? '' : 'video-player-responsive '}${className || ''}`} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', ...(!className?.includes('inline-video-container') ? { minHeight: 120 } : {}) }}>
             {error && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center', zIndex: 2 }}>
                     <span style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {error}</span>
