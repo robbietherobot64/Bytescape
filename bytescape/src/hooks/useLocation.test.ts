@@ -24,9 +24,14 @@ describe('B10.1 — resolveUrl()', () => {
         expect(route!.feedTab).toBe('subscribed');
     });
 
-    it('resolves byte://feed/you to feed with you tab', () => {
+    it('resolves byte://feed/groups to feed with groups tab', () => {
+        const route = resolveUrl('byte://feed/groups');
+        expect(route!.feedTab).toBe('groups');
+    });
+
+    it('resolves byte://feed/you to feed with all tab (you tab removed)', () => {
         const route = resolveUrl('byte://feed/you');
-        expect(route!.feedTab).toBe('you');
+        expect(route!.feedTab).toBe('all');
     });
 
     it('resolves byte://feed/invalid to feed with all tab (fallback)', () => {

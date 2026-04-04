@@ -161,7 +161,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     useEffect(() => {
         if (wasImportingRef.current && !isImporting) {
             // Import just finished — refresh the feed to pick up new vault data (including reposts)
-            fetchFeed(activeTabRef.current, true);
+            fetchFeed();
         }
         wasImportingRef.current = !!isImporting;
     }, [isImporting, fetchFeed]);
@@ -240,7 +240,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 setPostStatus(`${okTargets ? `Posted to ${okTargets}. ` : ''}${result.errors[0]}`);
             } else {
                 setPostStatus(`✅ Posted to ${okTargets || 'selected destination'}`);
-                fetchFeed(activeTab, false);
+                fetchFeed();
             }
         } catch (e: any) {
             setPostStatus(typeof e === 'string' ? e : 'Failed to publish post');
@@ -331,7 +331,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         setIsRefreshing(true);
         setPullDistance(PULL_THRESHOLD);
         try {
-            await fetchFeed(activeTabRef.current, false);
+            await fetchFeed();
         } finally {
             overscrollAccum.current = 0;
             setIsRefreshing(false);
@@ -383,7 +383,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 {/* Fixed Header with Tabs */}
                 <div className="feed-header">
                     <div className="tabs">
-                        {(['all', 'following', 'subscribed', 'you', 'groups'] as FeedTab[]).map(tab => (
+                        {(['all', 'following', 'subscribed', 'groups', 'rss'] as FeedTab[]).map(tab => (
                             <button
                                 key={tab}
                                 className={`tab ${activeTab === tab ? 'active' : ''}`}
@@ -505,7 +505,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                             <div className="card error" style={{ margin: '16px 0', padding: 16 }}>
                                 <div style={{ fontWeight: 600, marginBottom: 8 }}>Failed to load feed</div>
                                 <div style={{ fontSize: '0.9rem' }}>{feedError}</div>
-                                <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => fetchFeed(activeTab, true)}>Retry</button>
+                                <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => fetchFeed()}>Retry</button>
                             </div>
                         )}
 

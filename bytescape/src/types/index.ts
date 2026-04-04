@@ -656,3 +656,44 @@ export interface TopicSubscription {
     user_did: string;
     subscribed_at: number;
 }
+
+// ─── Feed Pipeline Types (v15 rebuild) ───
+
+/** Feed tabs — the five top-level views in the feed. */
+export type FeedTab = 'all' | 'following' | 'subscribed' | 'groups' | 'rss';
+
+export const FEED_TAB_LABELS: Record<FeedTab, string> = {
+    all: 'All',
+    following: 'Following',
+    subscribed: 'Subscribed',
+    groups: 'Groups',
+    rss: 'RSS',
+};
+
+/** Tabs that support auto-refresh (live network content). */
+export const LIVE_TABS: FeedTab[] = ['all', 'following', 'subscribed', 'groups'];
+
+/** Backend response shape from feed commands (matches Rust FeedPage). */
+export interface FeedPage {
+    items: FeedEntry[];
+    cursor: string | null;
+    has_more: boolean;
+}
+
+/** Per-tab state container managed by the feed cache store. */
+export interface FeedTabState {
+    entries: FeedEntry[];
+    cursor: string | null;
+    has_more: boolean;
+    fetchedAt: number;         // epoch ms
+    scrollOffset: number;      // preserved scroll position
+    sourceToggles: Record<string, boolean>;  // Following tab: per-platform toggles
+}
+
+/** Linked platform info for source toggle pills. */
+export interface LinkedFeedSource {
+    id: string;       // "bluesky", "mastodon", "pixelfed", "peertube"
+    label: string;    // "Bluesky", "Mastodon", etc.
+    handle: string;   // "@user.bsky.social"
+    connected: boolean;
+}

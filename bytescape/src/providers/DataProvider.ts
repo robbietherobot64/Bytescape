@@ -33,6 +33,7 @@ import type {
   CollabDocMeta,
   CollabStateResponse,
   FeedEntry,
+  FeedPage,
   GeneratorView,
   GuestbookEntry,
   IdentityInitResult,
@@ -478,14 +479,14 @@ export interface DataProvider {
   getTimeline(params: GetTimelineParams): Promise<[BlueskyPost[], string | null]>;
   getAuthorFeed(params: GetAuthorFeedParams): Promise<[BlueskyPost[], string | null]>;
   getUnifiedFeed(params: GetUnifiedFeedParams): Promise<[BlueskyPost[], string | null]>;
-  getTimelineUnified(params: GetTimelineUnifiedParams): Promise<UnifiedFeedResult>;
+  getTimelineUnified(params: GetTimelineUnifiedParams): Promise<FeedPage>;
   listSavedFeeds(): Promise<GeneratorView[]>;
   listFollowedHashtags(): Promise<string[]>;
   addFollowedHashtag(params: FollowedHashtagParams): Promise<string[]>;
   removeFollowedHashtag(params: FollowedHashtagParams): Promise<string[]>;
   getPostThread(params: GetPostThreadParams): Promise<ThreadReply[]>;
   verifySyndications(params: VerifySyndicationsParams): Promise<boolean>;
-  getGroupsFeed(params: GetGroupsFeedParams): Promise<BytescapeItem[]>;
+  getGroupsFeed(params: GetGroupsFeedParams): Promise<FeedPage>;
 
   /** Auth — authentication and session management for all linked platforms. */
   // ═══ Auth ═════════════════════════════════════════════════════

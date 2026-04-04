@@ -104,17 +104,16 @@ import type {
   SnapshotCollabToItemParams,
   VaultFileDeleteParams,
   PagedVaultResult,
-  UnifiedFeedResult,
   SyncDocResult,
   RelaySyncStatus,
 } from './DataProvider';
 import type {
   AuthStatus,
   BlueskyPost,
-  BytescapeItem,
   CollabDocMeta,
   CollabStateResponse,
   FeedEntry,
+  FeedPage,
   GeneratorView,
   GuestbookEntry,
   IdentityInitResult,
@@ -176,7 +175,7 @@ export class TauriDataProvider implements DataProvider {
     });
   }
 
-  async getTimelineUnified(params: GetTimelineUnifiedParams): Promise<UnifiedFeedResult> {
+  async getTimelineUnified(params: GetTimelineUnifiedParams): Promise<FeedPage> {
     return invoke('get_timeline_unified', {
       tags: params.tags,
       feedUris: params.feedUris,
@@ -187,7 +186,7 @@ export class TauriDataProvider implements DataProvider {
     });
   }
 
-  async getGroupsFeed(params: { limit: number; cursor?: string | null }): Promise<BytescapeItem[]> {
+  async getGroupsFeed(params: { limit: number; cursor?: string | null }): Promise<FeedPage> {
     return invoke('get_groups_feed', {
       limit: params.limit,
       cursor: params.cursor ?? null,
