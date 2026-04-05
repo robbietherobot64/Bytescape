@@ -530,15 +530,48 @@ export function useUnifiedFeed({
   const currentCursor = cached?.cursor ?? null;
   const hasMore = currentCursor != null;
 
-  // ── Apply source filter client-side for instant reactivity ──
-  // The cache stores ALL entries (no source filter). Filtering happens here
-  // so changing the dropdown instantly narrows the visible feed without re-fetching.
+  // ── Apply client-side filters for instant reactivity ──
+  // The cache stores ALL fetched entries. Filtering happens here so
+  // changing chips/dropdowns instantly narrows the visible feed without re-fetching.
+
+  /** Extract hashtags from post text (matches FeedEntryCard's extractHashtags) */
+  const extractPostTags = useCallback((text: string | undefined): Set<string> => {
+    if (!text) return new Set();
+    const matches = text.match(/#[\w\u00C0-\u024F\u1E00-\u1EFF]+/g);
+    if (!matches) return new Set();
+    return new Set(matches.map(t => t.replace(/^#/, '').toLowerCase()));
+  }, []);
+
+  // Are specific hashtag chips actively selected? (not "show all", not disabled)
+  const hasActiveTagFilter = selectedHashtagsFilter !== undefined
+    && selectedHashtagsFilter.length > 0
+    && !(selectedHashtagsFilter.length === 1 && selectedHashtagsFilter[0] === '__disabled__');
+
   const feedEntries = useMemo(() => {
-    if (!effectiveSourceFilter) return rawEntries;
-    return rawEntries.filter(e =>
-      e.source?.toLowerCase() === effectiveSourceFilter.toLowerCase()
-    );
-  }, [rawEntries, effectiveSourceFilter]);
+    let entries = rawEntries;
+
+    // Source filter (platform dropdown)
+    if (effectiveSourceFilter) {
+      entries = entries.filter(e =>
+        e.source?.toLowerCase() === effectiveSourceFilter.toLowerCase()
+      );
+    }
+
+    // Hashtag chip filter — when specific tags are selected, only show posts
+    // that contain at least one of the selected hashtags in their content.
+    if (hasActiveTagFilter) {
+      const selectedLower = new Set(selectedHashtagsFilter!.map(t => t.toLowerCase()));
+      entries = entries.filter(e => {
+        const postTags = extractPostTags(e.content);
+        for (const st of selectedLower) {
+          if (postTags.has(st)) return true;
+        }
+        return false;
+      });
+    }
+
+    return entries;
+  }, [rawEntries, effectiveSourceFilter, hasActiveTagFilter, selectedHashtagsFilter, extractPostTags]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {
