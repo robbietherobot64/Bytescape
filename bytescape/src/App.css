@@ -1362,8 +1362,18 @@ a:hover {
     background: #000;
 }
 
+/* CRITICAL FIX: Do NOT use width/height: 100% on img/video inside the
+   absolute-positioned .media-item-inner. WebKitGTK (Tauri Linux webview)
+   fails to resolve percentage heights when the ancestor chain relies on
+   aspect-ratio for height. Instead, make img/video themselves absolutely
+   positioned with inset:0 — fills via edge offsets, no % needed. */
 .media-item img,
 .media-item video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -1393,6 +1403,7 @@ a:hover {
     position: absolute;
     bottom: 4px;
     right: 4px;
+    z-index: 2;  /* above the absolutely-positioned img/video */
     background: var(--bg-toolbar);
     box-shadow: var(--bevel-raised);
     border: none;
@@ -1413,9 +1424,13 @@ a:hover {
 .media-expand-btn { transition: none !important; }
 
 .inline-video-container {
-    width: 100%;
-    height: 100%;
-    position: relative;
+    /* Fill .media-item-inner via inset instead of percentage w/h
+       to avoid WebKitGTK aspect-ratio percentage resolution bug */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1425,6 +1440,9 @@ a:hover {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    /* Override the position:absolute from .media-item video —
+       inside the flex container, video should be in normal flow */
+    position: static;
 }
 
 /* Multi-item grid: crop videos to fill cells */
@@ -3576,7 +3594,6 @@ textarea::placeholder {
 
     .post-media-grid { gap: 2px; }
     .post-media-grid.items-1 .media-item { max-height: 250px; }
-    .post-media-grid.items-1 .media-item img { max-height: 250px; }
 
     /* ── CHAT SCREEN ── */
     .chat-discord-layout {
@@ -3868,7 +3885,6 @@ textarea::placeholder {
     .feed-scroll-container { padding: 10px 24px; }
     .feed-list { max-width: 100%; }
     .post-media-grid.items-1 .media-item { max-height: 450px; }
-    .post-media-grid.items-1 .media-item img { max-height: 450px; }
 }
 
 /* ─── 30. IDENTITY SETUP MODAL ─── */
