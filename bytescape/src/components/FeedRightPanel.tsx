@@ -73,7 +73,7 @@ export function FeedRightPanel({
     handleRemoveHashtag,
     selectedHashtagsFilter,
     setSelectedHashtagsFilter,
-    archiveSourceFilter: _archiveSourceFilter,
+    archiveSourceFilter,
     setArchiveSourceFilter: _setArchiveSourceFilter,
     vaultSources: _vaultSources,
     archiveTotal: _archiveTotal,
@@ -86,12 +86,25 @@ export function FeedRightPanel({
     const [tagsExpanded, setTagsExpanded] = useState(true);
     const [feedsEnabled, setFeedsEnabled] = useState(true);
     const [tagsEnabled, setTagsEnabled] = useState(true);
+    const [followsEnabled, setFollowsEnabled] = useState(true);
 
     const visibleFeeds = savedFeeds.filter(f => !f.uri.includes('/following'));
+
+    /* Feeds are Bluesky-specific — disable when a non-Bluesky source is selected */
+    const feedsSectionAvailable = !archiveSourceFilter
+        || archiveSourceFilter === ''
+        || archiveSourceFilter.toLowerCase() === 'bluesky';
 
     /* ═══ Parent filter synchronization ════════════════════════════════ */
     /* When the master checkbox is toggled, update the filter arrays.
        Enabled + nothing selected = "show all".  Disabled = show none. */
+    /* Auto-disable feeds section when a non-Bluesky source is selected */
+    useEffect(() => {
+        if (!feedsSectionAvailable && feedsEnabled) {
+            setFeedsEnabled(false);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [feedsSectionAvailable]);
     useEffect(() => {
         if (!feedsEnabled) {
             setSelectedFeedUris(['__disabled__']);
@@ -201,21 +214,22 @@ export function FeedRightPanel({
                 {activeTab === 'subscribed' && (
                     <div className="sub-panel">
                         {/* Feeds header */}
-                        <div className="sub-section-header" onClick={() => setFeedsExpanded(v => !v)}>
-                            <span className="sub-section-label">Feeds</span>
+                        <div className={`sub-section-header ${!feedsSectionAvailable ? 'sub-section-header--disabled' : ''}`} onClick={() => { if (feedsSectionAvailable) setFeedsExpanded(v => !v); }}>
+                            <span className="sub-section-label">Feeds {!feedsSectionAvailable && <span className="sub-section-hint">(Bluesky only)</span>}</span>
                             <span className="sub-section-controls">
                                 <input
                                     type="checkbox"
-                                    checked={feedsEnabled}
+                                    checked={feedsEnabled && feedsSectionAvailable}
                                     onChange={e => { e.stopPropagation(); setFeedsEnabled(e.target.checked); }}
                                     onClick={e => e.stopPropagation()}
-                                    title="Include feeds in your subscribed timeline"
+                                    disabled={!feedsSectionAvailable}
+                                    title={feedsSectionAvailable ? 'Include feeds in your subscribed timeline' : 'Feeds are only available when filtering by Bluesky'}
                                 />
-                                <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
+                                <span className="sub-section-caret">{feedsExpanded && feedsSectionAvailable ? '▾' : '▸'}</span>
                             </span>
                         </div>
 
-                        {feedsExpanded && (
+                        {feedsExpanded && feedsSectionAvailable && (
                             <div className="sub-section-body">
                                 {visibleFeeds.length === 0 && (
                                     <div className="panel-hint">No custom feeds found.</div>
@@ -303,36 +317,54 @@ export function FeedRightPanel({
                 {/* ═══ ALL / GROUPS / RSS ═══════════════════════════════ */}
                 {activeTab !== 'following' && activeTab !== 'subscribed' && (
                     <div>
-                        <FollowingSection followingList={followingList} max={12} />
-                        {followingList.length > 12 && (
-                            <div
-                                className="panel-hint panel-hint--clickable"
-                                onClick={() => onNavigateTab?.('following')}
-                            >
-                                +{followingList.length - 12} more →
-                            </div>
+                        {/* Active Follows with enable checkbox */}
+                        <div className="sub-section-header" onClick={() => {}}>
+                            <span className="sub-section-label">Active Follows</span>
+                            <span className="sub-section-controls">
+                                <input
+                                    type="checkbox"
+                                    checked={followsEnabled}
+                                    onChange={e => { e.stopPropagation(); setFollowsEnabled(e.target.checked); }}
+                                    onClick={e => e.stopPropagation()}
+                                    title="Show posts from people you follow"
+                                />
+                            </span>
+                        </div>
+                        {followsEnabled && (
+                            <>
+                                <FollowingSection followingList={followingList} max={12} showHeader={false} />
+                                {followingList.length > 12 && (
+                                    <div
+                                        className="panel-hint panel-hint--clickable"
+                                        onClick={() => onNavigateTab?.('following')}
+                                    >
+                                        +{followingList.length - 12} more →
+                                    </div>
+                                )}
+                            </>
                         )}
 
                         <div className="panel-divider" />
 
-                        {/* ── Full subscription panel (same UI as subscribed tab) ── */}
+                        {/* ── Full subscription panel ── */}
                         <div className="sub-panel">
                             {/* Feeds header */}
-                            <div className="sub-section-header" onClick={() => setFeedsExpanded(v => !v)}>
-                                <span className="sub-section-label">Feeds</span>
+                            <div className={`sub-section-header ${!feedsSectionAvailable ? 'sub-section-header--disabled' : ''}`} onClick={() => { if (feedsSectionAvailable) setFeedsExpanded(v => !v); }}>
+                                <span className="sub-section-label">Feeds {!feedsSectionAvailable && <span className="sub-section-hint">(Bluesky only)</span>}</span>
                                 <span className="sub-section-controls">
                                     <input
                                         type="checkbox"
-                                        checked={feedsEnabled}
+                                        checked={feedsEnabled && feedsSectionAvailable}
                                         onChange={e => { e.stopPropagation(); setFeedsEnabled(e.target.checked); }}
                                         onClick={e => e.stopPropagation()}
-                                        title="Include feeds in results"
+                                        disabled={!feedsSectionAvailable}
+                                        title={feedsSectionAvailable ? 'Include feeds in results' : 'Feeds are only available when filtering by Bluesky'}
                                     />
-                                    <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
+                                    <span className="sub-section-caret">{feedsExpanded && feedsSectionAvailable ? '▾' : '▸'}</span>
                                 </span>
                             </div>
 
-                            {feedsExpanded && (
+                            {feedsExpanded && feedsSectionAvailable && (
                                 <div className="sub-section-body">
                                     {visibleFeeds.length === 0 && (
                                         <div className="panel-hint">No custom feeds found.</div>
@@ -430,13 +462,15 @@ export function FeedRightPanel({
  * Cross-system behavior:
  * - Uses `openProfile()` to route to in-app profile views for selected follows.
  */
-function FollowingSection({ followingList, max }: { followingList: ProfileView[]; max?: number }) {
+function FollowingSection({ followingList, max, showHeader = true }: { followingList: ProfileView[]; max?: number; showHeader?: boolean }) {
     const list = max ? followingList.slice(0, max) : followingList;
     return (
         <div>
-            <div className="panel-section">
-                <div className="panel-section-label">Active Follows</div>
-            </div>
+            {showHeader && (
+                <div className="panel-section">
+                    <div className="panel-section-label">Active Follows</div>
+                </div>
+            )}
             {list.map(profile => (
                 <div
                     key={profile.did}

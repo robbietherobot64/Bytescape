@@ -542,10 +542,14 @@ export function useUnifiedFeed({
     return new Set(matches.map(t => t.replace(/^#/, '').toLowerCase()));
   }, []);
 
-  // Are specific hashtag chips actively selected? (not "show all", not disabled)
-  const hasActiveTagFilter = selectedHashtagsFilter !== undefined
+  // Determine filter intent from the chip state arrays
+  const feedsDisabled = selectedFeedUris.length === 1 && selectedFeedUris[0] === '__disabled__';
+  const tagsDisabled = selectedHashtagsFilter !== undefined
+    && selectedHashtagsFilter.length === 1 && selectedHashtagsFilter[0] === '__disabled__';
+  // Specific chips actively selected? (not "show all", not disabled)
+  const hasSpecificTagChips = selectedHashtagsFilter !== undefined
     && selectedHashtagsFilter.length > 0
-    && !(selectedHashtagsFilter.length === 1 && selectedHashtagsFilter[0] === '__disabled__');
+    && !tagsDisabled;
 
   const feedEntries = useMemo(() => {
     let entries = rawEntries;
@@ -557,9 +561,12 @@ export function useUnifiedFeed({
       );
     }
 
-    // Hashtag chip filter — when specific tags are selected, only show posts
-    // that contain at least one of the selected hashtags in their content.
-    if (hasActiveTagFilter) {
+    // Hashtag content filter — applied in two scenarios:
+    // 1. Specific hashtag chips are selected → filter to only those
+    // 2. Feeds disabled + tags enabled (no specific chips) → filter by ALL followed hashtags
+    //    This ensures "hashtags only" mode actually removes non-hashtag feed content.
+    if (hasSpecificTagChips) {
+      // Scenario 1: narrow to specific selected tags
       const selectedLower = new Set(selectedHashtagsFilter!.map(t => t.toLowerCase()));
       entries = entries.filter(e => {
         const postTags = extractPostTags(e.content);
@@ -568,10 +575,20 @@ export function useUnifiedFeed({
         }
         return false;
       });
+    } else if (feedsDisabled && !tagsDisabled && followedHashtags.length > 0) {
+      // Scenario 2: feeds off, tags on with no specific chips → filter by ALL followed tags
+      const allTagsLower = new Set(followedHashtags.map(t => t.toLowerCase()));
+      entries = entries.filter(e => {
+        const postTags = extractPostTags(e.content);
+        for (const ft of allTagsLower) {
+          if (postTags.has(ft)) return true;
+        }
+        return false;
+      });
     }
 
     return entries;
-  }, [rawEntries, effectiveSourceFilter, hasActiveTagFilter, selectedHashtagsFilter, extractPostTags]);
+  }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {

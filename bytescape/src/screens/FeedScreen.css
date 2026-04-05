@@ -341,6 +341,22 @@
     color: var(--text-primary);
 }
 
+.sub-section-header--disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.sub-section-header--disabled input[type="checkbox"] {
+    cursor: not-allowed;
+}
+
+.sub-section-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted, #888);
+    font-weight: 400;
+    margin-left: 4px;
+}
+
 .sub-section-caret {
     margin-left: auto;
     font-size: 12px;
