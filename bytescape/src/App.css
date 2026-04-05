@@ -1154,7 +1154,7 @@ a:hover {
     transition: none;
     /* P0 feed stability: isolate each card to its own compositor layer
        so reflow/repaint in one card does NOT propagate to siblings */
-    contain: content;
+    contain: layout style;
     will-change: transform;
 }
 
@@ -1308,7 +1308,7 @@ a:hover {
     /* Break out of .feed-entry-body padding so media fills full card width */
     margin-left: -10px;
     margin-right: -10px;
-    max-width: calc(100% + 20px);
+    width: calc(100% + 20px);
     border-top: 2px solid #999;
     border-bottom: 2px solid #999;
     box-shadow: var(--bevel-sunken);
@@ -1455,6 +1455,10 @@ a:hover {
     text-decoration: none;
     color: inherit;
     margin-top: 6px;
+    /* Break out of .feed-entry-body padding like media grid */
+    margin-left: -10px;
+    margin-right: -10px;
+    width: calc(100% + 20px);
     background: var(--bg-panel);
     box-shadow: var(--bevel-sunken);
 }

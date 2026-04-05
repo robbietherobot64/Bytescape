@@ -199,14 +199,14 @@ export function useUnifiedFeed({
   ): Promise<FeedPage> => {
     switch (tab) {
       case 'all': {
-        // Backend returns FeedPage directly — pass tags + source filter
+        // Backend returns FeedPage directly — pass tags + feed URIs
+        // Source filter is applied client-side for instant reactivity
         return provider.getTimelineUnified({
           tags: effectiveTags,
           feedUris: effectiveFeedUris,
           limit,
           cursor,
           vaultOffset: 0,
-          sourceFilter: effectiveSourceFilter,
         });
       }
 
@@ -248,12 +248,7 @@ export function useUnifiedFeed({
         // Sort merged results by timestamp descending
         results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-        // Apply source filter if set
-        const filtered = effectiveSourceFilter
-          ? results.filter(e => e.source === effectiveSourceFilter)
-          : results;
-
-        return { items: filtered.slice(0, limit), cursor: null, has_more: false };
+        return { items: results.slice(0, limit), cursor: null, has_more: false };
       }
 
       case 'subscribed': {
@@ -308,7 +303,7 @@ export function useUnifiedFeed({
       default:
         return { items: [], cursor: null, has_more: false };
     }
-  }, [provider, effectiveFeedUris, effectiveTags, effectiveSourceFilter, sourceToggles]);
+  }, [provider, effectiveFeedUris, effectiveTags, sourceToggles]);
 
   // ── Get cached state for active tab ──
   const getCachedState = useCallback(() => {
@@ -503,9 +498,19 @@ export function useUnifiedFeed({
 
   // ── Derive current state from cache ──
   const cached = feedCache.getCache(activeTab, Infinity);
-  const feedEntries = cached?.entries ?? [];
+  const rawEntries = cached?.entries ?? [];
   const currentCursor = cached?.cursor ?? null;
   const hasMore = currentCursor != null;
+
+  // ── Apply source filter client-side for instant reactivity ──
+  // The cache stores ALL entries (no source filter). Filtering happens here
+  // so changing the dropdown instantly narrows the visible feed without re-fetching.
+  const feedEntries = useMemo(() => {
+    if (!effectiveSourceFilter) return rawEntries;
+    return rawEntries.filter(e =>
+      e.source?.toLowerCase() === effectiveSourceFilter.toLowerCase()
+    );
+  }, [rawEntries, effectiveSourceFilter]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {

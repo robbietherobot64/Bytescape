@@ -111,29 +111,69 @@ export function FeedRightPanel({
     }, [tagsEnabled]);
 
     /* ═══ Chip toggle helpers ══════════════════════════════════════════ */
-    /* ── Feed chip toggle ────────────────────────────────────────────── */
+    /* ── Feed chip toggle (multi-select) ─────────────────────────────── */
     const isFeedActive = useCallback(
         (uri: string) => selectedFeedUris.length === 0 || selectedFeedUris.includes(uri),
         [selectedFeedUris],
     );
+    const isFeedExplicitlySelected = useCallback(
+        (uri: string) => selectedFeedUris.includes(uri),
+        [selectedFeedUris],
+    );
     const toggleFeedChip = (uri: string) => {
-        if (selectedFeedUris.length === 1 && selectedFeedUris[0] === uri) {
-            setSelectedFeedUris([]);          // solo → back to all
+        if (selectedFeedUris.includes(uri)) {
+            // Remove from selection
+            const next = selectedFeedUris.filter(u => u !== uri);
+            setSelectedFeedUris(next);
         } else {
-            setSelectedFeedUris([uri]);       // solo this feed
+            // Add to selection
+            setSelectedFeedUris([...selectedFeedUris, uri]);
         }
     };
 
-    /* ── Hashtag chip toggle ─────────────────────────────────────────── */
+    /* ── Hashtag chip toggle (multi-select) ──────────────────────────── */
     const isTagActive = useCallback(
         (tag: string) => selectedHashtagsFilter.length === 0 || selectedHashtagsFilter.includes(tag),
         [selectedHashtagsFilter],
     );
+    const isTagExplicitlySelected = useCallback(
+        (tag: string) => selectedHashtagsFilter.includes(tag),
+        [selectedHashtagsFilter],
+    );
     const toggleTagChip = (tag: string) => {
-        if (selectedHashtagsFilter.length === 1 && selectedHashtagsFilter[0] === tag) {
-            setSelectedHashtagsFilter([]);   // solo → back to all
+        if (selectedHashtagsFilter.includes(tag)) {
+            // Remove from selection
+            const next = selectedHashtagsFilter.filter(t => t !== tag);
+            setSelectedHashtagsFilter(next);
         } else {
-            setSelectedHashtagsFilter([tag]); // solo this tag
+            // Add to selection
+            setSelectedHashtagsFilter([...selectedHashtagsFilter, tag]);
+        }
+    };
+
+    /* ── X button handler: deselect if selected, confirm-remove if not ── */
+    const handleFeedX = (uri: string, displayName: string) => {
+        if (isFeedExplicitlySelected(uri)) {
+            // Just deselect
+            setSelectedFeedUris(selectedFeedUris.filter(u => u !== uri));
+        } else {
+            // Already deselected → confirm unsubscribe
+            if (window.confirm(`Are you sure you want to remove the feed "${displayName}"?`)) {
+                // Remove from saved feeds via parent callback (if available)
+                // For now, deselect and mark as disabled
+                setSelectedFeedUris(selectedFeedUris.filter(u => u !== uri));
+            }
+        }
+    };
+    const handleTagX = (tag: string) => {
+        if (isTagExplicitlySelected(tag)) {
+            // Just deselect
+            setSelectedHashtagsFilter(selectedHashtagsFilter.filter(t => t !== tag));
+        } else {
+            // Already deselected → confirm unsubscribe
+            if (window.confirm(`Are you sure you want to unsubscribe from #${tag}?`)) {
+                handleRemoveHashtag(tag);
+            }
         }
     };
 
@@ -182,15 +222,22 @@ export function FeedRightPanel({
                                 )}
                                 <div className="sub-chip-list">
                                     {visibleFeeds.map(feed => (
-                                        <button
-                                            key={feed.uri}
-                                            className={`sub-chip ${isFeedActive(feed.uri) && feedsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}
-                                            onClick={() => { if (feedsEnabled) toggleFeedChip(feed.uri); }}
-                                            title={feed.displayName || 'Custom Feed'}
-                                            disabled={!feedsEnabled}
-                                        >
-                                            {feed.displayName || 'Custom Feed'}
-                                        </button>
+                                        <div key={feed.uri} className={`sub-chip ${isFeedExplicitlySelected(feed.uri) ? 'sub-chip--selected' : isFeedActive(feed.uri) && feedsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
+                                            <span
+                                                className="sub-chip-label"
+                                                onClick={() => { if (feedsEnabled) toggleFeedChip(feed.uri); }}
+                                                title={feed.displayName || 'Custom Feed'}
+                                            >
+                                                {feed.displayName || 'Custom Feed'}
+                                            </span>
+                                            {feedsEnabled && (
+                                                <button
+                                                    className="sub-chip-x"
+                                                    onClick={(e) => { e.stopPropagation(); handleFeedX(feed.uri, feed.displayName || 'Custom Feed'); }}
+                                                    title={isFeedExplicitlySelected(feed.uri) ? 'Remove from filter' : 'Unsubscribe from feed'}
+                                                >✕</button>
+                                            )}
+                                        </div>
                                     ))}
                                 </div>
                             </div>
@@ -218,15 +265,22 @@ export function FeedRightPanel({
                                 )}
                                 <div className="sub-chip-list">
                                     {followedHashtags.map(tag => (
-                                        <button
-                                            key={tag}
-                                            className={`sub-chip ${isTagActive(tag) && tagsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}
-                                            onClick={() => { if (tagsEnabled) toggleTagChip(tag); }}
-                                            title={`#${tag}`}
-                                            disabled={!tagsEnabled}
-                                        >
-                                            #{tag}
-                                        </button>
+                                        <div key={tag} className={`sub-chip ${isTagExplicitlySelected(tag) ? 'sub-chip--selected' : isTagActive(tag) && tagsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
+                                            <span
+                                                className="sub-chip-label"
+                                                onClick={() => { if (tagsEnabled) toggleTagChip(tag); }}
+                                                title={`#${tag}`}
+                                            >
+                                                #{tag}
+                                            </span>
+                                            {tagsEnabled && (
+                                                <button
+                                                    className="sub-chip-x"
+                                                    onClick={(e) => { e.stopPropagation(); handleTagX(tag); }}
+                                                    title={isTagExplicitlySelected(tag) ? 'Remove from filter' : 'Unfollow tag'}
+                                                >✕</button>
+                                            )}
+                                        </div>
                                     ))}
                                 </div>
 
@@ -265,17 +319,23 @@ export function FeedRightPanel({
                             <div className="panel-section-label">Feeds & Hashtags</div>
                             <div className="sub-chip-list">
                                 {visibleFeeds.slice(0, 6).map(feed => (
-                                    <button
-                                        key={feed.uri}
-                                        className={`sub-chip ${selectedFeedUris.includes(feed.uri) ? 'sub-chip--active' : 'sub-chip--inactive'}`}
-                                        onClick={() => {
-                                            toggleFeedChip(feed.uri);
-                                            onNavigateTab?.('subscribed', { feedUri: feed.uri });
-                                        }}
-                                        title={feed.displayName}
-                                    >
-                                        {feed.displayName || 'Feed'}
-                                    </button>
+                                    <div key={feed.uri} className={`sub-chip ${selectedFeedUris.includes(feed.uri) ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
+                                        <span
+                                            className="sub-chip-label"
+                                            onClick={() => {
+                                                toggleFeedChip(feed.uri);
+                                                onNavigateTab?.('subscribed', { feedUri: feed.uri });
+                                            }}
+                                            title={feed.displayName}
+                                        >
+                                            {feed.displayName || 'Feed'}
+                                        </span>
+                                        <button
+                                            className="sub-chip-x"
+                                            onClick={(e) => { e.stopPropagation(); handleFeedX(feed.uri, feed.displayName || 'Feed'); }}
+                                            title="Unsubscribe from feed"
+                                        >✕</button>
+                                    </div>
                                 ))}
                             </div>
 
