@@ -1330,19 +1330,24 @@ a:hover {
     position: relative;
     overflow: hidden;
     cursor: pointer;
-    background: var(--bg-toolbar, #ddd);
+    background: #000;
     aspect-ratio: 16 / 9;
-    contain: layout style paint;
-    will-change: transform;
 }
 
+/* Single-item images: taller container, contain to show full image */
 .post-media-grid.items-1 .media-item {
-    /* P0 feed stability: use fixed aspect ratio instead of auto
-       so the container has a stable height BEFORE the image loads.
-       This prevents virtualizer gaps from 0-height → expanded-height jumps. */
     aspect-ratio: 4 / 3;
     min-height: 200px;
     max-height: 600px;
+}
+
+/* Single-item VIDEOS: standard 16:9, fill the full card width */
+.post-media-grid.items-1 .media-item:has(video),
+.post-media-grid.items-1 .media-item:has(.inline-video-container) {
+    aspect-ratio: 16 / 9;
+    min-height: unset;
+    max-height: 600px;
+    background: #000;
 }
 
 .media-item img,
@@ -1351,7 +1356,6 @@ a:hover {
     height: 100%;
     object-fit: cover;
     display: block;
-    background: var(--bg-toolbar);
 }
 
 .post-media-grid.items-1 .media-item img {
@@ -1360,17 +1364,17 @@ a:hover {
     background: var(--bg-toolbar);
 }
 
-/* Videos in multi-item grids should fill the container (crop to fit) */
+/* Single-item videos: fill the 16:9 container edge-to-edge */
+.post-media-grid.items-1 .media-item video {
+    object-fit: contain;
+    background: #000;
+}
+
+/* Multi-item grid videos: crop to fill cells */
 .post-media-grid.items-2 .media-item video,
 .post-media-grid.items-3 .media-item video,
 .post-media-grid.items-4 .media-item video {
     object-fit: cover;
-}
-
-/* Single-item videos: show full video centered (no cropping) */
-.post-media-grid.items-1 .media-item video {
-    object-fit: contain;
-    background: #000;
 }
 
 .media-expand-btn {
@@ -1396,20 +1400,26 @@ a:hover {
 .media-item:hover .media-expand-btn { opacity: 1; }
 .media-expand-btn { transition: none !important; }
 
-.inline-video-container { width: 100%; height: 100%; position: relative; }
-.inline-video-container video { width: 100%; height: 100%; object-fit: cover; }
-
-/* Single-item videos: show full video (like images) instead of cropping */
-.post-media-grid.items-1 .inline-video-container video {
-    object-fit: contain;
-    background: #000;
-}
-
-/* Single-item video: center the container */
-.post-media-grid.items-1 .media-item {
+.inline-video-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
+    background: #000;
+}
+.inline-video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* Multi-item grid: crop videos to fill cells */
+.post-media-grid.items-2 .inline-video-container video,
+.post-media-grid.items-3 .inline-video-container video,
+.post-media-grid.items-4 .inline-video-container video {
+    object-fit: cover;
 }
 
 /* ─── 9. LINK PREVIEW — Article / External Link Card ─── */

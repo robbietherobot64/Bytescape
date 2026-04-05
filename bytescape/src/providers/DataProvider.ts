@@ -101,7 +101,7 @@ export interface GetPostThreadParams {
 }
 
 export interface FollowedHashtagParams {
-  tag: string;
+  hashtag: string;
 }
 
 export interface VerifySyndicationsParams {

@@ -310,7 +310,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     // Render
     // ═══════════════════════════════════════════════════════════════════════
     return (
-        <div ref={containerRef} className={`${className?.includes('inline-video-container') ? '' : 'video-player-responsive '}${className || ''}`} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden', ...(!className?.includes('inline-video-container') ? { minHeight: 120 } : {}) }}>
+        <div ref={containerRef} className={`${className?.includes('inline-video-container') ? '' : 'video-player-responsive '}${className || ''}`} style={{ ...style, position: 'relative', backgroundColor: '#000', overflow: 'hidden' }}>
             {error && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center', zIndex: 2 }}>
                     <span style={{ color: '#fca5a5', fontSize: '0.86rem' }}>⚠️ {error}</span>

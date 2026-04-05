@@ -421,7 +421,7 @@ export function useUnifiedFeed({
             const localSet = new Set(localTags.map(t => t.toLowerCase()));
             const newTags = remoteTags.filter(t => !localSet.has(t.toLowerCase()));
             for (const tag of newTags) {
-              await provider.addFollowedHashtag({ tag }).catch(() => {});
+              await provider.addFollowedHashtag({ hashtag: tag }).catch(() => {});
             }
             // Re-read the full list after sync
             if (mountedRef.current && newTags.length > 0) {
@@ -510,9 +510,9 @@ export function useUnifiedFeed({
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {
     const sources = new Set(vaultSources);
-    // Add connected platform names so the filter shows all available sources
+    // Add connected platform IDs (lowercase) so filter values match FeedEntry.source
     for (const ls of linkedSources) {
-      if (ls.connected) sources.add(ls.label);
+      if (ls.connected) sources.add(ls.id);
     }
     return Array.from(sources).sort();
   }, [vaultSources, linkedSources]);
