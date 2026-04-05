@@ -449,18 +449,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     </div>
                 )}
 
-                {/* Media Grid */}
-                {hasMedia && (
-                    <MediaGrid
-                        mediaUrls={entry.media_urls}
-                        mediaKinds={entry.media_kinds}
-                        mediaSources={mediaSources}
-                        thumbnailSources={thumbnailSources}
-                        mediaDir={mediaDir}
-                        openGallery={openGallery}
-                    />
-                )}
-
                 {/* Link Preview — only show full card when there's actual rich link data */}
                 {entry.link_url && !isGif && entry.link_title && (
                     <a href={entry.link_url} target="_blank" rel="noopener noreferrer" className="link-preview-card">
@@ -494,6 +482,19 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     <FeedEntryCard entry={entry.quoted_post} isQuote={true} resolveMediaPath={resolveMediaPath} mediaDir={mediaDir} />
                 )}
             </div>
+
+            {/* Media Grid — placed OUTSIDE .feed-entry-body as direct card child
+                so it naturally fills card width without negative margin hacks */}
+            {hasMedia && (
+                <MediaGrid
+                    mediaUrls={entry.media_urls}
+                    mediaKinds={entry.media_kinds}
+                    mediaSources={mediaSources}
+                    thumbnailSources={thumbnailSources}
+                    mediaDir={mediaDir}
+                    openGallery={openGallery}
+                />
+            )}
 
             {/* Engagement Action Bar — React · Comment · Repost · Share */}
             {!isQuote && (

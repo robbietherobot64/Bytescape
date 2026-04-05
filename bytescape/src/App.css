@@ -1300,17 +1300,15 @@ a:hover {
 }
 
 /* ─── 8. MEDIA GRID ─── */
+/* The media grid is a direct child of .feed-entry-card (not inside
+   .feed-entry-body), so it naturally fills the card's content width
+   without negative-margin hacks. Simple and robust on WebKitGTK. */
 .post-media-grid {
     display: grid;
     gap: 2px;
     overflow: hidden;
-    margin-top: 6px;
-    /* Full-bleed: break out of .feed-entry-body's 10px side padding.
-       Explicit width + negative margins guarantees full card width
-       even under contain: layout or WebKitGTK quirks. */
-    margin-left: -10px;
-    margin-right: -10px;
-    width: calc(100% + 20px);
+    margin: 0;
+    width: 100%;
     border-top: 2px solid #999;
     border-bottom: 2px solid #999;
     box-shadow: var(--bevel-sunken);
