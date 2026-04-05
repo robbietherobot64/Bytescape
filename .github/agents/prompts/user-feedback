@@ -7,13 +7,15 @@ Feedback:
 Critical priorities:
 
 - **STILL AN ISSUE - CRITICAL** Memory leak of some sort going on, leading to 32+gb of memory use.  This happens particularly when filtering the feed by video.  The only videos that show up are from instagram, rather than the actual platforms linked, but they never really load and the memory just skyrockets while loading.  Also, unrelatedly, the CPU spikes to nearly 100% usage when the app first launched, resulting in lag.  Videos in general are stilly slightly janky/stuttery/laggy.
-- **P0 - NEXT SPRINT** Video playback is twitchy and stuttery. This is a long-standing issue across all video sources. Top priority fix for next sprint. Investigate GStreamer pipeline reuse, frame drop reduction, and WebKitGTK compositor scheduling.
+- **P0 - NEXT SPRINT (BACKEND v16)** Video playback is twitchy and stuttery. This is a long-standing issue across all video sources. Top priority fix for next sprint. Investigate GStreamer pipeline reuse, frame drop reduction, and WebKitGTK compositor scheduling.
+- **P0 - NEXT SPRINT (FRONTEND v16)** Images improperly sized/centered — still not filling full width of post card after 20+ attempts. Previous approaches (negative margins, calc hacks, absolute positioning) all failed under WebKitGTK. Latest commit (9803005) moved MediaGrid outside feed-entry-body but user reports it's still not fixed. Frontend agent to take fresh approach.
+- **NEW ISSUE** Repost only works on Bluesky, not Mastodon. When clicking repost, it should prompt which platforms to post to (audience selection), allow tweaking audience, and add quotes if the platform supports it. Not just an automatic single-platform repost.
 - Instagram images are not loading on the feed.  They load fine in the vault.
 - Forums - no content currently federated, just dummy directory.  Subscribed button does toggle correctly.   
 
 Lower priorities:
 
-- Images improperly sized/centered.  
+- Source filter (platform dropdown) is client-side only — does not trigger re-fetch. Switching to "Bluesky" just filters cache, can show very few results.  
 - Posts double from mastodon for some reason. 
 - Image previews on the profile page do not work, it's just a small box with an X attached to it, but no image loads.  
 - Initial data import username suggestion is off.  It is concatenating the full handle and domain name together (i.e., @usernamedomainnamesuffix) rather than just using the username.  It should just cut off any characters after the first period, and not include anything after that, as the default suggestion.  That way it only captures the username on its own.
