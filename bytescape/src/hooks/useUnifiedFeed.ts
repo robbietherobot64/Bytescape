@@ -564,36 +564,36 @@ export function useUnifiedFeed({
       );
     }
 
-    // Hashtag content filter — applied in three scenarios:
-    // 1. Specific hashtag chips are selected → filter to only posts with those exact #hashtags
-    // 2. Feeds disabled (no specific chips) + tags enabled → filter by ALL followed hashtags
-    // 3. Follows disabled (no specific chips) + tags enabled → same hashtag filter
-    //    Scenarios 2 & 3 ensure "hashtag only" mode works regardless of which other
-    //    content stream (feeds or follows) is turned off.
-    if (hasSpecificTagChips) {
-      // Scenario 1: narrow to specific selected tags
-      const selectedLower = new Set(selectedHashtagsFilter!.map(t => t.toLowerCase()));
-      entries = entries.filter(e => {
-        const postTags = extractPostTags(e.content);
-        for (const st of selectedLower) {
-          if (postTags.has(st)) return true;
-        }
-        return false;
-      });
-    } else if ((feedsDisabled || followsDisabled) && !tagsDisabled && followedHashtags.length > 0) {
-      // Scenario 2/3: at least one content stream is off + tags enabled → hashtag filter
-      const allTagsLower = new Set(followedHashtags.map(t => t.toLowerCase()));
-      entries = entries.filter(e => {
-        const postTags = extractPostTags(e.content);
-        for (const ft of allTagsLower) {
-          if (postTags.has(ft)) return true;
-        }
-        return false;
-      });
+    // Hashtag content filter — ONLY applies when the user has narrowed to hashtags only:
+    // 1. Specific hashtag chips selected → filter to only posts with those exact #hashtags
+    // 2. Both feeds AND follows disabled + tags enabled → filter by ALL followed hashtags
+    // NEVER applies on the 'following' tab (that tab is purely about followed accounts).
+    if (activeTab !== 'following') {
+      if (hasSpecificTagChips) {
+        // Scenario 1: narrow to specific selected tags
+        const selectedLower = new Set(selectedHashtagsFilter!.map(t => t.toLowerCase()));
+        entries = entries.filter(e => {
+          const postTags = extractPostTags(e.content);
+          for (const st of selectedLower) {
+            if (postTags.has(st)) return true;
+          }
+          return false;
+        });
+      } else if (feedsDisabled && followsDisabled && !tagsDisabled && followedHashtags.length > 0) {
+        // Scenario 2: BOTH feeds and follows off, tags on → show only hashtag-matching posts
+        const allTagsLower = new Set(followedHashtags.map(t => t.toLowerCase()));
+        entries = entries.filter(e => {
+          const postTags = extractPostTags(e.content);
+          for (const ft of allTagsLower) {
+            if (postTags.has(ft)) return true;
+          }
+          return false;
+        });
+      }
     }
 
     return entries;
-  }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags, followsDisabled]);
+  }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags, followsDisabled, activeTab]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {

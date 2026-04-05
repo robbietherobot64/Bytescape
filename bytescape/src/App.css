@@ -1305,10 +1305,12 @@ a:hover {
     gap: 2px;
     overflow: hidden;
     margin-top: 6px;
-    /* Break out of .feed-entry-body padding so media fills full card width.
-       Block-level grid auto-expands: auto width = parent content + |margins| */
+    /* Full-bleed: break out of .feed-entry-body's 10px side padding.
+       Explicit width + negative margins guarantees full card width
+       even under contain: layout or WebKitGTK quirks. */
     margin-left: -10px;
     margin-right: -10px;
+    width: calc(100% + 20px);
     border-top: 2px solid #999;
     border-bottom: 2px solid #999;
     box-shadow: var(--bevel-sunken);
@@ -1332,6 +1334,16 @@ a:hover {
     cursor: pointer;
     background: #000;
     aspect-ratio: 16 / 9;
+}
+
+/* Inner wrapper — absolute fill so img/video height resolves correctly
+   even if WebKitGTK doesn't pass aspect-ratio height to % children */
+.media-item-inner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
 }
 
 /* Single-item images: taller container, contain to show full image */
@@ -1358,9 +1370,9 @@ a:hover {
     display: block;
 }
 
+/* Single-item images: fill the container edge-to-edge, crop excess */
 .post-media-grid.items-1 .media-item img {
-    object-fit: contain;
-    max-height: 600px;
+    object-fit: cover;
     background: var(--bg-toolbar);
 }
 
@@ -1456,9 +1468,10 @@ a:hover {
     color: inherit;
     margin-top: 6px;
     /* Break out of .feed-entry-body padding like media grid.
-       Block-level flex auto-expands: auto width = parent content + |margins| */
+       Explicit width + negative margins guarantees full card width. */
     margin-left: -10px;
     margin-right: -10px;
+    width: calc(100% + 20px);
     background: var(--bg-panel);
     box-shadow: var(--bevel-sunken);
 }

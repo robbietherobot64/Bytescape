@@ -54,7 +54,7 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                         {/* ── Inline video cell ───────────────────────────────── */}
                         {kind === 'video' ? (
                             /* Inline video player — plays directly in the feed */
-                            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+                            <div className="media-item-inner" onClick={(e) => e.stopPropagation()}>
                                 <VideoPlayer
                                     src={mediaSources[i]}
                                     poster={thumb}
@@ -71,8 +71,8 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                             </div>
                         ) : (
                             /* ── Image cell ───────────────────────────────────── */
-                            /* Image — wrapper must fill .media-item so img width/height: 100% resolves correctly */
-                            <div onClick={(e) => { e.stopPropagation(); openGallery(i); }} style={{ width: '100%', height: '100%' }}>
+                            /* Image — .media-item-inner fills .media-item via absolute positioning */
+                            <div className="media-item-inner" onClick={(e) => { e.stopPropagation(); openGallery(i); }}>
                                 <BlobImage
                                     src={mediaSources[i]}
                                     alt=""
