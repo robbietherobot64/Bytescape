@@ -315,57 +315,105 @@ export function FeedRightPanel({
 
                         <div className="panel-divider" />
 
-                        <div className="panel-section">
-                            <div className="panel-section-label">Feeds & Hashtags</div>
-                            <div className="sub-chip-list">
-                                {visibleFeeds.slice(0, 6).map(feed => (
-                                    <div key={feed.uri} className={`sub-chip ${selectedFeedUris.includes(feed.uri) ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
-                                        <span
-                                            className="sub-chip-label"
-                                            onClick={() => {
-                                                toggleFeedChip(feed.uri);
-                                                onNavigateTab?.('subscribed', { feedUri: feed.uri });
-                                            }}
-                                            title={feed.displayName}
-                                        >
-                                            {feed.displayName || 'Feed'}
-                                        </span>
-                                        <button
-                                            className="sub-chip-x"
-                                            onClick={(e) => { e.stopPropagation(); handleFeedX(feed.uri, feed.displayName || 'Feed'); }}
-                                            title="Unsubscribe from feed"
-                                        >✕</button>
-                                    </div>
-                                ))}
+                        {/* ── Full subscription panel (same UI as subscribed tab) ── */}
+                        <div className="sub-panel">
+                            {/* Feeds header */}
+                            <div className="sub-section-header" onClick={() => setFeedsExpanded(v => !v)}>
+                                <span className="sub-section-label">Feeds</span>
+                                <span className="sub-section-controls">
+                                    <input
+                                        type="checkbox"
+                                        checked={feedsEnabled}
+                                        onChange={e => { e.stopPropagation(); setFeedsEnabled(e.target.checked); }}
+                                        onClick={e => e.stopPropagation()}
+                                        title="Include feeds in results"
+                                    />
+                                    <span className="sub-section-caret">{feedsExpanded ? '▾' : '▸'}</span>
+                                </span>
                             </div>
 
-                            <div className="hashtag-input-row sub-tag-add-row">
-                                <input
-                                    className="input-field"
-                                    value={hashtagInput}
-                                    onChange={e => setHashtagInput(e.target.value)}
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter') {
-                                            handleAddHashtag();
-                                            onNavigateTab?.('subscribed');
-                                        }
-                                    }}
-                                    placeholder="#topic"
-                                />
-                                <button className="btn btn-primary hashtag-add-btn" onClick={() => {
-                                    handleAddHashtag();
-                                    onNavigateTab?.('subscribed');
-                                }}>+</button>
-                            </div>
-                            <div className="sub-chip-list">
-                                {followedHashtags.map(tag => (
-                                    <div key={tag} className="hashtag-pill">
-                                        <span>#{tag}</span>
-                                        <button className="hashtag-remove-btn" onClick={() => handleRemoveHashtag(tag)}>✕</button>
+                            {feedsExpanded && (
+                                <div className="sub-section-body">
+                                    {visibleFeeds.length === 0 && (
+                                        <div className="panel-hint">No custom feeds found.</div>
+                                    )}
+                                    <div className="sub-chip-list">
+                                        {visibleFeeds.map(feed => (
+                                            <div key={feed.uri} className={`sub-chip ${isFeedExplicitlySelected(feed.uri) ? 'sub-chip--selected' : isFeedActive(feed.uri) && feedsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
+                                                <span
+                                                    className="sub-chip-label"
+                                                    onClick={() => { if (feedsEnabled) toggleFeedChip(feed.uri); }}
+                                                    title={feed.displayName || 'Custom Feed'}
+                                                >
+                                                    {feed.displayName || 'Custom Feed'}
+                                                </span>
+                                                {feedsEnabled && (
+                                                    <button
+                                                        className="sub-chip-x"
+                                                        onClick={(e) => { e.stopPropagation(); handleFeedX(feed.uri, feed.displayName || 'Custom Feed'); }}
+                                                        title={isFeedExplicitlySelected(feed.uri) ? 'Remove from filter' : 'Unsubscribe from feed'}
+                                                    >✕</button>
+                                                )}
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                </div>
+                            )}
+
+                            {/* Hashtags header */}
+                            <div className="sub-section-header" onClick={() => setTagsExpanded(v => !v)}>
+                                <span className="sub-section-label">Hashtags</span>
+                                <span className="sub-section-controls">
+                                    <input
+                                        type="checkbox"
+                                        checked={tagsEnabled}
+                                        onChange={e => { e.stopPropagation(); setTagsEnabled(e.target.checked); }}
+                                        onClick={e => e.stopPropagation()}
+                                        title="Include hashtag posts in results"
+                                    />
+                                    <span className="sub-section-caret">{tagsExpanded ? '▾' : '▸'}</span>
+                                </span>
                             </div>
-                            {followedHashtags.length === 0 && <div className="panel-hint">No tags followed yet.</div>}
+
+                            {tagsExpanded && (
+                                <div className="sub-section-body">
+                                    {followedHashtags.length === 0 && (
+                                        <div className="panel-hint">No tags followed yet.</div>
+                                    )}
+                                    <div className="sub-chip-list">
+                                        {followedHashtags.map(tag => (
+                                            <div key={tag} className={`sub-chip ${isTagExplicitlySelected(tag) ? 'sub-chip--selected' : isTagActive(tag) && tagsEnabled ? 'sub-chip--active' : 'sub-chip--inactive'}`}>
+                                                <span
+                                                    className="sub-chip-label"
+                                                    onClick={() => { if (tagsEnabled) toggleTagChip(tag); }}
+                                                    title={`#${tag}`}
+                                                >
+                                                    #{tag}
+                                                </span>
+                                                {tagsEnabled && (
+                                                    <button
+                                                        className="sub-chip-x"
+                                                        onClick={(e) => { e.stopPropagation(); handleTagX(tag); }}
+                                                        title={isTagExplicitlySelected(tag) ? 'Remove from filter' : 'Unfollow tag'}
+                                                    >✕</button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Compact add row */}
+                                    <div className="sub-add-row">
+                                        <input
+                                            className="input-field sub-add-input"
+                                            value={hashtagInput}
+                                            onChange={e => setHashtagInput(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleAddHashtag(); }}
+                                            placeholder="Add #topic"
+                                        />
+                                        <button className="btn btn-primary sub-add-btn" onClick={handleAddHashtag}>+</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

@@ -7,6 +7,7 @@ Feedback:
 Critical priorities:
 
 - **STILL AN ISSUE - CRITICAL** Memory leak of some sort going on, leading to 32+gb of memory use.  This happens particularly when filtering the feed by video.  The only videos that show up are from instagram, rather than the actual platforms linked, but they never really load and the memory just skyrockets while loading.  Also, unrelatedly, the CPU spikes to nearly 100% usage when the app first launched, resulting in lag.  Videos in general are stilly slightly janky/stuttery/laggy.
+- **P0 - NEXT SPRINT** Video playback is twitchy and stuttery. This is a long-standing issue across all video sources. Top priority fix for next sprint. Investigate GStreamer pipeline reuse, frame drop reduction, and WebKitGTK compositor scheduling.
 - Instagram images are not loading on the feed.  They load fine in the vault.
 - Forums - no content currently federated, just dummy directory.  Subscribed button does toggle correctly.   
 
