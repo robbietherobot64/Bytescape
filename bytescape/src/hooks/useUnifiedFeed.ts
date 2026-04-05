@@ -104,6 +104,8 @@ interface UseUnifiedFeedOptions {
   selectedHashtagsFilter?: string[];
   archiveSourceFilter?: string;
   autoRefreshFeeds?: boolean;
+  /** When true, posts from followed users are excluded unless they match an active hashtag filter */
+  followsDisabled?: boolean;
 }
 
 interface UseUnifiedFeedReturn {
@@ -145,6 +147,7 @@ export function useUnifiedFeed({
   selectedHashtagsFilter,
   archiveSourceFilter,
   autoRefreshFeeds = true,
+  followsDisabled = false,
 }: UseUnifiedFeedOptions): UseUnifiedFeedReturn {
   const provider = useDataProvider();
   const feedCache = useFeedCacheStore();
@@ -561,10 +564,12 @@ export function useUnifiedFeed({
       );
     }
 
-    // Hashtag content filter — applied in two scenarios:
-    // 1. Specific hashtag chips are selected → filter to only those
-    // 2. Feeds disabled + tags enabled (no specific chips) → filter by ALL followed hashtags
-    //    This ensures "hashtags only" mode actually removes non-hashtag feed content.
+    // Hashtag content filter — applied in three scenarios:
+    // 1. Specific hashtag chips are selected → filter to only posts with those exact #hashtags
+    // 2. Feeds disabled (no specific chips) + tags enabled → filter by ALL followed hashtags
+    // 3. Follows disabled (no specific chips) + tags enabled → same hashtag filter
+    //    Scenarios 2 & 3 ensure "hashtag only" mode works regardless of which other
+    //    content stream (feeds or follows) is turned off.
     if (hasSpecificTagChips) {
       // Scenario 1: narrow to specific selected tags
       const selectedLower = new Set(selectedHashtagsFilter!.map(t => t.toLowerCase()));
@@ -575,8 +580,8 @@ export function useUnifiedFeed({
         }
         return false;
       });
-    } else if (feedsDisabled && !tagsDisabled && followedHashtags.length > 0) {
-      // Scenario 2: feeds off, tags on with no specific chips → filter by ALL followed tags
+    } else if ((feedsDisabled || followsDisabled) && !tagsDisabled && followedHashtags.length > 0) {
+      // Scenario 2/3: at least one content stream is off + tags enabled → hashtag filter
       const allTagsLower = new Set(followedHashtags.map(t => t.toLowerCase()));
       entries = entries.filter(e => {
         const postTags = extractPostTags(e.content);
@@ -588,7 +593,7 @@ export function useUnifiedFeed({
     }
 
     return entries;
-  }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags]);
+  }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags, followsDisabled]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
   const mergedSources = useMemo(() => {

@@ -71,8 +71,8 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                             </div>
                         ) : (
                             /* ── Image cell ───────────────────────────────────── */
-                            /* Image */
-                            <div onClick={(e) => { e.stopPropagation(); openGallery(i); }}>
+                            /* Image — wrapper must fill .media-item so img width/height: 100% resolves correctly */
+                            <div onClick={(e) => { e.stopPropagation(); openGallery(i); }} style={{ width: '100%', height: '100%' }}>
                                 <BlobImage
                                     src={mediaSources[i]}
                                     alt=""

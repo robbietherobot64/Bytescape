@@ -75,6 +75,7 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     const [selectedHashtagsFilter, setSelectedHashtagsFilter] = useState<string[]>([]);
     const [hashtagInput, setHashtagInput] = useState('');
     const [archiveSourceFilter, setArchiveSourceFilter] = useState<string>('');
+    const [followsDisabled, setFollowsDisabled] = useState(false);
     const [isPosting, setIsPosting] = useState(false);
     const [postStatus, setPostStatus] = useState<string>('');
     const [mediaDir, setMediaDir] = useState<string>('');
@@ -134,7 +135,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
         selectedFeedUris,
         selectedHashtagsFilter,
         archiveSourceFilter,
-        autoRefreshFeeds
+        autoRefreshFeeds,
+        followsDisabled,
     });
 
     // ═══ Lifecycle Wiring (media dir, hashtag navigation, import refresh) ═══
@@ -167,10 +169,11 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
     }, [isImporting, fetchFeed]);
 
     useEffect(() => {
-        // Only run reset if we actually have feeds loaded and current selection is invalid
+        // Only run reset if we actually have feeds loaded and current selection is invalid.
+        // Preserve special tokens like '__disabled__' — they are control signals, not feed URIs.
         if (savedFeeds.length > 0 && selectedFeedUris.length > 0) {
             const uris = savedFeeds.map(f => f.uri);
-            const validUris = selectedFeedUris.filter(uri => uris.includes(uri));
+            const validUris = selectedFeedUris.filter(uri => uri.startsWith('__') || uris.includes(uri));
             if (validUris.length !== selectedFeedUris.length) {
                 setSelectedFeedUris(validUris);
             }
@@ -378,6 +381,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                 archiveTotal={archiveTotal}
                 position="left"
                 onNavigateTab={handleNavigateTab}
+                followsDisabled={followsDisabled}
+                setFollowsDisabled={setFollowsDisabled}
             />
             <div className="feed-main">
                 {/* Fixed Header with Tabs */}
@@ -461,6 +466,8 @@ export function FeedScreen({ auth, activeTab, setActiveTab, isImporting, onOpenC
                                 vaultSources={vaultSources}
                                 archiveTotal={archiveTotal}
                                 onNavigateTab={handleNavigateTab}
+                                followsDisabled={followsDisabled}
+                                setFollowsDisabled={setFollowsDisabled}
                             />
                         </div>
                     )}

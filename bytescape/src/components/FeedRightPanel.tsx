@@ -47,6 +47,8 @@ interface FeedRightPanelProps {
     archiveTotal: number;
     position?: 'left' | 'right';
     onNavigateTab?: (tab: FeedTab, opts?: { feedUri?: string }) => void;
+    followsDisabled: boolean;
+    setFollowsDisabled: (disabled: boolean) => void;
 }
 
 /* ── (styles moved to FeedScreen.css — .sub-* classes) ─────────────── */
@@ -79,14 +81,17 @@ export function FeedRightPanel({
     archiveTotal: _archiveTotal,
     position = 'right',
     onNavigateTab,
+    followsDisabled,
+    setFollowsDisabled,
 }: FeedRightPanelProps) {
-    /* ═══ Local UI state (presentation only) ═══════════════════════════ */
-    /* ── Subscribed tab state ────────────────────────────────────────── */
+    /* ═══ Local UI state (presentation only) ═════════════════════════ */
+    /* ── Subscribed tab state ──────────────────────────────────── */
     const [feedsExpanded, setFeedsExpanded] = useState(true);
     const [tagsExpanded, setTagsExpanded] = useState(true);
     const [feedsEnabled, setFeedsEnabled] = useState(true);
     const [tagsEnabled, setTagsEnabled] = useState(true);
-    const [followsEnabled, setFollowsEnabled] = useState(true);
+    /* followsEnabled is derived from the lifted followsDisabled prop */
+    const followsEnabled = !followsDisabled;
 
     const visibleFeeds = savedFeeds.filter(f => !f.uri.includes('/following'));
 
@@ -324,7 +329,7 @@ export function FeedRightPanel({
                                 <input
                                     type="checkbox"
                                     checked={followsEnabled}
-                                    onChange={e => { e.stopPropagation(); setFollowsEnabled(e.target.checked); }}
+                                    onChange={e => { e.stopPropagation(); setFollowsDisabled(!e.target.checked); }}
                                     onClick={e => e.stopPropagation()}
                                     title="Show posts from people you follow"
                                 />
