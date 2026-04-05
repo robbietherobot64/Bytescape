@@ -1305,10 +1305,10 @@ a:hover {
     gap: 2px;
     overflow: hidden;
     margin-top: 6px;
-    /* Break out of .feed-entry-body padding so media fills full card width */
+    /* Break out of .feed-entry-body padding so media fills full card width.
+       Block-level grid auto-expands: auto width = parent content + |margins| */
     margin-left: -10px;
     margin-right: -10px;
-    width: calc(100% + 20px);
     border-top: 2px solid #999;
     border-bottom: 2px solid #999;
     box-shadow: var(--bevel-sunken);
@@ -1455,10 +1455,10 @@ a:hover {
     text-decoration: none;
     color: inherit;
     margin-top: 6px;
-    /* Break out of .feed-entry-body padding like media grid */
+    /* Break out of .feed-entry-body padding like media grid.
+       Block-level flex auto-expands: auto width = parent content + |margins| */
     margin-left: -10px;
     margin-right: -10px;
-    width: calc(100% + 20px);
     background: var(--bg-panel);
     box-shadow: var(--bevel-sunken);
 }

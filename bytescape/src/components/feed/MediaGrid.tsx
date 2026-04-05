@@ -1,4 +1,3 @@
-import React from 'react';
 import { BlobImage } from '../BlobImage';
 import { VideoPlayer } from '../VideoPlayer';
 import { ExpandIcon } from './icons';
@@ -79,7 +78,6 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                                     alt=""
                                     mediaDir={mediaDir}
                                     displayVariant
-                                    style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' } as React.CSSProperties}
                                 />
                                 <button
                                     className="media-expand-btn"

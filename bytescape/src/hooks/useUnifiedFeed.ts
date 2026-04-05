@@ -176,19 +176,28 @@ export function useUnifiedFeed({
     ? archiveSourceFilter : undefined;
 
   // ── Resolve effective tags from followed hashtags + active hashtag filters ──
+  // When specific tag chips are selected, use ONLY those (narrow view).
+  // When nothing is selected (empty array), use ALL followed hashtags (broad view).
+  // When __disabled__, use none.
   const effectiveTags = useMemo(() => {
-    const tags = new Set<string>();
-    for (const t of followedHashtags) tags.add(t);
-    if (selectedHashtagsFilter) {
-      for (const t of selectedHashtagsFilter) tags.add(t);
+    if (selectedHashtagsFilter && selectedHashtagsFilter.length > 0) {
+      if (selectedHashtagsFilter.length === 1 && selectedHashtagsFilter[0] === '__disabled__') {
+        return []; // Tags disabled via master checkbox
+      }
+      return [...selectedHashtagsFilter]; // Specific chips selected — narrow to those
     }
-    return Array.from(tags);
+    return [...followedHashtags]; // No selection — show all followed
   }, [followedHashtags, selectedHashtagsFilter]);
 
   // ── Resolve effective feed URIs (user-selected or all saved) ──
   const effectiveFeedUris = useMemo(() => {
-    if (selectedFeedUris.length > 0) return selectedFeedUris;
-    return customFeedUris(savedFeeds);
+    if (selectedFeedUris.length > 0) {
+      if (selectedFeedUris.length === 1 && selectedFeedUris[0] === '__disabled__') {
+        return []; // Feeds disabled via master checkbox
+      }
+      return selectedFeedUris.filter(u => u !== '__disabled__'); // Specific chips selected
+    }
+    return customFeedUris(savedFeeds); // No selection — use all saved feeds
   }, [selectedFeedUris, savedFeeds]);
 
   // ── Fetch a single page from the backend ──
@@ -455,6 +464,25 @@ export function useUnifiedFeed({
       }
     }
   }, [savedFeeds, activeTab, fetchFeed]);
+
+  // ── Re-fetch when chip selection changes (feeds or hashtags) ──
+  const filterKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!auth) return;
+    const key = JSON.stringify({ f: effectiveFeedUris, t: effectiveTags });
+    if (filterKeyRef.current === null) {
+      // Initial mount — just record the key, don't double-fetch
+      filterKeyRef.current = key;
+      return;
+    }
+    if (filterKeyRef.current !== key) {
+      filterKeyRef.current = key;
+      // Clear stale cache for this tab and re-fetch with new filters
+      feedCache.setCache(activeTab, [], null);
+      fetchFeed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth, activeTab, effectiveFeedUris, effectiveTags]);
 
   // ── Fetch on tab switch (stale-while-revalidate) ──
   useEffect(() => {
