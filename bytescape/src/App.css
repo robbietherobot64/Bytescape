@@ -1152,10 +1152,12 @@ a:hover {
     overflow: hidden;
     box-shadow: 1px 1px 0 var(--border-color, #666);
     transition: none;
-    /* P0 feed stability: isolate each card to its own compositor layer
-       so reflow/repaint in one card does NOT propagate to siblings */
-    contain: layout style;
-    will-change: transform;
+    /* P0 media full-width fix: removed `contain: layout` which prevented
+       WebKitGTK from correctly resolving percentage widths on children
+       (especially .post-media-grid width:100%).  `contain: style` still
+       isolates counter/quote increments.  The parent .feed-card-wrapper
+       already gets contain:layout from content-visibility:auto. */
+    contain: style;
 }
 
 /* Kill ALL transitions inside feed cards during scroll — prevents flicker */

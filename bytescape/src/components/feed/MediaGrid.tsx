@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'react';
 import { BlobImage } from '../BlobImage';
 import { VideoPlayer } from '../VideoPlayer';
 import { ExpandIcon } from './icons';
@@ -12,6 +13,10 @@ import { ExpandIcon } from './icons';
  * - Delegates fullscreen/gallery state to parent via `openGallery(index)`.
  * - Fires no custom events — the virtualizer's built-in ResizeObserver on
  *   measured row elements automatically detects height changes when images load.
+ * - Uses a ResizeObserver on the nearest `.feed-entry-card` ancestor to
+ *   measure its clientWidth and set an explicit pixel width on the grid.
+ *   This is a belt-and-suspenders fix for WebKitGTK, which has bugs with
+ *   percentage width resolution inside CSS containment contexts.
  *
  * RELATED FILES:
  * - src/components/feed/GalleryOverlay.tsx
@@ -30,6 +35,35 @@ interface MediaGridProps {
 }
 
 /**
+ * Hook: measure the nearest `.feed-entry-card` ancestor's clientWidth and
+ * set it as an explicit pixel width on the grid element.  This bypasses
+ * WebKitGTK bugs where `width: 100%` on a grid child resolves incorrectly
+ * when ancestor elements have CSS containment (`contain: layout` or
+ * `content-visibility: auto`).
+ */
+function useCardWidth(gridRef: React.RefObject<HTMLDivElement | null>) {
+    useEffect(() => {
+        const el = gridRef.current;
+        if (!el) return;
+        const card = el.closest('.feed-entry-card') as HTMLElement | null;
+        if (!card) return;
+
+        const sync = () => {
+            const w = card.clientWidth;
+            if (w > 0) el.style.width = `${w}px`;
+        };
+
+        // Measure immediately on mount
+        sync();
+
+        // Re-measure when the card resizes (e.g. window resize)
+        const ro = new ResizeObserver(sync);
+        ro.observe(card);
+        return () => ro.disconnect();
+    }, [gridRef]);
+}
+
+/**
  * Exported feed media grid renderer.
  *
  * Cross-system note:
@@ -37,10 +71,13 @@ interface MediaGridProps {
  * before values are passed to this component.
  */
 export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSources, mediaDir, openGallery }: MediaGridProps) {
+    const gridRef = useRef<HTMLDivElement>(null);
+    useCardWidth(gridRef);
+
     if (mediaUrls.length === 0) return null;
 
     return (
-        <div className={`post-media-grid items-${Math.min(mediaUrls.length, 4)}`}>
+        <div ref={gridRef} className={`post-media-grid items-${Math.min(mediaUrls.length, 4)}`}>
             {mediaUrls.slice(0, 4).map((_, i) => {
                 // ── Per-cell derived display values ───────────────────────────
                 const kind = (mediaKinds && mediaKinds[i]) || 'image';
