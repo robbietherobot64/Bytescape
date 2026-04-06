@@ -7,6 +7,7 @@ import { AudiencePills } from './AudiencePills';
 import { AudienceDrawer } from './AudienceDrawer';
 import { ReplyCompose } from './ReplyCompose';
 import { QuoteRepostModal } from './QuoteRepostModal';
+import { RepostModal } from './RepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { RichText } from './RichText';
 import {
@@ -117,6 +118,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const [threadLoading, setThreadLoading] = useState(false);
     const [quoteModalOpen, setQuoteModalOpen] = useState(false);
     const [repostMenuOpen, setRepostMenuOpen] = useState(false);
+    const [repostModalOpen, setRepostModalOpen] = useState(false);
 
     const isBluesky = entry.source === 'bluesky';
     const isMastodon = entry.source === 'mastodon';
@@ -213,11 +215,11 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
         if (!isInteractive) return;
 
         if (reposted && (repostUri || isMastodon)) {
-            // Undo repost directly
+            // Undo repost directly — immediate, no modal
             handleDirectRepost(e);
         } else {
-            // Show repost menu (repost vs quote)
-            setRepostMenuOpen(prev => !prev);
+            // Open multi-platform repost modal
+            setRepostModalOpen(true);
         }
     };
 
@@ -559,7 +561,21 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                 </div>
             )}
 
-            {/* Quote Repost Modal */}
+            {/* Multi-Platform Repost Modal */}
+            {repostModalOpen && (
+                <RepostModal
+                    entry={entry}
+                    onClose={() => setRepostModalOpen(false)}
+                    onReposted={(uri) => {
+                        setReposted(true);
+                        setRepostCount(c => c + 1);
+                        if (uri) setRepostUri(uri);
+                        setRepostModalOpen(false);
+                    }}
+                />
+            )}
+
+            {/* Quote Repost Modal (legacy Bluesky-only deep quote flow) */}
             {quoteModalOpen && createPortal(
                 <QuoteRepostModal
                     originalEntry={entry}
