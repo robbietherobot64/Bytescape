@@ -1302,12 +1302,14 @@ a:hover {
 }
 
 /* ─── 8. MEDIA GRID ─── */
-/* Nuclear simplification (Sprint v16): Images use intrinsic sizing —
-   aspect-ratio + object-fit directly on the <img> element itself.
-   NO absolute positioning on images, NO inner wrappers, NO ResizeObserver.
-   Videos keep absolute positioning via .media-item-inner wrapper because
-   VideoPlayer is a complex component that needs a pre-sized container.
-   This approach is immune to WebKitGTK containment/aspect-ratio bugs. */
+/* Sprint v16 fix: aspect-ratio lives on the .media-item CONTAINER (a plain
+   <div>, i.e. a non-replaced element) — never on the <img>.  WebKitGTK's
+   replaced-element sizing algorithm lets the image's intrinsic aspect ratio
+   fight the CSS aspect-ratio, producing unique widths per image.  By keeping
+   aspect-ratio on the non-replaced container, the container's width is always
+   determined by the CSS grid cell (consistent), and its height by the ratio.
+   The <img> then fills via position:absolute + inset:0 (edge offsets, no
+   percentage dimensions that could mis-resolve under containment). */
 .post-media-grid {
     display: grid;
     gap: 2px;
@@ -1331,36 +1333,43 @@ a:hover {
     grid-template-rows: 1fr 1fr;
 }
 
-/* === IMAGE items: simple block-level <img> with intrinsic sizing === */
+/* Container: aspect-ratio on the non-replaced div controls cell dimensions.
+   Width comes from the grid cell, height from the ratio.  max-height on a
+   non-replaced element clamps height WITHOUT shrinking width (unlike on an
+   <img> where the replaced-element algorithm can reduce width). */
 .media-item {
-    position: relative;  /* for .media-expand-btn absolute positioning */
+    position: relative;
     overflow: hidden;
     cursor: pointer;
     background: #000;
-    /* NO aspect-ratio — the <img> element controls its own dimensions.
-       This avoids the WebKitGTK bug where percentage heights don't resolve
-       inside aspect-ratio containers under CSS containment. */
+    aspect-ratio: 16 / 9;
 }
 
-/* Image element: block-level, full-width, aspect-ratio on the element itself.
-   No position:absolute, no inset:0, no height:100%.  Simplest possible model. */
+/* Image: absolute-positioned, fills container via edge offsets.
+   NO width/height percentages, NO aspect-ratio on the replaced element.
+   object-fit:cover scales and crops the bitmap to fill the box. */
 .media-item img {
-    display: block;
-    width: 100%;
-    aspect-ratio: 16 / 9;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     object-fit: cover;
     object-position: center;
+    display: block;
 }
 
-/* Single-image posts: taller aspect ratio, height clamped */
-.post-media-grid.items-1 .media-item img {
+/* Single-image posts: wider 4:3 cell, height clamped */
+.post-media-grid.items-1 .media-item:not(.media-item-video) {
     aspect-ratio: 4 / 3;
     min-height: 200px;
     max-height: 600px;
+}
+.post-media-grid.items-1 .media-item:not(.media-item-video) img {
     background: var(--bg-toolbar);
 }
 
-/* === VIDEO items (.media-item-video): container-controlled sizing === */
+/* === VIDEO items (.media-item-video) === */
 .media-item.media-item-video {
     aspect-ratio: 16 / 9;
 }
@@ -1387,7 +1396,7 @@ a:hover {
     display: block;
 }
 
-/* Single-video posts: 16:9 container, contain (not crop) */
+/* Single-video posts: 16:9, contain (show full video) */
 .post-media-grid.items-1 .media-item.media-item-video {
     aspect-ratio: 16 / 9;
     min-height: unset;
@@ -3600,8 +3609,7 @@ textarea::placeholder {
     .post-stats { font-size: 10px; gap: 8px; }
 
     .post-media-grid { gap: 2px; }
-    .post-media-grid.items-1 .media-item img { max-height: 250px; }
-    .post-media-grid.items-1 .media-item.media-item-video { max-height: 250px; }
+    .post-media-grid.items-1 .media-item { max-height: 250px; }
 
     /* ── CHAT SCREEN ── */
     .chat-discord-layout {
@@ -3892,8 +3900,7 @@ textarea::placeholder {
 @media (min-width: 1025px) {
     .feed-scroll-container { padding: 10px 24px; }
     .feed-list { max-width: 100%; }
-    .post-media-grid.items-1 .media-item img { max-height: 450px; }
-    .post-media-grid.items-1 .media-item.media-item-video { max-height: 450px; }
+    .post-media-grid.items-1 .media-item { max-height: 450px; }
 }
 
 /* ─── 30. IDENTITY SETUP MODAL ─── */
