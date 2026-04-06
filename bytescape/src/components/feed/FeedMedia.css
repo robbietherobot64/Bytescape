@@ -1,0 +1,89 @@
+/*
+ * FeedMedia.css — Decorative-only styles for feed media grid and gallery.
+ *
+ * RULE: NO width, height, position, display, grid, or aspect-ratio properties
+ * in this file. All layout is controlled by inline styles in FeedMedia.tsx.
+ * This file only contains decorative properties: borders, shadows, colors,
+ * hover states, opacity transitions, and backdrop styling.
+ */
+
+/* ─── Grid container decoration ─── */
+.fm-grid {
+    border-top: 2px solid #999;
+    border-bottom: 2px solid #999;
+    box-shadow: var(--bevel-sunken);
+}
+
+/* ─── Cell decoration ─── */
+.fm-cell {
+    background: #000;
+    cursor: pointer;
+}
+
+/* ─── Expand button ─── */
+.fm-expand {
+    background: var(--bg-toolbar);
+    box-shadow: var(--bevel-raised);
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0;
+    border-radius: 0;
+    /* Transition disabled in feed cards by parent !important rule */
+}
+
+.fm-cell:hover .fm-expand {
+    opacity: 1;
+}
+
+/* ─── Fullscreen gallery overlay ─── */
+.fm-overlay {
+    background: rgba(0, 0, 0, 0.88);
+}
+
+.fm-overlay-content {
+    background: var(--bg-toolbar);
+    border: 3px solid #666;
+    box-shadow: var(--bevel-raised);
+}
+
+.fm-overlay-close {
+    background: var(--bg-toolbar);
+    box-shadow: var(--bevel-raised);
+    border: none;
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-weight: bold;
+}
+
+.fm-overlay-close:hover {
+    background: var(--accent-red);
+    color: white;
+}
+
+/* ─── Gallery dot indicators ─── */
+.fm-dot {
+    border: 1px solid #666;
+    background: var(--bg-toolbar);
+    cursor: pointer;
+    padding: 0;
+    box-shadow: var(--bevel-raised);
+    border-radius: 0;
+}
+
+.fm-dot:hover {
+    background: #aaa;
+}
+
+.fm-dot--active {
+    background: var(--link-blue);
+    border-color: var(--link-blue);
+}
+
+/* ─── Video poster overlay (click-to-play hint) ─── */
+.fm-video-wrapper {
+    background: #000;
+}

@@ -17,10 +17,9 @@ import {
     formatTimestamp,
     sanitizeDisplayContent,
     resolveAtUri,
-    MediaGrid,
+    FeedMedia,
     EngagementBar,
     ThreadReplies,
-    GalleryOverlay,
 } from './feed';
 
 /**
@@ -99,8 +98,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     // Local UI state and derived presentation data
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const [isGalleryOpen, setIsGalleryOpen] = useState(false);
-    const [galleryIndex, setGalleryIndex] = useState(0);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const taggedPeople = parseTaggedPeople(entry.tagged_people);
     const tagLine = renderTaggedPeople(taggedPeople);
@@ -147,13 +144,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
             acc[event.platform.toLowerCase()] = event.uri;
             return acc;
         }, {} as Record<string, string>);
-
-    const openGallery = (index: number) => {
-        // Pause all videos when opening gallery (replaces VideoPlaybackManager)
-        document.querySelectorAll('video').forEach(v => { try { (v as HTMLVideoElement).pause(); } catch (_) {} });
-        setGalleryIndex(index);
-        setIsGalleryOpen(true);
-    };
 
     const handleShareClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -485,16 +475,14 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                 )}
             </div>
 
-            {/* Media Grid — placed OUTSIDE .feed-entry-body as direct card child
+            {/* Media — placed OUTSIDE .feed-entry-body as direct card child
                 so it naturally fills card width without negative margin hacks */}
             {hasMedia && (
-                <MediaGrid
-                    mediaUrls={entry.media_urls}
-                    mediaKinds={entry.media_kinds}
+                <FeedMedia
                     mediaSources={mediaSources}
                     thumbnailSources={thumbnailSources}
+                    mediaKinds={entry.media_kinds}
                     mediaDir={mediaDir}
-                    openGallery={openGallery}
                 />
             )}
 
@@ -586,18 +574,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                     }}
                 />,
                 document.body
-            )}
-
-            {/* Fullscreen Gallery */}
-            {isGalleryOpen && (
-                <GalleryOverlay
-                    mediaSources={mediaSources}
-                    thumbnailSources={thumbnailSources}
-                    mediaKinds={entry.media_kinds}
-                    galleryIndex={galleryIndex}
-                    setGalleryIndex={setGalleryIndex}
-                    onClose={() => setIsGalleryOpen(false)}
-                />
             )}
 
             {/* Audience Drawer */}

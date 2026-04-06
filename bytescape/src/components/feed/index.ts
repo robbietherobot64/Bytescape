@@ -25,7 +25,6 @@ export { parseTaggedPeople, renderTaggedPeople, formatTimestamp, formatCount, sa
 // ─────────────────────────────────────────────────────────────────────────────
 // Component exports
 // ─────────────────────────────────────────────────────────────────────────────
-export { MediaGrid } from './MediaGrid';
+export { FeedMedia } from './FeedMedia';
 export { EngagementBar } from './EngagementBar';
 export { ThreadReplies } from './ThreadReplies';
-export { GalleryOverlay } from './GalleryOverlay';
