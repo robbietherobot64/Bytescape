@@ -1,4 +1,6 @@
-import { BlobImage } from '../BlobImage';
+import { useMemo } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { useLazyBlobUrl } from '../../hooks/useBlobUrl';
 import { VideoPlayer } from '../VideoPlayer';
 import { ExpandIcon } from './icons';
 
@@ -7,20 +9,75 @@ import { ExpandIcon } from './icons';
  * Displays up to four media items for a feed entry in a compact grid layout.
  *
  * HOW IT WORKS:
- * - .media-item (a plain <div>) has aspect-ratio — controls cell dimensions.
- * - Images fill the container via position:absolute + explicit width:100%
- *   height:100% (BOTH in CSS and as inline styles on the <img> element).
- *   WebKitGTK does NOT stretch replaced elements via edge offsets alone;
- *   it needs explicit width/height. Inline styles guarantee highest specificity.
+ * - Images render as <div> elements with background-image (NOT <img> tags).
+ *   A <div> is NOT a replaced element, so position:absolute + width:100% +
+ *   height:100% is guaranteed to work in WebKitGTK. <img> elements have
+ *   replaced-element sizing quirks that cause inconsistent widths.
+ * - background-size:cover + background-position:center gives identical
+ *   visual results to object-fit:cover + object-position:center.
  * - Videos still use absolute positioning via .media-item-inner wrapper
  *   because VideoPlayer is a complex component that needs a sized container.
  *
  * RELATED FILES:
  * - src/components/feed/GalleryOverlay.tsx
  * - src/components/VideoPlayer.tsx
- * - src/components/BlobImage.tsx
+ * - src/components/BlobImage.tsx (used for gallery overlay, NOT here)
  * - src/components/FeedEntryCard.tsx (parent composer)
  */
+
+/**
+ * Internal component: renders a <div> with background-image instead of <img>.
+ * Reuses the same URL resolution pipeline as BlobImage (useLazyBlobUrl,
+ * convertFileSrc, blob-display: prefix) but avoids all replaced-element
+ * sizing issues by being a plain <div>.
+ */
+function FeedMediaImage({ src, mediaDir }: { src: string; mediaDir?: string }) {
+    // Transform blob: → blob-display: for lower-resolution display variant
+    const effectiveSrc = useMemo(() => {
+        if (src?.startsWith('blob:')) {
+            const afterPrefix = src.slice(5);
+            if (!afterPrefix.startsWith('http://') && !afterPrefix.startsWith('https://') && !afterPrefix.startsWith('tauri://')) {
+                return `blob-display:${afterPrefix}`;
+            }
+        }
+        return src;
+    }, [src]);
+
+    // Lazy blob URL resolution (IntersectionObserver-gated)
+    const [containerRef, blobUrl, , error] = useLazyBlobUrl(
+        effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:') ? effectiveSrc : undefined
+    );
+
+    // Final URL resolution — same logic as BlobImage
+    const resolvedUrl = useMemo(() => {
+        if (!src) return null;
+        if (effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:')) return blobUrl;
+        if (src.startsWith('http://') || src.startsWith('https://')) return src;
+        if (mediaDir) {
+            if (src.startsWith('media/')) {
+                return convertFileSrc(`${mediaDir}/${src.replace(/^media\//, '')}`);
+            } else if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) {
+                return convertFileSrc(src);
+            } else {
+                return convertFileSrc(`${mediaDir}/${src}`);
+            }
+        }
+        return convertFileSrc(src);
+    }, [src, effectiveSrc, blobUrl, mediaDir]);
+
+    const bgUrl = resolvedUrl && !error ? resolvedUrl : null;
+
+    return (
+        <div
+            ref={containerRef}
+            className="feed-media-bg"
+            role="img"
+            style={{
+                backgroundImage: bgUrl ? `url("${bgUrl.replace(/"/g, '%22')}")` : 'none',
+            } as React.CSSProperties}
+        />
+    );
+}
 
 interface MediaGridProps {
     mediaUrls: string[];
@@ -63,21 +120,9 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                             </div>
                         ) : (
                             <>
-                                <BlobImage
+                                <FeedMediaImage
                                     src={mediaSources[i]}
-                                    alt=""
                                     mediaDir={mediaDir}
-                                    displayVariant
-                                    style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        objectFit: 'cover',
-                                        objectPosition: 'center',
-                                        display: 'block',
-                                    } as React.CSSProperties}
                                 />
                                 <button
                                     className="media-expand-btn"

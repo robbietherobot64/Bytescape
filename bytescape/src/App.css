@@ -1345,31 +1345,28 @@ a:hover {
     aspect-ratio: 16 / 9;
 }
 
-/* Image: absolute-positioned, fills container completely.
-   MUST have explicit width:100% + height:100% — WebKitGTK does NOT stretch
-   replaced elements (<img>) via edge offsets alone; it falls back to the
-   image's intrinsic dimensions, producing a unique width per image.
-   The containing block (.media-item) has a definite height from aspect-ratio,
-   so percentage height resolves correctly for absolutely-positioned children. */
-.media-item img {
+/* Image: rendered as a plain <div> with background-image (NOT an <img> tag).
+   WebKitGTK has unreliable replaced-element sizing — <img> elements ignore
+   width:100%/height:100% and fall back to intrinsic image dimensions.
+   A <div> is a normal box-model element: absolute + width/height percentages
+   are guaranteed to work. background-size:cover gives the same crop behavior
+   as object-fit:cover. */
+.feed-media-bg {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: center;
-    display: block;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
 }
 
-/* Single-image posts: wider 4:3 cell, height clamped */
+/* Single-image posts: taller 4:3 cell, height clamped */
 .post-media-grid.items-1 .media-item:not(.media-item-video) {
     aspect-ratio: 4 / 3;
     min-height: 200px;
     max-height: 600px;
-}
-.post-media-grid.items-1 .media-item:not(.media-item-video) img {
-    background: var(--bg-toolbar);
 }
 
 /* === VIDEO items (.media-item-video) === */
