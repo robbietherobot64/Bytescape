@@ -57,7 +57,8 @@ const FeedCardWrapper = memo(function FeedCardWrapper({
             className="feed-card-wrapper"
             style={{
                 contentVisibility: 'auto',
-                containIntrinsicSize: 'auto 400px',
+                containIntrinsicBlockSize: 'auto 400px',
+                width: '100%',
             } as React.CSSProperties}
         >
             {groupBadge?.(entry)}

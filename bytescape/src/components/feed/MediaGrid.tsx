@@ -67,13 +67,22 @@ function FeedMediaImage({ src, mediaDir }: { src: string; mediaDir?: string }) {
 
     const bgUrl = resolvedUrl && !error ? resolvedUrl : null;
 
+    // ALL sizing as inline styles — no CSS class dependency for layout
     return (
         <div
             ref={containerRef}
             className="feed-media-bg"
             role="img"
             style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
                 backgroundImage: bgUrl ? `url("${bgUrl.replace(/"/g, '%22')}")` : 'none',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
             } as React.CSSProperties}
         />
     );
@@ -91,19 +100,75 @@ interface MediaGridProps {
 /**
  * Exported feed media grid renderer.
  */
+/** Compute grid-template-columns for N items */
+function gridCols(n: number): string {
+    if (n <= 1) return '1fr';
+    if (n === 3) return '2fr 1fr';
+    return '1fr 1fr'; // 2 or 4+
+}
+
+/** Compute grid-template-rows for N items */
+function gridRows(n: number): string | undefined {
+    if (n === 3 || n >= 4) return '1fr 1fr';
+    return undefined;
+}
+
 export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSources, mediaDir, openGallery }: MediaGridProps) {
     if (mediaUrls.length === 0) return null;
 
+    const count = Math.min(mediaUrls.length, 4);
+    const isSingle = count === 1;
+
+    // ALL grid layout as inline styles — CSS cannot interfere
+    const gridStyle: React.CSSProperties = {
+        display: 'grid',
+        gridTemplateColumns: gridCols(count),
+        gridTemplateRows: gridRows(count),
+        gap: '2px',
+        width: '100%',
+        overflow: 'hidden',
+        margin: 0,
+        borderTop: '2px solid #999',
+        borderBottom: '2px solid #999',
+    };
+
     return (
-        <div className={`post-media-grid items-${Math.min(mediaUrls.length, 4)}`}>
+        <div className={`post-media-grid items-${count}`} style={gridStyle}>
             {mediaUrls.slice(0, 4).map((_, i) => {
                 const kind = (mediaKinds && mediaKinds[i]) || 'image';
                 const thumb = thumbnailSources[i] || (kind === 'video' ? undefined : mediaSources[i]);
+                const isVideo = kind === 'video';
+
+                // Inline styles for the cell — position:relative + aspect-ratio
+                const cellStyle: React.CSSProperties = {
+                    position: 'relative',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    background: '#000',
+                    width: '100%',
+                    aspectRatio: isVideo ? '16 / 9' : (isSingle ? '4 / 3' : '16 / 9'),
+                    minHeight: isSingle && !isVideo ? 200 : undefined,
+                    maxHeight: isSingle ? 600 : undefined,
+                };
+
+                // For items-3, first child spans two rows
+                if (count === 3 && i === 0) {
+                    (cellStyle as Record<string, unknown>).gridRow = '1 / 3';
+                }
 
                 return (
-                    <div key={i} className={`media-item${kind === 'video' ? ' media-item-video' : ''}`} onClick={(e) => { e.stopPropagation(); openGallery(i); }}>
-                        {kind === 'video' ? (
-                            <div className="media-item-inner" onClick={(e) => e.stopPropagation()}>
+                    <div
+                        key={i}
+                        className={`media-item${isVideo ? ' media-item-video' : ''}`}
+                        style={cellStyle}
+                        onClick={(e) => { e.stopPropagation(); openGallery(i); }}
+                    >
+                        {isVideo ? (
+                            <div
+                                className="media-item-inner"
+                                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' } as React.CSSProperties}
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <VideoPlayer
                                     src={mediaSources[i]}
                                     poster={thumb}

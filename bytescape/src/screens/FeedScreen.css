@@ -95,10 +95,8 @@
 
 /* Feed card wrapper — content-visibility:auto for off-screen elision */
 .feed-card-wrapper {
-    /* content-visibility:auto (set inline) already provides
-       contain: layout style paint — no explicit containment needed.
-       Removed redundant `contain: layout style` which caused double
-       containment issues with .feed-entry-card on WebKitGTK. */
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Cap feed images to prevent WebKitGTK RGBA bitmap accumulation.
