@@ -1345,15 +1345,18 @@ a:hover {
     aspect-ratio: 16 / 9;
 }
 
-/* Image: absolute-positioned, fills container via edge offsets.
-   NO width/height percentages, NO aspect-ratio on the replaced element.
-   object-fit:cover scales and crops the bitmap to fill the box. */
+/* Image: absolute-positioned, fills container completely.
+   MUST have explicit width:100% + height:100% — WebKitGTK does NOT stretch
+   replaced elements (<img>) via edge offsets alone; it falls back to the
+   image's intrinsic dimensions, producing a unique width per image.
+   The containing block (.media-item) has a definite height from aspect-ratio,
+   so percentage height resolves correctly for absolutely-positioned children. */
 .media-item img {
     position: absolute;
     top: 0;
     left: 0;
-    right: 0;
-    bottom: 0;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
     object-position: center;
     display: block;

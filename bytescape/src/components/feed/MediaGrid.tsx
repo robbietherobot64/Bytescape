@@ -7,10 +7,11 @@ import { ExpandIcon } from './icons';
  * Displays up to four media items for a feed entry in a compact grid layout.
  *
  * HOW IT WORKS:
- * - Images are rendered as simple block-level elements with intrinsic sizing
- *   (width: 100% + aspect-ratio + object-fit: cover on the <img> itself).
- *   NO absolute positioning, NO inner wrappers, NO ResizeObserver.
- *   This is the simplest possible model, immune to WebKitGTK containment bugs.
+ * - .media-item (a plain <div>) has aspect-ratio — controls cell dimensions.
+ * - Images fill the container via position:absolute + explicit width:100%
+ *   height:100% (BOTH in CSS and as inline styles on the <img> element).
+ *   WebKitGTK does NOT stretch replaced elements via edge offsets alone;
+ *   it needs explicit width/height. Inline styles guarantee highest specificity.
  * - Videos still use absolute positioning via .media-item-inner wrapper
  *   because VideoPlayer is a complex component that needs a sized container.
  *
@@ -67,6 +68,16 @@ export function MediaGrid({ mediaUrls, mediaKinds, mediaSources, thumbnailSource
                                     alt=""
                                     mediaDir={mediaDir}
                                     displayVariant
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: '100%',
+                                        objectFit: 'cover',
+                                        objectPosition: 'center',
+                                        display: 'block',
+                                    } as React.CSSProperties}
                                 />
                                 <button
                                     className="media-expand-btn"
