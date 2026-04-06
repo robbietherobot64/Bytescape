@@ -727,15 +727,19 @@ pub fn run() {
                     .map_err(|e| format!("Failed to initialize database: {}", e))?)
             ));
 
-            // Seed default topic tree on first launch
-            {
-                let db_guard = tauri::async_runtime::block_on(db_manager.read());
+            // Seed default topic tree on first launch (deferred — non-blocking)
+            // P0.4 fix: Moved from blocking `block_on` to async spawn so it
+            // doesn't delay app window appearance or contribute to CPU spike.
+            let topic_db = db_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let db_guard = topic_db.read().await;
                 if let Some(ref db) = *db_guard {
-                    if let Err(e) = tauri::async_runtime::block_on(commands::groups::seed_default_topics(db)) {
+                    if let Err(e) = commands::groups::seed_default_topics(db).await {
                         eprintln!("Startup: topic seeding failed (non-fatal): {}", e);
                     }
                 }
-            }
+            });
 
             // Initialize auth manager
             let auth_manager = AuthManager::new();

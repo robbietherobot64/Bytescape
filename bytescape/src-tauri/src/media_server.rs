@@ -13,8 +13,10 @@
 //! 4. CORS headers restrict access to Tauri origins only (CRIT-5 security)
 //!
 //! ## Cache Strategy
-//! - **Videos**: `no-store` — prevents GStreamer double-buffering (each pipeline +
-//!   HTTP cache = 2× memory). Re-request cost is zero since it's localhost.
+//! - **Videos**: `max-age=3600, immutable` — blob cache files are content-addressed
+//!   (hash-named) so immutable is always correct. Caching prevents GStreamer from
+//!   re-initializing its demuxer pipeline on every seek or rebuffer, which was the
+//!   #1 cause of video stutter. Localhost serving means zero security risk.
 //! - **Images**: `max-age=300, immutable` — WebKitGTK caches the decoded bitmap
 //!   across virtualizer remount cycles, preventing multi-GB RSS spikes from
 //!   re-decoding full-res images during scroll.
@@ -58,16 +60,11 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
 
     let route = warp::fs::dir(cache_dir.clone())
         .map(|file: warp::fs::File| {
-            // Content-type-aware cache headers:
-            // - Videos: no-store to prevent GStreamer double-buffering (each
-            //   pipeline + HTTP cache = 2× the memory). Re-request cost is
-            //   zero since we serve from localhost.
-            // - Images: max-age=300 + immutable so WebKitGTK reuses the
-            //   decoded bitmap across virtualizer remount/unmount cycles.
-            //   Without this, scrolling re-decodes full-res images at ~48 MB
-            //   each, causing IMMEDIATE multi-GB RSS spikes. Blob cache files
-            //   are content-addressed (hash-named) so immutable is correct.
             let mut resp = file.into_response();
+            // All blob_cache files are content-addressed (hash-named) so
+            // immutable is always correct. Videos get a longer max-age because
+            // re-fetching on seek/rebuffer forces GStreamer to re-init its
+            // demuxer pipeline, which is the #1 cause of video stutter.
             let is_video = resp.headers()
                 .get("content-type")
                 .and_then(|v| v.to_str().ok())
@@ -75,7 +72,10 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
                 .unwrap_or(false);
 
             let cache_val = if is_video {
-                "no-store, no-cache, must-revalidate"
+                // Allow WebKitGTK to cache the video in memory. Seeking and
+                // rebuffering reuse the cached response instead of triggering
+                // a new HTTP round-trip + demuxer init.
+                "public, max-age=3600, immutable"
             } else {
                 "public, max-age=300, immutable"
             };
@@ -83,6 +83,13 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
             resp.headers_mut().insert(
                 "cache-control",
                 cache_val.parse().unwrap(),
+            );
+            // Accept-Ranges is already supported by warp::fs natively, but
+            // setting the header explicitly ensures WebKitGTK's GStreamer
+            // pipeline knows it can do byte-range seeks without re-downloading.
+            resp.headers_mut().insert(
+                "accept-ranges",
+                "bytes".parse().unwrap(),
             );
             resp.headers_mut().insert(
                 "connection",

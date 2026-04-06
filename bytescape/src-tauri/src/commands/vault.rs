@@ -288,9 +288,21 @@ pub async fn vault_get_thumbnail(file_id: String, state: State<'_, AppState>) ->
                 Ok(h) => h,
                 Err(e) => return Err(e.to_string()),
             };
-            let bytes = sync.get_media(hash).await
-                .map_err(|e: String| e)?;
-            Ok(Some(bytes.to_vec()))
+            // Stream thumbnail to cache file, then read from disk.
+            // Thumbnails are small (≤50 KB) so this is mostly for consistency
+            // with the zero-heap-allocation pattern established in P0.1.
+            let app_data_dir = state.app_handle.path().app_data_dir()
+                .map_err(|e| BytescapeError::FileSystem(format!("app_data_dir: {}", e)))?;
+            let cache_dir = app_data_dir.join("blob_cache");
+            let cache_path = cache_dir.join(format!("{}.thumb.webp", thumb_str));
+            if !cache_path.exists() {
+                let _ = std::fs::create_dir_all(&cache_dir);
+                sync.export_media_to_file(hash, &cache_path).await
+                    .map_err(|e| BytescapeError::BlobStorage(e))?;
+            }
+            let bytes = std::fs::read(&cache_path)
+                .map_err(|e| BytescapeError::FileSystem(e.to_string()))?;
+            Ok(Some(bytes))
         }
         None => Ok(None),
     }

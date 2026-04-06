@@ -1215,52 +1215,42 @@ async fn import_item_media_into_vault(
 
         // blob:<hash> paths (common for sync-backed imports), plus legacy raw
         // hash strings from older pending import payloads.
+        //
+        // P1.3 fix: Use header-only MIME detection (32 bytes) instead of
+        // re-fetching the full blob. The blob is already stored in Iroh —
+        // re-reading 50-500 MB into heap just for magic-byte detection was
+        // the root cause of Instagram video import failures (if get_media
+        // failed, the media item was silently dropped → empty media_mimes
+        // → "unknown" media_kinds → frontend treats video as broken image).
         if let Some(hash) = parse_blob_hash_path(media_path) {
-            let bytes = match sync.get_media(hash).await {
-                Ok(b) => b,
+            // Step 1: detect MIME from header bytes only (32 bytes, not full blob)
+            let mime_type = match sync.get_media_header(hash, 32).await {
+                Ok(header) => {
+                    let detected = mime_from_bytes(&header);
+                    // Fallback: if magic bytes are inconclusive, try path hint
+                    if detected == "application/octet-stream" {
+                        let hint = super::media::mime_from_path_hint(media_path);
+                        if hint != "application/octet-stream" { hint } else { detected }
+                    } else {
+                        detected
+                    }
+                }
                 Err(e) => {
-                    println!("import_item_media_into_vault: Failed to get media for hash {}: {}", hash, e);
-                    continue;
+                    println!("import_item_media_into_vault: Failed to read header for hash {}: {}", hash, e);
+                    // Last resort: try path-based detection so we don't drop the item
+                    let hint = super::media::mime_from_path_hint(media_path);
+                    if hint == "application/octet-stream" {
+                        continue; // truly unrecoverable
+                    }
+                    hint
                 }
             };
 
-            let mime_type = mime_from_bytes(bytes.as_ref());
-            let ext = if mime_type == "image/jpeg" {
-                "jpg"
-            } else if mime_type == "image/png" {
-                "png"
-            } else if mime_type == "image/gif" {
-                "gif"
-            } else if mime_type == "image/webp" {
-                "webp"
-            } else if mime_type == "video/mp4" {
-                "mp4"
-            } else if mime_type == "video/webm" {
-                "webm"
-            } else if mime_type == "video/ogg" {
-                "ogv"
-            } else if mime_type == "application/pdf" {
-                "pdf"
-            } else {
-                "bin"
-            };
-
-            let name = format!("{}-{}-{}.{}", source, item_id.clone().unwrap_or_else(|| "item".to_string()), idx, ext);
-            match sync.vault_add_file(
-                name,
-                mime_type.clone(),
-                bytes,
-                source.to_string(),
-                item_id.clone(),
-                created_at,
-                vec![],
-            ).await {
-                Ok(file) => {
-                    imported_blobs.push((idx, file.blob_hash, mime_type));
-                    println!("import_item_media_into_vault: Successfully added blob file to vault");
-                }
-                Err(e) => println!("import_item_media_into_vault: Failed to add blob file to vault: {}", e),
-            }
+            // The blob is already in Iroh — just record its hash and MIME.
+            // No need to re-fetch the full blob or re-add it to the vault.
+            let hash_str = format!("blob:{}", hash);
+            imported_blobs.push((idx, hash_str, mime_type.clone()));
+            println!("import_item_media_into_vault: blob {} → {} (header-only detection)", &hash.to_string()[..8.min(hash.to_string().len())], mime_type);
             continue;
         }
 
