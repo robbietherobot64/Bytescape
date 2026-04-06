@@ -4,6 +4,45 @@
 
 ---
 
+## 🔧 Backend — Sprint v16: Video Playback Stability & Memory Safety (2026-04-05)
+
+**Commit:** `f41af33` on `main`
+**Build:** 0 cargo check errors, 0 warnings, 30/30 Rust tests pass, 273/273 frontend tests pass, 0 tsc errors
+**Sprint prompt:** `backend-sprint-v16.md`
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0.1 | Media server cache headers | Changed video headers from `no-store` to `public, max-age=3600, immutable`. Added explicit `Accept-Ranges: bytes`. Prevents GStreamer demuxer re-init on seek/rebuffer. | ✅ |
+| P0.2 | FFmpeg `-movflags +faststart` | Already present in all 6 FFmpeg functions from prior sprints. No changes needed. | ✅ (pre-existing) |
+| P0.3 | Preload optimization | Frontend scope (Track B). Skipped per track boundaries. | ⏭️ |
+| P0.4 | CPU spike on launch | Moved `seed_default_topics` from blocking `block_on` to async spawn with 2s delay. Backfill and consistency check already have 24h guards. | ✅ |
+| P1.1 | blob_cache cleanup | Already implemented in v14 (500 MB LRU, 60s debounce, startup eviction). | ✅ (pre-existing) |
+| P1.2 | FFmpeg process leak | 120s timeout already wraps all 3 FFmpeg `spawn_blocking` sites (v14). `active_ffmpeg` HashMap exists but is never populated — PID tracking would require refactoring `.output()` → `.spawn()` across 6 functions. Deferred. | ⚠️ Known gap |
+| P1.3 | Instagram video resolution | Root cause: `import_item_media_into_vault` re-fetched full blob for MIME detection; if `get_media()` failed, media was silently dropped → empty `media_mimes` → `unknown` kinds → videos rendered as broken images. Fix: header-only MIME detection (32 bytes) + path-hint fallback. | ✅ |
+| P2 | Remaining `sync.get_media()` | `vault_get_thumbnail` → streaming `export_media_to_file`. `import_item_media_into_vault` → header-only detection. Only 1 remaining call: `import.rs:1219` (filesystem-backed import path, low frequency). | ✅ |
+
+### Root Cause: Instagram Videos Not Loading
+
+1. **Parse time**: Instagram connector correctly extracts video bytes from ZIP → stores as Iroh blobs
+2. **Commit time**: `import_item_media_into_vault` tried to **re-fetch** the full blob via `sync.get_media(hash)` for MIME sniffing. If this failed (silently `continue`d), media_mimes was **empty**
+3. **Feed aggregation**: Empty `media_mimes` → `media_kinds` filled with `"unknown"` → `BytescapeType::Video` safety net didn't trigger (item wasn't classified as Video due to empty mimes)
+4. **Frontend**: `"unknown"` kind treated as image → video element never rendered
+
+**Fix**: Use `sync.get_media_header(hash, 32)` for MIME detection (32 bytes, not 500 MB). Add `mime_from_path_hint` fallback. Never silently drop media items.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src-tauri/src/media_server.rs` | Video cache headers: `no-store` → `max-age=3600, immutable`. Added `Accept-Ranges: bytes`. |
+| `src-tauri/src/commands/import.rs` | `import_item_media_into_vault` → header-only MIME detection, path-hint fallback, no vault re-add for existing blobs |
+| `src-tauri/src/commands/vault.rs` | `vault_get_thumbnail` → streaming export pattern |
+| `src-tauri/src/lib.rs` | `seed_default_topics` → async spawn (non-blocking startup) |
+
+---
+
 ## 🔧 Backend — Memory Leak Eradication Sprint (2026-04-04)
 
 **Commit:** `45051f4` on `main`
