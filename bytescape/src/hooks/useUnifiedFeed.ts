@@ -468,11 +468,11 @@ export function useUnifiedFeed({
     }
   }, [savedFeeds, activeTab, fetchFeed]);
 
-  // ── Re-fetch when chip selection changes (feeds or hashtags) ──
+  // ── Re-fetch when chip selection changes (feeds, hashtags, or source filter) ──
   const filterKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!auth) return;
-    const key = JSON.stringify({ f: effectiveFeedUris, t: effectiveTags });
+    const key = JSON.stringify({ f: effectiveFeedUris, t: effectiveTags, s: effectiveSourceFilter });
     if (filterKeyRef.current === null) {
       // Initial mount — just record the key, don't double-fetch
       filterKeyRef.current = key;
@@ -485,7 +485,7 @@ export function useUnifiedFeed({
       fetchFeed();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth, activeTab, effectiveFeedUris, effectiveTags]);
+  }, [auth, activeTab, effectiveFeedUris, effectiveTags, effectiveSourceFilter]);
 
   // ── Fetch on tab switch (stale-while-revalidate) ──
   useEffect(() => {
