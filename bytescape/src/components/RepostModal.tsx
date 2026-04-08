@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Win98Box } from './Win98Box';
 import { FeedEntry, LinkedAccount } from '../types';
 import { useAuthStore } from '../store';
+import { resolveAtUri } from './feed/helpers';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
@@ -64,24 +65,17 @@ const PLATFORM_META: Record<string, { emoji: string; label: string; supportsQuot
 };
 
 /**
- * Resolve the AT-URI for a feed entry, mirroring the logic in
- * src/components/feed/helpers.ts `resolveAtUri`.
+ * Extract the Mastodon numeric status ID from a FeedEntry.
+ * Tries entry.cid first, then parses from original_url.
  */
-function resolveAtUri(entry: FeedEntry): string {
-    if (entry.id.startsWith('at://')) return entry.id;
-    if (entry.original_url) return entry.original_url;
-    if (entry.syndicated_uri) return entry.syndicated_uri;
-    const bskyEvent = entry.share_history?.find(e => e.platform === 'bluesky' && e.active);
-    if (bskyEvent?.uri) return bskyEvent.uri;
-    return entry.id;
-}
-
-function getCid(entry: FeedEntry): string {
-    return entry.cid || '';
-}
-
-/** For Mastodon, the status ID is stored in entry.cid */
-function getMastodonId(entry: FeedEntry): string {
+function getMastodonStatusId(entry: FeedEntry): string {
+    // If cid looks like a numeric Mastodon status ID, use it directly
+    if (entry.cid && /^\d+$/.test(entry.cid)) return entry.cid;
+    // Try to extract from Mastodon URL pattern: https://instance/users/acct/statuses/ID
+    // or https://instance/@user/ID
+    const url = entry.original_url || entry.id;
+    const match = url.match(/\/(?:statuses|@[^/]+)\/(\d+)/);
+    if (match) return match[1];
     return entry.cid || '';
 }
 
@@ -190,31 +184,49 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
 
         const outcomes: string[] = [];
         let firstUri: string | undefined;
+        const atUri = resolveAtUri(entry);
 
         for (const platformId of checked) {
             try {
                 if (platformId === 'bluesky') {
-                    if (quoteText.trim()) {
-                        // Quote repost on Bluesky
+                    if (!atUri) {
+                        // No valid AT-URI — share as a link post on Bluesky
+                        const linkUrl = entry.original_url || entry.id;
+                        const shareText = quoteText.trim()
+                            ? `${quoteText.trim()}\n\n${linkUrl}`
+                            : linkUrl;
+                        await invoke('publish_post_v2', {
+                            text: shareText,
+                            audiences: ['Bluesky'],
+                        });
+                        outcomes.push('🦋 Shared as link on Bluesky');
+                    } else if (quoteText.trim()) {
+                        // Quote repost on Bluesky (has valid AT-URI)
                         await invoke('publish_post_v2', {
                             text: quoteText.trim(),
                             audiences: ['Bluesky'],
-                            quoteUri: resolveAtUri(entry),
-                            quoteCid: getCid(entry),
+                            quoteUri: atUri,
+                            quoteCid: entry.cid || '',
                         });
                         outcomes.push('🦋 Quoted on Bluesky');
                     } else {
-                        // Direct repost
+                        // Native repost on Bluesky
                         const result = await invoke<{ uri: string; cid: string }>('repost_post', {
-                            uri: resolveAtUri(entry),
-                            cid: getCid(entry),
+                            uri: atUri,
+                            cid: entry.cid || '',
                         });
                         firstUri = result.uri;
                         outcomes.push('🦋 Reposted on Bluesky');
                     }
                 } else if (platformId === 'mastodon') {
-                    await invoke('mastodon_reblog', { statusId: getMastodonId(entry) });
-                    outcomes.push('🐘 Boosted on Mastodon');
+                    const statusId = getMastodonStatusId(entry);
+                    if (!statusId) {
+                        // No Mastodon status ID — can't boost
+                        outcomes.push('❌ Mastodon: Cannot boost — no Mastodon status ID');
+                    } else {
+                        await invoke('mastodon_reblog', { statusId });
+                        outcomes.push('🐘 Boosted on Mastodon');
+                    }
                 }
             } catch (err: any) {
                 const msg = typeof err === 'string' ? err : String(err);
@@ -236,35 +248,53 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
         platforms.find(p => p.id === id)?.supportsQuote
     );
 
+    // ── Cross-platform awareness ────────────────────────────────────────────
+    const atUri = resolveAtUri(entry);
+    const hasAtUri = !!atUri;
+    const isMastodonNative = (entry.source || '').toLowerCase() === 'mastodon';
+
     // ── Render ────────────────────────────────────────────────────────────────
     return createPortal(
         <div
             className="repost-modal-overlay"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
-            <Win98Box title="Repost" onClose={onClose} style={{ width: 380, maxWidth: '90vw' } as React.CSSProperties}>
-                <div className="repost-modal-body">
+            <Win98Box variant="window" title="Share Post" onClose={onClose} style={{ width: 380, maxWidth: '90vw' } as React.CSSProperties}>
+                <div className="repost-modal-body" style={{ overflow: 'hidden' } as React.CSSProperties}>
+                    {/* Cross-platform info banner */}
+                    {checked.has('bluesky') && !hasAtUri && (
+                        <div style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 4, padding: '6px 10px', marginBottom: 8, fontSize: '0.8rem', color: '#60a5fa' } as React.CSSProperties}>
+                            ℹ️ This post will be shared as a link on Bluesky (not a native repost)
+                        </div>
+                    )}
                     {/* Platform checkboxes */}
                     <div className="repost-modal-section-label">Share to:</div>
                     <div className="repost-modal-platforms">
-                        {platforms.map(p => (
-                            <label
-                                key={p.id}
-                                className={`repost-platform-row ${!p.connected ? 'disabled' : ''}`}
-                            >
-                                <input
-                                    type="checkbox"
-                                    checked={checked.has(p.id)}
-                                    disabled={!p.connected || loading}
-                                    onChange={() => toggle(p.id)}
-                                />
-                                <span className="repost-platform-emoji">{p.emoji}</span>
-                                <span className="repost-platform-info">
-                                    <span className="repost-platform-label">{p.label}</span>
-                                    <span className="repost-platform-handle">{p.handle}</span>
-                                </span>
-                            </label>
-                        ))}
+                        {platforms.map(p => {
+                            // Describe what will happen for each platform
+                            let hint = '';
+                            if (p.id === 'bluesky' && !hasAtUri) hint = '(will share as link)';
+                            if (p.id === 'mastodon' && !isMastodonNative) hint = '(cannot boost non-Mastodon posts)';
+                            const canUse = p.connected && !(p.id === 'mastodon' && !isMastodonNative);
+                            return (
+                                <label
+                                    key={p.id}
+                                    className={`repost-platform-row ${!canUse ? 'disabled' : ''}`}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={checked.has(p.id)}
+                                        disabled={!canUse || loading}
+                                        onChange={() => toggle(p.id)}
+                                    />
+                                    <span className="repost-platform-emoji">{p.emoji}</span>
+                                    <span className="repost-platform-info">
+                                        <span className="repost-platform-label">{p.label} {hint && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{hint}</span>}</span>
+                                        <span className="repost-platform-handle">{p.handle}</span>
+                                    </span>
+                                </label>
+                            );
+                        })}
                     </div>
 
                     {/* Optional quote text */}

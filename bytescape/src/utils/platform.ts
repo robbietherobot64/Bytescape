@@ -12,7 +12,7 @@ const ABBREV_MAP: Record<string, string> = {
     bluesky: 'blsky',
     mastodon: 'mstdn',
     facebook: 'fcbk',
-    instagram: 'nstgrm',
+    instagram: 'insta',
     lemmy: 'lmmy',
     piefed: 'pfd',
     bytescape: 'bytscpe',

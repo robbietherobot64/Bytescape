@@ -24,7 +24,7 @@ function useResolvedUrl(src: string, mediaDir?: string): [React.RefCallback<HTML
     const url = useMemo(() => {
         if (!src) return null;
         if (effectiveSrc?.startsWith('blob:') || effectiveSrc?.startsWith('blob-display:')) return blobUrl;
-        if (src.startsWith('http://') || src.startsWith('https://')) return src;
+        if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('asset://') || src.startsWith('tauri://')) return src;
         if (mediaDir) {
             if (src.startsWith('media/')) return convertFileSrc(`${mediaDir}/${src.replace(/^media\//, '')}`);
             if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) return convertFileSrc(src);

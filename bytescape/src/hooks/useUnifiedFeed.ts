@@ -219,6 +219,7 @@ export function useUnifiedFeed({
           limit,
           cursor,
           vaultOffset: 0,
+          sourceFilter: effectiveSourceFilter ?? null,
         });
       }
 

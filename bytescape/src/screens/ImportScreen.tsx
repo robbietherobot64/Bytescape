@@ -79,9 +79,6 @@ export function ImportScreen({
     const terminalRef = useRef<HTMLDivElement>(null);
     const lineIndexRef = useRef(0);
 
-    // Redirect state
-    const [redirectCountdown, setRedirectCountdown] = useState<number | null>(null);
-
     // ═══════════════════════════════════════════════════════════════════════
     // Terminal animation — adds log lines while importing
     // ═══════════════════════════════════════════════════════════════════════
@@ -108,31 +105,12 @@ export function ImportScreen({
     }, [terminalLog]);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Redirect to profile on completion
+    // Manual navigation handler (no auto-redirect)
     // ═══════════════════════════════════════════════════════════════════════
     const importComplete = importStatus?.startsWith('✅');
-    const handleRedirect = useCallback(() => {
+    const handleViewPosts = useCallback(() => {
         onNavigate('profile');
     }, [onNavigate]);
-
-    useEffect(() => {
-        if (!importComplete) {
-            setRedirectCountdown(null);
-            return;
-        }
-        setRedirectCountdown(5);
-        const interval = setInterval(() => {
-            setRedirectCountdown(prev => {
-                if (prev === null || prev <= 1) {
-                    clearInterval(interval);
-                    handleRedirect();
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
-        return () => clearInterval(interval);
-    }, [importComplete, handleRedirect]);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Native drag-drop subscription
@@ -203,7 +181,7 @@ export function ImportScreen({
                                         {importStatus}
                                     </div>
                                     <div className="import-terminal-line">
-                                        {'>'} Redirecting to profile in {redirectCountdown ?? 0}s...
+                                        {'>'} Ready for another import, or view your posts below.
                                     </div>
                                 </>
                             )}
@@ -217,10 +195,10 @@ export function ImportScreen({
                     {importComplete && (
                         <button
                             className="btn btn-primary"
-                            onClick={handleRedirect}
+                            onClick={handleViewPosts}
                             style={{ marginTop: 12, width: '100%', padding: '12px 20px' } as React.CSSProperties}
                         >
-                            📋 View Imported Posts Now
+                            📋 View Imported Posts
                         </button>
                     )}
                 </div>

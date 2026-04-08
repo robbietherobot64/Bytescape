@@ -98,18 +98,18 @@ export function sanitizeDisplayContent(raw: string): string {
     });
 }
 
-/** Resolve the AT-URI for a FeedEntry. Live posts use entry.id (already an AT-URI),
- *  but vault items store the CID as id and the AT-URI in original_url / syndicated_uri. */
+/** Resolve the AT-URI for a FeedEntry. Only returns valid AT-URIs (at:// prefix).
+ *  Returns empty string if no valid AT-URI exists (e.g. Mastodon-only posts). */
 /**
  * Exported AT-URI resolver for mixed-origin feed entries.
+ * Only returns URIs starting with 'at://' — never returns HTTP URLs.
  */
 export function resolveAtUri(entry: FeedEntry): string {
-    // AT-URIs start with 'at://'
     if (entry.id.startsWith('at://')) return entry.id;
-    if (entry.original_url) return entry.original_url;
-    if (entry.syndicated_uri) return entry.syndicated_uri;
-    // Fallback: check share_history for a bluesky URI
+    if (entry.syndicated_uri?.startsWith('at://')) return entry.syndicated_uri;
+    // Check share_history for a bluesky cross-post AT-URI
     const bskyEvent = entry.share_history?.find(e => e.platform === 'bluesky' && e.active);
-    if (bskyEvent?.uri) return bskyEvent.uri;
-    return entry.id;
+    if (bskyEvent?.uri?.startsWith('at://')) return bskyEvent.uri;
+    // No valid AT-URI found
+    return '';
 }
