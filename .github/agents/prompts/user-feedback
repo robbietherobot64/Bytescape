@@ -6,22 +6,14 @@ Feedback:
 
 Critical priorities:
 
-- **STILL AN ISSUE - CRITICAL** Memory leak of some sort going on, leading to 32+gb of memory use.  This happens particularly when filtering the feed by video.  The only videos that show up are from instagram, rather than the actual platforms linked, but they never really load and the memory just skyrockets while loading.  Also, unrelatedly, the CPU spikes to nearly 100% usage when the app first launched, resulting in lag.  Videos in general are stilly slightly janky/stuttery/laggy.
-- **P0 - NEXT SPRINT (BACKEND v16)** Video playback is twitchy and stuttery. This is a long-standing issue across all video sources. Top priority fix for next sprint. Investigate GStreamer pipeline reuse, frame drop reduction, and WebKitGTK compositor scheduling.
-- **P0 - NEXT SPRINT (FRONTEND v16)** Images improperly sized/centered — still not filling full width of post card after 20+ attempts. Previous approaches (negative margins, calc hacks, absolute positioning) all failed under WebKitGTK. Latest commit (9803005) moved MediaGrid outside feed-entry-body but user reports it's still not fixed. Frontend agent to take fresh approach.
-- **NEW ISSUE** Repost only works on Bluesky, not Mastodon. When clicking repost, it should prompt which platforms to post to (audience selection), allow tweaking audience, and add quotes if the platform supports it. Not just an automatic single-platform repost.
-- Instagram images are not loading on the feed.  They load fine in the vault.
-- Forums - no content currently federated, just dummy directory.  Subscribed button does toggle correctly.   
+- Video playback is mostly smooth now, but we need to ensure that video playback is rock solid smooth, since that will be a large part of how the platform is built. 
+- **STILL AN ISSUE** Repost only works on Bluesky, not Mastodon. Prompt text to select platform is misaligned and out of the pop up window.  Selecting bluesky does not actually work at all.  Returns the following error when trying to post to bluesky alone:
+❌ Bluesky: API returned 400 Bad Request: Some(Custom(Object {"error": String("InvalidRequest"), "message": String("Invalid app.bsky.feed.repost record: Invalid at-uri (got \"https://indieweb.social/statuses/11636119590771…\") at $.record.subject.uri")}))
+Need creative solution.  This is a fundamental limitation of having cross platform communication, so how do we make it work?
+- **Moved from lower priority, we need rich feed population** - Few/inconsistent posts loading in the feed.  Sometimes when filters are applied, only 2 posts show up.  Overall, the post quantity is small. It should be probably increased to 50 per load, and when filters are applied, they should make the feed reload entirely.
 
 Lower priorities:
-
-- Source filter (platform dropdown) is client-side only — does not trigger re-fetch. Switching to "Bluesky" just filters cache, can show very few results.  
-- Posts double from mastodon for some reason. 
 - Image previews on the profile page do not work, it's just a small box with an X attached to it, but no image loads.  
-- Initial data import username suggestion is off.  It is concatenating the full handle and domain name together (i.e., @usernamedomainnamesuffix) rather than just using the username.  It should just cut off any characters after the first period, and not include anything after that, as the default suggestion.  That way it only captures the username on its own.
-- Data import screen should be more animated, scrolling progress bar or at least a rotating loading screen.  Perhaps some ascii art terminal style dealio?  Also, import button should be big and green so it stands out.  
-- When data import is complete, it should direct you to your profile posts to see the posts you just imported displayed as a feed.  We may want to also consider adding a review process if there are any posts that are of an uncertain classification.  
-- Identity section in the settings screen should have more options than just mastodon and bluesky.  It should just be a single green box that says "connect account", and the previously mentioned pop up box should show up
-- Let's follow a rule for filtering friends lists by platform that we will spell the name of the platform without any vowels.  So bluesky would be blsky.  Mastodon would mstdn.  Lemmy would lmmy.  Piefed would pfd.  Etc.  Let's use that as the convention for friend filtering by platform, any time we have a friends list present (feed, chat, social, etc).  Any time we have a friends list, we want to be able to filter by platform.  The exception to this rule would be instagram, which can be shorted to "insta"
-- Platforms should automatically be logged in if a user has linked their account for that site.  I.e., if I click to visit a profile on bluesky, and I have linked a bluesky account, I should be logged in and able to interact.  If I don't have a linked account on that site, I should see a placeholder bytescape profile, which allows you to interact with that user through bytescape, and a toggle in the upper left hand side that lets you view their profile on their original platform, with no interactivity options since you would be logged out on their platform by default, unless you make an account on their instance.  
+- Data import should not be automatic redirect to the profile.  It should just be the landing page for you to upload facebook/instagram/mastodon/whatever else you want to upload to your vault.  Redirect to the profile makes no logical sense, when you want to import more posts. 
+- Make all instagram posts labelled as "insta".
 - We need to host our data on a desktop server instance/pds and federate with the larger fediverse.
