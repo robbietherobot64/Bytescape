@@ -83,11 +83,44 @@ interface LinkCard {
 }
 
 /**
- * Build a link card for the entry being shared.
- * Uses existing link preview metadata from the entry if available,
- * otherwise falls back to unfurling the URL via the backend.
+ * Extract external http/https URLs from HTML content.
+ * Parses <a href="..."> tags and returns unique URLs that aren't
+ * same-platform permalinks (e.g. filters out mastodon.social status URLs
+ * when sharing a Mastodon post).
  */
-async function buildLinkCard(entry: FeedEntry, linkUrl: string): Promise<LinkCard | undefined> {
+function extractExternalUrls(htmlContent: string, sourceHost?: string): string[] {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+    // Match href="..." in anchor tags
+    const hrefRegex = /href=["']?(https?:\/\/[^"'\s>]+)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = hrefRegex.exec(htmlContent)) !== null) {
+        const url = match[1].replace(/&amp;/g, '&');
+        if (seen.has(url)) continue;
+        seen.add(url);
+        // Skip same-platform permalink URLs (e.g. mastodon instance links
+        // that point back to the source status)
+        if (sourceHost) {
+            try {
+                const parsed = new URL(url);
+                if (parsed.hostname === sourceHost) continue;
+            } catch { /* invalid URL, skip */ }
+        }
+        urls.push(url);
+    }
+    return urls;
+}
+
+/**
+ * Build a link card for the entry being shared.
+ *
+ * Priority order:
+ * 1. Use existing link preview metadata from the entry (link_url + link_title)
+ * 2. Extract external URLs from post content (e.g. YouTube link in a Mastodon post)
+ *    and unfurl the first one for rich OG metadata
+ * 3. Fall back to unfurling the post permalink (original_url)
+ */
+async function buildLinkCard(entry: FeedEntry, fallbackUrl: string): Promise<LinkCard | undefined> {
     // 1. Use existing link preview metadata from the entry
     if (entry.link_url && entry.link_title) {
         return {
@@ -97,14 +130,36 @@ async function buildLinkCard(entry: FeedEntry, linkUrl: string): Promise<LinkCar
             image_url: entry.link_thumbnail || undefined,
         };
     }
-    // 2. Try to unfurl the URL via backend
+
+    // 2. Extract external URLs from post content HTML
+    //    This catches YouTube links, article links, etc. embedded in the post text
+    let sourceHost: string | undefined;
     try {
-        const card = await invoke<LinkCard>('unfurl_link', { url: linkUrl });
-        return card;
-    } catch {
-        // Unfurl failed — return a minimal card so at least the URL is embedded properly
-        return { url: linkUrl };
+        const origUrl = entry.original_url || entry.id;
+        if (origUrl.startsWith('http')) {
+            sourceHost = new URL(origUrl).hostname;
+        }
+    } catch { /* ignore parse errors */ }
+
+    const externalUrls = extractExternalUrls(entry.content || '', sourceHost);
+    const unfurlTarget = externalUrls.length > 0 ? externalUrls[0] : fallbackUrl;
+
+    // 3. Unfurl the best URL we found
+    try {
+        const card = await invoke<LinkCard>('unfurl_link', { url: unfurlTarget });
+        if (card && card.title) return card;
+    } catch { /* unfurl failed, continue */ }
+
+    // 4. If external URL unfurl failed but we have one, try the fallback
+    if (externalUrls.length > 0 && unfurlTarget !== fallbackUrl) {
+        try {
+            const card = await invoke<LinkCard>('unfurl_link', { url: fallbackUrl });
+            if (card && card.title) return card;
+        } catch { /* unfurl failed */ }
     }
+
+    // 5. Return minimal card with the best URL we have
+    return { url: unfurlTarget, title: unfurlTarget };
 }
 
 /**
@@ -239,12 +294,15 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
 
                     if (!atUri || (!entry.cid && !quoteText.trim())) {
                         // No valid AT-URI or missing CID — share as a link post on Bluesky
-                        const linkUrl = entry.original_url || entry.id;
+                        const postPermalink = entry.original_url || entry.id;
+                        // Build rich link card — this extracts embedded URLs (e.g. YouTube)
+                        // from the post content for proper OG unfurling
+                        const linkCard = await buildLinkCard(entry, postPermalink);
+                        // Use the link card URL (may be the embedded YouTube link) in the text
+                        const bestUrl = linkCard?.url || postPermalink;
                         const shareText = quoteText.trim()
-                            ? `${quoteText.trim()}\n\n${linkUrl}`
-                            : linkUrl;
-                        // Build rich link card for embed.external preview
-                        const linkCard = await buildLinkCard(entry, linkUrl);
+                            ? `${quoteText.trim()}\n\n${bestUrl}`
+                            : bestUrl;
                         const result = await invoke<PublishResult>('publish_post_v2', {
                             text: shareText,
                             attachments: [],
@@ -259,10 +317,11 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                         }
                     } else if (quoteText.trim()) {
                         // Quote repost on Bluesky — share quote text with link to original
-                        const linkUrl = entry.original_url || atUri;
-                        const fullText = `${quoteText.trim()}\n\n${linkUrl}`;
-                        // Build rich link card for embed.external preview
-                        const linkCard = await buildLinkCard(entry, linkUrl);
+                        const postPermalink = entry.original_url || atUri;
+                        // Build rich link card — extracts embedded URLs for OG unfurling
+                        const linkCard = await buildLinkCard(entry, postPermalink);
+                        const bestUrl = linkCard?.url || postPermalink;
+                        const fullText = `${quoteText.trim()}\n\n${bestUrl}`;
                         const result = await invoke<PublishResult>('publish_post_v2', {
                             text: fullText,
                             attachments: [],
