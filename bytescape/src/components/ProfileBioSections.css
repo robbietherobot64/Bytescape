@@ -47,6 +47,19 @@
     }
 }
 
+/* Sidebar context — stack all sections vertically when inside profile sidebar */
+.profile-sidebar .bio-sections-columns {
+    grid-template-columns: 1fr;
+}
+
+.profile-sidebar .bio-toolbar {
+    flex-wrap: wrap;
+}
+
+.profile-sidebar .bio-section-card {
+    min-width: 0;
+}
+
 /* ─── Section card ─── */
 .bio-section-card {
     position: relative;
@@ -418,4 +431,38 @@
 .bio-add-dropdown button:hover {
     background: rgba(124, 58, 237, 0.15);
     color: var(--accent-purple, #7c3aed);
+}
+
+/* ─── Enhanced connections ─── */
+.bio-connections-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bio-connections-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px dotted rgba(255,255,255,0.1);
+}
+
+.bio-connection-badge--self {
+    font-weight: 600;
+    border-color: var(--accent-purple, #7c3aed) !important;
+}
+
+.bio-connection-badge--more {
+    font-style: italic;
+    opacity: 0.7;
+    cursor: default;
+}
+
+/* ─── Links auto-populate label ─── */
+.bio-links-auto-label {
+    font-size: 0.72rem;
+    color: var(--text-muted, #999);
+    margin-bottom: 4px;
+    font-style: italic;
 }

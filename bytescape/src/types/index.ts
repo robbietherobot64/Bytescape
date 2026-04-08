@@ -697,3 +697,41 @@ export interface LinkedFeedSource {
     handle: string;   // "@user.bsky.social"
     connected: boolean;
 }
+
+// ─── Profile Types (v18a — Profile Polish) ───
+
+/** Profile settings (theme, background, customization preferences). */
+export interface ProfileSettings {
+    theme?: string;                  // "default" | "midnight" | "sunset" | "forest" | "retro" | "minimal" | "vaporwave" | "terminal"
+    background_type?: string;        // "default" | "color" | "image" | "pattern"
+    background_value?: string;       // CSS color, image URL, or pattern name
+    marquee_enabled?: boolean;
+    marquee_text?: string;
+    marquee_color?: string;
+    marquee_speed?: string;          // "slow" | "medium" | "fast"
+}
+
+/** A single page in the multi-page profile website. */
+export interface ProfilePage {
+    id: string;
+    slug: string;
+    title: string;
+    content_type: 'sections' | 'builder' | 'html' | 'embed' | 'rich-text' | 'blog' | 'gallery';
+    content: string;
+    css?: string;
+    js?: string;
+    order: number;
+    visible: boolean;
+    icon?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
+/** A connection entry for the expanded connections view. */
+export interface ConnectionEntry {
+    handle: string;
+    display_name?: string;
+    source: string;
+    relationship: string;
+    avatar_url?: string;
+}
