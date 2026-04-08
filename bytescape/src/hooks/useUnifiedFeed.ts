@@ -597,21 +597,31 @@ export function useUnifiedFeed({
   }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags, followsDisabled, activeTab]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
-  // Sources hidden from the main feed filter dropdown (browsed differently)
-  const FEED_HIDDEN_SOURCES = new Set(['instagram']);
+  // Only show sources that have a live connected account.
+  // Import-only sources (facebook, instagram, etc.) are excluded from the feed
+  // filter dropdown unless they correspond to a connected linked account.
+  const connectedSourceIds = useMemo(() => {
+    return new Set(
+      linkedSources
+        .filter(ls => ls.connected)
+        .map(ls => ls.id.toLowerCase())
+    );
+  }, [linkedSources]);
 
   const mergedSources = useMemo(() => {
-    const sources = new Set(vaultSources);
-    // Add connected platform IDs (lowercase) so filter values match FeedEntry.source
+    const sources = new Set<string>();
+    // Only include vault sources that match a connected linked account
+    for (const vs of vaultSources) {
+      if (connectedSourceIds.has(vs.toLowerCase())) {
+        sources.add(vs);
+      }
+    }
+    // Always include connected platform IDs so filter values match FeedEntry.source
     for (const ls of linkedSources) {
       if (ls.connected) sources.add(ls.id);
     }
-    // Remove sources that shouldn't appear in the feed dropdown
-    for (const hidden of FEED_HIDDEN_SOURCES) {
-      sources.delete(hidden);
-    }
     return Array.from(sources).sort();
-  }, [vaultSources, linkedSources]);
+  }, [vaultSources, linkedSources, connectedSourceIds]);
 
   // ── Legacy compat setFeedEntries — writes directly to cache ──
   const setFeedEntries: React.Dispatch<React.SetStateAction<FeedEntry[]>> = useCallback((action) => {

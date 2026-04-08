@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { Win98Box } from './Win98Box';
@@ -53,6 +53,16 @@ interface PlatformTarget {
     handle: string;
     connected: boolean;
     supportsQuote: boolean;
+}
+
+/** Return type from the Rust publish_post_v2 command */
+interface PublishResult {
+    local: boolean;
+    bluesky: boolean;
+    mastodon: boolean;
+    activitypub: boolean;
+    bluesky_uri?: string;
+    errors: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -175,6 +185,9 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
         });
     }, []);
 
+    // ── Track first successful repost URI for parent callback ──────────────
+    const firstUriRef = useRef<string | undefined>(undefined);
+
     // ── Execute repost ────────────────────────────────────────────────────────
     const handleRepost = useCallback(async () => {
         if (checked.size === 0) return;
@@ -189,33 +202,45 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
         for (const platformId of checked) {
             try {
                 if (platformId === 'bluesky') {
-                    if (!atUri) {
-                        // No valid AT-URI — share as a link post on Bluesky
+                    const canNativeRepost = !!atUri && !!entry.cid;
+
+                    if (!atUri || (!entry.cid && !quoteText.trim())) {
+                        // No valid AT-URI or missing CID — share as a link post on Bluesky
                         const linkUrl = entry.original_url || entry.id;
                         const shareText = quoteText.trim()
                             ? `${quoteText.trim()}\n\n${linkUrl}`
                             : linkUrl;
-                        await invoke('publish_post_v2', {
+                        const result = await invoke<PublishResult>('publish_post_v2', {
                             text: shareText,
                             attachments: [],
                             destination: 'bluesky',
                         });
-                        outcomes.push('🦋 Shared as link on Bluesky');
+                        if (result.bluesky) {
+                            outcomes.push('🦋 Shared as link on Bluesky');
+                        } else {
+                            const errMsg = result.errors?.length ? result.errors.join('; ') : 'Publishing failed';
+                            outcomes.push(`❌ Bluesky: ${errMsg}`);
+                        }
                     } else if (quoteText.trim()) {
-                        // Quote repost on Bluesky (has valid AT-URI)
-                        await invoke('publish_post_v2', {
-                            text: quoteText.trim(),
+                        // Quote repost on Bluesky — share quote text with link to original
+                        const linkUrl = entry.original_url || atUri;
+                        const fullText = `${quoteText.trim()}\n\n${linkUrl}`;
+                        const result = await invoke<PublishResult>('publish_post_v2', {
+                            text: fullText,
                             attachments: [],
                             destination: 'bluesky',
-                            quoteUri: atUri,
-                            quoteCid: entry.cid || '',
                         });
-                        outcomes.push('🦋 Quoted on Bluesky');
-                    } else {
-                        // Native repost on Bluesky
+                        if (result.bluesky) {
+                            outcomes.push('🦋 Quoted on Bluesky');
+                        } else {
+                            const errMsg = result.errors?.length ? result.errors.join('; ') : 'Quote publishing failed';
+                            outcomes.push(`❌ Bluesky: ${errMsg}`);
+                        }
+                    } else if (canNativeRepost) {
+                        // Native repost on Bluesky (valid AT-URI + CID)
                         const result = await invoke<{ uri: string; cid: string }>('repost_post', {
                             uri: atUri,
-                            cid: entry.cid || '',
+                            cid: entry.cid,
                         });
                         firstUri = result.uri;
                         outcomes.push('🦋 Reposted on Bluesky');
@@ -239,13 +264,26 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
         setResults(outcomes);
         setLoading(false);
 
-        // If at least one succeeded (no ❌ prefix), notify parent
-        if (outcomes.some(o => !o.startsWith('❌'))) {
+        const hasFailure = outcomes.some(o => o.startsWith('❌'));
+        const hasSuccess = outcomes.some(o => !o.startsWith('❌'));
+
+        // Only auto-close if ALL platforms succeeded (no failures at all).
+        // If there are any failures, keep the modal open to show results.
+        if (hasSuccess && !hasFailure) {
             onReposted(firstUri);
         }
+        // Store the URI for the Done button handler
+        firstUriRef.current = firstUri;
     }, [checked, quoteText, entry, onReposted]);
 
-    // ── Has any selected platform that supports quoting? ──────────────────────
+    // ── Close handler that notifies parent of any successes ──────────────────
+    const handleDone = useCallback(() => {
+        if (results.some(r => !r.startsWith('❌'))) {
+            onReposted(firstUriRef.current);
+        } else {
+            onClose();
+        }
+    }, [results, onReposted, onClose]);
     const showQuoteField = [...checked].some(id =>
         platforms.find(p => p.id === id)?.supportsQuote
     );
@@ -324,7 +362,7 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                     {results.length > 0 && (
                         <div className="repost-modal-results">
                             {results.map((r, i) => (
-                                <div key={i} className="repost-modal-result">{r}</div>
+                                <div key={i} className={r.startsWith('❌') ? 'repost-modal-result-error' : 'repost-modal-result'}>{r}</div>
                             ))}
                         </div>
                     )}
@@ -341,7 +379,7 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                         {results.length > 0 ? (
                             <button
                                 className="btn btn-sm btn-primary"
-                                onClick={onClose}
+                                onClick={handleDone}
                             >
                                 Done
                             </button>
