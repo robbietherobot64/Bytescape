@@ -805,12 +805,7 @@ pub fn mime_from_path_hint(path: &str) -> String {
 /// `std::process::Child::kill()` by storing the `Child` handle instead of the PID.
 #[tauri::command]
 pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<(), String> {
-    let url_hash = format!("{:x}", {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        playlist_url.hash(&mut hasher);
-        hasher.finish()
-    });
+    let url_hash = hls_cache_key(&playlist_url);
 
     let mut active = state.active_ffmpeg.lock().await;
     if let Some(pid) = active.remove(&url_hash) {
@@ -850,8 +845,93 @@ pub async fn cancel_video_resolve(playlist_url: String, state: tauri::State<'_, 
 /// 6. Raw `.ts` — if FFmpeg is entirely unavailable
 ///
 /// **IPC**: Frontend → `invoke('resolve_hls_video')`
+struct ResolveLockGuard {
+    path: std::path::PathBuf,
+}
+
+impl Drop for ResolveLockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Resolve a potentially-master HLS URL to a single media variant URL.
+///
+/// Feeding FFmpeg a master playlist can lead to multi-program probing and
+/// unstable stream auto-selection (e.g., video from one variant + audio from
+/// another). Selecting one variant up-front produces steadier timestamps and
+/// smoother playback.
+async fn select_hls_media_variant_url(
+    playlist_url: &str,
+    target_bandwidth: u64,
+) -> std::result::Result<String, String> {
+    let client = crate::connectors::bluesky::SHARED_CLIENT.clone();
+    let playlist_text = client
+        .get(playlist_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch HLS playlist: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read HLS playlist body: {}", e))?;
+
+    // Already a media playlist
+    if !playlist_text.contains("#EXT-X-STREAM-INF") {
+        return Ok(playlist_url.to_string());
+    }
+
+    let master_base = playlist_url
+        .split('?')
+        .next()
+        .unwrap_or(playlist_url)
+        .rsplit_once('/')
+        .map(|(base, _)| base)
+        .unwrap_or(playlist_url)
+        .to_string();
+
+    let mut variants: Vec<(u64, String)> = Vec::new();
+    let mut current_bw: Option<u64> = None;
+
+    for line in playlist_text.lines() {
+        if line.starts_with("#EXT-X-STREAM-INF") {
+            if let Some(bw_str) = line.split("BANDWIDTH=").nth(1) {
+                let bw: u64 = bw_str
+                    .split(',')
+                    .next()
+                    .unwrap_or("0")
+                    .parse()
+                    .unwrap_or(0);
+                current_bw = Some(bw);
+            }
+        } else if let Some(bw) = current_bw.take() {
+            if !line.starts_with('#') && !line.trim().is_empty() {
+                variants.push((bw, line.trim().to_string()));
+            }
+        }
+    }
+
+    if variants.is_empty() {
+        return Ok(playlist_url.to_string());
+    }
+
+    variants.sort_by_key(|(bw, _)| (*bw as i64 - target_bandwidth as i64).unsigned_abs());
+    let (chosen_bw, chosen_uri) = &variants[0];
+    let variant_url = if chosen_uri.starts_with("http") {
+        chosen_uri.clone()
+    } else {
+        format!("{}/{}", master_base, chosen_uri)
+    };
+
+    println!(
+        "resolve_hls_video: FFmpeg using single variant {}kbps",
+        chosen_bw / 1000
+    );
+    Ok(variant_url)
+}
+
 #[tauri::command]
 pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, AppState>) -> std::result::Result<String, String> {
+    use std::fs::OpenOptions;
     use std::io::Write;
 
     let app_data_dir: std::path::PathBuf = state.app_handle.path().app_data_dir()
@@ -860,9 +940,73 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
-    let url_hash = format!("{:x}", md5_hash(&playlist_url));
+    let url_hash = hls_cache_key(&playlist_url);
     let mp4_path = cache_dir.join(format!("{}.mp4", url_hash));
     let ts_path = cache_dir.join(format!("{}.ts", url_hash));
+    let lock_path = cache_dir.join(format!("{}.hls.lock", url_hash));
+
+    // Guard against concurrent resolves for the same URL hash.
+    // Without this, two FFmpeg jobs can race on the same output path, and one
+    // can invalidate/remove the file while the other is still writing trailer
+    // metadata (observed as "Unable to re-open ... output file for shifting");
+    // resulting in corrupted/partial MP4s and repeated fallback churn.
+    let mut lock_guard: Option<ResolveLockGuard> = None;
+    for _ in 0..240 {
+        match OpenOptions::new().create_new(true).write(true).open(&lock_path) {
+            Ok(mut lock_file) => {
+                let _ = writeln!(lock_file, "pid={}", std::process::id());
+                lock_guard = Some(ResolveLockGuard {
+                    path: lock_path.clone(),
+                });
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // If another resolve is in progress, reuse its output when ready.
+                if mp4_path.exists() {
+                    if let Ok(meta) = std::fs::metadata(&mp4_path) {
+                        if meta.len() > 1000 && validate_mp4_with_ffprobe(&mp4_path) {
+                            println!(
+                                "resolve_hls_video: waiting caller reused in-flight MP4 ({:.1} MB)",
+                                meta.len() as f64 / (1024.0 * 1024.0)
+                            );
+                            return Ok(mp4_path.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+                if ts_path.exists() {
+                    if let Ok(meta) = std::fs::metadata(&ts_path) {
+                        if meta.len() > 1000 {
+                            println!(
+                                "resolve_hls_video: waiting caller reused in-flight TS ({:.1} MB)",
+                                meta.len() as f64 / (1024.0 * 1024.0)
+                            );
+                            return Ok(ts_path.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+
+                // Reap stale lock files (e.g., crash during conversion).
+                if let Ok(meta) = std::fs::metadata(&lock_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(age) = std::time::SystemTime::now().duration_since(modified) {
+                            if age > std::time::Duration::from_secs(300) {
+                                let _ = std::fs::remove_file(&lock_path);
+                            }
+                        }
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(e) => {
+                return Err(format!("Failed to acquire resolve lock: {}", e));
+            }
+        }
+    }
+
+    if lock_guard.is_none() {
+        return Err("Timed out waiting for active HLS conversion to finish".to_string());
+    }
 
     // ── Cache hit — prefer MP4 (validate to catch old broken conversions) ──
     if mp4_path.exists() {
@@ -903,17 +1047,23 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
     // ── Strategy 1: FFmpeg native HLS → MP4 (tiered: copy → audio re-encode → full re-encode) ──
     // Try the fastest approach first, fall back to more expensive ones only if validation fails.
     println!("resolve_hls_video: Trying FFmpeg native HLS download (tiered)...");
-    let playlist_for_ffmpeg = playlist_url.clone();
+    let playlist_for_ffmpeg = match select_hls_media_variant_url(&playlist_url, 1_200_000).await {
+        Ok(url) => url,
+        Err(e) => {
+            println!("resolve_hls_video: variant selection failed ({}), using original playlist", e);
+            playlist_url.clone()
+        }
+    };
     let mp4_for_ffmpeg = mp4_path.clone();
     let ts_for_cleanup = ts_path.clone();
     match tokio::time::timeout(
         std::time::Duration::from_secs(120),
         tokio::task::spawn_blocking(move || {
-        // Strategy A: Stream copy — fastest (<1s, I/O bound)
+        // Strategy A: Full stable re-encode first (best playback smoothness)
         let mp4 = &mp4_for_ffmpeg;
-        if let Ok(path) = ffmpeg_hls_stream_copy(&playlist_for_ffmpeg, mp4) {
+        if let Ok(path) = ffmpeg_hls_full_reencode(&playlist_for_ffmpeg, mp4) {
             if validate_mp4_with_ffprobe(mp4) {
-                println!("resolve_hls_video: Strategy A (stream copy) succeeded");
+                println!("resolve_hls_video: Strategy A (full stable re-encode) succeeded");
                 return Ok(path);
             }
             println!("resolve_hls_video: Strategy A produced invalid MP4, trying B...");
@@ -922,10 +1072,11 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             println!("resolve_hls_video: Strategy A failed, trying B...");
         }
 
-        // Strategy B: Copy video, re-encode audio only (1-2s)
-        if let Ok(path) = ffmpeg_hls_audio_reencode(&playlist_for_ffmpeg, mp4) {
+        // Strategy B: Stream copy — fastest (<1s, I/O bound)
+        let mp4 = &mp4_for_ffmpeg;
+        if let Ok(path) = ffmpeg_hls_stream_copy(&playlist_for_ffmpeg, mp4) {
             if validate_mp4_with_ffprobe(mp4) {
-                println!("resolve_hls_video: Strategy B (audio re-encode) succeeded");
+                println!("resolve_hls_video: Strategy B (stream copy) succeeded");
                 return Ok(path);
             }
             println!("resolve_hls_video: Strategy B produced invalid MP4, trying C...");
@@ -934,7 +1085,19 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
             println!("resolve_hls_video: Strategy B failed, trying C...");
         }
 
-        // Strategy C: Full re-encode (5-20s, last resort)
+        // Strategy C: Copy video, re-encode audio only (1-2s)
+        if let Ok(path) = ffmpeg_hls_audio_reencode(&playlist_for_ffmpeg, mp4) {
+            if validate_mp4_with_ffprobe(mp4) {
+                println!("resolve_hls_video: Strategy C (audio re-encode) succeeded");
+                return Ok(path);
+            }
+            println!("resolve_hls_video: Strategy C produced invalid MP4, trying D...");
+            let _ = std::fs::remove_file(mp4);
+        } else {
+            println!("resolve_hls_video: Strategy C failed, trying D...");
+        }
+
+        // Strategy D: Full re-encode retry (last resort)
         ffmpeg_hls_full_reencode(&playlist_for_ffmpeg, mp4)
     })
     ).await {
@@ -975,7 +1138,7 @@ pub async fn resolve_hls_video(playlist_url: String, state: tauri::State<'_, App
 
     // 3. Select the best variant — target 720p for quality (lazy loading prevents OOM)
     let (media_playlist_text, segment_base_url) = if playlist_text.contains("#EXT-X-STREAM-INF") {
-        let target_bandwidth: u64 = 3_500_000; // 3.5 Mbps ≈ 720p
+        let target_bandwidth: u64 = 1_200_000; // favor smoother decode in feed views
         let mut variants: Vec<(u64, String)> = Vec::new();
         let mut current_bw: Option<u64> = None;
 
@@ -1200,8 +1363,10 @@ fn ffmpeg_hls_full_reencode(playlist_url: &str, mp4_path: &std::path::Path) -> s
             "-avoid_negative_ts", "make_zero",
             "-i", playlist_url,
             "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-vf", "fps=30",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "128k",
             "-fps_mode", "cfr",
@@ -1325,8 +1490,10 @@ fn ts_full_reencode_to_mp4(ts_input: &str, mp4_path: &std::path::Path) -> std::r
             "-avoid_negative_ts", "make_zero",
             "-i", ts_input,
             "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-vf", "fps=30",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "128k",
             "-fps_mode", "cfr",
@@ -1438,6 +1605,13 @@ fn md5_hash(input: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Versioned cache key for HLS conversion artifacts.
+/// Bump suffix when conversion policy changes so stale/corrupt old outputs
+/// are not reused.
+fn hls_cache_key(playlist_url: &str) -> String {
+    format!("{:x}", md5_hash(&format!("{}::hls-v2-smooth", playlist_url)))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
