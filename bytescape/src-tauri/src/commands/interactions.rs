@@ -195,6 +195,16 @@ pub async fn repost_post(
     cid: String,
     state: State<'_, AppState>,
 ) -> Result<RepostResult, String> {
+    // Validate AT-URI format — Bluesky native repost requires at:// URI.
+    // Cross-platform reposts (Mastodon → Bluesky) must use quote_post_to_bluesky instead.
+    if !uri.starts_with("at://") {
+        return Err(format!(
+            "Cannot natively repost non-Bluesky content (got \"{}...\"). \
+             Use quote-post to share cross-platform content on Bluesky.",
+            &uri[..uri.len().min(40)]
+        ));
+    }
+
     let user_did = state.get_user_did()?;
 
     let res = state.xrpc_post_json(
@@ -247,6 +257,81 @@ pub async fn unrepost_post(
     ).await?;
 
     Ok(true)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cross-Platform Quote Post
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Share a post from any platform to Bluesky as a quote-post with link card.
+///
+/// Instead of a native Bluesky repost (which requires an AT-URI), this creates
+/// a new Bluesky post embedding the original content as an `app.bsky.embed.external`
+/// link card. Bluesky users see the commentary text plus a clickable card linking
+/// back to the original post on its native platform.
+///
+/// # Parameters
+/// - `text` — User's commentary (can be empty — defaults to share prefix).
+/// - `original_url` — Full URL of the original post (Mastodon, etc.).
+/// - `original_author` — Display name of the original author.
+/// - `original_content` — Text content of the original post (truncated to 300 chars for description).
+///
+/// # Returns
+/// A `RepostResult` with the AT-URI and CID of the new Bluesky post.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('quote_post_to_bluesky', { text, originalUrl, originalAuthor, originalContent })`
+#[tauri::command]
+pub async fn quote_post_to_bluesky(
+    text: String,
+    original_url: String,
+    original_author: String,
+    original_content: String,
+    state: State<'_, AppState>,
+) -> Result<RepostResult, String> {
+    let user_did = state.get_user_did()?;
+
+    // Build the post text — include user commentary or a default share message
+    let post_text = if text.trim().is_empty() {
+        format!("Shared from {}", original_author)
+    } else {
+        text.trim().to_string()
+    };
+
+    // Truncate description to 300 chars (Bluesky embed limit)
+    let description = if original_content.len() > 300 {
+        format!("{}…", &original_content[..297])
+    } else {
+        original_content
+    };
+
+    let record = json!({
+        "$type": "app.bsky.feed.post",
+        "text": post_text,
+        "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "embed": {
+            "$type": "app.bsky.embed.external",
+            "external": {
+                "uri": original_url,
+                "title": format!("Post by {}", original_author),
+                "description": description
+            }
+        }
+    });
+
+    let res = state.xrpc_post_json(
+        "com.atproto.repo.createRecord",
+        json!({
+            "repo": user_did,
+            "collection": "app.bsky.feed.post",
+            "record": record
+        }),
+    ).await?;
+
+    Ok(RepostResult {
+        uri: res["uri"].as_str().unwrap_or_default().to_string(),
+        cid: res["cid"].as_str().unwrap_or_default().to_string(),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -2648,13 +2648,22 @@ pub async fn get_unified_feed(
     feed_uris: Vec<String>,
     limit: u16,
     cursor: Option<String>,
+    source_filter: Option<String>,
 ) -> std::result::Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> {
     let cache_ttl = std::time::Duration::from_secs(30);
+
+    // Normalize source filter
+    let source_filter = source_filter
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
 
     // Build a deterministic cache key — only for first-page (no cursor) requests
     let cache_key = if cursor.is_none() {
         let mut key_parts: Vec<String> = tags.iter().map(|t| format!("tag:{}", t)).collect();
         key_parts.extend(feed_uris.iter().map(|u| format!("feed:{}", u)));
+        if let Some(ref sf) = source_filter {
+            key_parts.push(format!("source:{}", sf));
+        }
         key_parts.sort();
         Some(format!("unified:{}", key_parts.join("|")))
     } else {
@@ -2673,8 +2682,19 @@ pub async fn get_unified_feed(
     }
 
     // Cache miss — hit network
+    // When filtering to an archive-only source (facebook, instagram, etc.),
+    // skip the network round-trip — those posts will just be discarded.
+    let skip_bluesky = source_filter.as_deref()
+        .map(|sf| sf != "bluesky" && sf != "all")
+        .unwrap_or(false);
+    let skip_mastodon = source_filter.as_deref()
+        .map(|sf| sf != "mastodon" && sf != "all")
+        .unwrap_or(false);
+
     // Gracefully handle no Bluesky session (Mastodon-only users)
-    let mut result: Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> = if state.is_oauth_session() {
+    let mut result: Result<(Vec<crate::connectors::bluesky::BlueskyImportedPost>, Option<String>), String> = if skip_bluesky {
+        Ok((Vec::new(), None))
+    } else if state.is_oauth_session() {
         get_unified_feed_oauth(&state, tags.clone(), feed_uris.clone(), limit, cursor.clone()).await
     } else {
         match state.get_fresh_access_jwt().await {
@@ -2691,7 +2711,7 @@ pub async fn get_unified_feed(
     };
 
     // Merge Mastodon hashtag posts into non-OAuth path results too
-    if !tags.is_empty() {
+    if !tags.is_empty() && !skip_mastodon {
         if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
             if let Ok((ref mut posts, _)) = result {
                 let per_tag = (limit / tags.len().max(1) as u16).max(20);

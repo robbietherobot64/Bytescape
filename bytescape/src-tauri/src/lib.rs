@@ -524,6 +524,7 @@ pub fn run() {
             commands::interactions::unlike_post,
             commands::interactions::repost_post,
             commands::interactions::unrepost_post,
+            commands::interactions::quote_post_to_bluesky,
             commands::interactions::reply_to_post,
             commands::interactions::get_post_thread,
             

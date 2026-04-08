@@ -491,8 +491,10 @@ pub async fn get_timeline_unified(
     };
 
     if has_custom && !skip_network {
+        let custom_source_filter = source_filter.clone();
         let custom_fut = crate::commands::import::get_unified_feed(
-            state.clone(), tags, feed_uris, limit.unwrap_or(50) as u16, None
+            state.clone(), tags, feed_uris, limit.unwrap_or(50) as u16, None,
+            custom_source_filter,
         );
 
         // Run ALL three concurrently: timeline + custom feeds + vault
