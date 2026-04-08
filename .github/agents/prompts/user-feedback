@@ -6,14 +6,7 @@ Feedback:
 
 Critical priorities:
 
-- Video playback is mostly smooth now, but we need to ensure that video playback is rock solid smooth, since that will be a large part of how the platform is built. 
-- **STILL AN ISSUE** Repost only works on Bluesky, not Mastodon. Prompt text to select platform is misaligned and out of the pop up window.  Selecting bluesky does not actually work at all.  Returns the following error when trying to post to bluesky alone:
-❌ Bluesky: API returned 400 Bad Request: Some(Custom(Object {"error": String("InvalidRequest"), "message": String("Invalid app.bsky.feed.repost record: Invalid at-uri (got \"https://indieweb.social/statuses/11636119590771…\") at $.record.subject.uri")}))
-Need creative solution.  This is a fundamental limitation of having cross platform communication, so how do we make it work?
-- **Moved from lower priority, we need rich feed population** - Few/inconsistent posts loading in the feed.  Sometimes when filters are applied, only 2 posts show up.  Overall, the post quantity is small. It should be probably increased to 50 per load, and when filters are applied, they should make the feed reload entirely.
+- We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification.  See notes on next phase.  
 
 Lower priorities:
-- Image previews on the profile page do not work, it's just a small box with an X attached to it, but no image loads.  
-- Data import should not be automatic redirect to the profile.  It should just be the landing page for you to upload facebook/instagram/mastodon/whatever else you want to upload to your vault.  Redirect to the profile makes no logical sense, when you want to import more posts. 
-- Make all instagram posts labelled as "insta".
-- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.
+- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.  This will come after the cloud hosted option works.

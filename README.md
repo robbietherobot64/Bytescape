@@ -7,7 +7,7 @@ Bytescape is a unified social vault and communication client. It operates on a "
 ## Architecture: Engine & Lens
 
 - **Bytescape Bridge (The Engine):** A headless local backend that manages your data "Vault", P2P networking (Iroh), and connections to external networks (Bluesky, ActivityPub).
-- **Bytescape Browser (The Lens):** A beautiful, "Frutiger Aero" inspired interface that lets you browse, search, and interact with your unified social history.
+- **Bytescape Browser (The Lens):** A beautiful, modern, and highly customizable interface that lets you browse, search, and interact with your unified social history.
 
 > "Web2 Convenience, Web3 Privacy."
 
