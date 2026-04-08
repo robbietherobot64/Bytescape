@@ -462,6 +462,7 @@ pub fn run() {
             commands::vault::list_contacts,
             commands::vault::list_contacts_unified,
             commands::vault::vault_gc_tombstones,
+            commands::vault::delete_vault_item,
             
             // Auth commands
             commands::auth::check_auth_status,
@@ -558,6 +559,12 @@ pub fn run() {
             // Profile section commands (B2.4 — editable blocks)
             commands::profile::save_profile_sections,
             commands::profile::get_profile_sections,
+            // Profile settings & pages commands (v18a — profile polish)
+            commands::profile::save_profile_settings,
+            commands::profile::get_profile_settings,
+            commands::profile::save_profile_page,
+            commands::profile::get_profile_pages,
+            commands::profile::delete_profile_page,
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
             // Classification commands

@@ -407,6 +407,84 @@ impl DbManager {
         }
     }
 
+    // ─── Profile Settings ───
+
+    pub async fn save_profile_settings(&self, settings_json: &str) -> Result<(), String> {
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            table
+                .insert("user_profile_settings", settings_json)
+                .map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_profile_settings(&self) -> Result<Option<String>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn
+            .open_table(PROFILE_LAYOUT_TABLE)
+            .map_err(|e| e.to_string())?;
+        match table.get("user_profile_settings") {
+            Ok(Some(value)) => Ok(Some(value.value().to_string())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    // ─── Profile Pages ───
+
+    pub async fn save_profile_page(&self, page_id: &str, page_json: &str) -> Result<(), String> {
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            let key = format!("user_profile_page:{}", page_id);
+            table
+                .insert(key.as_str(), page_json)
+                .map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_profile_pages(&self) -> Result<Vec<String>, String> {
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn
+            .open_table(PROFILE_LAYOUT_TABLE)
+            .map_err(|e| e.to_string())?;
+        let mut pages = Vec::new();
+        for result in table.iter().map_err(|e| e.to_string())? {
+            let (key, value) = result.map_err(|e| e.to_string())?;
+            if key.value().starts_with("user_profile_page:") {
+                pages.push(value.value().to_string());
+            }
+        }
+        Ok(pages)
+    }
+
+    pub async fn delete_profile_page(&self, page_id: &str) -> Result<(), String> {
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn
+                .open_table(PROFILE_LAYOUT_TABLE)
+                .map_err(|e| e.to_string())?;
+            let key = format!("user_profile_page:{}", page_id);
+            let _ = table.remove(key.as_str());
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ─── Guestbook ───
 
     pub async fn add_guestbook_entry(

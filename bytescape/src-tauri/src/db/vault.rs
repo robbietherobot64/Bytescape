@@ -153,6 +153,59 @@ impl DbManager {
         Ok(None)
     }
 
+    /// Deletes a single vault item by its UUID.
+    ///
+    /// First tries a direct key lookup. If the key is `source:original_id`,
+    /// falls back to a full table scan to find the matching storage key.
+    /// Invalidates the header cache after deletion.
+    ///
+    /// Returns `true` if the item was found and deleted, `false` if not found.
+    pub async fn delete_item_by_id(&self, item_id: &str) -> Result<bool, String> {
+        // First, find the storage key for this item
+        let storage_key = {
+            let db = self.db.read().await;
+            let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+            let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+            // Try direct lookup first
+            if let Some(val) = table.get(item_id).map_err(|e| e.to_string())? {
+                let item: BytescapeItem = serde_json::from_str(val.value()).map_err(|e| e.to_string())?;
+                if item.id == item_id {
+                    Some(item_id.to_string())
+                } else {
+                    None
+                }
+            } else {
+                // Fallback: scan for the item
+                let mut found_key = None;
+                for row in table.iter().map_err(|e| e.to_string())? {
+                    let (key, value) = row.map_err(|e| e.to_string())?;
+                    let item: BytescapeItem = serde_json::from_str(value.value()).map_err(|e| e.to_string())?;
+                    if item.id == item_id {
+                        found_key = Some(key.value().to_string());
+                        break;
+                    }
+                }
+                found_key
+            }
+        };
+
+        let Some(key) = storage_key else {
+            return Ok(false);
+        };
+
+        // Delete the item
+        let db = self.db.write().await;
+        let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+        {
+            let mut table = write_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+            table.remove(key.as_str()).map_err(|e| e.to_string())?;
+        }
+        write_txn.commit().map_err(|e| e.to_string())?;
+        self.invalidate_header_cache().await;
+        Ok(true)
+    }
+
     // ─── Bulk Operations & Dedup ────────────────────────────────────────
 
     /// Collects all known URIs/IDs from the vault, including:

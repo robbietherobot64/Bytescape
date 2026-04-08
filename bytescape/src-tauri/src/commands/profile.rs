@@ -330,3 +330,91 @@ pub async fn get_profile_sections(
 
     db.get_profile_sections().await
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Profile Settings (theme, background, customization preferences)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Save profile settings (theme, background, customization preferences).
+///
+/// Stores an opaque JSON blob — the frontend defines the schema.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('save_profile_settings', { settingsJson })`
+#[tauri::command]
+pub async fn save_profile_settings(
+    settings_json: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.save_profile_settings(&settings_json).await
+}
+
+/// Load profile settings.
+///
+/// Returns `None` if no settings have been saved yet.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('get_profile_settings')`
+#[tauri::command]
+pub async fn get_profile_settings(
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.get_profile_settings().await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Profile Pages (multi-page personal website)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Save a profile page (creates or updates).
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('save_profile_page', { pageId, pageJson })`
+#[tauri::command]
+pub async fn save_profile_page(
+    page_id: String,
+    page_json: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.save_profile_page(&page_id, &page_json).await
+}
+
+/// List all profile pages.
+///
+/// Returns a vector of JSON strings, each representing a page.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('get_profile_pages')`
+#[tauri::command]
+pub async fn get_profile_pages(
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.get_profile_pages().await
+}
+
+/// Delete a profile page by ID.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('delete_profile_page', { pageId })`
+#[tauri::command]
+pub async fn delete_profile_page(
+    page_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    db.delete_profile_page(&page_id).await
+}

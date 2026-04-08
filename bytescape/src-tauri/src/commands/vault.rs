@@ -817,3 +817,24 @@ pub async fn vault_gc_tombstones(state: State<'_, AppState>) -> std::result::Res
     sync.vault_gc_tombstones().await
         .map_err(|e| e.to_string())
 }
+
+/// Delete a single vault item by its UUID.
+///
+/// Removes the `BytescapeItem` from the redb items table. Works for any source
+/// (Bluesky, Facebook, Instagram, local). This is a local-only deletion — it
+/// does not remove the post from the source platform.
+///
+/// Returns `true` if the item was found and deleted, `false` if not found.
+///
+/// → IPC: `delete_vault_item` (frontend Profile → Post delete)
+#[tauri::command]
+pub async fn delete_vault_item(
+    item_id: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<bool, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    db.delete_item_by_id(&item_id).await
+}
