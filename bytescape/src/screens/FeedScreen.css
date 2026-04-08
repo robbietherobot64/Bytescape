@@ -99,10 +99,10 @@
     box-sizing: border-box;
 }
 
-/* Cap feed images to prevent WebKitGTK RGBA bitmap accumulation.
-   Exclude media-item images (they should fill their grid cell). */
-.feed-card-wrapper > .feed-entry-card > .feed-entry-body > .post-text img,
-.feed-card-wrapper .link-preview-card img {
+/* Cap inline post-text images (e.g. pasted screenshots) but NOT link
+   preview thumbnails — those fill their .link-thumb container via CSS
+   in App.css (.link-thumb img { width:100%; height:100%; object-fit:cover }). */
+.feed-card-wrapper > .feed-entry-card > .feed-entry-body > .post-text img {
     max-width: 600px;
     max-height: 400px;
     object-fit: contain;

@@ -1,32 +1,18 @@
 /**
- * PURPOSE
- * - Render Bytescape video media with progressive UX and backend-assisted URL resolution.
+ * VideoPlayer — In-post video playback for Bytescape feeds.
  *
- * HOW IT WORKS
- * - **Click-to-play**: No GStreamer pipeline is created until the user explicitly taps
- *   the play overlay. This prevents passive scrolling from accumulating 100-500 MB
- *   decoder pipelines per video in WebKitGTK.
- * - **Visibility unloading**: When the video scrolls out of the viewport, its source
- *   is unloaded (`src='' + load()`) to force GStreamer to tear down the pipeline.
- *   This ensures at most 1 active pipeline at a time regardless of scroll speed.
- * - Resolves sources by strategy: HLS playlist -> backend native file, vault blob
- *   hash -> backend media path, or direct URL passthrough.
- * - Uses global playback coordination so only one video actively plays at a time.
- * - Caches resolved URLs in-memory to avoid repeated backend work for the same source.
+ * Resolves HLS / blob / URL sources to a local file served via warp,
+ * then hands off to a plain <video> element. Visibility-gated so only
+ * videos near the viewport resolve their URL (saves IPC + FFmpeg work).
  *
- * MEMORY MODEL (why click-to-play is critical):
- * Each `<video>` element with a src in WebKitGTK creates a GStreamer decoder pipeline
- * that holds 100-500 MB of native memory (decoded frames, demuxer buffers). Even with
- * `preload="metadata"`, GStreamer allocates a partial pipeline. In a virtualized feed
- * with overscan, 4-9 pipelines can exist simultaneously, consuming 1-4 GB. If pipeline
- * teardown is slow (common in WebKitGTK), this accumulates to 10-20+ GB during fast
- * scrolling, causing OOM. Click-to-play limits active pipelines to exactly 1.
- *
- * RELATED FILES
- * - `src/hooks/useBlobUrl.ts` (poster blob URL resolution)
- * - `src/utils/mediaServer.ts` (local media server port discovery)
- * - `src/utils/VideoPlaybackManager.ts` (global play/pause coordination)
- * - `src-tauri/src/lib.rs` command handlers for media resolution/cancellation
+ * Key design decisions for smooth playback:
+ * - NO destructive src teardown (removeAttribute + load) — that causes
+ *   GStreamer pipeline re-creation and audible/visual glitches.
+ * - Visibility changes are debounced (150ms) to prevent rapid play/pause
+ *   thrashing during fast scrolling.
+ * - Fullscreen playback is protected: while a video is fullscreen, the
+ *   IntersectionObserver pause logic is bypassed.
+ * - Only one video plays at a time (global singleton tracking).
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -40,9 +26,11 @@ interface VideoPlayerProps {
     className?: string;
     style?: React.CSSProperties;
     autoPlay?: boolean;
+    controls?: boolean;
+    muted?: boolean;
 }
 
-const VIDEO_URL_CACHE_MAX = 100;
+const VIDEO_URL_CACHE_MAX = 120;
 const videoUrlCache = new Map<string, string>();
 
 function setVideoUrlCache(key: string, value: string): void {
@@ -63,10 +51,7 @@ export function videoUrlCacheSize(): number {
     return videoUrlCache.size;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Module-level singleton: only one video pipeline active at a time.
-// When a new video starts, the previous one is destroyed (not just paused).
-// ═══════════════════════════════════════════════════════════════════════════════
+// One active playing element at a time.
 let activeVideoElement: HTMLVideoElement | null = null;
 
 /** Returns true if any video is currently playing globally. */
@@ -79,8 +64,6 @@ function activateVideo(el: HTMLVideoElement): void {
     if (activeVideoElement && activeVideoElement !== el) {
         try {
             activeVideoElement.pause();
-            activeVideoElement.removeAttribute('src');
-            activeVideoElement.load(); // forces GStreamer pipeline release
         } catch (_) { /* ignore cleanup errors */ }
     }
     activeVideoElement = el;
@@ -93,52 +76,60 @@ function deactivateVideo(el: HTMLVideoElement): void {
 }
 
 /**
- * Standard, native VideoPlayer component for Bytescape.
- * Uses click-to-play to prevent GStreamer pipeline accumulation in WebKitGTK.
- * Uses a lightweight, dedicated `warp` file server to bypass WebKitGTK's strict
- * drop-dead media restrictions.
+ * Stable feed video player:
+ * - resolves source once per visible item
+ * - auto-plays when visible (when `autoPlay` is true)
+ * - pauses when not visible (debounced to avoid scroll thrash)
+ * - protects fullscreen playback from visibility changes
  */
-export function VideoPlayer({ src, poster, className, style, autoPlay = false }: VideoPlayerProps) {
-    // ═══════════════════════════════════════════════════════════════════════
-    // Local state and element refs
-    // ═══════════════════════════════════════════════════════════════════════
+export function VideoPlayer({
+    src,
+    poster,
+    className,
+    style,
+    autoPlay = false,
+    controls = true,
+    muted,
+}: VideoPlayerProps) {
     const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isVisible, setIsVisible] = useState(false);
-    const isPlayingRef = useRef(false);
+    const isFullscreenRef = useRef(false);
 
-    // Click-to-play: video src is only set after user interaction.
-    // This prevents GStreamer pipeline creation during passive scrolling.
-    const [userActivated, setUserActivated] = useState(false);
+    // autoplay in feeds should be muted to satisfy platform autoplay policies.
+    const effectiveMuted = muted ?? autoPlay;
 
-    // Resolve poster URL — blob:hash → local HTTP, HTTPS → passthrough.
-    // Uses useBlobUrl directly (not useLazyBlobUrl) because the poster is a small
-    // thumbnail that doesn't need viewport gating, and useLazyBlobUrl requires a
-    // ref callback attached to a DOM element (which VideoPlayer doesn't wire up).
     const [resolvedPoster] = useBlobUrl(poster);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Global playback coordination
-    // ═══════════════════════════════════════════════════════════════════════
-    // Register/unregister with global playback manager
     const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
         videoRef.current = el;
     }, []);
 
-    // Cleanup on unmount — unregister AND release the GStreamer pipeline.
-    // Without removeAttribute('src') + load(), the WebKitGTK media backend
-    // keeps the decoder pipeline (100-500 MB) alive even after the element is
-    // removed from the DOM.
+    // Track fullscreen state so we never pause a fullscreen video
+    // due to IntersectionObserver firing isIntersecting=false.
+    useEffect(() => {
+        const onFsChange = () => {
+            isFullscreenRef.current = !!(
+                document.fullscreenElement ||
+                (document as unknown as Record<string, unknown>).webkitFullscreenElement
+            );
+        };
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+        return () => {
+            document.removeEventListener('fullscreenchange', onFsChange);
+            document.removeEventListener('webkitfullscreenchange', onFsChange);
+        };
+    }, []);
+
     useEffect(() => {
         return () => {
             if (videoRef.current) {
                 try {
                     videoRef.current.pause();
-                    videoRef.current.removeAttribute('src');
-                    videoRef.current.load(); // forces GStreamer pipeline release
                 } catch (_) { /* ignore cleanup errors */ }
                 deactivateVideo(videoRef.current);
             }
@@ -146,73 +137,42 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
     }, []);
 
     const handlePlay = () => {
-        // Destroy previous video's GStreamer pipeline, activate this one
-        isPlayingRef.current = true;
         if (videoRef.current) {
             activateVideo(videoRef.current);
         }
     };
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Visibility gating — dual IntersectionObserver
-    // ═══════════════════════════════════════════════════════════════════════
-    // Observer 1: Trigger lazy URL resolution when near viewport (one-shot for initial entry).
-    // Observer 2: Continuous monitoring — unload video src when scrolled far out of view
-    //             to force GStreamer pipeline teardown. This is the primary memory defense.
+    // Debounced visibility tracking — prevents rapid play/pause thrashing
+    // during fast scrolling. 150ms delay means the video must be continuously
+    // out-of-viewport for 150ms before we consider it "gone".
     useEffect(() => {
-        const entryObserver = new IntersectionObserver(
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const observer = new IntersectionObserver(
             ([entry]) => {
                 if (entry.isIntersecting) {
+                    // Entering viewport: apply immediately (start resolution ASAP)
+                    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
                     setIsVisible(true);
-                    entryObserver.disconnect();
+                } else {
+                    // Leaving viewport: debounce to avoid thrash during fast scroll
+                    if (debounceTimer) clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(() => setIsVisible(false), 150);
                 }
             },
-            { rootMargin: '200px' }
+            { rootMargin: '220px' }
         );
 
         if (containerRef.current) {
-            entryObserver.observe(containerRef.current);
+            observer.observe(containerRef.current);
         }
 
-        return () => entryObserver.disconnect();
+        return () => {
+            observer.disconnect();
+            if (debounceTimer) clearTimeout(debounceTimer);
+        };
     }, []);
 
-    // Observer 2: Continuous visibility tracking — unload pipeline when far from viewport.
-    // Only tears down when the video is NOT actively playing AND is far from viewport.
-    // rootMargin 500px gives generous buffer so minor scrolls don't kill playback.
-    useEffect(() => {
-        if (!containerRef.current) return;
-
-        const visibilityObserver = new IntersectionObserver(
-            ([entry]) => {
-                if (!entry.isIntersecting && userActivated && !isPlayingRef.current) {
-                    // Video has scrolled far out of view and is not playing — tear down
-                    if (videoRef.current) {
-                        try {
-                            videoRef.current.pause();
-                            videoRef.current.removeAttribute('src');
-                            videoRef.current.load();
-                        } catch (_) { /* ignore */ }
-                        deactivateVideo(videoRef.current);
-                    }
-                    isPlayingRef.current = false;
-                    setUserActivated(false);
-                }
-            },
-            { rootMargin: '500px' }
-        );
-
-        visibilityObserver.observe(containerRef.current);
-        return () => visibilityObserver.disconnect();
-    }, [userActivated]);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Source resolution pipeline (includes Tauri invoke bridge)
-    // ═══════════════════════════════════════════════════════════════════════
-    // MEMORY-CRITICAL: URL resolution starts when VISIBLE (pre-resolves before click).
-    // But the <video src> is only set when userActivated is true (click-to-play),
-    // so no GStreamer pipeline is created until the user actually clicks play.
-    // This pre-resolution eliminates the multi-second delay on play.
     useEffect(() => {
         if (!src || !isVisible) return;
 
@@ -228,10 +188,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
             setError(null);
 
             try {
-                // 1. Handle HLS Bluesky Videos (which are m3u8 playlists)
                 if (src.includes('.m3u8')) {
-                    console.log(`[VideoPlayer] Resolving native file for HLS: ${src}`);
-                    // Backend efficiently downloads the segments and creates a single local .ts file
                     const filePath = await invoke<string>('resolve_hls_video', { playlistUrl: src });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
@@ -242,12 +199,8 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             setResolvedUrl(assetUrl);
                         }
                     }
-                }
-                // 2. Handle Vault Encrypted Blobs
-                else if (src.startsWith('blob:') && !src.startsWith('blob:http') && !src.startsWith('blob:tauri')) {
+                } else if (src.startsWith('blob:') && !src.startsWith('blob:http') && !src.startsWith('blob:tauri')) {
                     const hash = src.replace(/^blob:/, '').trim();
-                    console.log(`[VideoPlayer] Decoding Blob to native file path: ${hash}`);
-                    // Backend streams out the decrypted file to a cache and returns the path
                     const filePath = await invoke<string>('get_media_blob', { hashStr: hash });
                     if (!cancelled && filePath) {
                         const filename = filePath.split(/[/\\]/).pop();
@@ -258,9 +211,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                             setResolvedUrl(assetUrl);
                         }
                     }
-                }
-                // 3. Handle direct ready-to-play URLs (HTTP, Object URL, standard Tauri Asset URL)
-                else {
+                } else {
                     setResolvedUrl(src);
                 }
             } catch (err) {
@@ -279,32 +230,45 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
 
         return () => {
             cancelled = true;
-            // Cancel in-progress video resolve when scrolling away (P8)
-            // Prevents CPU thrashing from multiple concurrent FFmpeg processes
             if (!videoUrlCache.has(src) && src.includes('.m3u8')) {
-                invoke('cancel_video_resolve', { url: src }).catch(() => {});
+                invoke('cancel_video_resolve', { playlistUrl: src }).catch(() => {});
             }
         };
     }, [src, isVisible]);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Click-to-play handler
-    // ═══════════════════════════════════════════════════════════════════════
-    const handleActivate = useCallback(() => {
-        setUserActivated(true);
-    }, []);
-
-    // Determine whether the video element should have a src.
-    // autoPlay prop (used in GalleryOverlay) bypasses click-to-play.
-    const videoSrc = (userActivated || autoPlay) ? (resolvedUrl || undefined) : undefined;
-    const showPlayOverlay = !userActivated && !autoPlay && !error;
-
-    // Auto-activate resolution for autoPlay mode (gallery overlay)
+    // Visibility-driven autoplay in feed contexts.
+    // Only one visible autoplay video should actively play at a time.
+    // NEVER pause a video that's in native fullscreen (the element leaves
+    // normal flow so IntersectionObserver reports it as non-intersecting).
     useEffect(() => {
-        if (autoPlay && isVisible) {
-            setUserActivated(true);
+        const el = videoRef.current;
+        if (!el || !resolvedUrl || !autoPlay) return;
+
+        if (!isVisible && !isFullscreenRef.current) {
+            el.pause();
+            if (activeVideoElement === el) {
+                deactivateVideo(el);
+            }
+            return;
         }
-    }, [autoPlay, isVisible]);
+
+        // Don't interrupt an already-playing video (including fullscreen)
+        if (!el.paused) return;
+
+        // If another video is currently active and still playing, do not steal.
+        if (activeVideoElement && activeVideoElement !== el && !activeVideoElement.paused) {
+            return;
+        }
+
+        const p = el.play();
+        if (p && typeof p.then === 'function') {
+            p.then(() => {
+                activateVideo(el);
+            }).catch(() => {});
+        } else {
+            activateVideo(el);
+        }
+    }, [autoPlay, isVisible, resolvedUrl]);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Render
@@ -317,8 +281,7 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                 </div>
             )}
 
-            {/* Loading indicator — overlaid on poster, not replacing it */}
-            {isLoading && !resolvedUrl && userActivated && (
+            {isLoading && !resolvedUrl && (
                 <div style={{
                     position: 'absolute',
                     bottom: 8,
@@ -334,88 +297,24 @@ export function VideoPlayer({ src, poster, className, style, autoPlay = false }:
                     <span style={{ color: '#aaa', fontSize: '0.75rem' }}>Loading…</span>
                 </div>
             )}
-
-            {/* Click-to-play overlay — shown when video is not yet activated.
-                Prevents GStreamer pipeline creation during passive scrolling.
-                When no poster is available, shows a film strip icon so the card
-                isn't just a black rectangle. */}
-            {showPlayOverlay && (
-                <div
-                    onClick={handleActivate}
-                    style={{
-                        position: 'absolute',
-                        inset: 0,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 3,
-                        cursor: 'pointer',
-                        background: resolvedPoster ? 'rgba(0,0,0,0.15)' : 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-                    }}
-                >
-                    {!resolvedPoster && (
-                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style={{ marginBottom: 8, opacity: 0.5 }}>
-                            <rect x="2" y="4" width="20" height="16" rx="2" stroke="white" strokeWidth="1.5" fill="none"/>
-                            <path d="M2 8h20M2 16h20M6 4v16M18 4v16" stroke="white" strokeWidth="0.5" opacity="0.3"/>
-                        </svg>
-                    )}
-                    <div style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: '50%',
-                        background: 'rgba(0,0,0,0.55)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        backdropFilter: 'blur(4px)',
-                    }}>
-                        <svg width="24" height="28" viewBox="0 0 24 28" fill="none">
-                            <path d="M22 14L2 26V2L22 14Z" fill="white" fillOpacity="0.9"/>
-                        </svg>
-                    </div>
-                </div>
-            )}
-
-            {/*
-               Click-to-play video element:
-               - src is undefined until the user taps the play overlay (or autoPlay is set)
-               - preload="none" prevents GStreamer from creating even a metadata pipeline
-               - When src is set, autoPlay starts playback immediately
-            */}
             <video
                 ref={videoRefCallback}
-                src={videoSrc}
+                src={resolvedUrl || undefined}
                 poster={resolvedPoster || undefined}
-                controls={!!videoSrc}
-                autoPlay={!!videoSrc}
-                loop
+                controls={controls}
+                autoPlay={autoPlay}
+                muted={effectiveMuted}
                 playsInline
-                preload={videoSrc ? 'metadata' : 'none'}
+                preload={autoPlay ? 'auto' : 'metadata'}
                 style={{ width: '100%', height: '100%', display: 'block' }}
                 onPlay={handlePlay}
-                onPlaying={() => { isPlayingRef.current = true; }}
-                onPause={(e) => {
-                    // Only clear isPlayingRef if user-initiated pause (not buffering/stall).
-                    // Buffering fires pause with readyState 1 (HAVE_METADATA).
-                    // User pause or end fires with readyState >= 2 (has frame data).
-                    const vid = e.currentTarget;
-                    if (vid.ended || vid.readyState >= 2) {
-                        isPlayingRef.current = false;
-                    }
-                }}
-                onWaiting={() => {
-                    // Buffering started — keep isPlayingRef true so Observer 2
-                    // doesn't tear down the pipeline during a stall
-                }}
-                onCanPlay={() => {
-                    // Enough data buffered to resume — if we were playing, stay playing
-                    if (videoRef.current && !videoRef.current.paused) {
-                        isPlayingRef.current = true;
+                onEnded={() => {
+                    if (videoRef.current) {
+                        deactivateVideo(videoRef.current);
                     }
                 }}
                 onError={(e) => {
-                    if (videoSrc) {
+                    if (resolvedUrl) {
                         console.error("[VideoPlayer] Video tag intrinsic WebKit error:", e.currentTarget.error);
                     }
                 }}

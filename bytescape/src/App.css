@@ -1157,10 +1157,11 @@ a:hover {
     box-sizing: border-box;
 }
 
-/* Kill ALL transitions inside feed cards during scroll — prevents flicker */
-.feed-entry-card *,
-.feed-entry-card *::before,
-.feed-entry-card *::after {
+/* Kill transitions inside feed cards during scroll — prevents flicker.
+   Exempt <video> and its shadow DOM children so native controls render smoothly. */
+.feed-entry-card *:not(video),
+.feed-entry-card *:not(video)::before,
+.feed-entry-card *:not(video)::after {
     transition: none !important;
     animation: none !important;
 }
