@@ -74,6 +74,39 @@ const PLATFORM_META: Record<string, { emoji: string; label: string; supportsQuot
     mastodon: { emoji: '🐘', label: 'Mastodon', supportsQuote: false },
 };
 
+/** Link card metadata to pass to publish_post_v2 for rich embeds */
+interface LinkCard {
+    url: string;
+    title?: string;
+    description?: string;
+    image_url?: string;
+}
+
+/**
+ * Build a link card for the entry being shared.
+ * Uses existing link preview metadata from the entry if available,
+ * otherwise falls back to unfurling the URL via the backend.
+ */
+async function buildLinkCard(entry: FeedEntry, linkUrl: string): Promise<LinkCard | undefined> {
+    // 1. Use existing link preview metadata from the entry
+    if (entry.link_url && entry.link_title) {
+        return {
+            url: entry.link_url,
+            title: entry.link_title || undefined,
+            description: entry.link_description || undefined,
+            image_url: entry.link_thumbnail || undefined,
+        };
+    }
+    // 2. Try to unfurl the URL via backend
+    try {
+        const card = await invoke<LinkCard>('unfurl_link', { url: linkUrl });
+        return card;
+    } catch {
+        // Unfurl failed — return a minimal card so at least the URL is embedded properly
+        return { url: linkUrl };
+    }
+}
+
 /**
  * Extract the Mastodon numeric status ID from a FeedEntry.
  * Tries entry.cid first, then parses from original_url.
@@ -210,10 +243,13 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                         const shareText = quoteText.trim()
                             ? `${quoteText.trim()}\n\n${linkUrl}`
                             : linkUrl;
+                        // Build rich link card for embed.external preview
+                        const linkCard = await buildLinkCard(entry, linkUrl);
                         const result = await invoke<PublishResult>('publish_post_v2', {
                             text: shareText,
                             attachments: [],
                             destination: 'bluesky',
+                            linkCard,
                         });
                         if (result.bluesky) {
                             outcomes.push('🦋 Shared as link on Bluesky');
@@ -225,10 +261,13 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                         // Quote repost on Bluesky — share quote text with link to original
                         const linkUrl = entry.original_url || atUri;
                         const fullText = `${quoteText.trim()}\n\n${linkUrl}`;
+                        // Build rich link card for embed.external preview
+                        const linkCard = await buildLinkCard(entry, linkUrl);
                         const result = await invoke<PublishResult>('publish_post_v2', {
                             text: fullText,
                             attachments: [],
                             destination: 'bluesky',
+                            linkCard,
                         });
                         if (result.bluesky) {
                             outcomes.push('🦋 Quoted on Bluesky');
