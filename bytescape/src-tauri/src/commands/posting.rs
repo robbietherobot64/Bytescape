@@ -41,7 +41,7 @@ use serde::Deserialize;
 use serde_json::json;
 use crate::AppState;
 use crate::models::{BytescapeItem, SyndicationStatus, BytescapeType, Audience};
-use crate::connectors::{Source, bluesky::{BlueskyClient, authenticated_xrpc_candidates}};
+use crate::connectors::Source;
 use crate::commands::import::{PublishResult, willow_path_for_item};
 use crate::richtext;
 use crate::blob_hash;
@@ -282,16 +282,7 @@ pub async fn publish_post_v2(
 
     // 3. Bluesky publish
     if publish_bluesky {
-        let (user_did, _) = match state.keychain.load_session().ok().flatten() {
-            Some(v) => v,
-            None => return Err("Not authenticated with Bluesky".to_string()),
-        };
-
-        let access_jwt = state.get_fresh_access_jwt().await?;
-
-        let candidates = authenticated_xrpc_candidates(&access_jwt, true);
-        let _pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
-        let _client = BlueskyClient::with_jwt(&access_jwt);
+        let user_did = state.get_user_did()?;
 
         let mut images_embed = Vec::new();
         let mut video_embed = None;
