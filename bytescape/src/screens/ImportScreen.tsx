@@ -147,66 +147,6 @@ export function ImportScreen({
     // Render
     // ═══════════════════════════════════════════════════════════════════════
 
-    // ─── Importing state: show terminal animation ───
-    if (isImporting || importComplete) {
-        return (
-            <div className="screen-centered">
-                <div className="main-header">
-                    <h1 style={{ textAlign: 'center', width: '100%' } as React.CSSProperties}>
-                        {importComplete ? '✅ Import Complete' : '📡 Importing...'}
-                    </h1>
-                </div>
-                <div className="import-tools">
-                    <div className="import-terminal">
-                        <div className="import-terminal-titlebar">
-                            <span className="import-terminal-dot import-terminal-dot--red" />
-                            <span className="import-terminal-dot import-terminal-dot--yellow" />
-                            <span className="import-terminal-dot import-terminal-dot--green" />
-                            <span className="import-terminal-title">bytescape — import</span>
-                        </div>
-                        <div className="import-terminal-body" ref={terminalRef}>
-                            {terminalLog.map((line, i) => (
-                                <div key={i} className="import-terminal-line">
-                                    {line}
-                                </div>
-                            ))}
-                            {!importComplete && (
-                                <div className="import-terminal-line import-terminal-cursor">
-                                    {'>'} <span className="import-terminal-blink">█</span>
-                                </div>
-                            )}
-                            {importComplete && (
-                                <>
-                                    <div className="import-terminal-line import-terminal-line--success">
-                                        {importStatus}
-                                    </div>
-                                    <div className="import-terminal-line">
-                                        {'>'} Ready for another import, or view your posts below.
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                        {!importComplete && (
-                            <div className="import-terminal-progress">
-                                <div className="import-terminal-progress-bar" />
-                            </div>
-                        )}
-                    </div>
-                    {importComplete && (
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleViewPosts}
-                            style={{ marginTop: 12, width: '100%', padding: '12px 20px' } as React.CSSProperties}
-                        >
-                            📋 View Imported Posts
-                        </button>
-                    )}
-                </div>
-            </div>
-        );
-    }
-
-    // ─── Default state: import actions ───
     return (
         <div className="screen-centered">
             <div className="main-header">
@@ -214,6 +154,42 @@ export function ImportScreen({
             </div>
 
             <div className="import-tools">
+                {/* ─── Active import: show terminal animation ─── */}
+                {isImporting && (
+                    <div className="import-terminal" style={{ marginBottom: 16 } as React.CSSProperties}>
+                        <div className="import-terminal-body" ref={terminalRef}>
+                            {terminalLog.map((line, i) => (
+                                <div key={i} className="import-terminal-line">
+                                    {line}
+                                </div>
+                            ))}
+                            <div className="import-terminal-line import-terminal-cursor">
+                                {'>'} <span className="import-terminal-blink">█</span>
+                            </div>
+                        </div>
+                        <div className="import-terminal-progress">
+                            <div className="import-terminal-progress-bar" />
+                        </div>
+                    </div>
+                )}
+
+                {/* ─── Import complete banner ─── */}
+                {importComplete && !isImporting && (
+                    <div className="card" style={{ marginBottom: 16, textAlign: 'center', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)' } as React.CSSProperties}>
+                        <p style={{ color: '#34d399', fontWeight: 600, margin: '4px 0' } as React.CSSProperties}>
+                            {importStatus}
+                        </p>
+                        <button
+                            className="btn btn-sm btn-primary"
+                            onClick={handleViewPosts}
+                            style={{ marginTop: 8 } as React.CSSProperties}
+                        >
+                            📋 View Imported Posts
+                        </button>
+                    </div>
+                )}
+
+                {/* ─── Import actions (always visible) ─── */}
                 <div className="card card-glow">
                     <h2>🔌 Import Your Social History</h2>
                     <p className="text-muted text-sm" style={{ marginBottom: 16 }}>
@@ -245,7 +221,8 @@ export function ImportScreen({
                             <p className="text-muted text-sm mb-8">Or import from a data export:</p>
                             <div
                                 className={`drop-zone${dragOver ? ' dragging' : ''}`}
-                                onClick={onFilePick}
+                                onClick={isImporting ? undefined : onFilePick}
+                                style={isImporting ? { opacity: 0.5, pointerEvents: 'none' } as React.CSSProperties : undefined}
                             >
                                 {dragOver && (
                                     <div className="drop-icon" style={{ color: 'var(--accent-blue)' }}>📥</div>

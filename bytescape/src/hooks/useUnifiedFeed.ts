@@ -597,11 +597,18 @@ export function useUnifiedFeed({
   }, [rawEntries, effectiveSourceFilter, hasSpecificTagChips, selectedHashtagsFilter, extractPostTags, feedsDisabled, tagsDisabled, followedHashtags, followsDisabled, activeTab]);
 
   // ── Merge vault sources with linked platform sources for filter dropdown ──
+  // Sources hidden from the main feed filter dropdown (browsed differently)
+  const FEED_HIDDEN_SOURCES = new Set(['instagram']);
+
   const mergedSources = useMemo(() => {
     const sources = new Set(vaultSources);
     // Add connected platform IDs (lowercase) so filter values match FeedEntry.source
     for (const ls of linkedSources) {
       if (ls.connected) sources.add(ls.id);
+    }
+    // Remove sources that shouldn't appear in the feed dropdown
+    for (const hidden of FEED_HIDDEN_SOURCES) {
+      sources.delete(hidden);
     }
     return Array.from(sources).sort();
   }, [vaultSources, linkedSources]);

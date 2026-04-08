@@ -197,14 +197,16 @@ export function RepostModal({ entry, onClose, onReposted }: RepostModalProps) {
                             : linkUrl;
                         await invoke('publish_post_v2', {
                             text: shareText,
-                            audiences: ['Bluesky'],
+                            attachments: [],
+                            destination: 'bluesky',
                         });
                         outcomes.push('🦋 Shared as link on Bluesky');
                     } else if (quoteText.trim()) {
                         // Quote repost on Bluesky (has valid AT-URI)
                         await invoke('publish_post_v2', {
                             text: quoteText.trim(),
-                            audiences: ['Bluesky'],
+                            attachments: [],
+                            destination: 'bluesky',
                             quoteUri: atUri,
                             quoteCid: entry.cid || '',
                         });
