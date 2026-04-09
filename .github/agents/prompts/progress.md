@@ -4,6 +4,71 @@
 
 ---
 
+## 🎨 Frontend — Sprint v18a/b/c: Profile Screen Overhaul (2026-04-08)
+
+**Commit:** `b7fca4e` on `main`
+**Build:** 0 cargo check errors, 0 tsc errors, 273/273 frontend tests pass
+**Sprint prompts:** `frontend-sprint-v18a.md`, `frontend-sprint-v18b.md`, `frontend-sprint-v18c.md`
+
+### Deliverables
+
+| # | Sprint | Description | Status |
+|---|--------|-------------|--------|
+| v18a.1 | Layout | 2-column layout: posts left, bio sidebar right (responsive, stacks on mobile) | ✅ |
+| v18a.2 | Layout | Show Bytescape username (`local_username`) instead of raw Bluesky handle | ✅ |
+| v18a.3 | Layout | Auth-guarded "Edit Profile" toggle replaces non-functional "Customize" button | ✅ |
+| v18a.4 | Layout | Post deletion with confirmation dialog via `delete_vault_item` | ✅ |
+| v18a.5 | Layout | Removed hardcoded marquee footer and wall/posts tab split | ✅ |
+| v18b.1 | Media | Now Playing: auto-detect Bandcamp/SoundCloud/Spotify/YouTube URLs → inline embeds | ✅ |
+| v18b.2 | Media | Links auto-populate from `list_linked_accounts` when no custom links exist | ✅ |
+| v18b.3 | Media | Connections: summary badges + handle grid with overflow indicator | ✅ |
+| v18b.4 | Custom | Theme picker: 6 palettes (default/midnight/sunset/forest/ocean/retrowave), persisted | ✅ |
+| v18b.5 | Custom | ProfileBioSections accepts external `editMode` prop, sidebar-aware single-column layout | ✅ |
+| v18c.1 | Pages | ProfilePageNav: tabbed navigation (Home + user pages), add/delete in edit mode | ✅ |
+| v18c.2 | Pages | ProfilePageEditor: rich-text and blog content types with inline editing | ✅ |
+| v18c.3 | Pages | useProfilePages hook: full CRUD backed by Tauri commands | ✅ |
+| v18c.4 | Pages | Blog template with entry creation and date-sorted display | ✅ |
+
+### Files Created
+- `src/components/ProfilePageNav.tsx` — Page tab navigation
+- `src/components/ProfilePageEditor.tsx` — Inline page content editor
+- `src/hooks/useProfilePages.ts` — Profile pages CRUD hook
+
+### Files Modified
+- `src/screens/ProfileScreen.tsx` — Complete rewrite: 2-col layout, edit mode, themes, pages, deletion
+- `src/screens/ProfileScreen.css` — New grid layout, hero actions, theme picker, page nav, delete confirm
+- `src/components/ProfileBioSections.tsx` — External editMode, embeds, linked accounts, connections
+- `src/components/ProfileBioSections.css` — Sidebar context rules, connections, links auto-label
+- `src/components/FeedEntryCard.tsx` — `onDelete` prop with trash icon button
+- `src/types/index.ts` — `ProfileSettings`, `ProfilePage`, `ConnectionEntry` interfaces
+
+---
+
+## 🔧 Backend — Sprint v18a: Profile Backend Support (2026-04-08)
+
+**Commit:** `97dda2c` on `main`
+**Build:** 0 cargo check errors, 0 tsc errors, 273/273 frontend tests pass
+**Sprint prompt:** `backend-sprint-v18a.md`
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0 | Vault post deletion | `delete_item_by_id()` in `db/vault.rs` with key lookup + UUID scan fallback. `delete_vault_item` Tauri command. | ✅ |
+| P1 | Expanded connections | Deferred — frontend used existing `list_follows` + `list_contacts` with improved UI rendering | ⏭️ Descoped |
+| P2 | Profile settings persistence | `save_profile_settings` / `get_profile_settings` commands using `PROFILE_LAYOUT_TABLE` | ✅ |
+| P3 | Linked accounts exposure | Already available via `list_linked_accounts` command (verified, no changes needed) | ✅ (pre-existing) |
+| — | Profile pages CRUD | `save_profile_page` / `get_profile_pages` / `delete_profile_page` — prefix-key pattern | ✅ |
+
+### Files Modified
+- `src-tauri/src/db/vault.rs` — `delete_item_by_id()` method
+- `src-tauri/src/db/mod.rs` — Profile settings + pages persistence methods
+- `src-tauri/src/commands/vault.rs` — `delete_vault_item` command
+- `src-tauri/src/commands/profile.rs` — 5 new commands (settings ×2, pages ×3)
+- `src-tauri/src/lib.rs` — Registered 6 new commands
+
+---
+
 ## 🔧 Backend — Sprint v16: Video Playback Stability & Memory Safety (2026-04-05)
 
 **Commit:** `f41af33` on `main`
