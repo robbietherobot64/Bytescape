@@ -1,439 +1,374 @@
-# Frontend Sprint v19 — Profile Customization Deepening
+# Frontend Sprint v19 — Profile Customization: Modular Widgets & Minimalist Default
 
-**Sprint**: v19 (Profile Polish: Creative Expression)  
+**Sprint**: v19 (Profile Polish)  
 **Track**: B (Frontend — React/TypeScript)  
 **Date**: 2026-04-09  
-**Previous sprint**: v18a/b/c (profile screen overhaul — 2-col layout, themes, embeds, pages — delivered)  
-**HEAD at prompt time**: `b7fca4e`  
-**Rationale**: Make the profile visually compelling before the hosted go-live (v20). Users need creative tools to express themselves.
+**Previous sprint**: v18 reverted — profile UI restored to pre-v18 state per user feedback (commit `8f8070b`)  
+**HEAD at prompt time**: `8f8070b`  
+**Design philosophy**: Minimalist default layout. Modular widget system — easy to add, remove, rearrange. Users opt into complexity; they don't start with it.
 
 ---
 
 ## Sprint Context
 
-Sprint v18 delivered the profile's structural overhaul: 2-column layout, 6 preset themes, Now Playing embeds, connections grid, profile pages with blog support, and post deletion. This sprint deepens the customization options — custom backgrounds, marquee ticker, avatar images, GIF sections, custom colors, expanded connections, and richer page editing. The goal is old-web creative expression: make it feel like a personal homepage.
+The v18 profile overhaul was reverted because it butchered the profile — too much at once, layout felt wrong, customization was tacked on rather than integrated. This sprint rebuilds profile customization from the ground up with a different approach:
 
-### User feedback driving this sprint
+1. **Start minimal**: Clean default layout that looks good with zero configuration
+2. **Modular widgets**: Each profile section is a self-contained widget the user can add/remove/reorder
+3. **Opt-in complexity**: Themes, backgrounds, marquee, GIFs, etc. are available but never forced
+4. **Component architecture**: Each widget type is independently renderable — easy to build, test, and extend
 
-From `profile-feedback`:
+### Current state (post-revert)
 
-> "Overall increase of customization options. What creative ideas can we come up with that allows users to be creative on their profile? Custom backgrounds? Custom themes? Etc."
+| Component | File | State |
+|-----------|------|-------|
+| ProfileScreen | `screens/ProfileScreen.tsx` | Pre-v18: hero + Wall/Posts tabs + Bio sections + hardcoded marquee footer |
+| ProfileScreen CSS | `screens/ProfileScreen.css` | Pre-v18: 228 lines, GeoCities theme |
+| ProfileBioSections | `components/ProfileBioSections.tsx` | Pre-v18: 768 lines, 6 section types (about, connections, now-playing, guestbook, links, custom), self-contained edit mode |
+| FeedEntryCard | `components/FeedEntryCard.tsx` | Pre-v18: no `onDelete` prop |
+| ProfilePageNav | `components/ProfilePageNav.tsx` | ✅ Kept from v18 — tabbed page navigation |
+| ProfilePageEditor | `components/ProfilePageEditor.tsx` | ✅ Kept from v18 — rich-text + blog editor |
+| useProfilePages | `hooks/useProfilePages.ts` | ✅ Kept from v18 — page CRUD |
+| ProfileSettings type | `types/index.ts` | ✅ Kept — theme, background, marquee fields defined |
+| Backend commands | `commands/profile.rs` | ✅ Kept — settings persistence, pages CRUD, vault deletion |
 
-> "Lose the tacky scrolling ticker at the bottom, but keep it as an option for customization that users can change the message, font, color, etc."
+### User direction
 
-> "What sort of native gif embedding can I do on these sections? Can I have a section full of gif buttons as a custom section? This is the type of creativity we want to allow on the profile, a lot of old web functionality."
+> "We want the profile to be highly customizable and easy to add or remove different components. However, it should start with a default layout that is minimalist and makes sense."
 
-> "Connections should be more navigable, searchable, filterable by source, expandable to view all connections"
+### Profile feedback items to address
 
-> "We want the user to utilize their profile as a website/blog. So how can we implement a directory system on the profile that allows users to have a navigable site of pages that they customize?"
+From `profile-feedback` (prioritized):
 
-### What already exists
-
-| Component | File | Status |
-|-----------|------|--------|
-| 6 preset themes | `ProfileScreen.tsx` (PROFILE_THEMES) | ✅ Working |
-| ProfileSettings type fields | `types/index.ts` (704-713) | ✅ Fields defined for background + marquee |
-| Profile settings persistence | `save_profile_settings` / `get_profile_settings` | ✅ JSON blob — any new fields just work |
-| Bio sections CRUD | `ProfileBioSections.tsx` | ✅ 5 section types + custom |
-| Section types | about, connections, now-playing, guestbook, links, custom | ✅ |
-| Profile pages | `ProfilePageNav.tsx`, `ProfilePageEditor.tsx`, `useProfilePages.ts` | ✅ Rich-text + blog |
-| Theme picker dropdown | `ProfileScreen.tsx` hero area | ✅ |
-| Edit mode toggle | `ProfileScreen.tsx` hero actions | ✅ |
-
-### What's defined but not implemented
-
-The `ProfileSettings` interface already has these fields, but no UI controls or rendering logic:
-- `background_type?: string` — "default" | "color" | "image" | "pattern"
-- `background_value?: string` — CSS color, image URL, or pattern name
-- `marquee_enabled?: boolean`
-- `marquee_text?: string`
-- `marquee_color?: string`
-- `marquee_speed?: string` — "slow" | "medium" | "fast"
+| # | Item | Priority |
+|---|------|----------|
+| 1 | Username should be Bytescape handle (end of did:web), not Bluesky handle | P0 |
+| 2 | Hide customize/edit buttons for non-logged-in users | P0 |
+| 3 | Posts as default content (not hidden behind a tab), better space utilization | P0 |
+| 4 | Replace broken "Customize" button with working edit mode | P0 |
+| 5 | Post deletion on profile | P0 |
+| 6 | Marquee as opt-in only (off by default), with customization options | P1 |
+| 7 | Now Playing with Bandcamp/SoundCloud/Spotify/YouTube embeds | P1 |
+| 8 | Links auto-populate from linked accounts | P1 |
+| 9 | Theme/background customization | P1 |
+| 10 | Expanded connections (search, filter, expand all) | P2 |
+| 11 | GIF collection section type | P2 |
+| 12 | Profile pages / website-blog directory | P2 |
 
 ---
 
-## P0: Custom Backgrounds
+## Architecture: Widget System
 
-### Problem
+### Core concept
 
-Users can pick from 6 preset themes but can't set their own background color, image, or pattern. The `ProfileSettings` type already has `background_type` and `background_value` fields — they just need UI and rendering.
-
-### Requirements
-
-Add a **Background** section to the theme picker dropdown (or as a separate panel in edit mode):
-
-1. **Solid color**: Color picker input → stores hex value in `background_value`
-2. **Image URL**: Text input for image URL → renders as `background-image: url(...); background-size: cover`
-3. **Pattern**: Selectable from a set of CSS-generated retro patterns (scanlines, checkerboard, dots, stars, diamonds)
-4. **Default**: Resets to the active theme's default gradient
-
-### UI Design
-
-In edit mode, when the theme picker is open, add a second section below the theme swatches:
-
-```
-┌─ Theme ────────────────────────┐
-│ [Default] [Midnight] [Sunset]  │
-│ [Forest]  [Ocean]  [Retrowave] │
-├─ Background ───────────────────┤
-│ ○ Default  ○ Color  ○ Image    │
-│ ○ Pattern                      │
-│                                │
-│ [color picker / URL input /    │
-│  pattern selector based on     │
-│  selected radio]               │
-└────────────────────────────────┘
-```
-
-### Rendering
-
-Apply background to `.profile-geocities`:
-- If `background_type === 'color'`: `background: {background_value}`
-- If `background_type === 'image'`: `background: url({background_value}) center/cover no-repeat fixed`
-- If `background_type === 'pattern'`: Apply the selected CSS pattern (each pattern is a CSS-only repeating-gradient or background-image combo)
-
-### Pattern Presets
+The profile is a **widget container**. Each visual section is a **widget** with a standard interface:
 
 ```typescript
-const BACKGROUND_PATTERNS: Record<string, React.CSSProperties> = {
-    scanlines: {
-        background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 4px)',
-    },
-    checkerboard: {
-        background: 'repeating-conic-gradient(rgba(255,255,255,0.05) 0% 25%, transparent 0% 50%) 0 0 / 20px 20px',
-    },
-    dots: {
-        background: 'radial-gradient(circle, rgba(255,255,255,0.08) 1px, transparent 1px) 0 0 / 16px 16px',
-    },
-    stars: {
-        background: 'radial-gradient(2px 2px at 10px 10px, rgba(255,255,255,0.3), transparent), radial-gradient(1px 1px at 30px 25px, rgba(255,255,255,0.2), transparent), radial-gradient(1px 1px at 50px 40px, rgba(255,255,255,0.15), transparent)',
-        backgroundSize: '60px 60px',
-    },
-    diamonds: {
-        background: 'linear-gradient(45deg, rgba(255,255,255,0.04) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.04) 75%), linear-gradient(45deg, rgba(255,255,255,0.04) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.04) 75%)',
-        backgroundPosition: '0 0, 10px 10px',
-        backgroundSize: '20px 20px',
-    },
+type WidgetType = 'posts' | 'about' | 'now-playing' | 'links' | 'connections' | 'guestbook' | 'gif-collection' | 'marquee' | 'custom';
+
+interface ProfileWidget {
+    id: string;                    // Unique instance ID
+    type: WidgetType;              // Widget type from registry
+    title: string;                 // User-editable display title
+    column: 'main' | 'sidebar';   // Which column it lives in
+    order: number;                 // Sort order within its column
+    visible: boolean;              // Can be hidden without deleting
+    config: Record<string, any>;   // Widget-specific settings
+}
+```
+
+Add `WidgetType` and `ProfileWidget` to `src/types/index.ts`.
+
+### Widget registry (in ProfileScreen)
+
+```typescript
+const WIDGET_REGISTRY: Record<WidgetType, { label: string; emoji: string; defaultColumn: 'main' | 'sidebar'; singleton: boolean }> = {
+    'posts':          { label: 'Posts',           emoji: '📝', defaultColumn: 'main',    singleton: true },
+    'about':          { label: 'About Me',        emoji: '👋', defaultColumn: 'sidebar', singleton: true },
+    'links':          { label: 'Links',           emoji: '🔗', defaultColumn: 'sidebar', singleton: true },
+    'connections':    { label: 'Connections',      emoji: '👥', defaultColumn: 'sidebar', singleton: true },
+    'now-playing':    { label: 'Now Playing',      emoji: '🎵', defaultColumn: 'sidebar', singleton: true },
+    'guestbook':      { label: 'Guestbook',        emoji: '💬', defaultColumn: 'main',    singleton: true },
+    'gif-collection': { label: 'GIF Collection',    emoji: '🖼️', defaultColumn: 'main',    singleton: false },
+    'marquee':        { label: 'Marquee Ticker',    emoji: '📰', defaultColumn: 'main',    singleton: true },
+    'custom':         { label: 'Custom Section',    emoji: '✨', defaultColumn: 'main',    singleton: false },
 };
 ```
 
-### Files to modify
+`singleton: true` = only one instance allowed. `singleton: false` = user can add multiples.
 
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Add background picker UI in edit mode; apply background styles to .profile-geocities |
-| `src/screens/ProfileScreen.css` | Background overlay styles, pattern classes |
-
----
-
-## P1: Marquee Ticker (Opt-In)
-
-### Problem
-
-The old scrolling ticker was removed in v18 ("tacky"), but user feedback says to keep it as an **opt-in customization** with message, font, color, and speed controls.
-
-### Requirements
-
-1. Off by default (`marquee_enabled: false`)
-2. In edit mode → show a "Marquee" toggle + configuration panel:
-   - Message text input
-   - Color picker (text color)
-   - Speed selector (slow / medium / fast)
-3. When enabled → render a `<marquee>`-style scrolling bar at the bottom of the hero area (or below the page nav)
-4. Use CSS animation (not actual `<marquee>` element) for modern compatibility
-
-### UI Design
-
-In edit mode, add a collapsible "Marquee Ticker" section below the theme/background picker:
-
-```
-┌─ Marquee Ticker ──── [ON/OFF] ─┐
-│ Message: [_________________]    │
-│ Color:   [■ #ff00ff]           │
-│ Speed:   ○ Slow  ● Medium  ○ Fast │
-└─────────────────────────────────┘
-```
-
-### Rendering
-
-When `profileSettings.marquee_enabled === true`:
-
-```html
-<div class="profile-marquee" style="color: {marquee_color}">
-    <div class="profile-marquee-content" style="animation-duration: {speed}s">
-        {marquee_text}
-    </div>
-</div>
-```
-
-CSS animation: `@keyframes marquee-scroll { from { transform: translateX(100%); } to { transform: translateX(-100%); } }`
-
-Speed map: slow = 20s, medium = 12s, fast = 6s.
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Marquee config UI in edit mode; marquee render below hero/nav |
-| `src/screens/ProfileScreen.css` | Marquee animation, ticker bar styles |
-
----
-
-## P2: Avatar Image
-
-### Problem
-
-Profile currently shows a letter avatar (first letter of display name). Users need to set an actual profile picture.
-
-### Requirements
-
-1. In edit mode → clicking the avatar opens an image URL input (or file picker if backend supports it)
-2. Store as `avatar_url` in ProfileSettings
-3. Render the image (with fallback to letter avatar on load error)
-4. Circular avatar with the theme's accent border
-
-### Implementation
-
-Add `avatar_url?: string` to `ProfileSettings` in `types/index.ts`.
-
-In ProfileScreen hero area, make the avatar clickable in edit mode:
+### Default widget set (new users / no saved layout)
 
 ```typescript
-{editMode ? (
-    <div className="profile-avatar-large profile-avatar-editable" onClick={() => setShowAvatarInput(true)}>
-        {profileSettings.avatar_url ? (
-            <img src={profileSettings.avatar_url} alt="avatar" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-        ) : (
-            <span>{displayName[0].toUpperCase()}</span>
-        )}
-        <div className="profile-avatar-edit-overlay">📷</div>
-    </div>
-) : (
-    <div className="profile-avatar-large">
-        {profileSettings.avatar_url ? (
-            <img src={profileSettings.avatar_url} alt="avatar" />
-        ) : (
-            <span>{displayName[0].toUpperCase()}</span>
-        )}
-    </div>
+const DEFAULT_WIDGETS: ProfileWidget[] = [
+    { id: 'posts',       type: 'posts',       title: 'Posts',       column: 'main',    order: 0, visible: true, config: {} },
+    { id: 'about',       type: 'about',       title: 'About Me',   column: 'sidebar', order: 0, visible: true, config: {} },
+    { id: 'links',       type: 'links',       title: 'Links',      column: 'sidebar', order: 1, visible: true, config: {} },
+    { id: 'connections', type: 'connections',  title: 'Connections', column: 'sidebar', order: 2, visible: true, config: {} },
+];
+```
+
+Minimal, sensible, clean. No marquee, no guestbook, no now-playing by default.
+
+### Default visual layout
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  [Avatar]  username                                       │
+│            did:web:bytescape.social:username      [Edit]  │
+└──────────────────────────────────────────────────────────┘
+┌────────────────────────────────┐ ┌──────────────────────┐
+│  📝 Posts                      │ │  👋 About Me         │
+│  [All] [🦋 Bsky] [📦 Archive] │ │  "Tell the world..." │
+│                                │ ├──────────────────────┤
+│  [post cards...]               │ │  🔗 Links            │
+│                                │ │  🦋 @handle.bsky...  │
+│                                │ │  🔗 mysite.com       │
+│  [Load More]                   │ ├──────────────────────┤
+│                                │ │  👥 Connections       │
+└────────────────────────────────┘ │  42 following         │
+                                   └──────────────────────┘
+```
+
+---
+
+## P0: New Default Layout + Core Fixes
+
+This is the structural rewrite. One commit, all core issues resolved.
+
+### Step 1: ProfileScreen rewrite
+
+Replace the Wall/Posts tab system with a 2-column widget layout.
+
+**Key changes from current pre-v18 code:**
+- Remove `ProfileTab` type and `profileTab` state (no more wall/posts tabs)
+- Add `editMode` state (boolean) with working toggle button
+- Add `widgets` state loaded from `get_profile_settings` (or default set)
+- Add `deleteConfirm` state for post deletion confirmation
+- Remove hardcoded marquee footer
+- Show posts directly in main column (no tab required)
+- Render sidebar widgets in right column using existing `ProfileBioSections` sub-renderers
+
+**Username fix:**
+```typescript
+const displayName = auth?.local_username || auth?.handle || 'Anonymous';
+```
+Display `local_username` (the Bytescape handle). Fall back to `handle` only if not set.
+
+**Auth-guarded edit mode:**
+```typescript
+{auth && (
+    <button className="profile-edit-btn" onClick={() => setEditMode(!editMode)}>
+        {editMode ? <><BsCheckLg /> Done</> : <><BsPencilFill /> Edit</>}
+    </button>
 )}
 ```
+No button visible when not logged in. No broken "Customize" button.
 
-### Files to modify
+### Step 2: FeedEntryCard `onDelete`
 
-| File | Changes |
-|------|---------|
-| `src/types/index.ts` | Add `avatar_url?: string` to `ProfileSettings` |
-| `src/screens/ProfileScreen.tsx` | Avatar image rendering + edit mode URL input |
-| `src/screens/ProfileScreen.css` | Avatar image styles, edit overlay |
+Add optional `onDelete?: (id: string) => void` prop. When present, show a small trash icon in the card header. ProfileScreen handles the confirmation dialog (inline bar above the card, same pattern as v18).
 
----
+### Step 3: CSS rewrite
 
-## P3: Custom Color Picker
+Rewrite `ProfileScreen.css` for the 2-column grid layout:
 
-### Problem
+```css
+.profile-content-grid {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 16px;
+    padding: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+}
 
-The 6 preset themes are good starting points, but some users want their own exact colors. Need a custom color option that lets them pick hero gradient colors and accent color.
-
-### Requirements
-
-1. Add a "Custom" option to the theme picker (7th swatch)
-2. When "Custom" is selected, show three color inputs:
-   - **Gradient Start** (hero background gradient start)
-   - **Gradient End** (hero background gradient end)
-   - **Accent Color** (text highlights, borders)
-3. Store in ProfileSettings as:
-   - `custom_gradient_start?: string`
-   - `custom_gradient_end?: string`
-   - `custom_accent?: string`
-4. Apply via CSS custom properties (same pattern as existing themes)
-
-### Implementation
-
-Add fields to `ProfileSettings` in `types/index.ts`.
-
-When `theme === 'custom'`, generate the theme vars dynamically:
-
-```typescript
-const customThemeVars = profileSettings.theme === 'custom' ? {
-    '--profile-hero-bg': `linear-gradient(135deg, ${profileSettings.custom_gradient_start || '#1a1a2e'} 0%, ${profileSettings.custom_gradient_end || '#16213e'} 100%)`,
-    '--profile-hero-accent': profileSettings.custom_accent || '#e2e8f0',
-    '--profile-card-bg': `rgba(0,0,0,0.3)`,
-} : {};
-```
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/types/index.ts` | Add `custom_gradient_start`, `custom_gradient_end`, `custom_accent` to `ProfileSettings` |
-| `src/screens/ProfileScreen.tsx` | Custom theme swatch + color inputs + dynamic theme vars |
-| `src/screens/ProfileScreen.css` | Custom theme picker layout |
-
----
-
-## P4: GIF Section Type
-
-### Problem
-
-User wants "a section full of gif buttons as a custom section" — old-web style GIF collections as profile decoration.
-
-### Requirements
-
-1. Add a new section type: `'gif-collection'` to `ProfileBioSections`
-2. In edit mode → user can add GIFs by URL (paste in a URL)
-3. GIFs display in a responsive grid (2-3 columns, auto-height)
-4. Clicking a GIF in view mode could do nothing (decoration) or open it full-size
-5. Store GIF URLs as JSON array in `section.content`
-
-### Implementation
-
-Add to `ProfileBioSections.tsx`:
-
-```typescript
-// In addableTypes:
-{ type: 'gif-collection', label: 'GIF Collection', emoji: '🖼️' },
-
-// New renderer:
-function renderGifCollection(section: ProfileSection) {
-    let gifs: string[] = [];
-    try { gifs = JSON.parse(section.content || '[]'); } catch { gifs = []; }
-    
-    if (gifs.length === 0) {
-        return <p className="bio-section-placeholder">
-            {editing ? 'Click ✏️ to add GIF URLs...' : 'No GIFs yet.'}
-        </p>;
-    }
-    
-    return (
-        <div className="bio-gif-grid">
-            {gifs.map((url, i) => (
-                <img key={i} src={url} alt="GIF" className="bio-gif-item" loading="lazy" />
-            ))}
-        </div>
-    );
+@media (max-width: 768px) {
+    .profile-content-grid { grid-template-columns: 1fr; }
 }
 ```
 
-GIF editor (in edit mode): list of URL inputs with add/remove, similar to the links editor.
-
-### Column placement
-
-GIF collections → `'full'` width (below the 3-column grid) for maximum visual impact.
+Keep existing hero styles (they look fine). Remove the marquee styles from default render. Add edit-mode control styles.
 
 ### Files to modify
 
 | File | Changes |
 |------|---------|
-| `src/components/ProfileBioSections.tsx` | Add 'gif-collection' section type, renderer, and editor |
-| `src/components/ProfileBioSections.css` | GIF grid styles (responsive, auto-height) |
+| `src/screens/ProfileScreen.tsx` | Rewrite: 2-column widget container, username fix, edit mode, post deletion |
+| `src/screens/ProfileScreen.css` | Rewrite: 2-column grid, widget card, edit controls |
+| `src/components/FeedEntryCard.tsx` | Add `onDelete` prop with trash icon |
+| `src/types/index.ts` | Add `ProfileWidget`, `WidgetType` types |
+
+### Migration from BioSections to Widgets
+
+The current `ProfileBioSections` uses its own `ProfileSection` model (`get_widget_data`/`save_widget_data`). The new widget system uses `ProfileWidget[]` stored inside `ProfileSettings` via `get_profile_settings`/`save_profile_settings`.
+
+**Strategy**: Keep `ProfileBioSections` as the content renderer for sidebar widgets. The new `ProfileScreen` manages layout; it renders each widget using the appropriate sub-component. For About, Links, Connections, Now Playing, Guestbook — delegate to extracted renderers from `ProfileBioSections`. For Posts — render directly in ProfileScreen (it already does this).
+
+This avoids rewriting all the section content logic in one go. Over time, individual widget renderers can be extracted into their own component files.
 
 ---
 
-## P5: Connections Expansion
+## P1: Widget Customization Panel + Themes
 
-### Problem
+### Edit mode widget controls
 
-Connections currently show 8 handles with a "+N more" badge. User wants searchable, filterable by source, and expandable to view all.
+When `editMode === true`:
 
-### Requirements
+1. Each widget card shows a small toolbar: ↑↓ (reorder within column), ✕ (remove widget)
+2. Bottom of each column shows an **"+ Add Widget"** button
+3. Clicking "Add Widget" shows a dropdown of available types (singletons filtered if already present)
+4. Hero area shows a **"Theme"** button that opens a theme/background panel
 
-1. **Expand/collapse**: "Show all" button that reveals full list (scrollable, max-height)
-2. **Search**: Filter input to search by handle name
-3. **Source filter**: Tabs or buttons for "All / Bluesky / P2P / Mastodon"
-4. **Better badges**: Show source icon with each connection (🦋 / 🤝 / 🐘)
+### Theme picker
 
-### Implementation
-
-Modify `renderConnections()` in `ProfileBioSections.tsx`:
+Offer 6 pre-built themes + custom:
 
 ```typescript
-const [connectionsExpanded, setConnectionsExpanded] = useState(false);
-const [connectionSearch, setConnectionSearch] = useState('');
-
-// Load ALL follows (not just 8) when expanded
-useEffect(() => {
-    if (connectionsExpanded && did) {
-        invoke<Array<...>>('list_follows', { actor: did })
-            .then(follows => setAllFollows(follows));
-    }
-}, [connectionsExpanded, did]);
+const THEMES: Record<string, { heroGradient?: string; accent?: string; cardBg?: string }> = {
+    default: {},
+    midnight: { heroGradient: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', accent: '#a78bfa', cardBg: 'rgba(30,27,75,0.7)' },
+    sunset:   { heroGradient: 'linear-gradient(135deg, #f12711, #f5af19)', accent: '#fef08a', cardBg: 'rgba(120,30,10,0.5)' },
+    forest:   { heroGradient: 'linear-gradient(135deg, #0b3d0b, #2d6a4f, #40916c)', accent: '#95d5b2', cardBg: 'rgba(11,61,11,0.5)' },
+    ocean:    { heroGradient: 'linear-gradient(135deg, #0077b6, #023e8a, #03045e)', accent: '#90e0ef', cardBg: 'rgba(2,62,138,0.5)' },
+    retrowave:{ heroGradient: 'linear-gradient(135deg, #0d0221, #4a0e4e, #cc5577)', accent: '#ff6ec7', cardBg: 'rgba(74,14,78,0.5)' },
+};
 ```
 
-Add a search bar + source filter tabs at top of connections section. Filtered list renders in a scrollable grid area.
+"Custom" unlocks 3 color inputs: gradient start, gradient end, accent. Store all in `ProfileSettings`.
+
+### Background options
+
+Radio: Default / Solid Color / Image URL / Pattern  
+Patterns: scanlines, dots, checkerboard, stars, diamonds (CSS-only).  
+Applied to `.profile-geocities` background.
+
+### Marquee widget
+
+Not on by default. User adds it via "Add Widget" → "Marquee Ticker". Widget config:
+- `text: string` — scrolling message
+- `color: string` — text color
+- `speed: 'slow' | 'medium' | 'fast'`
+
+CSS animation renders it. Speed map: slow=20s, medium=12s, fast=6s.
 
 ### Files to modify
 
 | File | Changes |
 |------|---------|
-| `src/components/ProfileBioSections.tsx` | Expand connections with search, filter, and full list |
-| `src/components/ProfileBioSections.css` | Expanded connections list styles, search bar |
+| `src/screens/ProfileScreen.tsx` | Widget controls, add widget dropdown, theme/background panel, marquee widget renderer |
+| `src/screens/ProfileScreen.css` | Edit controls, theme picker, background patterns, marquee animation |
 
 ---
 
-## P6: Richer Page Editor
+## P2: Rich Widget Content
 
-### Problem
+### Now Playing embeds
 
-Profile pages currently use a plain `<textarea>` for content. Users want richer editing closer to a Website builder.
+Auto-detect URL type and render inline embed:
 
-### Requirements
+- **Bandcamp**: `{artist}.bandcamp.com/(track|album)/{slug}` → Bandcamp embedded player
+- **SoundCloud**: `soundcloud.com/{user}/{track}` → SoundCloud widget
+- **Spotify**: `open.spotify.com/(track|album|playlist)/{id}` → Spotify embed
+- **YouTube**: `youtube.com/watch?v={id}` or `youtu.be/{id}` → YouTube embed
 
-1. **Markdown rendering**: Parse page content as Markdown and render it (use a lightweight parser — `marked` or manual regex for basic Markdown: headers, bold, italic, links, images, lists, code blocks)
-2. **Live preview**: Side-by-side or toggle between edit and preview
-3. **Embed support**: Accept iframe embed URLs (YouTube, Bandcamp, external sites) in page content — detect and render inline
-4. **Gallery page type**: The `gallery` content type exists in `ProfilePage` but isn't implemented. Add a simple grid layout for image URLs.
+The embed detection logic from v18's `detectEmbed()` was solid — reuse that pattern.
 
-### Markdown rendering approach
+### Links auto-populate
 
-To avoid adding a heavy dependency, implement a lightweight Markdown-to-HTML renderer:
-- `# heading` → `<h1>`
-- `**bold**` → `<strong>`
-- `*italic*` → `<em>`
-- `[text](url)` → `<a>`
-- `![alt](url)` → `<img>`
-- `` `code` `` → `<code>`
-- Lists (`-` / `1.`)
-- Line breaks
+When user has no custom links and has linked accounts (`list_linked_accounts`), auto-populate links widget with entries. Show "Auto-detected from linked accounts:" label.
 
-Or, if `marked` is already in `package.json`, use it. Check first: `grep marked package.json`.
+### GIF Collection widget
 
-### Gallery page type
-
-```typescript
-if (page.content_type === 'gallery') {
-    return renderGalleryPage();
-}
-
-function renderGalleryPage() {
-    let images: string[] = [];
-    try { images = JSON.parse(content || '[]'); } catch { images = []; }
-    
-    return (
-        <Win98Box title={`🖼️ ${page.title}`}>
-            {editMode && (/* URL input editor, similar to GIF editor */)}
-            <div className="profile-gallery-grid">
-                {images.map((url, i) => (
-                    <img key={i} src={url} className="profile-gallery-image" loading="lazy" />
-                ))}
-            </div>
-        </Win98Box>
-    );
-}
-```
+Stores array of GIF URLs in `config.gifs`. Displays in a responsive grid. Editor: URL inputs with add/remove (same pattern as links editor).
 
 ### Files to modify
 
 | File | Changes |
 |------|---------|
-| `src/components/ProfilePageEditor.tsx` | Add Markdown rendering, live preview toggle, embed detection, gallery page type |
-| `src/screens/ProfileScreen.css` | Gallery grid, preview panel, Markdown rendered content styles |
+| `src/components/ProfileBioSections.tsx` | Now Playing embed detection, links auto-populate, GIF collection renderer |
+| `src/components/ProfileBioSections.css` | Embed iframe sizing, GIF grid, auto-label |
+
+---
+
+## P3: Profile Pages Integration
+
+Wire the existing ProfilePageNav + ProfilePageEditor into the profile.
+
+- Page tab bar below hero (only visible when pages exist or in edit mode)
+- Clicking a page hides the widget grid and shows page content
+- "Home" tab returns to widgets
+- Edit mode: "Add Page" button with type selector (rich-text, blog, gallery)
+- Gallery page type: simple image URL grid (basic implementation)
+
+### Files to modify
+
+| File | Changes |
+|------|---------|
+| `src/screens/ProfileScreen.tsx` | Wire ProfilePageNav + ProfilePageEditor, page routing state |
+| `src/components/ProfilePageEditor.tsx` | Add gallery page type renderer |
+
+---
+
+## P4: Connections Expansion
+
+1. "Show all" button → scrollable full list (max-height with overflow)
+2. Search input filtering by handle text
+3. Source filter tabs: All / Bluesky / P2P / Mastodon
+4. Source icon per connection badge
+
+### Files to modify
+
+| File | Changes |
+|------|---------|
+| `src/components/ProfileBioSections.tsx` | Connections search, filter, expand |
+| `src/components/ProfileBioSections.css` | Expanded list, search bar styles |
+
+---
+
+## P5: Avatar Image
+
+1. Edit mode → clicking avatar shows URL input popup
+2. Store as `avatar_url` in ProfileSettings
+3. Render circular image with accent border; fallback to letter avatar on error
+4. Add `avatar_url?: string` to ProfileSettings type
+
+### Files to modify
+
+| File | Changes |
+|------|---------|
+| `src/types/index.ts` | Add `avatar_url` to ProfileSettings |
+| `src/screens/ProfileScreen.tsx` | Avatar image rendering + edit overlay |
+| `src/screens/ProfileScreen.css` | Avatar image, edit overlay styles |
+
+---
+
+## Implementation Guidance
+
+### What NOT to do (lessons from v18)
+
+- **Don't combine everything in one massive commit.** Use the recommended commit sequence below.
+- **Don't force features on by default.** Every customization feature is opt-in via the widget system.
+- **Don't inline CSS extensively.** Use classes. The pre-v18 code had too many inline style objects.
+- **Don't remove features without providing the replacement in the same commit.**
+- **Don't over-engineer.** 6 presets + custom is plenty for themes. The widget system is a flat array, not a nested tree.
+
+### Recommended commit sequence
+
+1. **P0**: New default layout + username fix + edit mode + post deletion (the big structural change)
+2. **P1**: Widget customization panel + themes + backgrounds + marquee opt-in
+3. **P2**: Rich widget content (embeds, auto-links, GIFs)
+4. **P3**: Profile pages integration
+5. **P4+P5**: Connections expansion + avatar (can combine)
+
+Each commit must pass: `npx tsc --noEmit` (0 errors) + `pnpm test -- --run` (all pass).
 
 ---
 
 ## Verification
 
-Before committing:
+Before each commit:
 
 ```bash
 cd bytescape
