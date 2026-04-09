@@ -565,6 +565,9 @@ pub fn run() {
             commands::profile::save_profile_page,
             commands::profile::get_profile_pages,
             commands::profile::delete_profile_page,
+            // Avatar & profile export (v19)
+            commands::profile::save_avatar_image,
+            commands::profile::export_profile_data,
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
             // Classification commands

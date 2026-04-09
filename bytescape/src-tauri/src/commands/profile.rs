@@ -30,7 +30,7 @@
 //! - Frontend: `src/screens/ProfileEditorScreen.tsx` — GrapesJS editor
 //! - Frontend: `src/components/Guestbook.tsx` — guestbook UI
 
-use tauri::State;
+use tauri::{State, Manager};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -417,4 +417,194 @@ pub async fn delete_profile_page(
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
     db.delete_profile_page(&page_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Avatar Image Storage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MAX_AVATAR_SIZE: usize = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_AVATAR_MIMES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/// Save an avatar image to local storage.
+///
+/// Validates MIME type (png/jpeg/gif/webp only) and file size (< 5 MB),
+/// writes the image to `app_data_dir/avatars/{hash}.{ext}`, and returns
+/// a `file://` URL the frontend can use to display the image.
+///
+/// # Parameters
+/// - `image_data` — Raw image bytes (base64-decoded by Tauri's serde bridge)
+/// - `mime_type` — MIME type string (e.g. "image/png")
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('save_avatar_image', { imageData: [...], mimeType: 'image/png' })`
+#[tauri::command]
+pub async fn save_avatar_image(
+    image_data: Vec<u8>,
+    mime_type: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Validate MIME type
+    let mime_lower = mime_type.to_lowercase();
+    if !ALLOWED_AVATAR_MIMES.contains(&mime_lower.as_str()) {
+        return Err(format!(
+            "Unsupported image type '{}'. Allowed: png, jpeg, gif, webp",
+            mime_type
+        ));
+    }
+
+    // Validate size
+    if image_data.len() > MAX_AVATAR_SIZE {
+        return Err(format!(
+            "Avatar image too large ({:.1} MB). Maximum is 5 MB.",
+            image_data.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    if image_data.is_empty() {
+        return Err("Avatar image data is empty".to_string());
+    }
+
+    // Determine file extension from MIME
+    let ext = match mime_lower.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => return Err("Unsupported image type".to_string()),
+    };
+
+    // Hash the image data for a content-addressed filename
+    let hash = blake3::hash(&image_data);
+    let filename = format!("{}.{}", hash.to_hex(), ext);
+
+    // Write to app_data_dir/avatars/
+    let app_data_dir = state.app_handle.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let avatars_dir = app_data_dir.join("avatars");
+    std::fs::create_dir_all(&avatars_dir)
+        .map_err(|e| format!("Failed to create avatars directory: {}", e))?;
+
+    let file_path = avatars_dir.join(&filename);
+    std::fs::write(&file_path, &image_data)
+        .map_err(|e| format!("Failed to write avatar file: {}", e))?;
+
+    // Return a file:// URL the frontend can display
+    let url = tauri::Url::from_file_path(&file_path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", file_path.display()));
+
+    Ok(url)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Profile Data Export (composite bundle for hosted profile publishing)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Composite profile data bundle for export/publishing.
+///
+/// Contains everything needed to reconstruct a user's profile on a hosted domain:
+/// settings, pages, sections, and avatar. The v20 publish flow will serialize
+/// this and push it to the user's `did:web` domain.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProfileExport {
+    /// Profile settings JSON (theme, background, widget layout, etc.)
+    pub settings: Option<serde_json::Value>,
+    /// Profile pages as JSON values
+    pub pages: Vec<serde_json::Value>,
+    /// Profile sections (about, links, connections, etc.)
+    pub sections: Vec<ProfileSection>,
+    /// Avatar URL — either an external URL or base64 data URL for local images
+    pub avatar: Option<String>,
+    /// ISO 8601 timestamp of when the export was generated
+    pub exported_at: String,
+}
+
+/// Export the complete profile as a single composite data structure.
+///
+/// Bundles profile settings, pages, sections, and avatar into one JSON-serializable
+/// struct. If the avatar is stored locally (file:// path in settings), the image
+/// bytes are inlined as a base64 data URL for portability.
+///
+/// # Tauri IPC
+/// Frontend invokes: `invoke('export_profile_data')`
+#[tauri::command]
+pub async fn export_profile_data(
+    state: State<'_, AppState>,
+) -> Result<ProfileExport, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+
+    // 1. Load profile settings
+    let settings_json = db.get_profile_settings().await?;
+    let settings: Option<serde_json::Value> = settings_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok());
+
+    // 2. Load profile pages
+    let page_strings = db.get_profile_pages().await?;
+    let pages: Vec<serde_json::Value> = page_strings
+        .iter()
+        .filter_map(|s| serde_json::from_str(s).ok())
+        .collect();
+
+    // 3. Load profile sections
+    let sections = db.get_profile_sections().await?;
+
+    // 4. Resolve avatar — inline local files as base64 data URLs
+    let avatar = resolve_avatar_for_export(&settings).await;
+
+    // 5. Bundle
+    let exported_at = chrono::Utc::now().to_rfc3339();
+
+    Ok(ProfileExport {
+        settings,
+        pages,
+        sections,
+        avatar,
+        exported_at,
+    })
+}
+
+/// Resolve avatar URL for export. If the avatar is a local file, read it and
+/// encode as a base64 data URL so the export is self-contained.
+async fn resolve_avatar_for_export(settings: &Option<serde_json::Value>) -> Option<String> {
+    let settings = settings.as_ref()?;
+    let avatar_url = settings.get("avatar_url")?.as_str()?;
+
+    if avatar_url.is_empty() {
+        return None;
+    }
+
+    // External URLs pass through as-is
+    if avatar_url.starts_with("http://") || avatar_url.starts_with("https://") {
+        return Some(avatar_url.to_string());
+    }
+
+    // Local file:// URL — try to read and inline as data URL
+    let file_path = if avatar_url.starts_with("file://") {
+        avatar_url.strip_prefix("file://").unwrap_or(avatar_url)
+    } else {
+        avatar_url
+    };
+
+    let path = std::path::Path::new(file_path);
+    if !path.exists() {
+        return Some(avatar_url.to_string());
+    }
+
+    let bytes = std::fs::read(path).ok()?;
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    };
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Some(format!("data:{};base64,{}", mime, b64))
 }
