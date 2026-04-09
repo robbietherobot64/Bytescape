@@ -10,6 +10,7 @@ import { QuoteRepostModal } from './QuoteRepostModal';
 import { RepostModal } from './RepostModal';
 import { safeHostname, looksLikeGif } from '../utils/content';
 import { RichText } from './RichText';
+import { BsTrash } from 'react-icons/bs';
 import {
     RepostIcon,
     parseTaggedPeople,
@@ -80,6 +81,7 @@ interface FeedEntryCardProps {
     resolveMediaPath?: (p: string) => string;
     mediaDir?: string;
     onEntryUpdated?: (id: string, audiences: Audience[]) => void;
+    onDelete?: (id: string) => void;
     isQuote?: boolean;
 }
 
@@ -93,7 +95,7 @@ interface FeedEntryCardProps {
  * - Uses feed helper exports from `./feed` to keep layout primitives consistent across views.
  * - Emits browser-level `navigate-hashtag` custom events consumed by feed navigation listeners.
  */
-function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
+function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, onDelete, isQuote = false }: FeedEntryCardProps) {
     // ═══════════════════════════════════════════════════════════════════════════
     // Local UI state and derived presentation data
     // ═══════════════════════════════════════════════════════════════════════════
@@ -368,6 +370,15 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                 </div>
                 {!isQuote && (
                     <div className="header-actions">
+                        {onDelete && (
+                            <button
+                                className="post-delete-btn"
+                                onClick={(e) => { e.stopPropagation(); onDelete(entry.id); }}
+                                title="Delete post"
+                            >
+                                <BsTrash size={12} />
+                            </button>
+                        )}
                         <AudiencePills
                             source={entry.source}
                             originalTimestamp={entry.timestamp}
@@ -607,6 +618,7 @@ export const FeedEntryCard = React.memo(FeedEntryCardInner, (prev, next) => {
         prev.entry.like_count === next.entry.like_count &&
         prev.entry.repost_count === next.entry.repost_count &&
         prev.entry.reply_count === next.entry.reply_count &&
-        prev.isQuote === next.isQuote
+        prev.isQuote === next.isQuote &&
+        !!prev.onDelete === !!next.onDelete
     );
 });

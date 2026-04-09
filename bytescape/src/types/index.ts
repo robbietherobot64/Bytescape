@@ -698,6 +698,20 @@ export interface LinkedFeedSource {
     connected: boolean;
 }
 
+// ─── Profile Widget System (v19) ───
+
+export type WidgetType = 'posts' | 'about' | 'now-playing' | 'links' | 'connections' | 'guestbook' | 'gif-collection' | 'marquee' | 'custom';
+
+export interface ProfileWidget {
+    id: string;
+    type: WidgetType;
+    title: string;
+    column: 'main' | 'sidebar';
+    order: number;
+    visible: boolean;
+    config: Record<string, unknown>;
+}
+
 // ─── Profile Types (v18a — Profile Polish) ───
 
 /** Profile settings (theme, background, customization preferences). */
