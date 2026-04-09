@@ -38,6 +38,8 @@ function setupDefaultMocks() {
                 return Promise.resolve([
                     { did: 'did:plc:xyz', handle: 'carol.bsky.social' },
                 ]);
+            case 'list_linked_accounts':
+                return Promise.resolve([]);
             default:
                 return Promise.resolve(null);
         }

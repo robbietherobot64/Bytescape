@@ -42,7 +42,7 @@ export interface ProfileLink {
 /** Public section model persisted in widget data JSON. */
 export interface ProfileSection {
     id: string;
-    type: 'about' | 'connections' | 'now-playing' | 'guestbook' | 'links' | 'custom';
+    type: 'about' | 'connections' | 'now-playing' | 'guestbook' | 'links' | 'gif-collection' | 'custom';
     title: string;
     content: string;
     order: number;
@@ -72,6 +72,7 @@ const COLUMN_MAP: Record<string, 'left' | 'center' | 'right' | 'full'> = {
     links: 'left',
     guestbook: 'center',
     connections: 'right',
+    'gif-collection': 'center',
     custom: 'full',
 };
 
@@ -85,6 +86,36 @@ function getColumnKey(type: string): 'left' | 'center' | 'right' | 'full' {
 
 function generateId(): string {
     return `section-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Detect embeddable media URLs and return an iframe-compatible embed URL. */
+function detectEmbed(url: string): { url: string; label: string } | null {
+    const trimmed = url.trim();
+
+    // Bandcamp: {artist}.bandcamp.com/(track|album)/{slug}
+    const bcMatch = trimmed.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/(track|album)\/([^/?#]+)/i);
+    if (bcMatch) {
+        return { url: `https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/transparent=true/`, label: `Bandcamp · ${bcMatch[1]}` };
+    }
+
+    // SoundCloud: soundcloud.com/{user}/{track}
+    if (/^https?:\/\/(www\.)?soundcloud\.com\/[^/]+\/[^/]+/i.test(trimmed)) {
+        return { url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false`, label: 'SoundCloud' };
+    }
+
+    // Spotify: open.spotify.com/(track|album|playlist)/{id}
+    const spMatch = trimmed.match(/^https?:\/\/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/i);
+    if (spMatch) {
+        return { url: `https://open.spotify.com/embed/${spMatch[1]}/${spMatch[2]}`, label: `Spotify · ${spMatch[1]}` };
+    }
+
+    // YouTube: youtube.com/watch?v={id} or youtu.be/{id}
+    const ytMatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+    if (ytMatch) {
+        return { url: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`, label: 'YouTube' };
+    }
+
+    return null;
 }
 
 function parseBioData(raw: string | null): ProfileSection[] | null {
@@ -146,6 +177,9 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
     const [contactCount, setContactCount] = useState(0);
     const [connectionHandles, setConnectionHandles] = useState<string[]>([]);
 
+    // Linked accounts for auto-populate
+    const [linkedAccounts, setLinkedAccounts] = useState<Array<{ display_handle: string; protocol: string }>>([]);
+
     // Add-section menu ref for click-outside
     const addMenuRef = useRef<HTMLDivElement>(null);
 
@@ -184,6 +218,13 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
             .then((contacts) => setContactCount(contacts.length))
             .catch(() => {});
     }, [did]);
+
+    // Load linked accounts for links auto-populate
+    useEffect(() => {
+        invoke<Array<{ display_handle: string; protocol: string }>>('list_linked_accounts')
+            .then(setLinkedAccounts)
+            .catch(() => {});
+    }, []);
 
     // Click-outside to close add menu
     useEffect(() => {
@@ -278,7 +319,7 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
             id: generateId(),
             type,
             title,
-            content: type === 'links' ? '[]' : '',
+            content: (type === 'links' || type === 'gif-collection') ? '[]' : '',
             order: editSections.length,
             visible: true,
         };
@@ -433,6 +474,8 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
                 return renderGuestbook();
             case 'links':
                 return renderLinks(section);
+            case 'gif-collection':
+                return renderGifCollection(section);
             case 'custom':
                 return renderCustom(section);
             default:
@@ -501,6 +544,25 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
                 </div>
             );
         }
+
+        const embed = detectEmbed(section.content);
+        if (embed) {
+            return (
+                <div className="bio-now-playing">
+                    <div className="bio-embed-wrapper">
+                        <iframe
+                            src={embed.url}
+                            title={embed.label}
+                            className="bio-embed-iframe"
+                            allow="autoplay; encrypted-media"
+                            sandbox="allow-scripts allow-same-origin allow-popups"
+                        />
+                    </div>
+                    <span className="bio-now-playing-text bio-now-playing-source">{embed.label}</span>
+                </div>
+            );
+        }
+
         return (
             <div className="bio-now-playing">
                 <span className="bio-now-playing-icon">💿</span>
@@ -567,6 +629,29 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
             links = JSON.parse(section.content || '[]');
         } catch {
             links = [];
+        }
+
+        const hasCustomLinks = links.length > 0;
+
+        if (!hasCustomLinks && linkedAccounts.length > 0) {
+            return (
+                <div className="bio-links-list">
+                    <span className="bio-links-auto-label">Auto-detected from linked accounts:</span>
+                    {linkedAccounts.map((acct, i) => {
+                        const emoji = acct.protocol === 'bluesky' ? '🦋' : acct.protocol === 'mastodon' ? '🐘' : '🔗';
+                        return (
+                            <div key={i} className="bio-link-item">
+                                {emoji} <span className="bio-link-handle">{acct.display_handle}</span>
+                            </div>
+                        );
+                    })}
+                    {editing && (
+                        <p className="bio-section-placeholder" style={{ marginTop: 6 } as React.CSSProperties}>
+                            Click ✏️ to add custom links
+                        </p>
+                    )}
+                </div>
+            );
         }
 
         if (links.length === 0) {
@@ -652,6 +737,79 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         );
     }
 
+    function renderGifCollection(section: ProfileSection) {
+        let gifs: string[] = [];
+        try {
+            gifs = JSON.parse(section.content || '[]');
+        } catch {
+            gifs = [];
+        }
+
+        if (editing && editingSection === section.id) {
+            return renderGifEditor(section, gifs);
+        }
+
+        if (gifs.length === 0) {
+            return (
+                <p className="bio-section-placeholder">
+                    {editing ? 'Click ✏️ to add GIFs...' : 'No GIFs yet.'}
+                </p>
+            );
+        }
+
+        return (
+            <div className="bio-gif-grid">
+                {gifs.map((url, i) => (
+                    <img key={i} src={url} alt="" className="bio-gif-item" loading="lazy" />
+                ))}
+            </div>
+        );
+    }
+
+    function renderGifEditor(section: ProfileSection, gifs: string[]) {
+        const updateGif = (index: number, value: string) => {
+            const updated = [...gifs];
+            updated[index] = value;
+            updateSectionContent(section.id, JSON.stringify(updated));
+        };
+        const addGif = () => {
+            updateSectionContent(section.id, JSON.stringify([...gifs, '']));
+        };
+        const removeGif = (index: number) => {
+            updateSectionContent(section.id, JSON.stringify(gifs.filter((_, i) => i !== index)));
+        };
+
+        return (
+            <div>
+                {gifs.map((url, i) => (
+                    <div key={i} className="bio-link-edit-row">
+                        <input
+                            className="bio-link-input"
+                            type="text"
+                            placeholder="https://example.com/funny.gif"
+                            value={url}
+                            onChange={(e) => updateGif(i, e.target.value)}
+                        />
+                        <button
+                            className="bio-toolbar-btn bio-toolbar-btn--cancel"
+                            onClick={() => removeGif(i)}
+                            style={{ padding: '4px 8px' } as React.CSSProperties}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                ))}
+                <button
+                    className="bio-toolbar-btn"
+                    onClick={addGif}
+                    style={{ marginTop: 4, padding: '4px 10px', fontSize: '0.8rem' } as React.CSSProperties}
+                >
+                    <BsPlusLg size={10} /> Add GIF
+                </button>
+            </div>
+        );
+    }
+
     function renderCustom(section: ProfileSection) {
         if (!section.content) {
             return (
@@ -686,6 +844,7 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
         { type: 'now-playing', label: 'Now Playing', emoji: '🎵' },
         { type: 'guestbook', label: 'Guestbook', emoji: '💬' },
         { type: 'links', label: 'Links', emoji: '🔗' },
+        { type: 'gif-collection', label: 'GIF Collection', emoji: '🖼️' },
         { type: 'custom', label: 'Custom Section', emoji: '✨' },
     ];
 

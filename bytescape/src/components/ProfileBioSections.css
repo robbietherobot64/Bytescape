@@ -419,3 +419,54 @@
     background: rgba(124, 58, 237, 0.15);
     color: var(--accent-purple, #7c3aed);
 }
+
+/* ─── Now Playing Embeds ─── */
+.bio-embed-wrapper {
+    position: relative;
+    width: 100%;
+    padding-bottom: 56.25%;
+    height: 0;
+    overflow: hidden;
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+.bio-embed-iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+.bio-now-playing-source {
+    font-size: 0.75rem;
+    color: var(--text-muted, #71717a);
+}
+
+/* ─── Links Auto-Populate ─── */
+.bio-links-auto-label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--text-muted, #71717a);
+    font-style: italic;
+    margin-bottom: 6px;
+}
+.bio-link-handle {
+    color: var(--text-secondary, #a1a1aa);
+    font-size: 0.84rem;
+}
+
+/* ─── GIF Collection ─── */
+.bio-gif-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 4px;
+}
+.bio-gif-item {
+    width: 100%;
+    height: auto;
+    border-radius: 3px;
+    display: block;
+    object-fit: cover;
+    max-height: 120px;
+}
