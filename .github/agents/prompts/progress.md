@@ -4,6 +4,26 @@
 
 ---
 
+## 📋 PM — Queue Notice: Post-Profile Architecture Phase (2026-04-09)
+
+**User direction:** provide one general architecture source file PM can use to build the next prompts after profile-hosting phase.
+
+### PM scheduling decision
+
+- Reserved as post-profile phase, queued and not active.
+- Start gate: begin only after v20 profile-hosted identity deliverables are accepted.
+
+### PM source file created
+
+- `.github/agents/prompts/post-profile-phase-architecture.md`
+
+### Phase objective (queued)
+
+- Build RSS ingestion foundations and candidate-review workflow for archive-derived subscriptions.
+- Keep legal/policy controls and bounded feed performance as hard requirements.
+
+---
+
 ## 📋 PM — Sprint v20 Initialization: Hosted Identity (2026-04-09)
 
 **Trigger:** User feedback now prioritizes hosted URL-based identity: public profile hosting plus DID document publication for cross-platform verification.
@@ -34,6 +54,57 @@
 - Settings still shows `Bytescape Social` placeholders
 - Identity setup still stops after username selection
 - No publish server or publish commands exist yet in committed state
+
+---
+
+## 🎨 Frontend — Sprint v19: Profile Customization & Website Builder Foundations (2026-04-09)
+
+**Commits:** `3a899e2`, `df592e7`, `a614e4e`, `648f43e`, `6213f59` on `main`
+**Verification at PM sprint initialization:** `cargo check` clean, `npx tsc --noEmit` clean, `pnpm test -- --run` 273/273 pass
+**Sprint prompt:** `frontend-sprint-v19.md` (archived)
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0 | Layout | 2-column profile layout, Bytescape username display, working edit mode, post deletion, marquee removed from default view | ✅ |
+| P1 | Customization | Theme picker, background options, marquee opt-in | ✅ |
+| P2 | Rich widgets | Bandcamp/SoundCloud/Spotify/YouTube embeds, linked-account auto-links, GIF collection support | ✅ |
+| P3 | Pages | Profile page navigation, page editor, blog and gallery page support | ✅ |
+| P4 | Connections | Search, source filtering, expandable full list, richer navigation | ✅ |
+| P5 | Avatar | Avatar image editing and rendering wired into profile settings | ✅ |
+
+### Files Created
+- `src/components/ProfilePageNav.tsx` — Page tab navigation
+- `src/components/ProfilePageEditor.tsx` — Inline page content editor
+- `src/hooks/useProfilePages.ts` — Profile pages CRUD hook
+
+### Files Modified
+- `src/screens/ProfileScreen.tsx` — Profile layout, edit flow, pages, avatar, publish-ready hero state
+- `src/screens/ProfileScreen.css` — Layout, themes, page nav, avatar and connections styling
+- `src/components/ProfileBioSections.tsx` — Embeds, links, GIFs, connections search/filter/expand
+- `src/components/ProfileBioSections.css` — Sidebar layout, embed and connections styles
+- `src/components/FeedEntryCard.tsx` — `onDelete` support for profile post removal
+- `src/types/index.ts` — Profile settings and profile publishing support types
+
+---
+
+## 🔧 Backend — Sprint v19: Profile Backend Support & Publish Prep (2026-04-09)
+
+**Commit:** `1f6722b` on `main`
+**Verification at PM sprint initialization:** `cargo check` clean, `npx tsc --noEmit` clean, `pnpm test -- --run` 273/273 pass
+**Sprint prompt:** `backend-sprint-v19.md` (archived)
+
+### Deliverables
+
+| # | Priority | Description | Status |
+|---|----------|-------------|--------|
+| P0 | Avatar storage | `save_avatar_image` validates MIME/size, stores content-addressed avatar files, returns local URL | ✅ |
+| P1 | Profile export | `export_profile_data` bundles settings, pages, widgets, and avatar into one publishable structure | ✅ |
+
+### Files Modified
+- `src-tauri/src/commands/profile.rs` — Avatar storage and export commands
+- `src-tauri/src/lib.rs` — Registered profile publish-prep commands
 
 ---
 

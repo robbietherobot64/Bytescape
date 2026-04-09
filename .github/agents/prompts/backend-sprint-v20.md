@@ -1,224 +1,10 @@
-# Backend Sprint v20 — Hosted Identity Publish Service
-
-**Sprint**: v20 (Hosted Identity)  
-**Track**: A (Backend — Rust)  
-**Date**: 2026-04-09  
-**Previous sprint**: v19 delivered avatar storage and profile export support  
-**Committed HEAD at prompt time**: `6213f59`
-
----
-
-## Sprint Goal
-
-Stand up the first hosted identity pipeline for `bytescape.social`.
-
-Scope for this sprint:
-
-1. Publish a user's DID document to the hosted server
-2. Publish a user's public profile data to the hosted server
-3. Expose public resolution endpoints for profile, DID doc, and WebFinger
-4. Let the Tauri app check publish status and republish
-
-This sprint is **not** full AT Protocol PDS hosting and **not** full ActivityPub federation migration. Those come later.
-
-### User feedback driving this sprint
-
-> "We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification. See notes on next phase."
-
----
-
-## Current committed state
-
-| Component | File | State |
-|---|---|---|
-| Ed25519 key generation + `did:key` derivation | `bytescape/src-tauri/src/keychain_encrypted.rs` | Working |
-| `did:web` string formatting | `bytescape/src-tauri/src/keychain_encrypted.rs`, `auth.rs` | Exists, but no hosted DID document yet |
-| WebFinger JSON generation helper | `bytescape/src-tauri/src/activitypub/webfinger.rs` | Exists and should be reused where practical |
-| Avatar persistence | Track A commit `1f6722b` | `save_avatar_image` exists |
-| Composite profile export | Track A commit `1f6722b` | `export_profile_data` exists and should be reused |
-| Hosted publish commands | `bytescape/src-tauri/src/` | Not implemented |
-| Public hosted server | `bytescape/server/` | Does not exist |
-
-### Working tree warning
-
-There are uncommitted backend changes in `profile.rs` and `lib.rs`. Their source is undetermined. Do **not** assume they are part of the approved sprint direction. Work from the committed state above.
-
----
-
-## P0: Create the hosted identity server crate
-
-Create a standalone Rust server crate at:
-
-`bytescape/server/`
-
-### Recommended structure
-
-```text
-bytescape/server/
-├── Cargo.toml
-└── src/
-    ├── main.rs
-    ├── config.rs
-    ├── storage.rs
-    ├── auth.rs
-    ├── identity.rs
-    ├── webfinger.rs
-    ├── atproto_did.rs
-    ├── profile.rs
-    └── publish.rs
-```
-
-### Minimal design
-
-- `axum` server
-- env-driven config
-- file-based storage for single-user-first launch
-- bearer token auth for publish API
-
-### Config
-
-Read from env:
-
-- `DOMAIN`
-- `BIND_ADDR`
-- `DATA_DIR`
-- `PUBLISH_SECRET`
-
-Fail fast with clear errors when required config is missing.
-
----
-
-## P1: Public resolver endpoints
-
-Implement the first hosted identity endpoints:
-
-1. `GET /health`
-2. `GET /.well-known/webfinger?resource=acct:{username}@bytescape.social`
-3. `GET /.well-known/atproto-did`
-4. `GET /{username}/did.json`
-5. `GET /@{username}`
-
-### Requirements
-
-- `/{username}/did.json` must serve a real DID document for `did:web:bytescape.social:{username}`
-- `/.well-known/webfinger` must resolve `acct:{username}@bytescape.social`
-- `/@{username}` must serve a public HTML profile page
-- If practical in this sprint, `/@{username}` should content-negotiate AP JSON when `Accept` requests it. If not, keep HTML first and document the limitation.
-
-### DID document expectations
-
-Use the existing Ed25519 public key material and generate a document with:
-
-- `id = did:web:bytescape.social:{username}`
-- multikey verification method
-- `alsoKnownAs` links for the hosted profile and hosted acct identity
-- service entries for at least the public profile endpoint
-
----
-
-## P2: Publish API
-
-Implement authenticated endpoints:
-
-1. `POST /api/publish/did`
-2. `POST /api/publish/profile`
-3. `GET /api/publish/status`
-
-### Auth model
-
-Use bearer-token auth with the configured `PUBLISH_SECRET`.
-
-### Behavior
-
-- `publish/did` validates username + key data, then writes `did.json`
-- `publish/profile` writes the hosted public profile payload
-- `publish/status` reports whether DID, profile, and WebFinger are active
-
-### Response shape
-
-Keep it aligned with the frontend needs:
-
-```json
-{
-  "username": "alice",
-  "did_published": true,
-  "did_url": "https://bytescape.social/alice/did.json",
-  "profile_published": true,
-  "profile_url": "https://bytescape.social/@alice",
-  "webfinger_active": true,
-  "last_published_at": "2026-04-09T12:00:00Z"
-}
-```
-
----
-
-## P3: Tauri publish commands
-
-Add the frontend-facing commands needed to drive the hosted identity UI:
-
-1. `publish_identity`
-2. `check_publish_status`
-3. `set_publish_secret`
-
-### Implementation requirements
-
-- Reuse `export_profile_data` instead of rebuilding profile payload assembly from scratch
-- Store the publish secret in the encrypted keychain
-- Keep existing keychains backward-compatible by defaulting the new field to `None`
-- Register all new commands in `bytescape/src-tauri/src/lib.rs`
-
-### Suggested flow for `publish_identity`
-
-1. Load username and public key material from the keychain
-2. Load exported profile data via `export_profile_data`
-3. Load the publish secret from keychain storage
-4. POST DID payload to the hosted server
-5. POST profile payload to the hosted server
-6. Return a compact `PublishResult`
-
----
-
-## P4: Keep the sprint narrowly scoped
-
-Do not expand this sprint into:
-
-- full Bluesky PDS implementation
-- ActivityPub inbox/outbox delivery
-- desktop relay hosting
-- custom-domain onboarding
-- account migration flows
-
-Those can be planned once hosted DID + profile publish is live.
-
----
-
-## Verification
-
-Before committing:
-
-```bash
-cd bytescape/server && cargo check
-cd ../src-tauri && cargo check
-cd .. && npx tsc --noEmit
-pnpm test -- --run
-```
-
-Document the sprint result in `/.github/agents/prompts/progress.md`.
-
----
-
-## Track boundaries
-
-- Track A owns: `bytescape/src-tauri/src/` and `bytescape/server/`
-- Track B owns the hosted identity UI in `bytescape/src/`
-- Shared frontend type additions should stay minimal and coordinated
-- Do not build around the current uncommitted backend WIP in the working tree# Backend Sprint v20 — Identity Resolver Server & Publish API
+# Backend Sprint v20 — Identity Resolver Server & Publish API
 
 **Sprint**: v20 (Go-Live: Hosted Identity)  
 **Track**: A (Backend — Rust)  
 **Date**: 2026-04-09  
-**Previous sprint**: v19 (profile customization deepening — delivered)  
-**HEAD at prompt time**: `b7fca4e`  
+**Previous sprint**: v19 (profile backend support — delivered in `1f6722b`)  
+**HEAD at prompt time**: `6213f59`  
 **Decision**: Single-user launch first (fast go-live, harden later)
 
 ---
@@ -254,6 +40,8 @@ The Tauri desktop app publishes identity data to the server via an authenticated
 | Provisioning stubs | `commands/relay.rs:33-165` | ⚠️ All return errors — replace in P3 |
 | Profile settings persistence | `commands/profile.rs` | ✅ Working (v18a) |
 | Profile pages CRUD | `commands/profile.rs` | ✅ Working (v18a) |
+| Avatar image storage | `commands/profile.rs` | ✅ Working (`save_avatar_image`, v19) |
+| Composite profile export | `commands/profile.rs` | ✅ Working (`export_profile_data`, v19) |
 | Vault item deletion | `commands/vault.rs` | ✅ Working (v18a) |
 
 ### What doesn't exist (must build)
@@ -551,12 +339,13 @@ pub async fn publish_identity(
 ```
 
 This command:
-1. Reads the user's keychain (username, public key, display name, bio)
+1. Reads the user's keychain (username, public key, publish secret)
 2. Reads the publish secret from the keychain
-3. Constructs the DID document payload
-4. POSTs to `https://bytescape.social/api/publish/did`
-5. POSTs to `https://bytescape.social/api/publish/profile`
-6. Returns the publish status
+3. Reuses `export_profile_data` for settings/pages/avatar payload instead of rebuilding profile export logic
+4. Constructs the DID document payload
+5. POSTs to `https://bytescape.social/api/publish/did`
+6. POSTs to `https://bytescape.social/api/publish/profile`
+7. Returns the publish status
 
 ### New command: `check_publish_status`
 
@@ -620,7 +409,8 @@ Add `publish_secret: Option<String>` to `AuthData` in `keychain_encrypted.rs`. H
 | File | Changes |
 |------|---------|
 | `src-tauri/src/keychain_encrypted.rs` | Add `publish_secret` to `AuthData` |
-| `src-tauri/src/commands/relay.rs` | Replace stubs with real publish calls |
+| `src-tauri/src/commands/profile.rs` | Add `publish_identity`, `check_publish_status`, `set_publish_secret`; reuse `export_profile_data` |
+| `src-tauri/src/commands/relay.rs` | Replace provisioning stubs with aliases or updated messaging |
 | `src-tauri/src/lib.rs` | Register new commands |
 
 ### New Tauri commands
