@@ -4,6 +4,39 @@
 
 ---
 
+## 📋 PM — Sprint v20 Initialization: Hosted Identity (2026-04-09)
+
+**Trigger:** User feedback now prioritizes hosted URL-based identity: public profile hosting plus DID document publication for cross-platform verification.
+
+### Pre-sprint checks
+
+- Read `user-feedback` and `profile-feedback`
+- Checked recent git history on `main`
+- Investigated uncommitted changes in profile-related frontend files and `src-tauri/src/commands/profile.rs` / `lib.rs`
+- Found no reliable attribution for those working-tree changes; treating them as anomalous and excluding them from sprint planning
+- Verified committed baseline builds:
+  - `npx tsc --noEmit` ✅
+  - `pnpm test -- --run` ✅ `273/273` tests passed
+  - `cargo check` ✅
+
+### Sprint setup actions
+
+1. Restored active sprint planning for hosted identity as **v20** using the archived v20 direction as the base.
+2. Wrote fresh active prompts:
+   - `frontend-sprint-v20.md` — hosted identity UI in Settings, IdentitySetupModal, and ProfileScreen
+   - `backend-sprint-v20.md` — hosted publish server, public identity endpoints, Tauri publish commands
+3. Tightened scope to **single-user hosted DID + profile publish first**. Deferred PDS hosting, relay hosting, and full federation expansion to later sprints.
+
+### Objective current state for v20 kickoff
+
+- v19 profile work is committed through `6213f59`
+- Track A already landed `save_avatar_image` and `export_profile_data` in `1f6722b`
+- Settings still shows `Bytescape Social` placeholders
+- Identity setup still stops after username selection
+- No publish server or publish commands exist yet in committed state
+
+---
+
 ## 🎨 Frontend — Sprint v18a/b/c: Profile Screen Overhaul (2026-04-08)
 
 **Commit:** `b7fca4e` on `main`
