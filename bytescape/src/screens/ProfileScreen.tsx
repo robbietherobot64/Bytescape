@@ -5,6 +5,9 @@ import { appDataDir } from '@tauri-apps/api/path';
 import { AuthStatus, BytescapeItem, ProfileSettings } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { ProfileBioSections } from '../components/ProfileBioSections';
+import { ProfilePageNav } from '../components/ProfilePageNav';
+import { ProfilePageEditor } from '../components/ProfilePageEditor';
+import { useProfilePages } from '../hooks/useProfilePages';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
 import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill } from 'react-icons/bs';
@@ -54,7 +57,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [mediaDir, setMediaDir] = useState<string>('');
     const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
     const [showThemePanel, setShowThemePanel] = useState(false);
+    const [activePage, setActivePage] = useState<string | null>(null);
     const offsetRef = useRef(0);
+    const { pages, savePage, deletePage, createPage } = useProfilePages();
 
     /* ════════════════════ Profile settings persistence ════════════════════ */
     useEffect(() => {
@@ -352,8 +357,37 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 </div>
             )}
 
-            {/* ═══ 2-Column Content Grid ═══ */}
-            <div className="profile-content-grid">
+            {/* ═══ Page Navigation ═══ */}
+            {(pages.length > 0 || editMode) && (
+                <ProfilePageNav
+                    pages={pages}
+                    activePage={activePage}
+                    editMode={editMode}
+                    onSelectPage={setActivePage}
+                    onCreatePage={async (title, type) => {
+                        const page = await createPage(title, type);
+                        setActivePage(page.id);
+                    }}
+                    onDeletePage={async (pageId) => {
+                        await deletePage(pageId);
+                        if (activePage === pageId) setActivePage(null);
+                    }}
+                />
+            )}
+
+            {/* ═══ Page Content (when a page is active) ═══ */}
+            {activePage && pages.find(p => p.id === activePage) && (
+                <div className="profile-page-container">
+                    <ProfilePageEditor
+                        page={pages.find(p => p.id === activePage)!}
+                        editMode={editMode}
+                        onSave={savePage}
+                    />
+                </div>
+            )}
+
+            {/* ═══ 2-Column Content Grid (Home) ═══ */}
+            {!activePage && <div className="profile-content-grid">
                 {/* Main column — posts */}
                 <div className="profile-main-column">
                     {/* Source/network filter */}
@@ -438,7 +472,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         source={auth?.source}
                     />
                 </div>
-            </div>
+            </div>}
 
             {/* ═══ Marquee Footer (opt-in) ═══ */}
             {marqueeEnabled && (
