@@ -175,7 +175,10 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
     // Connections state
     const [followCount, setFollowCount] = useState(0);
     const [contactCount, setContactCount] = useState(0);
-    const [connectionHandles, setConnectionHandles] = useState<string[]>([]);
+    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string }>>([]);
+    const [showAllConnections, setShowAllConnections] = useState(false);
+    const [connectionSearch, setConnectionSearch] = useState('');
+    const [connectionSourceFilter, setConnectionSourceFilter] = useState<string>('all');
 
     // Linked accounts for auto-populate
     const [linkedAccounts, setLinkedAccounts] = useState<Array<{ display_handle: string; protocol: string }>>([]);
@@ -206,17 +209,27 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
 
     // Load connection counts
     useEffect(() => {
+        const conns: Array<{ handle: string; source: string }> = [];
+        const promises: Promise<void>[] = [];
         if (did) {
-            invoke<Array<{ did: string; handle: string; displayName?: string }>>('list_follows', { actor: did })
-                .then((follows) => {
-                    setFollowCount(follows.length);
-                    setConnectionHandles(follows.slice(0, 8).map(f => f.handle || f.displayName || f.did.slice(0, 12)));
-                })
-                .catch(() => {});
+            promises.push(
+                invoke<Array<{ did: string; handle: string; displayName?: string }>>('list_follows', { actor: did })
+                    .then((follows) => {
+                        setFollowCount(follows.length);
+                        follows.forEach(f => conns.push({ handle: f.handle || f.displayName || f.did.slice(0, 12), source: 'Bluesky' }));
+                    })
+                    .catch(() => {})
+            );
         }
-        invoke<Array<{ did: string; handle: string }>>('list_contacts')
-            .then((contacts) => setContactCount(contacts.length))
-            .catch(() => {});
+        promises.push(
+            invoke<Array<{ did: string; handle: string }>>('list_contacts')
+                .then((contacts) => {
+                    setContactCount(contacts.length);
+                    contacts.forEach(c => conns.push({ handle: c.handle || c.did.slice(0, 12), source: 'P2P' }));
+                })
+                .catch(() => {})
+        );
+        Promise.all(promises).then(() => setAllConnections(conns));
     }, [did]);
 
     // Load linked accounts for links auto-populate
@@ -501,6 +514,14 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
     }
 
     function renderConnections() {
+        const sourceEmoji: Record<string, string> = { Bluesky: '🦋', P2P: '🔗', Mastodon: '🐘', ActivityPub: '📡' };
+        const uniqueSources = [...new Set(allConnections.map(c => c.source))];
+        const filtered = allConnections
+            .filter(c => connectionSourceFilter === 'all' || c.source === connectionSourceFilter)
+            .filter(c => !connectionSearch || c.handle.toLowerCase().includes(connectionSearch.toLowerCase()));
+        const displayList = showAllConnections ? filtered : filtered.slice(0, 6);
+        const totalConnections = allConnections.length;
+
         return (
             <div className="bio-connections-grid">
                 {source === 'bluesky' && handle && (
@@ -518,15 +539,59 @@ export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsPr
                         🤝 {contactCount} contacts
                     </span>
                 )}
-                {connectionHandles.slice(0, 6).map((h) => (
-                    <span key={h} className="bio-connection-badge">
-                        <span className="bio-connection-avatar">
-                            {h[0]?.toUpperCase() || '?'}
+
+                {/* Source filter tabs */}
+                {uniqueSources.length > 1 && (
+                    <div className="bio-connections-filters">
+                        <button
+                            className={`bio-connections-filter-btn ${connectionSourceFilter === 'all' ? 'active' : ''}`}
+                            onClick={() => setConnectionSourceFilter('all')}
+                        >All</button>
+                        {uniqueSources.map(s => (
+                            <button
+                                key={s}
+                                className={`bio-connections-filter-btn ${connectionSourceFilter === s ? 'active' : ''}`}
+                                onClick={() => setConnectionSourceFilter(s)}
+                            >{sourceEmoji[s] || '🌐'} {s}</button>
+                        ))}
+                    </div>
+                )}
+
+                {/* Search input */}
+                {showAllConnections && (
+                    <input
+                        type="text"
+                        className="bio-connections-search"
+                        placeholder="Search connections..."
+                        value={connectionSearch}
+                        onChange={(e) => setConnectionSearch(e.target.value)}
+                    />
+                )}
+
+                {/* Connection list */}
+                <div className={`bio-connections-list ${showAllConnections ? 'bio-connections-list--expanded' : ''}`}>
+                    {displayList.map((c, i) => (
+                        <span key={`${c.source}-${c.handle}-${i}`} className="bio-connection-badge">
+                            <span className="bio-connection-source-icon">{sourceEmoji[c.source] || '🌐'}</span>
+                            <span className="bio-connection-avatar">
+                                {c.handle[0]?.toUpperCase() || '?'}
+                            </span>
+                            {c.handle}
                         </span>
-                        {h}
-                    </span>
-                ))}
-                {connectionHandles.length === 0 && followCount === 0 && contactCount === 0 && (
+                    ))}
+                </div>
+
+                {/* Show all / collapse toggle */}
+                {totalConnections > 6 && (
+                    <button
+                        className="bio-connections-toggle"
+                        onClick={() => { setShowAllConnections(!showAllConnections); if (showAllConnections) setConnectionSearch(''); }}
+                    >
+                        {showAllConnections ? '▲ Show less' : `▼ Show all (${totalConnections})`}
+                    </button>
+                )}
+
+                {totalConnections === 0 && followCount === 0 && contactCount === 0 && (
                     <p className="bio-section-placeholder">No connections yet. Add friends to see them here!</p>
                 )}
             </div>

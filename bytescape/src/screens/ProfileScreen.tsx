@@ -58,6 +58,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
     const [showThemePanel, setShowThemePanel] = useState(false);
     const [activePage, setActivePage] = useState<string | null>(null);
+    const [showAvatarInput, setShowAvatarInput] = useState(false);
+    const [avatarError, setAvatarError] = useState(false);
     const offsetRef = useRef(0);
     const { pages, savePage, deletePage, createPage } = useProfilePages();
 
@@ -214,13 +216,47 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             <div className="profile-hero" style={heroStyle}>
                 <div className="profile-hero-gradient" />
                 <div className="profile-hero-content">
-                    <div className="profile-avatar-large" style={{ borderColor: accentColor } as React.CSSProperties}>
-                        {displayName ? (
+                    <div
+                        className={`profile-avatar-large ${editMode ? 'profile-avatar-large--editable' : ''}`}
+                        style={{ borderColor: accentColor } as React.CSSProperties}
+                        onClick={() => { if (editMode) setShowAvatarInput(!showAvatarInput); }}
+                        title={editMode ? 'Click to change avatar' : undefined}
+                    >
+                        {profileSettings.avatar_url && !avatarError ? (
+                            <img
+                                src={profileSettings.avatar_url}
+                                alt="Avatar"
+                                className="profile-avatar-img"
+                                onError={() => setAvatarError(true)}
+                            />
+                        ) : displayName ? (
                             <span>{displayName[0].toUpperCase()}</span>
                         ) : (
                             <BsPersonFill size={32} />
                         )}
+                        {editMode && <div className="profile-avatar-edit-overlay">📷</div>}
                     </div>
+                    {showAvatarInput && editMode && (
+                        <div className="profile-avatar-input-popup">
+                            <input
+                                type="text"
+                                placeholder="Avatar image URL..."
+                                value={profileSettings.avatar_url || ''}
+                                maxLength={2000}
+                                onChange={(e) => {
+                                    setAvatarError(false);
+                                    saveSettings({ ...profileSettings, avatar_url: e.target.value || undefined });
+                                }}
+                                className="profile-avatar-url-input"
+                                autoFocus
+                            />
+                            <button className="profile-avatar-clear-btn" onClick={() => {
+                                saveSettings({ ...profileSettings, avatar_url: undefined });
+                                setAvatarError(false);
+                                setShowAvatarInput(false);
+                            }}>Clear</button>
+                        </div>
+                    )}
                     <div className="profile-hero-info">
                         <h1 className="profile-display-name-large" style={{ color: accentColor } as React.CSSProperties}>{displayName}</h1>
                         <div className="profile-did">{auth?.web_did || auth?.did}</div>

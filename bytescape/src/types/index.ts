@@ -723,6 +723,7 @@ export interface ProfileSettings {
     marquee_text?: string;
     marquee_color?: string;
     marquee_speed?: string;          // "slow" | "medium" | "fast"
+    avatar_url?: string;             // URL for profile avatar image
 }
 
 /** A single page in the multi-page profile website. */
