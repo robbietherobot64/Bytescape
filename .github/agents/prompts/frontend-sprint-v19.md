@@ -50,7 +50,7 @@ From `profile-feedback` (prioritized):
 | 6 | Marquee as opt-in only (off by default), with customization options | P1 |
 | 7 | Now Playing with Bandcamp/SoundCloud/Spotify/YouTube embeds | P1 |
 | 8 | Links auto-populate from linked accounts | P1 |
-| 9 | Theme/background customization | P1 |
+| 9 | Profile inherits system theme (no separate picker) | P0 |
 | 10 | Expanded connections (search, filter, expand all) | P2 |
 | 11 | GIF collection section type | P2 |
 | 12 | Profile pages / website-blog directory | P2 |
@@ -210,7 +210,13 @@ This avoids rewriting all the section content logic in one go. Over time, indivi
 
 ---
 
-## P1: Widget Customization Panel + Themes
+## P1: Widget Customization Panel
+
+### Theme: Inherit the system theme
+
+**The profile does NOT have its own theme picker.** It inherits whatever system theme the user has active (`useTheme().activeTheme`). The app already has 4 themes (`geocities`, `win98`, `midnight`, `hacker`) with full CSS variable sets and custom override support via `useTheme`. The profile should use these CSS variables for all its colors, backgrounds, and accents — no profile-specific theming layer.
+
+The hero gradient, card backgrounds, and accent colors all come from the active theme's CSS variables (`--bg-primary`, `--accent-purple`, etc.). If the user switches their system theme, the profile updates automatically.
 
 ### Edit mode widget controls
 
@@ -219,30 +225,6 @@ When `editMode === true`:
 1. Each widget card shows a small toolbar: ↑↓ (reorder within column), ✕ (remove widget)
 2. Bottom of each column shows an **"+ Add Widget"** button
 3. Clicking "Add Widget" shows a dropdown of available types (singletons filtered if already present)
-4. Hero area shows a **"Theme"** button that opens a theme/background panel
-
-### Theme picker
-
-Offer 6 pre-built themes + custom:
-
-```typescript
-const THEMES: Record<string, { heroGradient?: string; accent?: string; cardBg?: string }> = {
-    default: {},
-    midnight: { heroGradient: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', accent: '#a78bfa', cardBg: 'rgba(30,27,75,0.7)' },
-    sunset:   { heroGradient: 'linear-gradient(135deg, #f12711, #f5af19)', accent: '#fef08a', cardBg: 'rgba(120,30,10,0.5)' },
-    forest:   { heroGradient: 'linear-gradient(135deg, #0b3d0b, #2d6a4f, #40916c)', accent: '#95d5b2', cardBg: 'rgba(11,61,11,0.5)' },
-    ocean:    { heroGradient: 'linear-gradient(135deg, #0077b6, #023e8a, #03045e)', accent: '#90e0ef', cardBg: 'rgba(2,62,138,0.5)' },
-    retrowave:{ heroGradient: 'linear-gradient(135deg, #0d0221, #4a0e4e, #cc5577)', accent: '#ff6ec7', cardBg: 'rgba(74,14,78,0.5)' },
-};
-```
-
-"Custom" unlocks 3 color inputs: gradient start, gradient end, accent. Store all in `ProfileSettings`.
-
-### Background options
-
-Radio: Default / Solid Color / Image URL / Pattern  
-Patterns: scanlines, dots, checkerboard, stars, diamonds (CSS-only).  
-Applied to `.profile-geocities` background.
 
 ### Marquee widget
 
@@ -257,8 +239,8 @@ CSS animation renders it. Speed map: slow=20s, medium=12s, fast=6s.
 
 | File | Changes |
 |------|---------|
-| `src/screens/ProfileScreen.tsx` | Widget controls, add widget dropdown, theme/background panel, marquee widget renderer |
-| `src/screens/ProfileScreen.css` | Edit controls, theme picker, background patterns, marquee animation |
+| `src/screens/ProfileScreen.tsx` | Widget controls, add widget dropdown, marquee widget renderer |
+| `src/screens/ProfileScreen.css` | Edit controls, widget toolbar, marquee animation |
 
 ---
 
@@ -350,14 +332,15 @@ Wire the existing ProfilePageNav + ProfilePageEditor into the profile.
 
 - **Don't combine everything in one massive commit.** Use the recommended commit sequence below.
 - **Don't force features on by default.** Every customization feature is opt-in via the widget system.
+- **Don't add a separate profile theme system.** The profile inherits the active system theme from `useTheme()`. CSS variables (`--bg-primary`, `--accent-purple`, etc.) drive all profile colors.
 - **Don't inline CSS extensively.** Use classes. The pre-v18 code had too many inline style objects.
 - **Don't remove features without providing the replacement in the same commit.**
-- **Don't over-engineer.** 6 presets + custom is plenty for themes. The widget system is a flat array, not a nested tree.
+- **Don't over-engineer.** The widget system is a flat array, not a nested tree.
 
 ### Recommended commit sequence
 
 1. **P0**: New default layout + username fix + edit mode + post deletion (the big structural change)
-2. **P1**: Widget customization panel + themes + backgrounds + marquee opt-in
+2. **P1**: Widget customization panel + marquee opt-in (profile inherits system theme — no separate theme picker)
 3. **P2**: Rich widget content (embeds, auto-links, GIFs)
 4. **P3**: Profile pages integration
 5. **P4+P5**: Connections expansion + avatar (can combine)
