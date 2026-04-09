@@ -80,7 +80,6 @@ interface FeedEntryCardProps {
     resolveMediaPath?: (p: string) => string;
     mediaDir?: string;
     onEntryUpdated?: (id: string, audiences: Audience[]) => void;
-    onDelete?: (id: string) => void;
     isQuote?: boolean;
 }
 
@@ -94,7 +93,7 @@ interface FeedEntryCardProps {
  * - Uses feed helper exports from `./feed` to keep layout primitives consistent across views.
  * - Emits browser-level `navigate-hashtag` custom events consumed by feed navigation listeners.
  */
-function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, onDelete, isQuote = false }: FeedEntryCardProps) {
+function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, isQuote = false }: FeedEntryCardProps) {
     // ═══════════════════════════════════════════════════════════════════════════
     // Local UI state and derived presentation data
     // ═══════════════════════════════════════════════════════════════════════════
@@ -375,22 +374,6 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
                             shareHistory={shareHistory}
                             compact
                         />
-                        {onDelete && (
-                            <button
-                                className="delete-post-btn"
-                                title="Delete post"
-                                onClick={(e) => { e.stopPropagation(); onDelete(entry.id); }}
-                                style={{
-                                    background: 'none', border: 'none', cursor: 'pointer',
-                                    color: 'var(--text-muted)', fontSize: '0.85rem', padding: '4px 6px',
-                                    borderRadius: 4, transition: 'color 0.15s',
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.color = '#e74c3c')}
-                                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-                            >
-                                🗑
-                            </button>
-                        )}
                     </div>
                 )}
             </div>

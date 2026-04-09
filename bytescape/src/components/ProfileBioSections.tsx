@@ -25,7 +25,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { LinkedAccount } from '../types';
 import { Win98Box } from './Win98Box';
 import { BsPencilFill, BsCheckLg, BsXLg, BsPlusLg, BsArrowUp, BsArrowDown, BsTrash } from 'react-icons/bs';
 import './ProfileBioSections.css';
@@ -113,8 +112,6 @@ interface ProfileBioSectionsProps {
     handle?: string | null;
     did?: string | null;
     source?: string | null;
-    /** When provided, external parent controls edit mode (profile screen toggle). */
-    editMode?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -129,7 +126,7 @@ interface ProfileBioSectionsProps {
  * - Edit mode: allows rename/reorder/content editing/add/remove operations.
  * - Save action serializes current draft and persists it through backend commands.
  */
-export function ProfileBioSections({ handle, did, source, editMode: externalEditMode }: ProfileBioSectionsProps) {
+export function ProfileBioSections({ handle, did, source }: ProfileBioSectionsProps) {
     const [sections, setSections] = useState<ProfileSection[]>([]);
     const [editing, setEditing] = useState(false);
     const [editSections, setEditSections] = useState<ProfileSection[]>([]);
@@ -148,9 +145,6 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
     const [followCount, setFollowCount] = useState(0);
     const [contactCount, setContactCount] = useState(0);
     const [connectionHandles, setConnectionHandles] = useState<string[]>([]);
-
-    // Linked accounts for links auto-populate
-    const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 
     // Add-section menu ref for click-outside
     const addMenuRef = useRef<HTMLDivElement>(null);
@@ -191,13 +185,6 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
             .catch(() => {});
     }, [did]);
 
-    // Load linked accounts for links auto-populate
-    useEffect(() => {
-        invoke<LinkedAccount[]>('list_linked_accounts')
-            .then((accts) => { if (Array.isArray(accts)) setLinkedAccounts(accts); })
-            .catch(() => {});
-    }, []);
-
     // Click-outside to close add menu
     useEffect(() => {
         if (!showAddMenu) return;
@@ -209,18 +196,6 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
         document.addEventListener('mousedown', handleClick);
         return () => document.removeEventListener('mousedown', handleClick);
     }, [showAddMenu]);
-
-    // Sync editing state with external editMode prop
-    useEffect(() => {
-        if (externalEditMode !== undefined) {
-            if (externalEditMode && !editing) {
-                startEditing();
-            } else if (!externalEditMode && editing) {
-                cancelEdits();
-            }
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [externalEditMode]);
 
     // Save sections to backend
     const saveSections = useCallback(async (updated: ProfileSection[]) => {
@@ -483,116 +458,36 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
     }
 
     function renderConnections() {
-        const totalConnections = followCount + contactCount;
-        const displayLimit = 8;
-        const showAll = connectionHandles.length > displayLimit;
-
         return (
-            <div className="bio-connections-section">
-                {/* Summary badges */}
-                <div className="bio-connections-summary">
-                    {source === 'bluesky' && handle && (
-                        <span className="bio-connection-badge bio-connection-badge--self">
-                            🦋 {handle}
-                        </span>
-                    )}
-                    {followCount > 0 && (
-                        <span className="bio-connection-badge">
-                            👥 {followCount} following
-                        </span>
-                    )}
-                    {contactCount > 0 && (
-                        <span className="bio-connection-badge">
-                            🤝 {contactCount} contacts
-                        </span>
-                    )}
-                </div>
-
-                {/* Connection handles grid */}
-                {connectionHandles.length > 0 && (
-                    <div className="bio-connections-grid">
-                        {connectionHandles.slice(0, displayLimit).map((h) => (
-                            <span key={h} className="bio-connection-badge">
-                                <span className="bio-connection-avatar">
-                                    {h[0]?.toUpperCase() || '?'}
-                                </span>
-                                {h}
-                            </span>
-                        ))}
-                        {showAll && (
-                            <span className="bio-connection-badge bio-connection-badge--more">
-                                +{connectionHandles.length - displayLimit} more
-                            </span>
-                        )}
-                    </div>
+            <div className="bio-connections-grid">
+                {source === 'bluesky' && handle && (
+                    <span className="bio-connection-badge">
+                        🦋 {handle}
+                    </span>
                 )}
-
-                {totalConnections === 0 && connectionHandles.length === 0 && (
+                {followCount > 0 && (
+                    <span className="bio-connection-badge">
+                        👥 {followCount} following
+                    </span>
+                )}
+                {contactCount > 0 && (
+                    <span className="bio-connection-badge">
+                        🤝 {contactCount} contacts
+                    </span>
+                )}
+                {connectionHandles.slice(0, 6).map((h) => (
+                    <span key={h} className="bio-connection-badge">
+                        <span className="bio-connection-avatar">
+                            {h[0]?.toUpperCase() || '?'}
+                        </span>
+                        {h}
+                    </span>
+                ))}
+                {connectionHandles.length === 0 && followCount === 0 && contactCount === 0 && (
                     <p className="bio-section-placeholder">No connections yet. Add friends to see them here!</p>
                 )}
             </div>
         );
-    }
-
-    /** Detect embed-worthy URLs and return an iframe, else null. */
-    function detectEmbed(content: string): React.ReactNode | null {
-        const trimmed = content.trim();
-        // Bandcamp album/track
-        const bcMatch = trimmed.match(/https?:\/\/([a-z0-9-]+)\.bandcamp\.com\/(track|album)\/([a-z0-9-]+)/i);
-        if (bcMatch) {
-            return (
-                <iframe
-                    title="Bandcamp embed"
-                    style={{ border: 0, width: '100%', height: 120 } as React.CSSProperties}
-                    src={`https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/artwork=small/transparent=true/`}
-                    seamless
-                />
-            );
-        }
-        // SoundCloud
-        if (/soundcloud\.com\/[a-z0-9_-]+\/[a-z0-9_-]+/i.test(trimmed)) {
-            return (
-                <iframe
-                    title="SoundCloud embed"
-                    width="100%"
-                    height={166}
-                    scrolling="no"
-                    frameBorder="no"
-                    allow="autoplay"
-                    src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false`}
-                />
-            );
-        }
-        // Spotify track/album/playlist
-        const spotMatch = trimmed.match(/https?:\/\/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/);
-        if (spotMatch) {
-            return (
-                <iframe
-                    title="Spotify embed"
-                    style={{ borderRadius: 12, border: 0, width: '100%', height: 152 } as React.CSSProperties}
-                    src={`https://open.spotify.com/embed/${spotMatch[1]}/${spotMatch[2]}?theme=0`}
-                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                    loading="lazy"
-                />
-            );
-        }
-        // YouTube
-        const ytMatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-        if (ytMatch) {
-            return (
-                <iframe
-                    title="YouTube embed"
-                    width="100%"
-                    height={180}
-                    src={`https://www.youtube.com/embed/${ytMatch[1]}`}
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    style={{ borderRadius: 4 } as React.CSSProperties}
-                />
-            );
-        }
-        return null;
     }
 
     function renderNowPlaying(section: ProfileSection) {
@@ -601,16 +496,8 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
                 <div className="bio-now-playing">
                     <span className="bio-now-playing-icon">💿</span>
                     <span className="bio-section-placeholder">
-                        {editing ? 'Click ✏️ to set what you\'re listening to (paste a URL for embeds)...' : 'Nothing playing right now.'}
+                        {editing ? 'Click ✏️ to set what you\'re listening to...' : 'Nothing playing right now.'}
                     </span>
-                </div>
-            );
-        }
-        const embed = detectEmbed(section.content);
-        if (embed) {
-            return (
-                <div className="bio-now-playing">
-                    {embed}
                 </div>
             );
         }
@@ -682,24 +569,7 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
             links = [];
         }
 
-        // Auto-populate from linked accounts when no custom links exist
-        const autoLinks: ProfileLink[] = linkedAccounts
-            .filter(a => a.active)
-            .map(a => {
-                const proto = a.protocol.charAt(0).toUpperCase() + a.protocol.slice(1);
-                return {
-                    label: `${proto}: ${a.display_handle}`,
-                    url: a.protocol === 'bluesky'
-                        ? `https://bsky.app/profile/${a.display_handle.replace('@', '')}`
-                        : a.protocol === 'mastodon' && a.platform_identifier
-                            ? `https://${a.platform_identifier.split('@').pop()}/@${a.platform_identifier.split('@')[1]}`
-                            : '#',
-                };
-            });
-
-        const allLinks = links.length > 0 ? links : autoLinks;
-
-        if (allLinks.length === 0) {
+        if (links.length === 0) {
             return (
                 <p className="bio-section-placeholder">
                     {editing ? 'Click ✏️ to add your links...' : 'No links added yet.'}
@@ -709,10 +579,7 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
 
         return (
             <div className="bio-links-list">
-                {links.length === 0 && autoLinks.length > 0 && (
-                    <div className="bio-links-auto-label">Auto-detected from linked accounts:</div>
-                )}
-                {allLinks.map((link, i) => (
+                {links.map((link, i) => (
                     <div key={i} className="bio-link-item">
                         🔗 <a href={link.url} target="_blank" rel="noopener noreferrer">
                             {link.label || link.url}
@@ -828,9 +695,9 @@ export function ProfileBioSections({ handle, did, source, editMode: externalEdit
     );
 
     return (
-        <div className="bio-sections-root">
-            {/* Toolbar — hidden when parent controls edit mode (externally toggled) */}
-            <div className="bio-toolbar" style={externalEditMode !== undefined && !editing ? { display: 'none' } : undefined}>
+        <div>
+            {/* Toolbar */}
+            <div className="bio-toolbar">
                 {!editing ? (
                     <button className="bio-toolbar-btn" onClick={startEditing}>
                         <BsPencilFill size={12} /> Edit Bio
