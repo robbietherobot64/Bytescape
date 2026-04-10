@@ -1,387 +1,213 @@
-# Frontend Sprint v19 — Profile Customization: Modular Widgets & Minimalist Default
+# Frontend Sprint v19 — Profile Customization Reactivation
 
-**Sprint**: v19 (Profile Polish)  
+**Sprint**: v19 (Profile Customization)  
 **Track**: B (Frontend — React/TypeScript)  
-**Date**: 2026-04-09  
-**Previous sprint**: v18 reverted — profile UI restored to pre-v18 state per user feedback (commit `8f8070b`)  
-**HEAD at prompt time**: `8f8070b`  
-**Design philosophy**: Minimalist default layout. Modular widget system — easy to add, remove, rearrange. Users opt into complexity; they don't start with it.
+**Date**: 2026-04-10  
+**HEAD at prompt time**: `1b59005`  
+**Status**: Reissued because v19 was skipped while prompts drifted ahead to hosted-identity planning  
 
 ---
 
 ## Sprint Context
 
-The v18 profile overhaul was reverted because it butchered the profile — too much at once, layout felt wrong, customization was tacked on rather than integrated. This sprint rebuilds profile customization from the ground up with a different approach:
+Hosted identity is **not** the active implementation target right now. The user explicitly wants the profile customization sprint revived and executed first.
 
-1. **Start minimal**: Clean default layout that looks good with zero configuration
-2. **Modular widgets**: Each profile section is a self-contained widget the user can add/remove/reorder
-3. **Opt-in complexity**: Themes, backgrounds, marquee, GIFs, etc. are available but never forced
-4. **Component architecture**: Each widget type is independently renderable — easy to build, test, and extend
+The current profile surface still reflects the reverted pre-v18 baseline:
 
-### Current state (post-revert)
+| Component | File | Current state |
+|-----------|------|---------------|
+| Profile screen | `src/screens/ProfileScreen.tsx` | Still uses top-level `wall/posts` tabs, broken `Customize` button, hardcoded marquee, no post deletion |
+| Profile screen CSS | `src/screens/ProfileScreen.css` | Older layout, not the intended minimalist 2-column profile |
+| Bio sections | `src/components/ProfileBioSections.tsx` | Basic editable sections, but no rich embeds, no linked-account auto-links, no GIF surface, no connections search/filter |
+| Feed cards | `src/components/FeedEntryCard.tsx` | No profile delete affordance |
+| Profile pages | `src/components/ProfilePageNav.tsx`, `src/components/ProfilePageEditor.tsx`, `src/hooks/useProfilePages.ts` | Present in the repo, but not wired into the current profile experience |
 
-| Component | File | State |
-|-----------|------|-------|
-| ProfileScreen | `screens/ProfileScreen.tsx` | Pre-v18: hero + Wall/Posts tabs + Bio sections + hardcoded marquee footer |
-| ProfileScreen CSS | `screens/ProfileScreen.css` | Pre-v18: 228 lines, GeoCities theme |
-| ProfileBioSections | `components/ProfileBioSections.tsx` | Pre-v18: 768 lines, 6 section types (about, connections, now-playing, guestbook, links, custom), self-contained edit mode |
-| FeedEntryCard | `components/FeedEntryCard.tsx` | Pre-v18: no `onDelete` prop |
-| ProfilePageNav | `components/ProfilePageNav.tsx` | ✅ Kept from v18 — tabbed page navigation |
-| ProfilePageEditor | `components/ProfilePageEditor.tsx` | ✅ Kept from v18 — rich-text + blog editor |
-| useProfilePages | `hooks/useProfilePages.ts` | ✅ Kept from v18 — page CRUD |
-| ProfileSettings type | `types/index.ts` | ✅ Kept — theme, background, marquee fields defined |
-| Backend commands | `commands/profile.rs` | ✅ Kept — settings persistence, pages CRUD, vault deletion |
+## Non-Negotiable Product Direction
 
-### User direction
+1. The default profile should be **minimalist** and sensible out of the box.
+2. The profile should inherit the **active app/system theme** the user already selected.
+3. Do **not** add a separate profile theme picker or a parallel profile-only theming layer.
+4. Customization should come from **modular profile components** the user can add, remove, hide, or reorder.
+5. Optional creative features like marquees, backgrounds, embeds, GIF walls, and extra pages must be opt-in and must not clutter the default profile.
 
-> "We want the profile to be highly customizable and easy to add or remove different components. However, it should start with a default layout that is minimalist and makes sense."
+### User feedback to implement
 
-### Profile feedback items to address
+From `profile-feedback` and chat:
 
-From `profile-feedback` (prioritized):
-
-| # | Item | Priority |
-|---|------|----------|
-| 1 | Username should be Bytescape handle (end of did:web), not Bluesky handle | P0 |
-| 2 | Hide customize/edit buttons for non-logged-in users | P0 |
-| 3 | Posts as default content (not hidden behind a tab), better space utilization | P0 |
-| 4 | Replace broken "Customize" button with working edit mode | P0 |
-| 5 | Post deletion on profile | P0 |
-| 6 | Marquee as opt-in only (off by default), with customization options | P1 |
-| 7 | Now Playing with Bandcamp/SoundCloud/Spotify/YouTube embeds | P1 |
-| 8 | Links auto-populate from linked accounts | P1 |
-| 9 | Theme/background customization | P1 |
-| 10 | Expanded connections (search, filter, expand all) | P2 |
-| 11 | GIF collection section type | P2 |
-| 12 | Profile pages / website-blog directory | P2 |
+- Replace the broken `Customize` button with a working customization/edit flow.
+- Show the Bytescape handle / local username, not the Bluesky handle, as the main profile identity.
+- Make posts the default/main surface and use space better so posts and profile widgets can be visible at the same time.
+- Keep the wall / guestbook capability, but do not make it the dominant default view.
+- Allow deleting profile posts, including local posts.
+- Remove the default scrolling ticker; keep it only as an optional customization.
+- Support richer creativity: embeds, GIF-heavy sections, linked-account auto-links, more navigable connections, and profile pages.
 
 ---
 
-## Architecture: Widget System
+## P0: Minimalist System-Themed Profile Baseline
 
-### Core concept
+This is the first required implementation step. Do this before any richer customization work.
 
-The profile is a **widget container**. Each visual section is a **widget** with a standard interface:
+### Required behavior
 
-```typescript
-type WidgetType = 'posts' | 'about' | 'now-playing' | 'links' | 'connections' | 'guestbook' | 'gif-collection' | 'marquee' | 'custom';
+1. Replace the current top-level `wall/posts` tab framing with a layout where **posts are visible by default**.
+2. Use a balanced **2-column profile layout** so the main post feed and profile widgets are both on screen on desktop, with a clean stacked mobile fallback.
+3. Replace the broken `Customize` button with a working **Edit / Customize** toggle.
+4. Hide edit/customization controls when the viewer is not the logged-in local user.
+5. Show `local_username` as the primary identity label.
+6. Remove the hardcoded marquee from the default render.
+7. Add delete affordances for profile posts.
 
-interface ProfileWidget {
-    id: string;                    // Unique instance ID
-    type: WidgetType;              // Widget type from registry
-    title: string;                 // User-editable display title
-    column: 'main' | 'sidebar';   // Which column it lives in
-    order: number;                 // Sort order within its column
-    visible: boolean;              // Can be hidden without deleting
-    config: Record<string, any>;   // Widget-specific settings
-}
-```
+### Layout rule
 
-Add `WidgetType` and `ProfileWidget` to `src/types/index.ts`.
+Treat the wall / guestbook as a secondary profile component, not the main page shell. If a wall toggle remains anywhere, it belongs with the wall / guestbook area itself, and **Posts** must be the default selection.
 
-### Widget registry (in ProfileScreen)
+### Files expected in P0
 
-```typescript
-const WIDGET_REGISTRY: Record<WidgetType, { label: string; emoji: string; defaultColumn: 'main' | 'sidebar'; singleton: boolean }> = {
-    'posts':          { label: 'Posts',           emoji: '📝', defaultColumn: 'main',    singleton: true },
-    'about':          { label: 'About Me',        emoji: '👋', defaultColumn: 'sidebar', singleton: true },
-    'links':          { label: 'Links',           emoji: '🔗', defaultColumn: 'sidebar', singleton: true },
-    'connections':    { label: 'Connections',      emoji: '👥', defaultColumn: 'sidebar', singleton: true },
-    'now-playing':    { label: 'Now Playing',      emoji: '🎵', defaultColumn: 'sidebar', singleton: true },
-    'guestbook':      { label: 'Guestbook',        emoji: '💬', defaultColumn: 'main',    singleton: true },
-    'gif-collection': { label: 'GIF Collection',    emoji: '🖼️', defaultColumn: 'main',    singleton: false },
-    'marquee':        { label: 'Marquee Ticker',    emoji: '📰', defaultColumn: 'main',    singleton: true },
-    'custom':         { label: 'Custom Section',    emoji: '✨', defaultColumn: 'main',    singleton: false },
-};
-```
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.tsx` | Main layout rewrite, username fix, working customize/edit mode, post deletion wiring |
+| `src/screens/ProfileScreen.css` | Minimalist 2-column layout using existing theme variables, responsive stacking |
+| `src/components/FeedEntryCard.tsx` | Optional `onDelete` affordance for profile-owned posts |
 
-`singleton: true` = only one instance allowed. `singleton: false` = user can add multiples.
+### Theme rule for P0
 
-### Default widget set (new users / no saved layout)
-
-```typescript
-const DEFAULT_WIDGETS: ProfileWidget[] = [
-    { id: 'posts',       type: 'posts',       title: 'Posts',       column: 'main',    order: 0, visible: true, config: {} },
-    { id: 'about',       type: 'about',       title: 'About Me',   column: 'sidebar', order: 0, visible: true, config: {} },
-    { id: 'links',       type: 'links',       title: 'Links',      column: 'sidebar', order: 1, visible: true, config: {} },
-    { id: 'connections', type: 'connections',  title: 'Connections', column: 'sidebar', order: 2, visible: true, config: {} },
-];
-```
-
-Minimal, sensible, clean. No marquee, no guestbook, no now-playing by default.
-
-### Default visual layout
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  [Avatar]  username                                       │
-│            did:web:bytescape.social:username      [Edit]  │
-└──────────────────────────────────────────────────────────┘
-┌────────────────────────────────┐ ┌──────────────────────┐
-│  📝 Posts                      │ │  👋 About Me         │
-│  [All] [🦋 Bsky] [📦 Archive] │ │  "Tell the world..." │
-│                                │ ├──────────────────────┤
-│  [post cards...]               │ │  🔗 Links            │
-│                                │ │  🦋 @handle.bsky...  │
-│                                │ │  🔗 mysite.com       │
-│  [Load More]                   │ ├──────────────────────┤
-│                                │ │  👥 Connections       │
-└────────────────────────────────┘ │  42 following         │
-                                   └──────────────────────┘
-```
+Use the app's existing theme system and CSS variables. The profile should visually inherit the current app theme automatically. Do not introduce profile-specific palette state, profile theme presets, or a theme picker modal.
 
 ---
 
-## P0: New Default Layout + Core Fixes
+## P1: Modular Section Customization
 
-This is the structural rewrite. One commit, all core issues resolved.
+Once the baseline layout is solid, make the profile easy to customize without making it noisy by default.
 
-### Step 1: ProfileScreen rewrite
+### Goal
 
-Replace the Wall/Posts tab system with a 2-column widget layout.
+Move toward a modular section model where profile areas can be added, removed, hidden, or reordered.
 
-**Key changes from current pre-v18 code:**
-- Remove `ProfileTab` type and `profileTab` state (no more wall/posts tabs)
-- Add `editMode` state (boolean) with working toggle button
-- Add `widgets` state loaded from `get_profile_settings` (or default set)
-- Add `deleteConfirm` state for post deletion confirmation
-- Remove hardcoded marquee footer
-- Show posts directly in main column (no tab required)
-- Render sidebar widgets in right column using existing `ProfileBioSections` sub-renderers
+This can be implemented either by:
 
-**Username fix:**
-```typescript
-const displayName = auth?.local_username || auth?.handle || 'Anonymous';
-```
-Display `local_username` (the Bytescape handle). Fall back to `handle` only if not set.
+1. introducing a flat widget/section registry, or
+2. extending the existing `ProfileBioSections` model so it supports clearer layout placement and enable/disable behavior
 
-**Auth-guarded edit mode:**
-```typescript
-{auth && (
-    <button className="profile-edit-btn" onClick={() => setEditMode(!editMode)}>
-        {editMode ? <><BsCheckLg /> Done</> : <><BsPencilFill /> Edit</>}
-    </button>
-)}
-```
-No button visible when not logged in. No broken "Customize" button.
+Choose the simpler path that fits the current codebase. Do not over-engineer this into a nested page builder yet.
 
-### Step 2: FeedEntryCard `onDelete`
+### Default section set
 
-Add optional `onDelete?: (id: string) => void` prop. When present, show a small trash icon in the card header. ProfileScreen handles the confirmation dialog (inline bar above the card, same pattern as v18).
+The default profile should stay sparse:
 
-### Step 3: CSS rewrite
+- Posts
+- About
+- Links
+- Connections
 
-Rewrite `ProfileScreen.css` for the 2-column grid layout:
+These should be available but **not default-on**:
 
-```css
-.profile-content-grid {
-    display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 16px;
-    padding: 16px;
-    max-width: 1100px;
-    margin: 0 auto;
-    width: 100%;
-}
+- Wall / guestbook
+- Now Playing
+- GIF collection / image button section
+- Marquee / ticker
+- Extra custom sections
 
-@media (max-width: 768px) {
-    .profile-content-grid { grid-template-columns: 1fr; }
-}
-```
+### Constraints
 
-Keep existing hero styles (they look fine). Remove the marquee styles from default render. Add edit-mode control styles.
+- No separate profile theme picker.
+- Optional backgrounds are acceptable only if they layer on top of the current app theme and remain subtle by default.
+- Keep edit controls compact and obvious.
 
-### Files to modify
+### Likely files
 
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Rewrite: 2-column widget container, username fix, edit mode, post deletion |
-| `src/screens/ProfileScreen.css` | Rewrite: 2-column grid, widget card, edit controls |
-| `src/components/FeedEntryCard.tsx` | Add `onDelete` prop with trash icon |
-| `src/types/index.ts` | Add `ProfileWidget`, `WidgetType` types |
-
-### Migration from BioSections to Widgets
-
-The current `ProfileBioSections` uses its own `ProfileSection` model (`get_widget_data`/`save_widget_data`). The new widget system uses `ProfileWidget[]` stored inside `ProfileSettings` via `get_profile_settings`/`save_profile_settings`.
-
-**Strategy**: Keep `ProfileBioSections` as the content renderer for sidebar widgets. The new `ProfileScreen` manages layout; it renders each widget using the appropriate sub-component. For About, Links, Connections, Now Playing, Guestbook — delegate to extracted renderers from `ProfileBioSections`. For Posts — render directly in ProfileScreen (it already does this).
-
-This avoids rewriting all the section content logic in one go. Over time, individual widget renderers can be extracted into their own component files.
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.tsx` | Section layout ownership, add/remove/reorder controls |
+| `src/components/ProfileBioSections.tsx` | Section visibility, ordering, richer per-section controls |
+| `src/components/ProfileBioSections.css` | Minimalist section chrome and editor controls |
+| `src/types/index.ts` | Only if a minimal shared section/widget type is necessary |
 
 ---
 
-## P1: Widget Customization Panel + Themes
+## P2: Rich Media and Creative Profile Components
 
-### Edit mode widget controls
+After the core layout and modular editing are in place, implement the richer customization features the user asked for.
 
-When `editMode === true`:
+### Required items
 
-1. Each widget card shows a small toolbar: ↑↓ (reorder within column), ✕ (remove widget)
-2. Bottom of each column shows an **"+ Add Widget"** button
-3. Clicking "Add Widget" shows a dropdown of available types (singletons filtered if already present)
-4. Hero area shows a **"Theme"** button that opens a theme/background panel
+1. **Now Playing embeds**
+   - Support Bandcamp, SoundCloud, Spotify, and YouTube.
+   - Autoplay must be opt-in only.
 
-### Theme picker
+2. **Linked-account auto-links**
+   - If the user has linked accounts and has not manually customized links yet, auto-populate the links section from linked accounts.
 
-Offer 6 pre-built themes + custom:
+3. **GIF-first custom section**
+   - Provide a section type for GIF buttons / GIF collections / image-button style content.
 
-```typescript
-const THEMES: Record<string, { heroGradient?: string; accent?: string; cardBg?: string }> = {
-    default: {},
-    midnight: { heroGradient: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', accent: '#a78bfa', cardBg: 'rgba(30,27,75,0.7)' },
-    sunset:   { heroGradient: 'linear-gradient(135deg, #f12711, #f5af19)', accent: '#fef08a', cardBg: 'rgba(120,30,10,0.5)' },
-    forest:   { heroGradient: 'linear-gradient(135deg, #0b3d0b, #2d6a4f, #40916c)', accent: '#95d5b2', cardBg: 'rgba(11,61,11,0.5)' },
-    ocean:    { heroGradient: 'linear-gradient(135deg, #0077b6, #023e8a, #03045e)', accent: '#90e0ef', cardBg: 'rgba(2,62,138,0.5)' },
-    retrowave:{ heroGradient: 'linear-gradient(135deg, #0d0221, #4a0e4e, #cc5577)', accent: '#ff6ec7', cardBg: 'rgba(74,14,78,0.5)' },
-};
-```
+4. **Connections navigation improvements**
+   - Search
+   - Source filtering
+   - Expand all / scrollable full list
 
-"Custom" unlocks 3 color inputs: gradient start, gradient end, accent. Store all in `ProfileSettings`.
+### Likely files
 
-### Background options
-
-Radio: Default / Solid Color / Image URL / Pattern  
-Patterns: scanlines, dots, checkerboard, stars, diamonds (CSS-only).  
-Applied to `.profile-geocities` background.
-
-### Marquee widget
-
-Not on by default. User adds it via "Add Widget" → "Marquee Ticker". Widget config:
-- `text: string` — scrolling message
-- `color: string` — text color
-- `speed: 'slow' | 'medium' | 'fast'`
-
-CSS animation renders it. Speed map: slow=20s, medium=12s, fast=6s.
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Widget controls, add widget dropdown, theme/background panel, marquee widget renderer |
-| `src/screens/ProfileScreen.css` | Edit controls, theme picker, background patterns, marquee animation |
+| File | Work |
+|------|------|
+| `src/components/ProfileBioSections.tsx` | Embed detection, linked-account fallback, GIF section, connections search/filter |
+| `src/components/ProfileBioSections.css` | Embed frames, GIF layout, expanded connection list |
 
 ---
 
-## P2: Rich Widget Content
+## P3: Website / Blog Pages On Profile
 
-### Now Playing embeds
+The user wants the profile to function like a customizable small website.
 
-Auto-detect URL type and render inline embed:
+Use the existing profile page files already in the repo and wire them into the active profile surface:
 
-- **Bandcamp**: `{artist}.bandcamp.com/(track|album)/{slug}` → Bandcamp embedded player
-- **SoundCloud**: `soundcloud.com/{user}/{track}` → SoundCloud widget
-- **Spotify**: `open.spotify.com/(track|album|playlist)/{id}` → Spotify embed
-- **YouTube**: `youtube.com/watch?v={id}` or `youtu.be/{id}` → YouTube embed
+- `src/components/ProfilePageNav.tsx`
+- `src/components/ProfilePageEditor.tsx`
+- `src/hooks/useProfilePages.ts`
 
-The embed detection logic from v18's `detectEmbed()` was solid — reuse that pattern.
+### Required behavior
 
-### Links auto-populate
+1. The profile can have additional pages beyond the default home/profile surface.
+2. The default home page remains minimalist.
+3. Users can create page-style content for blog / website usage.
+4. Page navigation should feel like an extension of the profile, not a separate application.
 
-When user has no custom links and has linked accounts (`list_linked_accounts`), auto-populate links widget with entries. Show "Auto-detected from linked accounts:" label.
-
-### GIF Collection widget
-
-Stores array of GIF URLs in `config.gifs`. Displays in a responsive grid. Editor: URL inputs with add/remove (same pattern as links editor).
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/components/ProfileBioSections.tsx` | Now Playing embed detection, links auto-populate, GIF collection renderer |
-| `src/components/ProfileBioSections.css` | Embed iframe sizing, GIF grid, auto-label |
+This is where richer Neocities-style behavior starts, but keep the first implementation grounded and maintainable.
 
 ---
 
-## P3: Profile Pages Integration
+## Guardrails
 
-Wire the existing ProfilePageNav + ProfilePageEditor into the profile.
+### Do
 
-- Page tab bar below hero (only visible when pages exist or in edit mode)
-- Clicking a page hides the widget grid and shows page content
-- "Home" tab returns to widgets
-- Edit mode: "Add Page" button with type selector (rich-text, blog, gallery)
-- Gallery page type: simple image URL grid (basic implementation)
+- Implement the direct user feedback first.
+- Keep the default profile clean.
+- Reuse existing theme variables and page components where practical.
+- Split work into small commits that map to P0, P1, P2, and P3.
 
-### Files to modify
+### Do not
 
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Wire ProfilePageNav + ProfilePageEditor, page routing state |
-| `src/components/ProfilePageEditor.tsx` | Add gallery page type renderer |
-
----
-
-## P4: Connections Expansion
-
-1. "Show all" button → scrollable full list (max-height with overflow)
-2. Search input filtering by handle text
-3. Source filter tabs: All / Bluesky / P2P / Mastodon
-4. Source icon per connection badge
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/components/ProfileBioSections.tsx` | Connections search, filter, expand |
-| `src/components/ProfileBioSections.css` | Expanded list, search bar styles |
-
----
-
-## P5: Avatar Image
-
-1. Edit mode → clicking avatar shows URL input popup
-2. Store as `avatar_url` in ProfileSettings
-3. Render circular image with accent border; fallback to letter avatar on error
-4. Add `avatar_url?: string` to ProfileSettings type
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/types/index.ts` | Add `avatar_url` to ProfileSettings |
-| `src/screens/ProfileScreen.tsx` | Avatar image rendering + edit overlay |
-| `src/screens/ProfileScreen.css` | Avatar image, edit overlay styles |
-
----
-
-## Implementation Guidance
-
-### What NOT to do (lessons from v18)
-
-- **Don't combine everything in one massive commit.** Use the recommended commit sequence below.
-- **Don't force features on by default.** Every customization feature is opt-in via the widget system.
-- **Don't inline CSS extensively.** Use classes. The pre-v18 code had too many inline style objects.
-- **Don't remove features without providing the replacement in the same commit.**
-- **Don't over-engineer.** 6 presets + custom is plenty for themes. The widget system is a flat array, not a nested tree.
-
-### Recommended commit sequence
-
-1. **P0**: New default layout + username fix + edit mode + post deletion (the big structural change)
-2. **P1**: Widget customization panel + themes + backgrounds + marquee opt-in
-3. **P2**: Rich widget content (embeds, auto-links, GIFs)
-4. **P3**: Profile pages integration
-5. **P4+P5**: Connections expansion + avatar (can combine)
-
-Each commit must pass: `npx tsc --noEmit` (0 errors) + `pnpm test -- --run` (all pass).
+- Do not jump ahead to hosted identity work in this sprint.
+- Do not add a profile-specific theme picker.
+- Do not make marquee / backgrounds / GIF widgets appear by default.
+- Do not rebuild the entire profile architecture if a smaller extension of current components will get the result faster and more safely.
 
 ---
 
 ## Verification
 
-Before each commit:
+Run all of these before handing back work:
 
 ```bash
-cd bytescape
-npx tsc --noEmit                     # 0 errors
-pnpm test -- --run                   # all tests pass
+cd bytescape && npx tsc --noEmit
+cd bytescape && pnpm test -- --run
+cd bytescape/src-tauri && cargo check
 ```
-
-Document all changes in `progress.md`.
 
 ---
 
 ## Track Boundaries
 
-- **Track B owns**: `src/` (all React/TypeScript, CSS)
-- **Shared files** (require PM coordination): `src/types/index.ts`
-- Check `git log --oneline -5 -- <filepath>` before editing any shared file
+- Track B owns `src/` UI work.
+- `src/types/index.ts` is shared; keep any change minimal and coordinated.
+- Do not move back into hosted-identity prompt scope until this profile sprint is actually implemented.

@@ -4,6 +4,33 @@
 
 ---
 
+## 📋 PM — Sprint v20 Initialization: Hosted Identity (2026-04-10)
+
+**Trigger:** User feedback prioritizes hosted URL-based identity. Sprint v19 (profile customization) is fully delivered across both tracks. Time to move forward.
+
+### Pre-sprint checks
+
+- Read `user-feedback`: hosted identity is critical priority
+- Read `profile-feedback`: v19 addressed customization items
+- Build verification: `cargo check` ✅, `cargo test` 272 Rust tests ✅, `tsc --noEmit` ✅, `vitest` 273/273 ✅
+- Checked `git log`: v19 fully committed (Track A: `1f6722b`, Track B: `3a899e2`–`6213f59`)
+- Uncommitted changes: 1 untracked doc file (`post-profile-phase-architecture.md`) — not anomalous
+- Identity code audit: `did:key`/`did:web`/webfinger helpers exist, no server crate, no publish commands, all relay.rs stubs
+
+### Sprint setup actions
+
+1. Archived delivered v19 prompts to `archive/`
+2. Created fresh `backend-sprint-v20.md` — standalone axum server crate + publish commands + keychain changes
+3. Created fresh `frontend-sprint-v20.md` — publish secret config, identity publish UI, settings cleanup
+4. Scope: single-user hosted DID + profile publish first. Deferred: PDS, relay, full federation.
+
+### Active prompt set
+
+- `.github/agents/prompts/backend-sprint-v20.md`
+- `.github/agents/prompts/frontend-sprint-v20.md`
+
+---
+
 ## 📋 PM — Sprint v19 Reactivation: Profile Customization (2026-04-10)
 
 **Trigger:** user reported that sprint v19 had effectively been skipped and requested that profile customization be reactivated before any hosted-identity work.
