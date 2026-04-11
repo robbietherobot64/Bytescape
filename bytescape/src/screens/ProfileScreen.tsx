@@ -124,6 +124,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Media ─── */
     const [mediaFiles, setMediaFiles] = useState<VaultFile[]>([]);
     const [mediaLoading, setMediaLoading] = useState(false);
+    const [mediaThumbs, setMediaThumbs] = useState<Record<string, string>>({});
 
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
@@ -275,7 +276,21 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setMediaLoading(true);
         try {
             const files = await invoke<VaultFile[]>('vault_list_files');
-            setMediaFiles(files.filter(f => f.kind === 'Image' || f.kind === 'Video'));
+            const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
+            setMediaFiles(visual);
+            // Fetch thumbnails for images
+            const thumbs: Record<string, string> = {};
+            await Promise.all(visual.map(async (f) => {
+                if (f.kind !== 'Image' || !f.thumbnail_hash) return;
+                try {
+                    const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                    if (bytes) {
+                        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                        thumbs[f.id] = URL.createObjectURL(blob);
+                    }
+                } catch { /* skip */ }
+            }));
+            setMediaThumbs(thumbs);
         } catch {
             setMediaFiles([]);
         } finally {
@@ -912,12 +927,17 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 <div className="profile-media-grid">
                     {mediaFiles.map(file => (
                         <div key={file.id} className="profile-media-item">
-                            <img
-                                src={resolveMediaPath(file.name)}
-                                alt={file.name}
-                                loading="lazy"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
+                            {mediaThumbs[file.id] ? (
+                                <img
+                                    src={mediaThumbs[file.id]}
+                                    alt={file.name}
+                                    loading="lazy"
+                                />
+                            ) : (
+                                <div className="profile-media-placeholder">
+                                    {file.kind === 'Video' ? '🎬' : '🖼️'}
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
