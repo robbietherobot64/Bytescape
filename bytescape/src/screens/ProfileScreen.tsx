@@ -6,14 +6,13 @@ import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModul
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
-import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsGripVertical, BsArrowsFullscreen } from 'react-icons/bs';
+import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
 /* ═══ Navigation Sections ═══ */
 const CORE_NAV = [
     { id: 'home', label: 'Home', emoji: '🏠' },
-    { id: 'wall', label: 'Wall', emoji: '📋' },
     { id: 'posts', label: 'Posts', emoji: '📰' },
     { id: 'media', label: 'Media', emoji: '🖼️' },
 ];
@@ -93,8 +92,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [editingModuleContent, setEditingModuleContent] = useState<string | null>(null);
     const [editingModuleTitle, setEditingModuleTitle] = useState<string | null>(null);
     const [showAddModuleMenu, setShowAddModuleMenu] = useState(false);
-    const [dragModuleId, setDragModuleId] = useState<string | null>(null);
-    const [dragOverModuleId, setDragOverModuleId] = useState<string | null>(null);
     const addMenuRef = useRef<HTMLDivElement>(null);
 
     /* ─── Identities ─── */
@@ -377,27 +374,17 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         saveModules(updated);
     }, [modules, saveModules]);
 
-    // Drag and drop
-    const handleModuleDragStart = useCallback((id: string) => setDragModuleId(id), []);
-    const handleModuleDragOver = useCallback((id: string) => setDragOverModuleId(id), []);
-
-    const handleModuleDrop = useCallback((targetId: string) => {
-        if (!dragModuleId || dragModuleId === targetId) {
-            setDragModuleId(null);
-            setDragOverModuleId(null);
-            return;
-        }
-        const fromIdx = modules.findIndex(m => m.id === dragModuleId);
-        const toIdx = modules.findIndex(m => m.id === targetId);
-        if (fromIdx === -1 || toIdx === -1) return;
+    // Move module up/down
+    const moveModule = useCallback((id: string, direction: 'up' | 'down') => {
+        const idx = modules.findIndex(m => m.id === id);
+        if (idx === -1) return;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= modules.length) return;
         const updated = [...modules];
-        const [moved] = updated.splice(fromIdx, 1);
-        updated.splice(toIdx, 0, moved);
+        [updated[idx], updated[targetIdx]] = [updated[targetIdx], updated[idx]];
         updated.forEach((m, i) => m.order = i);
         saveModules(updated);
-        setDragModuleId(null);
-        setDragOverModuleId(null);
-    }, [dragModuleId, modules, saveModules]);
+    }, [modules, saveModules]);
 
     // Click-outside to close add menu
     useEffect(() => {
@@ -568,13 +555,17 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     />
                 )}
 
-                <div className="profile-connections-list">
+                <div className="profile-connections-grid">
                     {displayList.map((c, i) => (
-                        <span key={`${c.source}-${c.handle}-${i}`} className="profile-connection-chip">
-                            <span className="profile-connection-chip-avatar">{c.handle[0]?.toUpperCase() || '?'}</span>
-                            <span>{sourceEmoji[c.source] || '🌐'}</span>
-                            {c.handle}
-                        </span>
+                        <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-card">
+                            <div className="profile-connection-avatar">
+                                {c.handle[0]?.toUpperCase() || '?'}
+                            </div>
+                            <div className="profile-connection-name" title={c.handle}>{c.handle}</div>
+                            <div className="profile-connection-platform">
+                                <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
+                            </div>
+                        </div>
                     ))}
                 </div>
 
@@ -777,19 +768,19 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const visibleModules = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
         return (
             <div className="profile-module-grid">
-                {visibleModules.map((mod) => (
+                {visibleModules.map((mod, idx) => (
                     <div
                         key={mod.id}
-                        className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''} ${dragModuleId === mod.id ? 'profile-module--dragging' : ''} ${dragOverModuleId === mod.id ? 'profile-module--drag-over' : ''}`}
+                        className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}
                         style={mod.background ? { background: mod.background, backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties : undefined}
-                        draggable={editMode}
-                        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; handleModuleDragStart(mod.id); }}
-                        onDragOver={(e) => { e.preventDefault(); handleModuleDragOver(mod.id); }}
-                        onDrop={(e) => { e.preventDefault(); handleModuleDrop(mod.id); }}
-                        onDragEnd={() => { setDragModuleId(null); setDragOverModuleId(null); }}
                     >
                         <div className="profile-module-header">
-                            {editMode && <span className="profile-module-drag-handle"><BsGripVertical /></span>}
+                            {editMode && (
+                                <div className="profile-module-reorder">
+                                    <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={idx === 0} title="Move up"><BsChevronUp size={10} /></button>
+                                    <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={idx === visibleModules.length - 1} title="Move down"><BsChevronDown size={10} /></button>
+                                </div>
+                            )}
                             {editMode && editingModuleTitle === mod.id ? (
                                 <input
                                     className="profile-module-title-input"
@@ -840,43 +831,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         )}
                     </div>
                 )}
-            </div>
-        );
-    }
-
-    function renderWall() {
-        return (
-            <div>
-                <div className="profile-section-header">
-                    <span className="profile-section-header-emoji">📋</span> Wall
-                </div>
-                <div className="profile-wall-form">
-                    <input
-                        className="profile-wall-input"
-                        type="text"
-                        placeholder="Leave a message on the wall..."
-                        value={wallMessage}
-                        onChange={(e) => setWallMessage(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') addWallEntry(); }}
-                        maxLength={500}
-                    />
-                    <button className="profile-wall-submit" onClick={addWallEntry} disabled={wallSubmitting || !wallMessage.trim()}>Post</button>
-                </div>
-                {wallEntries.length === 0 && (
-                    <div className="profile-empty"><div className="profile-empty-icon">📋</div><p className="profile-empty-text">No wall posts yet. Be the first to leave a message!</p></div>
-                )}
-                <div className="profile-wall-entries">
-                    {wallEntries.map(entry => (
-                        <div key={entry.id} className="profile-wall-entry">
-                            <div className="profile-wall-entry-header">
-                                <span className="profile-wall-author">{entry.author}</span>
-                                <span className="profile-wall-time">{new Date(entry.timestamp * 1000).toLocaleDateString()}</span>
-                            </div>
-                            <div className="profile-wall-message">{entry.message}</div>
-                            <button className="profile-wall-delete" onClick={() => deleteWallEntry(entry.id)}>🗑 Remove</button>
-                        </div>
-                    ))}
-                </div>
             </div>
         );
     }
@@ -975,6 +929,43 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         return (
             <div className="profile-customize-panel">
                 <div className="profile-customize-section">
+                    <h3>🎨 Banner Header</h3>
+                    <div className="profile-customize-row">
+                        <label>
+                            <input type="radio" name="banner" checked={bannerType === 'theme'} onChange={() => saveSettings({ ...profileSettings, banner_type: 'theme', banner_value: '' })} /> Match Theme
+                        </label>
+                        <label>
+                            <input type="radio" name="banner" checked={bannerType === 'color'} onChange={() => saveSettings({ ...profileSettings, banner_type: 'color', banner_value: '#1a1a2e' })} /> Solid Color
+                        </label>
+                        <label>
+                            <input type="radio" name="banner" checked={bannerType === 'image'} onChange={() => saveSettings({ ...profileSettings, banner_type: 'image', banner_value: '' })} /> Image
+                        </label>
+                        <label>
+                            <input type="radio" name="banner" checked={bannerType === 'gradient'} onChange={() => saveSettings({ ...profileSettings, banner_type: 'gradient', banner_value: 'linear-gradient(135deg, #667eea, #764ba2)' })} /> Gradient
+                        </label>
+                    </div>
+                    {bannerType === 'color' && (
+                        <input type="color" className="profile-customize-color" value={bannerValue || '#1a1a2e'}
+                            onChange={(e) => saveSettings({ ...profileSettings, banner_type: 'color', banner_value: e.target.value })} />
+                    )}
+                    {bannerType === 'image' && (
+                        <input type="text" className="profile-customize-input" placeholder="https://example.com/banner.jpg" value={bannerValue} maxLength={2000}
+                            onChange={(e) => saveSettings({ ...profileSettings, banner_type: 'image', banner_value: e.target.value })} />
+                    )}
+                    {bannerType === 'gradient' && (
+                        <input type="text" className="profile-customize-input" placeholder="linear-gradient(135deg, #667eea, #764ba2)" value={bannerValue} maxLength={500}
+                            onChange={(e) => saveSettings({ ...profileSettings, banner_type: 'gradient', banner_value: e.target.value })} />
+                    )}
+                    <div className="profile-customize-sub">
+                        <label>Text Color:
+                            <input type="color" value={bannerTextColor || '#ffcc00'}
+                                onChange={(e) => saveSettings({ ...profileSettings, banner_text_color: e.target.value })} />
+                        </label>
+                        <button className="profile-customize-reset-btn" onClick={() => saveSettings({ ...profileSettings, banner_text_color: undefined })}>Reset</button>
+                    </div>
+                </div>
+
+                <div className="profile-customize-section">
                     <h3>🖼️ Profile Background</h3>
                     <div className="profile-customize-row">
                         <label>
@@ -1053,11 +1044,31 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     /* ════════════════════ Main Render ════════════════════ */
+
+    /* Banner styling */
+    const bannerType = profileSettings.banner_type || 'theme';
+    const bannerValue = profileSettings.banner_value || '';
+    const bannerTextColor = profileSettings.banner_text_color || '';
+    const bannerStyle: React.CSSProperties = {};
+    if (bannerType === 'color' && bannerValue) {
+        bannerStyle.background = bannerValue;
+    } else if (bannerType === 'image' && bannerValue) {
+        bannerStyle.backgroundImage = `url(${bannerValue})`;
+        bannerStyle.backgroundSize = 'cover';
+        bannerStyle.backgroundPosition = 'center';
+    } else if (bannerType === 'gradient' && bannerValue) {
+        bannerStyle.background = bannerValue;
+    }
+    // 'theme' → no inline style, CSS inherits from theme variables
+    if (bannerTextColor) {
+        bannerStyle.color = bannerTextColor;
+    }
+
     return (
         <div className="profile-container" style={containerStyle}>
             {/* ═══ Hero Banner ═══ */}
-            <div className="profile-hero">
-                <div className="profile-hero-gradient" />
+            <div className={`profile-hero ${bannerType === 'theme' ? 'profile-hero--themed' : ''}`} style={bannerStyle}>
+                {bannerType === 'theme' && <div className="profile-hero-gradient" />}
                 <div
                     className={`profile-avatar ${editMode ? 'profile-avatar--editable' : ''}`}
                     onClick={() => { if (editMode) setShowAvatarInput(!showAvatarInput); }}
@@ -1074,7 +1085,20 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 </div>
 
                 <div className="profile-hero-info">
-                    <h1 className="profile-hero-name">{displayName}</h1>
+                    {profileSettings.nickname && (
+                        <div className="profile-hero-nickname">{profileSettings.nickname}</div>
+                    )}
+                    {editMode && (
+                        <input
+                            className="profile-hero-nickname-input"
+                            type="text"
+                            placeholder="Add a nickname..."
+                            value={profileSettings.nickname || ''}
+                            maxLength={50}
+                            onChange={(e) => saveSettings({ ...profileSettings, nickname: e.target.value || undefined })}
+                        />
+                    )}
+                    <h1 className="profile-hero-name" style={bannerTextColor ? { color: bannerTextColor } as React.CSSProperties : undefined}>{displayName}</h1>
                     <div className="profile-hero-did">{auth?.web_did || auth?.did}</div>
                 </div>
 
@@ -1138,38 +1162,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         </button>
                     ))}
 
-                    {/* Custom module nav items */}
-                    {modules.filter(m => m.visible && !['identities', 'connections'].includes(m.type)).length > 0 && (
-                        <>
-                            <div className="profile-nav-divider" />
-                            <div className="profile-nav-heading">Modules</div>
-                            {modules.filter(m => m.visible && !['identities', 'connections'].includes(m.type)).map(mod => {
-                                const emojiMap: Record<string, string> = {
-                                    about: '📝', 'listening-to': '🎵', 'away-message': '💤', links: '🔗',
-                                    guestbook: '💬', 'gif-collection': '🖼️', blogs: '✍️', 'check-ins': '📍',
-                                    polls: '📊', playlists: '🎶', custom: '✨',
-                                };
-                                return (
-                                    <button
-                                        key={mod.id}
-                                        className={`profile-nav-item ${activeNav === `mod-${mod.id}` ? 'profile-nav-item--active' : ''}`}
-                                        onClick={() => setActiveNav('home')}
-                                        title={`Jump to ${mod.title}`}
-                                    >
-                                        <span className="profile-nav-emoji">{emojiMap[mod.type] || '✨'}</span>
-                                        {mod.title}
-                                    </button>
-                                );
-                            })}
-                        </>
-                    )}
                 </nav>
 
                 {/* Content Area */}
                 <div className="profile-content">
                     <div className="profile-content-inset">
                         {activeNav === 'home' && renderHome()}
-                        {activeNav === 'wall' && renderWall()}
                         {activeNav === 'posts' && renderPosts()}
                         {activeNav === 'media' && renderMedia()}
                     </div>
