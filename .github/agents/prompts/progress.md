@@ -3,6 +3,26 @@
 > This document is a running log of work completed by all agents. Updated after each commit. PM reviews this for status tracking.
 
 ---
+## 📋 PM — Prompt Cleanup: Remove Stale Active v19 Duplicates (2026-04-11)
+
+**Trigger:** user requested cleanup of old or outdated sprint files and duplicate prompt docs.
+
+### Audit findings
+
+- The active prompt folder still contained `frontend-sprint-v19.md` and `backend-sprint-v19.md`.
+- Both `v19` prompt files already existed in `.github/agents/prompts/archive/`.
+- The current progress log already marks `v20` as the active prompt set.
+
+### PM actions
+
+1. Removed the stale active `v19` prompt duplicates from `.github/agents/prompts/`.
+2. Left the archived `v19` copies intact as the historical record.
+3. Kept the active sprint set unchanged:
+  - `.github/agents/prompts/frontend-sprint-v20.md`
+  - `.github/agents/prompts/backend-sprint-v20.md`
+
+---
+
 ## 📋 PM — Sprint v20 Initialization: Final Profile Polish Before Web (2026-04-11)
 
 **Trigger:** user confirmed the next step is to finalize the profile surface before moving on to hosted web publishing.
