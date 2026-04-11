@@ -571,10 +571,10 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             case 'links': return renderLinksView(mod);
             case 'guestbook': return renderGuestbook();
             case 'gif-collection': return renderGifView(mod);
-            case 'blogs':
+            case 'blogs': return renderBlogs(mod);
+            case 'playlists': return renderPlaylist(mod);
             case 'check-ins':
             case 'polls':
-            case 'playlists':
                 return renderPlaceholder(mod);
             case 'custom': return renderTextContent(mod, '✨', 'Add your custom content...');
             default: return renderPlaceholder(mod);
@@ -857,6 +857,72 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         </div>
                     ))}
                 </div>
+            </div>
+        );
+    }
+
+    function renderPlaylist(mod: ProfileModule) {
+        if (editMode && editingModuleContent === mod.id) {
+            return (
+                <textarea
+                    className="profile-module-editor"
+                    value={mod.content || ''}
+                    onChange={(e) => updateModuleContent(mod.id, e.target.value)}
+                    placeholder="Paste Bandcamp, SoundCloud, Spotify, or YouTube URLs (one per line)..."
+                    autoFocus
+                />
+            );
+        }
+        if (!mod.content) {
+            return <div className="profile-empty"><div className="profile-empty-icon">🎶</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add playlist URLs...' : 'No playlists yet.'}</p></div>;
+        }
+        const lines = mod.content.split('\n').filter(l => l.trim());
+        const embeds = lines.map(l => detectEmbed(l.trim())).filter(Boolean) as Array<{ url: string; label: string }>;
+        if (embeds.length === 0) {
+            return <div className="profile-listening-text"><span>🎶</span><span>{mod.content}</span></div>;
+        }
+        return (
+            <div className="profile-playlist-stack">
+                {embeds.map((embed, i) => (
+                    <div key={i} className="profile-playlist-item">
+                        <div className="profile-listening-embed">
+                            <iframe src={embed.url} title={embed.label} allow="autoplay; encrypted-media" sandbox="allow-scripts allow-same-origin allow-popups" />
+                        </div>
+                        <div className="profile-listening-source">{embed.label}</div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    function renderBlogs(mod: ProfileModule) {
+        if (editMode && editingModuleContent === mod.id) {
+            return (
+                <textarea
+                    className="profile-module-editor"
+                    value={mod.content || ''}
+                    onChange={(e) => updateModuleContent(mod.id, e.target.value)}
+                    placeholder="Paste your blog URLs (WordPress, Ghost, Substack, etc.) — one per line..."
+                    autoFocus
+                />
+            );
+        }
+        if (!mod.content) {
+            return <div className="profile-empty"><div className="profile-empty-icon">✍️</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add blog links...' : 'No blogs linked yet.'}</p></div>;
+        }
+        const lines = mod.content.split('\n').filter(l => l.trim());
+        return (
+            <div className="profile-links-list">
+                {lines.map((url, i) => {
+                    const trimmed = url.trim();
+                    let label = trimmed;
+                    try { label = new URL(trimmed).hostname; } catch { /* use raw */ }
+                    return (
+                        <div key={i} className="profile-link-item">
+                            ✍️ <a href={trimmed} target="_blank" rel="noopener noreferrer">{label}</a>
+                        </div>
+                    );
+                })}
             </div>
         );
     }
