@@ -1,817 +1,165 @@
-# Backend Sprint v20 — Hosted Identity Publish Service
+# Backend Sprint v20 — Profile Final Polish Support & Pre-Web Gate
 
-**Sprint**: v20 (Hosted Identity)  
+**Sprint**: v20 (Profile Final Polish Support)  
 **Track**: A (Backend — Rust)  
-**Date**: 2026-04-10  
-**Previous sprint**: v19 delivered avatar storage + profile export (commit `1f6722b`)  
-**HEAD at prompt time**: `5d1dc73`  
-**Decision**: Single-user launch first (fast go-live, harden later)
-
----
-
-## Sprint Goal
-
-Stand up the first hosted identity pipeline for `bytescape.social`.
-
-When complete:
-
-- `did:web:bytescape.social:{username}` resolves to a real DID document
-- `acct:{username}@bytescape.social` resolves via WebFinger
-- `https://bytescape.social/@{username}` serves a public profile page
-- `https://bytescape.social/{username}/did.json` serves the DID document
-- The Tauri desktop app can publish identity data to the server via authenticated API
-
-This sprint is **not** full AT Protocol PDS hosting and **not** full ActivityPub federation. Those come later.
-
-### User feedback driving this sprint
-
-> "We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification."
-
----
-
-## Current committed state
-
-| Component | File | Status |
-|-----------|------|--------|
-| Ed25519 keypair gen + storage | `keychain_encrypted.rs:56-72` | ✅ Working |
-| `did:key` derivation (multicodec) | `keychain_encrypted.rs:336` (`did_key_from_ed25519_bytes`) | ✅ Working |
-| `did:web` string formatting | `keychain_encrypted.rs:394-427` (`ensure_web_did`/`get_web_did`) | ✅ String only — no document served |
-| WebFinger JRD generation | `activitypub/webfinger.rs:57-75` (`generate_webfinger`) | ✅ Working |
-| AP Actor JSON-LD | `activitypub/actor.rs:152-190` (`to_activitystreams`) | ✅ Working |
-| AP_DOMAIN constant | `activitypub/actor.rs:52` | ✅ `"bytescape.social"` |
-| Avatar persistence | `commands/profile.rs:442` (`save_avatar_image`) | ✅ Working (v19) |
-| Composite profile export | `commands/profile.rs:534` (`export_profile_data`) | ✅ Working (v19) |
-| Relay/provisioning stubs | `commands/relay.rs:33-157` | ⚠️ All return errors |
-| `publish_secret` in AuthData | `keychain_encrypted.rs` | ❌ Does not exist |
-| Server crate | `bytescape/server/` | ❌ Does not exist |
-
----
-
-## P0: New Server Crate — `bytescape-server`
-
-Create a **standalone Rust crate** at `bytescape/server/` (sibling to `src-tauri/`). This is a standalone `axum` HTTP server, NOT embedded in the Tauri app.
-
-Rationale:
-1. The Tauri app runs on the user's desktop — it can't serve public HTTP
-2. The server runs on `bytescape.social` — always-on, publicly reachable
-3. They share identity data via the Publish API (app → server)
-
-### Crate Structure
-
-```
-bytescape/server/
-├── Cargo.toml
-├── src/
-│   ├── main.rs              # axum server entrypoint
-│   ├── config.rs             # env-based config (domain, port, data dir, auth secret)
-│   ├── identity.rs           # DID document generation + storage
-│   ├── webfinger.rs          # /.well-known/webfinger handler
-│   ├── atproto_did.rs        # /.well-known/atproto-did handler
-│   ├── profile.rs            # /@{username} profile page handler
-│   ├── publish.rs            # POST /api/publish/* handlers (auth required)
-│   ├── auth.rs               # Bearer token validation for publish API
-│   └── storage.rs            # File-based storage for DID docs + profiles
-```
-
-### Dependencies
-
-```toml
-[package]
-name = "bytescape-server"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-```
-
-### config.rs
-
-```rust
-pub struct Config {
-    pub bind_addr: String,           // default "0.0.0.0:3000"
-    pub domain: String,              // "bytescape.social"
-    pub data_dir: String,            // "/data" or "./data"
-    pub publish_secret: String,      // Bearer token for Publish API auth
-}
-```
-
-Read from environment variables. Fail fast with clear messages if `PUBLISH_SECRET` or `DOMAIN` are missing.
-
-### storage.rs — File-based storage
-
-Store identity data as JSON files:
-
-```
-{data_dir}/
-├── {username}/
-│   ├── did.json           # DID document
-│   ├── profile.json       # Profile metadata
-│   └── avatar.*           # Avatar image (if published)
-```
-
-Provide methods:
-- `store_did_document(username, did_doc) -> Result<()>`
-- `load_did_document(username) -> Result<Option<DIDDocument>>`
-- `store_profile(username, profile) -> Result<()>`
-- `load_profile(username) -> Result<Option<Profile>>`
-- `list_users() -> Result<Vec<String>>`
-
-Username validation: alphanumeric + hyphens only, no path traversal.
-
-### main.rs
-
-```rust
-let app = Router::new()
-    // Identity resolution (public)
-    .route("/.well-known/webfinger", get(webfinger::handler))
-    .route("/.well-known/atproto-did", get(atproto_did::handler))
-    .route("/{username}/did.json", get(identity::did_json_handler))
-    .route("/@{username}", get(profile::handler))
-    // Publish API (authenticated)
-    .route("/api/publish/did", post(publish::publish_did))
-    .route("/api/publish/profile", post(publish::publish_profile))
-    .route("/api/publish/status", get(publish::status))
-    // Health
-    .route("/health", get(|| async { "ok" }))
-    .with_state(state);
-```
-
----
-
-## P1: Public Resolver Endpoints
-
-### `GET /.well-known/webfinger?resource=acct:{username}@bytescape.social`
-
-Return JRD per RFC 7033. Only respond for usernames that have a published DID document on disk. Return 404 for unknown users.
-
-### `GET /.well-known/atproto-did`
-
-Return the user's AT Protocol DID as plain text: `did:web:bytescape.social:{username}`. For single-user launch, return the sole registered user's `did:web`.
-
-### `GET /{username}/did.json`
-
-**Critical endpoint.** The `did:web` spec requires the DID document at this exact path.
-
-Generate from published keychain material:
-
-```json
-{
-  "@context": [
-    "https://www.w3.org/ns/did/v1",
-    "https://w3id.org/security/multikey/v1"
-  ],
-  "id": "did:web:bytescape.social:alice",
-  "alsoKnownAs": [
-    "at://alice.bytescape.social",
-    "acct:alice@bytescape.social"
-  ],
-  "verificationMethod": [
-    {
-      "id": "did:web:bytescape.social:alice#iroh",
-      "type": "Multikey",
-      "controller": "did:web:bytescape.social:alice",
-      "publicKeyMultibase": "z6Mk..."
-    }
-  ],
-  "service": [
-    {
-      "id": "#activitypub",
-      "type": "ActivityPubActor",
-      "serviceEndpoint": "https://bytescape.social/@alice"
-    }
-  ]
-}
-```
-
-The `publicKeyMultibase` is the same `z6Mk...` format produced by `did_key_from_ed25519_bytes()` in `keychain_encrypted.rs:336`. Strip the `did:key:` prefix to get the multibase value.
-
-### `GET /@{username}`
-
-Serve a public profile page. **Content negotiation**:
-- `Accept: application/activity+json` or `application/ld+json` → return AP actor JSON-LD
-- Otherwise → return HTML profile page
-
-HTML page should include OpenGraph meta tags and a `<link rel="alternate" type="application/activity+json">` header for AP discovery.
-
----
-
-## P2: Publish API
-
-Authenticated endpoints called by the Tauri desktop app to push identity data to the server.
-
-### Auth Model
-
-Bearer token auth with `PUBLISH_SECRET` env var. Validate in middleware. Return 401 for missing/invalid tokens.
-
-### `POST /api/publish/did`
-
-Request body:
-```json
-{
-  "username": "alice",
-  "public_key_multibase": "z6Mk...",
-  "display_name": "Alice",
-  "also_known_as": ["at://alice.bytescape.social"]
-}
-```
-
-Server generates DID document and writes to `{data_dir}/{username}/did.json`.
-
-### `POST /api/publish/profile`
-
-Request body:
-```json
-{
-  "username": "alice",
-  "display_name": "Alice",
-  "bio": "Building the future",
-  "avatar_data": null,
-  "links": [{ "label": "Website", "url": "https://alice.com" }]
-}
-```
-
-### `GET /api/publish/status`
-
-Reports whether DID, profile, and WebFinger are active:
-
-```json
-{
-  "username": "alice",
-  "did_published": true,
-  "did_url": "https://bytescape.social/alice/did.json",
-  "profile_published": true,
-  "profile_url": "https://bytescape.social/@alice",
-  "webfinger_active": true,
-  "last_published_at": "2026-04-10T12:00:00Z"
-}
-```
-
----
-
-## P3: Tauri App — Publish Commands
-
-### New command: `publish_identity`
-
-```rust
-#[tauri::command]
-pub async fn publish_identity(
-    state: State<'_, AppState>,
-) -> Result<PublishResult, String>
-```
-
-Flow:
-1. Read username and public key from keychain
-2. Load exported profile data via `export_profile_data`
-3. Load publish secret from keychain
-4. POST DID payload to hosted server
-5. POST profile payload to hosted server
-6. Return publish status
-
-### New command: `check_publish_status`
-
-```rust
-#[tauri::command]
-pub async fn check_publish_status(
-    state: State<'_, AppState>,
-) -> Result<PublishStatus, String>
-```
-
-GET `/api/publish/status` with bearer token.
-
-### New command: `set_publish_secret`
-
-```rust
-#[tauri::command]
-pub async fn set_publish_secret(
-    state: State<'_, AppState>,
-    secret: String,
-) -> Result<(), String>
-```
-
-Store publish secret in encrypted keychain.
-
-### Keychain changes
-
-Add `publish_secret: Option<String>` to `AuthData` in `keychain_encrypted.rs`. Default to `None` for backward compatibility with existing keychains.
-
-### Replace relay stubs
-
-In `commands/relay.rs`:
-- `provision_ap_actor` → call `publish_identity` internally
-- `provision_pds_account` → update error message: "Coming after hosted identity is live"
-
-### Register new commands in `lib.rs`
-
-Add `publish_identity`, `check_publish_status`, and `set_publish_secret` to the invoke handler.
-
----
-
-## P4: Scope Limits
-
-Do **not** expand this sprint into:
-- Full Bluesky PDS implementation
-- ActivityPub inbox/outbox delivery
-- Desktop relay hosting
-- Custom-domain onboarding
-- Account migration flows
-
----
-
-## Files Summary
-
-### New files (create)
-
-| File | Purpose |
-|------|---------|
-| `server/Cargo.toml` | Server crate manifest |
-| `server/src/main.rs` | axum server entrypoint |
-| `server/src/config.rs` | Environment config |
-| `server/src/identity.rs` | DID document generation |
-| `server/src/webfinger.rs` | WebFinger handler |
-| `server/src/atproto_did.rs` | AT Protocol handle resolution |
-| `server/src/profile.rs` | Profile page handler (HTML + AP content negotiation) |
-| `server/src/publish.rs` | Publish API handlers |
-| `server/src/auth.rs` | Bearer token validation |
-| `server/src/storage.rs` | File-based storage |
-
-### Modified files (Track A owns)
-
-| File | Changes |
-|------|---------|
-| `src-tauri/src/keychain_encrypted.rs` | Add `publish_secret` to `AuthData` |
-| `src-tauri/src/commands/relay.rs` | Replace stubs with real publish calls |
-| `src-tauri/src/lib.rs` | Register new commands |
-
----
-
-## Verification
-
-Before committing:
-
-```bash
-cd bytescape/server && cargo check
-cd ../src-tauri && cargo check
-cd .. && npx tsc --noEmit
-pnpm test -- --run
-```
-
-Document results in `progress.md`.
-
----
-
-## Track Boundaries
-
-- **Track A owns**: `src-tauri/src/` (Rust app), `server/` (new server crate)
-- **Track B owns**: `src/` (React/TypeScript, CSS)
-- **Shared**: `src/types/index.ts` (Track B adds `PublishStatus`/`PublishResult` types)
-# Backend Sprint v20 — Identity Resolver Server & Publish API
-
-**Sprint**: v20 (Go-Live: Hosted Identity)  
-**Track**: A (Backend — Rust)  
-**Date**: 2026-04-09  
-**Previous sprint**: v19 (profile customization deepening — delivered)  
-**HEAD at prompt time**: `b7fca4e`  
-**Decision**: Single-user launch first (fast go-live, harden later)
+**Date**: 2026-04-11  
+**Previous sprint**: backend profile helpers already landed; this sprint is for the last backend issues blocking profile sign-off before hosted publishing work  
+**HEAD at prompt time**: `8010b45`  
+**Supersedes**: the earlier hosted-identity publish-service prompt that jumped ahead of profile acceptance
 
 ---
 
 ## Sprint Context
 
-This sprint transitions Bytescape from a local-only desktop app to a **publicly resolvable identity**. When complete:
+The frontend profile surface is substantially built already. Backend should stay narrowly focused on the last issues that can still make the profile feel incomplete before the hosted web phase.
 
-- `did:web:bytescape.social:{username}` resolves to a real DID document
-- `acct:{username}@bytescape.social` resolves via WebFinger
-- `https://bytescape.social/@{username}` serves a public profile page
-- `https://bytescape.social/{username}/did.json` serves the DID document
-- `/.well-known/atproto-did` resolves for AT Protocol handle verification
+### Current relevant backend state
 
-The Tauri desktop app publishes identity data to the server via an authenticated Publish API. The server is a standalone axum HTTP service — NOT embedded in the Tauri app.
+Already present:
 
-### User feedback driving this sprint
+- `save_profile_settings`
+- `get_profile_settings`
+- `save_profile_page`
+- `get_profile_pages`
+- `delete_profile_page`
+- `delete_vault_item`
+- `save_avatar_image`
+- `export_profile_data`
+- `import_mastodon_posts`
 
-> "We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification."  
-> — `user-feedback`
+Hosted publish infrastructure is **not** ready yet:
 
-### What already exists (reuse, don't rewrite)
+- no `bytescape/server/` crate
+- no `publish_identity`
+- no `check_publish_status`
+- no `set_publish_secret`
 
-| Component | File | Status |
-|-----------|------|--------|
-| Ed25519 keypair gen + storage | `keychain_encrypted.rs:56-72` | ✅ Working |
-| `did:key` derivation (multicodec) | `keychain_encrypted.rs:356-370` | ✅ Working |
-| `did:web` string formatting | `keychain_encrypted.rs:412`, `auth.rs:423` | ✅ String only — no document |
-| WebFinger JRD generation | `activitypub/webfinger.rs:55-75` | ✅ Working (`generate_webfinger()`) |
-| AP Actor → JSON-LD | `activitypub/actor.rs:152-190` | ✅ Working (`to_activitystreams()`) |
-| AP HTTP Signatures | `activitypub/signatures.rs` | ✅ Working |
-| `AP_DOMAIN` constant | `activitypub/actor.rs:52` | ✅ `"bytescape.social"` |
-| Provisioning stubs | `commands/relay.rs:33-165` | ⚠️ All return errors — replace in P3 |
-| Profile settings persistence | `commands/profile.rs` | ✅ Working (v18a) |
-| Profile pages CRUD | `commands/profile.rs` | ✅ Working (v18a) |
-| Vault item deletion | `commands/vault.rs` | ✅ Working (v18a) |
-
-### What doesn't exist (must build)
-
-- **`bytescape/server/`** — Standalone axum server crate (new)
-- DID Document (`did.json`) generation from keychain material
-- Server-side identity resolver endpoints
-- Publish API (authenticated POST endpoints)
-- AT Protocol handle resolution endpoint
-- Tauri app commands to call the Publish API
+Do not spend this sprint building the hosted server or publish pipeline.
 
 ---
 
-## P0: New Server Crate — `bytescape-server`
+## Sprint Goal
 
-### Architecture Decision
-
-Create a **new Rust crate** at `bytescape/server/` (sibling to `src-tauri/`). This is a standalone `axum` HTTP server, NOT embedded in the Tauri app. Rationale:
-
-1. The Tauri app runs on the user's desktop — it can't serve public HTTP
-2. The server runs on `bytescape.social` — always-on, publicly reachable
-3. They share identity data via the Publish API (app → server)
-4. Types can be shared later via workspace crate extraction; for v19, copy minimal types
-
-### Crate Structure
-
-```
-bytescape/server/
-├── Cargo.toml
-├── src/
-│   ├── main.rs              # axum server entrypoint
-│   ├── config.rs             # env-based config (domain, port, data dir, auth secret)
-│   ├── identity.rs           # DID document generation + storage
-│   ├── webfinger.rs          # /.well-known/webfinger handler
-│   ├── atproto_did.rs        # /.well-known/atproto-did handler
-│   ├── profile.rs            # /@{username} profile page handler
-│   ├── publish.rs            # POST /api/publish/* handlers (auth required)
-│   ├── auth.rs               # Bearer token validation for publish API
-│   └── storage.rs            # File-based storage for DID docs + profiles
-```
-
-### Dependencies
-
-```toml
-[package]
-name = "bytescape-server"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-```
-
-### config.rs — Environment-based configuration
-
-```rust
-pub struct Config {
-    pub bind_addr: String,           // default "0.0.0.0:3000"
-    pub domain: String,              // "bytescape.social"
-    pub data_dir: String,            // "/data" or "./data"
-    pub publish_secret: String,      // Bearer token for Publish API auth
-}
-```
-
-Read from environment variables. Fail fast with clear messages if `PUBLISH_SECRET` or `DOMAIN` are missing.
-
-### storage.rs — File-based storage
-
-For single-user launch, store identity data as JSON files:
-
-```
-{data_dir}/
-├── {username}/
-│   ├── did.json           # DID document
-│   ├── profile.json       # Profile metadata (display name, bio, links, avatar)
-│   └── webfinger.json     # Cached JRD for quick serving
-```
-
-Provide methods:
-- `store_did_document(username, did_doc) -> Result<()>`
-- `load_did_document(username) -> Result<Option<DIDDocument>>`
-- `store_profile(username, profile) -> Result<()>`
-- `load_profile(username) -> Result<Option<Profile>>`
-- `list_users() -> Result<Vec<String>>` (list dirs in data_dir)
-
-### main.rs — Server entrypoint
-
-```rust
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::init();
-    let config = Config::from_env();
-    let state = AppState::new(config);
-    
-    let app = Router::new()
-        // Identity resolution (public)
-        .route("/.well-known/webfinger", get(webfinger::handler))
-        .route("/.well-known/atproto-did", get(atproto_did::handler))
-        .route("/{username}/did.json", get(identity::did_json_handler))
-        .route("/@{username}", get(profile::handler))
-        // Publish API (authenticated)
-        .route("/api/publish/did", post(publish::publish_did))
-        .route("/api/publish/profile", post(publish::publish_profile))
-        .route("/api/publish/status", get(publish::status))
-        // Health
-        .route("/health", get(|| async { "ok" }))
-        .with_state(state);
-    
-    let listener = tokio::net::TcpListener::bind(&config.bind_addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
-```
+Close the backend-side blockers that still prevent the profile from being considered locally finished and safely ready for the next hosted-publish phase.
 
 ---
 
-## P1: Identity Resolver Endpoints
+## P0: Mastodon Posts Must Appear In Profile History
 
-### `GET /.well-known/webfinger?resource=acct:{username}@bytescape.social`
+This is the top backend risk from the latest user feedback.
 
-Return a JRD response:
+### Problem statement
 
-```json
-{
-  "subject": "acct:alice@bytescape.social",
-  "aliases": ["https://bytescape.social/@alice"],
-  "links": [
-    {
-      "rel": "self",
-      "type": "application/activity+json",
-      "href": "https://bytescape.social/@alice"
-    },
-    {
-      "rel": "http://webfinger.net/rel/profile-page",
-      "type": "text/html",
-      "href": "https://bytescape.social/@alice"
-    }
-  ]
-}
-```
+The user reports:
 
-**Validation**: Only respond for usernames that have a published DID document on disk. Return 404 for unknown users. Parse the `resource` query param — reject requests without `acct:` prefix or wrong domain.
+- Mastodon connections are now showing
+- Mastodon posts still do not appear on the user's profile post history page
 
-### `GET /.well-known/atproto-did`
+Current evidence:
 
-Return the user's AT Protocol DID as plain text. For single-user launch, return the sole registered user's `did:web`. For multi-user, this needs host-based routing (future).
+- `import_mastodon_posts` is wired into boot sync
+- profile post history is owner-scoped through `list_vault_posts_paged`
 
-```
-did:web:bytescape.social:alice
-```
+### Required outcome
 
-### `GET /{username}/did.json`
+Trace the full path and fix the root cause if present:
 
-**Critical endpoint.** The `did:web` spec requires the DID document at this exact path. For `did:web:bytescape.social:alice`, resolvers fetch `https://bytescape.social/alice/did.json`.
+1. Mastodon own posts are imported into the vault.
+2. They are stamped / stored so the owner's profile queries can see them.
+3. Source naming and filtering line up with the frontend filter chips.
+4. The fix is verified against the actual profile history path, not just import counts.
 
-Generate from published keychain material:
+### Strong suspicion to check first
 
-```json
-{
-  "@context": [
-    "https://www.w3.org/ns/did/v1",
-    "https://w3id.org/security/multikey/v1"
-  ],
-  "id": "did:web:bytescape.social:alice",
-  "alsoKnownAs": [
-    "at://alice.bytescape.social",
-    "acct:alice@bytescape.social"
-  ],
-  "verificationMethod": [
-    {
-      "id": "did:web:bytescape.social:alice#iroh",
-      "type": "Multikey",
-      "controller": "did:web:bytescape.social:alice",
-      "publicKeyMultibase": "z6Mk..."
-    }
-  ],
-  "service": [
-    {
-      "id": "#activitypub",
-      "type": "ActivityPubActor",
-      "serviceEndpoint": "https://bytescape.social/@alice"
-    }
-  ]
-}
-```
+The likely fault line is the interaction between:
 
-The `publicKeyMultibase` is the same `z6Mk...` format already produced by `did_key_from_ed25519_bytes()` in `keychain_encrypted.rs:356`. Strip the `did:key:` prefix to get the multibase value.
+- `import_mastodon_posts`
+- shared post save/import code
+- owner-scoped vault listing in `list_vault_posts_paged`
 
-### `GET /@{username}`
+If the imported items are not associated with the same effective owner identity that the profile query uses, they can exist in the vault but still be invisible on the profile.
 
-Serve a public profile page. **Content negotiation**:
+### Files likely involved
 
-- If `Accept: application/activity+json` or `application/ld+json` → return AP actor JSON-LD
-- Otherwise → return HTML profile page
-
-HTML page should include:
-- OpenGraph meta tags (`og:title`, `og:description`)
-- Link to DID document
-- Basic profile info (display name, bio, username)
-- `<link rel="alternate" type="application/activity+json">` header for AP discovery
-
-For v19, use a minimal server-rendered HTML template. The profile data comes from what the user published via the Publish API.
+| File | Work |
+|------|------|
+| `src-tauri/src/commands/import.rs` | Verify Mastodon post stamping / save path |
+| `src-tauri/src/commands/vault.rs` | Verify owner-scoped query behavior and source filtering |
+| `src-tauri/src/lib.rs` | Only if command wiring or boot sync registration needs adjustment |
 
 ---
 
-## P2: Publish API
+## P1: Support Full-Size Profile Media Viewing If Backend Is The Bottleneck
 
-These endpoints are called by the Tauri desktop app to push identity data to the server.
+Frontend needs the profile Media section to open full-size images and playable videos.
 
-### Auth Model
+### Required behavior
 
-Bearer token authentication. For single-user launch, use a pre-shared secret configured as `PUBLISH_SECRET` env var on the server. The Tauri app stores this in the encrypted keychain.
+Audit whether the current backend commands already provide everything needed for:
 
-```
-Authorization: Bearer {PUBLISH_SECRET}
-```
+- full-size image display
+- video playback from the profile media surface
+- stable blob/file resolution from the profile context
 
-Validate the token in an axum middleware or extractor. Return 401 for missing/invalid tokens.
+If an actual backend gap exists, fill it surgically by reusing or extending existing vault/media access patterns.
 
-### `POST /api/publish/did`
+### Constraint
 
-Push the user's DID document data to the server.
-
-**Request body:**
-```json
-{
-  "username": "alice",
-  "public_key_multibase": "z6Mk...",
-  "display_name": "Alice",
-  "bio": "Building the future",
-  "also_known_as": ["at://alice.bytescape.social"],
-  "services": [
-    { "id": "#activitypub", "type": "ActivityPubActor", "endpoint": "https://bytescape.social/@alice" }
-  ]
-}
-```
-
-**Server behavior:**
-1. Validate bearer token
-2. Validate username (alphanumeric + dashes, no path traversal)
-3. Generate DID document JSON from the payload
-4. Write to `{data_dir}/{username}/did.json`
-5. Return `{ "status": "published", "did": "did:web:bytescape.social:alice" }`
-
-### `POST /api/publish/profile`
-
-Push profile data for the `/@{username}` page.
-
-**Request body:**
-```json
-{
-  "username": "alice",
-  "display_name": "Alice",
-  "bio": "Building the future",
-  "avatar_url": null,
-  "links": [
-    { "label": "Website", "url": "https://alice.com" }
-  ]
-}
-```
-
-### `GET /api/publish/status`
-
-Check the current publish status for the authenticated user. Requires bearer token.
-
-**Response:**
-```json
-{
-  "username": "alice",
-  "did_published": true,
-  "did_url": "https://bytescape.social/alice/did.json",
-  "profile_published": true,
-  "profile_url": "https://bytescape.social/@alice",
-  "webfinger_active": true,
-  "last_published_at": "2026-04-09T12:00:00Z"
-}
-```
+Do not create a second redundant media-read API if an existing command can be reused from the profile screen.
 
 ---
 
-## P3: Tauri App — Publish Commands
+## P2: Export Parity With The Current Profile Model
 
-### New command: `publish_identity`
+`export_profile_data` exists, but the profile model has moved beyond the older prompt assumptions.
 
-```rust
-#[tauri::command]
-pub async fn publish_identity(
-    state: State<'_, AppState>,
-) -> Result<PublishResult, String>
-```
+### Required outcome
 
-This command:
-1. Reads the user's keychain (username, public key, display name, bio)
-2. Reads the publish secret from the keychain
-3. Constructs the DID document payload
-4. POSTs to `https://bytescape.social/api/publish/did`
-5. POSTs to `https://bytescape.social/api/publish/profile`
-6. Returns the publish status
+Verify that export still reflects the current persisted profile surface well enough for the next hosted-publish sprint:
 
-### New command: `check_publish_status`
+- modules
+- custom pages
+- avatar
+- background/banner settings
+- any current persisted profile-specific fields that matter for rendering
 
-```rust
-#[tauri::command]
-pub async fn check_publish_status(
-    state: State<'_, AppState>,
-) -> Result<PublishStatus, String>
-```
+If the export shape is missing newly persisted fields, fix that now while the profile model is still fresh.
 
-GETs `/api/publish/status` with the bearer token and returns the result.
+### Constraint
 
-### New command: `set_publish_secret`
-
-```rust
-#[tauri::command]
-pub async fn set_publish_secret(
-    state: State<'_, AppState>,
-    secret: String,
-) -> Result<(), String>
-```
-
-Stores the publish secret in the encrypted keychain (`AuthData.publish_secret`).
-
-### Replace relay stubs
-
-In `commands/relay.rs`, the stub functions at lines 33-164 return errors. Replace:
-
-- `provision_ap_actor` → call `publish_identity` internally (or mark as alias)
-- `provision_pds_account` → keep as stub, update error message: "Coming after hosted identity is live"
-
-### Register new commands in `lib.rs`
-
-Add `publish_identity`, `check_publish_status`, and `set_publish_secret` to the invoke handler.
-
-### Keychain changes
-
-Add `publish_secret: Option<String>` to `AuthData` in `keychain_encrypted.rs`. Handle the new field in serialization (default to `None` for existing keychains).
+Do not invent backend state for features the frontend no longer treats as distinct persisted concepts.
 
 ---
 
-## Files Summary
+## Out of Scope
 
-### New files (create)
+- `bytescape/server/` crate
+- public resolver endpoints
+- `publish_identity`
+- `check_publish_status`
+- `set_publish_secret`
+- full hosted identity rollout
 
-| File | Purpose |
-|------|---------|
-| `server/Cargo.toml` | Server crate manifest |
-| `server/src/main.rs` | axum server entrypoint |
-| `server/src/config.rs` | Environment config |
-| `server/src/identity.rs` | DID document generation |
-| `server/src/webfinger.rs` | WebFinger handler |
-| `server/src/atproto_did.rs` | AT Protocol handle resolution |
-| `server/src/profile.rs` | Profile page handler (HTML + AP content negotiation) |
-| `server/src/publish.rs` | Publish API handlers |
-| `server/src/auth.rs` | Bearer token validation |
-| `server/src/storage.rs` | File-based storage |
-
-### Modified files (Track A owns)
-
-| File | Changes |
-|------|---------|
-| `src-tauri/src/keychain_encrypted.rs` | Add `publish_secret` to `AuthData` |
-| `src-tauri/src/commands/relay.rs` | Replace stubs with real publish calls |
-| `src-tauri/src/lib.rs` | Register new commands |
-
-### New Tauri commands
-
-| Command | Purpose |
-|---------|---------|
-| `publish_identity` | Push DID + profile to server |
-| `check_publish_status` | Query publish status from server |
-| `set_publish_secret` | Store publish secret in keychain |
+Those remain the next phase after this profile gate closes.
 
 ---
 
 ## Verification
 
-Before committing:
+Run all of these before handing back work:
 
 ```bash
-cd bytescape
-# Server crate
-cd server && cargo check && cd ..
-# Tauri app
-cargo check
-npx tsc --noEmit
-pnpm test -- --run
+cd bytescape/src-tauri && cargo check
+cd bytescape && npx tsc --noEmit
+cd bytescape && pnpm test -- --run
 ```
 
-Document all changes in `progress.md`.
+Also do a behavior-level check that imported Mastodon posts actually appear through the same profile-history path the frontend uses.
 
 ---
 
 ## Track Boundaries
 
-- **Track A owns**: `src-tauri/src/` (Rust app), `server/` (new server crate)
-- **Track B owns**: `src/` (React/TypeScript, CSS)
-- **Shared files** (require PM coordination): `src/types/index.ts` (Track B adds `PublishStatus`/`PublishResult`)
+- Track A owns `src-tauri/src/`.
+- Coordinate with Track B on the exact visible profile-history failure, but fix the root cause in backend if the issue is import/ownership/query related.
+- Do not jump ahead to hosted publish service work until this sprint is accepted.

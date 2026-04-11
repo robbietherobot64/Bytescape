@@ -3,6 +3,34 @@
 > This document is a running log of work completed by all agents. Updated after each commit. PM reviews this for status tracking.
 
 ---
+## 📋 PM — Sprint v20 Initialization: Final Profile Polish Before Web (2026-04-11)
+
+**Trigger:** user confirmed the next step is to finalize the profile surface before moving on to hosted web publishing.
+
+### Audit findings
+
+- The current profile code is substantially ahead of the stale v19 prompt baseline.
+- Recent profile commits already landed modular sections, preview mode, custom pages, playlist/blog modules, avatar handling, connection avatars, Mastodon connection work, and boot-time Mastodon import.
+- The remaining user feedback is a narrow punch list, not a rebuild:
+  - Media thumbnails need full-size interaction.
+  - Mastodon posts need to appear in profile history.
+  - Customization panels still need alignment/overlap cleanup.
+  - Preview / module editing flow needs to feel more useful.
+  - Connections terminology and a few smaller module UX issues still need polish.
+- Hosted identity is still blocked by missing server/publish infrastructure and should not be the active sprint yet.
+
+### PM actions
+
+1. Rewrote active `frontend-sprint-v20.md` as a final profile-polish sprint instead of hosted-identity UI work.
+2. Rewrote active `backend-sprint-v20.md` as a narrow support sprint focused on Mastodon post-history correctness, media-viewer support if needed, and export parity.
+3. Explicitly deferred hosted publish work until the profile is accepted as locally finished.
+
+### Active prompt set
+
+- `.github/agents/prompts/backend-sprint-v20.md`
+- `.github/agents/prompts/frontend-sprint-v20.md`
+
+---
 
 ## 📋 PM — New Architecture Source: Profile Dev Mode (2026-04-10)
 

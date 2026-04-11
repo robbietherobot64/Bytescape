@@ -1,419 +1,224 @@
-# Frontend Sprint v20 — Hosted Identity UI
+# Frontend Sprint v20 — Profile Final Polish & Pre-Web Readiness
 
-**Sprint**: v20 (Hosted Identity)  
+**Sprint**: v20 (Profile Final Polish)  
 **Track**: B (Frontend — React/TypeScript)  
-**Date**: 2026-04-10  
-**Previous sprint**: v19 delivered profile customization (commits `3a899e2` through `6213f59`)  
-**HEAD at prompt time**: `5d1dc73`
-
----
-
-## Sprint Goal
-
-Wire the hosted identity publish flow into the Tauri desktop UI. When complete:
-
-- Users can enter/configure their publish secret in Settings
-- Users can publish their identity (DID + profile) to `bytescape.social` with one click
-- Users can see their live publish status (DID URL, profile URL, WebFinger active)
-- Settings shows identity information clearly (not raw DIDs)
-
-This sprint depends on Track A delivering the publish commands (`publish_identity`, `check_publish_status`, `set_publish_secret`). If commands aren't available yet, build the UI against the expected invoke signatures and test with mocks.
-
-### User feedback driving this sprint
-
-> "We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification."
-
----
-
-## Current committed state
-
-| Component | File | State |
-|-----------|------|--------|
-| Settings screen | `src/screens/SettingsScreen.tsx` | Shows identity section with `Bytescape Social` placeholders, disconnect is `alert()` stub |
-| Identity setup | `src/screens/SettingsScreen.tsx` | Stops after username selection — no publish flow |
-| Types | `src/types/index.ts` | No `PublishStatus` or `PublishResult` types |
-| Auth store | `src/store/index.ts` | Tracks auth state but no publish state |
-
----
-
-## P0: Publish Status Types + Data Layer
-
-### New types in `src/types/index.ts`
-
-```typescript
-export interface PublishStatus {
-  username: string;
-  did_published: boolean;
-  did_url: string;
-  profile_published: boolean;
-  profile_url: string;
-  webfinger_active: boolean;
-  last_published_at: string | null;
-}
-
-export interface PublishResult {
-  success: boolean;
-  did_url?: string;
-  profile_url?: string;
-  error?: string;
-}
-```
-
----
-
-## P1: Settings — Publish Secret Configuration
-
-Add a section to SettingsScreen for configuring the publish secret:
-
-1. Text input (masked) for setting the publish secret
-2. Save button that calls `invoke('set_publish_secret', { secret })`
-3. Status indicator showing whether a secret is configured
-
-Keep it simple — just a secure input field and save action.
-
----
-
-## P2: Identity Publish UI
-
-Add a publish section to SettingsScreen (or an IdentityPublishCard component):
-
-1. **Publish button** — calls `invoke('publish_identity')`
-2. **Status display** — shows:
-   - DID URL (linkified): `https://bytescape.social/{username}/did.json`
-   - Profile URL (linkified): `https://bytescape.social/@{username}`
-   - WebFinger status badge
-   - Last published timestamp
-3. **Refresh status** — calls `invoke('check_publish_status')` on mount and after publish
-4. **Error handling** — show clear error if publish fails (no secret configured, server unreachable, etc.)
-
-### Design constraints
-
-- Use existing Win98Box / card components — no new design system
-- Keep the identity section compact but informative
-- Make published URLs clickable (open in system browser via `open()` from `@tauri-apps/plugin-shell`)
-
----
-
-## P3: Clean Up Settings Identity Section
-
-The current Settings identity section has several issues to fix:
-
-1. Replace raw DID display with human-readable format
-2. Fix the disconnect button (currently `alert()` stub)
-3. Add Mastodon to linked accounts display (currently only shows Bluesky)
-4. Show linked accounts with proper source labels
-
----
-
-## Guardrails
-
-### Do
-
-- Build UI against the invoke signatures defined in `backend-sprint-v20.md`
-- Keep the publish flow simple: configure secret → publish → see status
-- Reuse existing component patterns (Win98Box, existing Settings layout)
-
-### Do not
-
-- Do not implement the server crate — that's Track A
-- Do not add a separate profile theme picker
-- Do not restructure the entire Settings screen unless necessary
-
----
-
-## Verification
-
-```bash
-cd bytescape
-npx tsc --noEmit
-pnpm test -- --run
-```
-
----
-
-## Track Boundaries
-
-- **Track B owns**: `src/` (React/TypeScript, CSS)
-- **Track A owns**: `src-tauri/src/` (Rust), `server/` (new server crate)
-- **Shared**: `src/types/index.ts` for publish types
-# Frontend Sprint v20 — Domain Publish Panel & First-Run Publish Flow
-
-**Sprint**: v20 (Go-Live: Hosted Identity)  
-**Track**: B (Frontend — React/TypeScript)  
-**Date**: 2026-04-09  
-**Previous sprint**: v19 (profile customization deepening — delivered)  
-**HEAD at prompt time**: `b7fca4e`  
-**Decision**: Single-user launch first
+**Date**: 2026-04-11  
+**Previous sprint**: v19 delivered the bulk of the profile platform; this sprint closes the last meaningful UX gaps before hosted publishing work begins  
+**HEAD at prompt time**: `8010b45`  
+**Supersedes**: the earlier hosted-identity UI prompt that jumped ahead of profile acceptance
 
 ---
 
 ## Sprint Context
 
-This sprint adds the UI for publishing a user's identity to `bytescape.social`. The backend (Track A) is building the server crate + Tauri publish commands in parallel. Frontend depends on these new Tauri commands:
+The profile is no longer in a "build from scratch" state. Current code already includes:
 
-- `publish_identity` → pushes DID + profile to server, returns `PublishResult`
-- `check_publish_status` → gets current publish status, returns `PublishStatus`
-- `set_publish_secret` → stores the server auth secret in keychain
+- modular home/profile modules
+- custom left-nav pages
+- preview mode
+- playlist and listening modules with embed support
+- blog modules and custom page CRUD
+- connection avatars and clickable links
+- avatar editing and profile export primitives
 
-If backend commands aren't ready yet, **stub the invocations** with `invoke<PublishStatus>('check_publish_status')` and let them fail gracefully — the UI should handle errors and show a clear "Backend not ready" state.
+Recent profile delivery history includes commits:
 
-### User feedback driving this sprint
+- `1748048` — profile feedback batch 1
+- `a985d69` — media blob thumbnails
+- `30e5bb9` — custom nav pages + media/page CRUD
+- `ac8885b` — theme presets + per-module style editor + background presets + preview mode
+- `b76246c` — playlists + blogs module work
+- `86fdfba` — connections avatars + clickable items + embeds + blog editor
+- `1830382` — Mastodon posts import + Mastodon connections support
+- `8010b45` — boot-time Mastodon import wiring
 
-> "We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification."  
-> — `user-feedback`
+This sprint is the **final local polish pass** before hosted web publishing. Do not reopen already-solved architectural work unless a remaining feedback item proves it is still broken.
 
-### What already exists
+### Source-of-truth feedback still open
 
-| Component | File | Status |
-|-----------|------|--------|
-| Identity setup modal | `components/IdentitySetupModal.tsx` | ✅ Username picker + `set_local_username` |
-| Settings "Bytescape Social" section | `screens/SettingsScreen.tsx` | ⚠️ "Coming soon" stubs for PDS/AP/Relay |
-| `AuthStatus` type with `web_did` | `types/index.ts:56-63` | ✅ |
-| Profile screen (overhauled) | `screens/ProfileScreen.tsx` | ✅ 2-col layout, themes, pages (v18) |
-| Profile bio sections | `components/ProfileBioSections.tsx` | ✅ Embeds, links, connections (v18) |
-| Profile pages system | `components/ProfilePageNav.tsx`, `ProfilePageEditor.tsx`, `hooks/useProfilePages.ts` | ✅ Full CRUD (v18) |
-| Profile settings persistence | `save_profile_settings` / `get_profile_settings` commands | ✅ Backend ready (v18a) |
+From `user-feedback`:
 
----
+#### Critical
 
-## P0: Add Publish Types
+1. Media thumbnails render, but clicking them does not open a full-size interactive image/viewer.
+2. Mastodon posts are still not showing on the user's profile post history page.
+3. Popup windows / toggle boxes / customization controls still suffer from text overlap and alignment problems.
 
-Add to `src/types/index.ts`:
+#### Lower priority but still relevant for sign-off
 
-```typescript
-export interface PublishStatus {
-    username: string;
-    did_published: boolean;
-    did_url: string | null;
-    profile_published: boolean;
-    profile_url: string | null;
-    webfinger_active: boolean;
-    last_published_at: string | null;
-}
-
-export interface PublishResult {
-    status: string;         // "published" | "error"
-    did: string | null;
-    error: string | null;
-}
-```
-
-**Important**: Check `git log --oneline -5 -- src/types/index.ts` before editing — this is a shared file.
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/types/index.ts` | Add `PublishStatus` and `PublishResult` interfaces |
+4. Connections terminology is unclear: following vs followers vs contacts.
+5. Connections avatars still need consistency where data is available.
+6. Listening To / Playlists paste behavior seems flaky.
+7. Preview mode does not yet feel useful enough.
+8. Logged-in owner flow needs direct per-module edit affordances from normal viewing mode.
+9. Blogs need at least a minimal path toward linking WordPress / Ghost / external blog systems.
 
 ---
 
-## P1: Replace "Coming Soon" Stubs — Domain Publish Panel
+## Sprint Goal
 
-### Location
+Make the profile feel finished enough that the next major phase can be **hosted publishing**, not more local profile cleanup.
 
-`src/screens/SettingsScreen.tsx` — find the "Bytescape Social" section (currently has three "Coming soon" badges for PDS Account, AP Actor, Relay).
+That means:
 
-### Replace with functional Domain Publish Panel
+- no dead-end media interactions
+- no obvious broken or confusing customization controls
+- no major gaps between imported profile data and the profile post history
+- owner editing flow feels fast and intentional
 
-**Design:**
-
-```
-┌─────────────────────────────────────────────┐
-│ ☁️ Bytescape Social                          │
-│                                             │
-│ Publish your identity to bytescape.social   │
-│ for cross-platform verification.            │
-│                                             │
-│ ┌─────────────────────────────────────────┐ │
-│ │ Identity: did:web:bytescape.social:alice│ │
-│ │ Status: ✅ Published                    │ │
-│ │ Last published: Apr 9, 2026 12:00       │ │
-│ │                                         │ │
-│ │ ✅ WebFinger    acct:alice@bytescape... │ │
-│ │ ✅ DID Document /alice/did.json         │ │
-│ │ ✅ Profile Page /@alice                 │ │
-│ │                                         │ │
-│ │ [🔄 Publish Now]  [View Profile →]      │ │
-│ └─────────────────────────────────────────┘ │
-│                                             │
-│ Publish Secret: ••••••••  [Change]          │
-└─────────────────────────────────────────────┘
-```
-
-### States
-
-1. **No username set** (`!authStatus.local_username`):
-   - Show message: "Set a username in Identity Setup to enable publishing"
-   - Button to open the Identity Setup modal
-
-2. **Username set, not published** (`authStatus.web_did && !publishStatus?.did_published`):
-   - Show DID preview: `did:web:bytescape.social:{username}`
-   - Show endpoints that will be created (WebFinger, DID doc, profile)
-   - Publish Secret input field (required before first publish)
-   - Prominent **"Publish Identity"** button (disabled until secret is entered)
-
-3. **Published** (`publishStatus?.did_published`):
-   - Green checkmarks for each active endpoint
-   - "Last published" timestamp
-   - **"Republish"** button (for after profile edits)
-   - **"View Profile"** link → opens `https://bytescape.social/@{username}` in system browser
-
-4. **Error state**:
-   - Red error banner with the error message
-   - Retry button
-
-### Implementation
-
-```typescript
-// On mount + after publish:
-useEffect(() => {
-    invoke<PublishStatus>('check_publish_status')
-        .then(setPublishStatus)
-        .catch(() => setPublishStatus(null)); // not published yet, or command not ready
-}, []);
-
-// On "Publish Now" click:
-const handlePublish = async () => {
-    setPublishing(true);
-    try {
-        const result = await invoke<PublishResult>('publish_identity');
-        if (result.status === 'published') {
-            // Refresh status
-            const status = await invoke<PublishStatus>('check_publish_status');
-            setPublishStatus(status);
-        } else {
-            setError(result.error || 'Publish failed');
-        }
-    } catch (e) {
-        setError(String(e));
-    } finally {
-        setPublishing(false);
-    }
-};
-```
-
-### Publish Secret flow
-
-The publish secret authenticates the Tauri app to the server. For single-user launch:
-
-1. Show a text input for "Publish Secret" (masked, with show/hide toggle)
-2. On entry, call `invoke('set_publish_secret', { secret })` to store in keychain
-3. The secret is sent as a Bearer token in publish API calls by the backend
-
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/screens/SettingsScreen.tsx` | Replace "Bytescape Social" section with functional Domain Publish panel |
+Hosted identity / `bytescape.social` publish UI is **not** the active frontend goal in this sprint.
 
 ---
 
-## P2: First-Run Publish Flow
+## P0: Media Viewer + Post History Correctness
 
-### Trigger
+### 1. Make the Media section interactive
 
-After the user completes the Identity Setup Modal (sets username via `set_local_username`), show a follow-up prompt suggesting they publish their identity.
+Current state: the Media nav renders thumbnails/placeholders only.
 
-### Extend IdentitySetupModal
+Required outcome:
 
-Current state: single-step username picker. Add a multi-step flow:
+- clicking a media thumbnail opens a full-size viewer / lightbox
+- images should be viewable at usable size
+- video items should be playable from the media section as well
+- navigation between media items is a plus if it is cheap to reuse existing patterns
 
-```
-Step 1: Choose username (existing flow)
-  ↓
-Step 2: DID Preview
-  "Your identity will be: did:web:bytescape.social:{username}"
-  "Your profile will be at: https://bytescape.social/@{username}"
-  [Publish Now] [Skip — publish later from Settings]
-  ↓ (if Publish Now)
-Step 3: Enter Publish Secret
-  "Enter the publish secret for bytescape.social:"
-  [masked text input]
-  [Publish]
-  ↓
-Step 4: Success/Error
-  ✅ "Your identity is live!"
-  "WebFinger: acct:{username}@bytescape.social"
-  "DID: did:web:bytescape.social:{username}"
-  "Profile: https://bytescape.social/@{username}"
-  [View Profile] [Done]
-```
+### Guidance
 
-### Implementation notes
+- Prefer reusing an existing viewer/lightbox/modal pattern from elsewhere in the app instead of inventing a new one.
+- Do not leave the profile media grid as a dead-end visual gallery.
 
-- Add a `step` state: `'username' | 'preview' | 'secret' | 'publishing' | 'success' | 'error'`
-- Steps 2-4 only shown after username is confirmed
-- "Skip" dismisses the modal — user can publish later from Settings
-- Error state shows the error and a "Retry" button
-- Loading state during publish shows a spinner
+### 2. Verify Mastodon post history on the profile
 
-### Files to modify
+Current state: Mastodon import work has landed, and boot sync now calls `import_mastodon_posts`, but the user still reports missing Mastodon posts on profile history.
 
-| File | Changes |
-|------|---------|
-| `src/components/IdentitySetupModal.tsx` | Add multi-step flow with DID preview + publish trigger |
+Required outcome:
+
+- confirm the Posts area of the profile actually displays imported Mastodon posts
+- if the frontend is filtering or labeling the source incorrectly, fix it
+- if the bug is backend-owner or import related, coordinate with Track A immediately rather than papering over it in UI
+
+### Files likely involved
+
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.tsx` | Media viewer state, click handlers, profile post history validation/fixes |
+| `src/screens/ProfileScreen.css` | Media viewer / lightbox styling, media grid polish |
 
 ---
 
-## P3: Profile Publish Trigger
+## P1: Editing UX and Preview Utility
 
-### Problem
+The user is explicitly asking for faster, more module-local editing.
 
-After the user edits their profile (display name, bio, themes, pages) in the Profile screen, they need a way to push those changes to the server.
+### Required behavior
 
-### Requirements
+1. In normal logged-in profile view, each module should expose a compact edit affordance.
+2. Clicking that affordance should jump directly into editing that specific module.
+3. Preview mode should hide owner-only editing chrome and feel like an external visitor view.
+4. Any author label in preview should reflect the viewed profile identity, not a generic self-label like `You`.
 
-1. Add a **"Publish to bytescape.social"** button in the Profile screen's edit mode actions area
-2. Button calls `invoke('publish_identity')` which pushes the latest profile data
-3. Show a success toast/banner: "Profile published to bytescape.social ✅"
-4. Show error state on failure
-5. Only visible when user has previously published (or has a publish secret set)
+### Important product intent
 
-### Location
+The point is not to add more UI everywhere. The point is to make editing **faster** when the owner already knows which module they want to change.
 
-In `src/screens/ProfileScreen.tsx`, within the edit mode toolbar or hero action buttons area, alongside the existing save/edit controls.
+### Files likely involved
 
-### Files to modify
-
-| File | Changes |
-|------|---------|
-| `src/screens/ProfileScreen.tsx` | Add "Publish to bytescape.social" button in edit mode / hero actions |
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.tsx` | Per-module quick edit flow, preview behavior cleanup |
+| `src/screens/ProfileScreen.css` | Visible but restrained quick-edit control styling |
 
 ---
 
-## P4: Clean Up Remaining "Coming Soon" Stubs
+## P2: Customization Panel Polish
 
-Search `src/` for any remaining "Coming soon" or "Phase 4.5" text related to PDS, AP Actor, or Relay. Update messaging:
+Current feedback says the customization surfaces are much better, but still have overlapping text and alignment issues.
 
-- PDS Account → "Available after hosted identity is live"
-- Relay → "Available after hosted identity is live"
-- Any other stale references → update
+### Required outcome
 
-```bash
-grep -rn "Coming soon" src/
-grep -rn "Phase 4.5" src/
-```
+Audit and clean up layout issues in:
+
+- customize dropdown
+- floating customize popup panels
+- per-module style editor rows
+- playlist/listening/blog editors
+- avatar popup
+- toggle/button clusters where text overlaps controls
+
+This is visual polish, but it matters because these are the core profile-creation controls.
+
+### Constraints
+
+- keep the system-theme inheritance model
+- do not reopen the larger theme architecture
+- avoid re-skinning the whole profile while fixing spacing/alignment
+
+### Files likely involved
+
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.css` | Alignment, spacing, wrapping, responsive control layout |
+| `src/screens/ProfileScreen.tsx` | Minor markup adjustments only where CSS alone is insufficient |
+
+---
+
+## P3: Connection and Content Clarification
+
+These are lower priority than P0-P2, but they are part of making the profile understandable enough for launch.
+
+### Required items
+
+1. Clarify what `contacts` means relative to `following` and `followers`.
+2. Improve labels or help text so the user understands what is being counted.
+3. Ensure connection avatars render wherever the data is already available.
+4. Verify Listening To / Playlists input behavior, especially paste.
+5. Add the smallest reasonable external-blog linking path if it is cheap:
+   - acceptable first pass: blog module entries can include an outbound URL for WordPress / Ghost / external blog home
+   - do not build a full external blog ingestion system in this sprint
+
+### Files likely involved
+
+| File | Work |
+|------|------|
+| `src/screens/ProfileScreen.tsx` | Labels, help text, editor input reliability, optional blog link support |
+| `src/screens/ProfileScreen.css` | Supporting UI polish |
+
+---
+
+## Out of Scope
+
+- hosted identity Settings UI
+- `publish_identity` / `check_publish_status` / `set_publish_secret`
+- `bytescape.social` web publish panel
+- full external blog embed/import architecture
+- new profile theme system redesign
+
+Those come next, after this sprint is accepted.
 
 ---
 
 ## Verification
 
-Before committing:
+Run all of these before handing back work:
 
 ```bash
-cd bytescape
-npx tsc --noEmit                     # 0 errors
-pnpm test -- --run                   # all tests pass
+cd bytescape && npx tsc --noEmit
+cd bytescape && pnpm test -- --run
+cd bytescape/src-tauri && cargo check
 ```
 
-Document all changes in `progress.md`.
+In addition to automated verification, manually exercise:
+
+1. media thumbnail click-through in the profile Media section
+2. Mastodon posts visible in profile Posts history
+3. per-module quick edit from normal logged-in view
+4. customize popup and style controls at desktop and narrow width
 
 ---
 
 ## Track Boundaries
 
-- **Track B owns**: `src/` (all React/TypeScript, CSS)
-- **Track A owns**: `src-tauri/src/` (Rust app), `server/` (new server crate)
-- **Shared files** (require PM coordination): `src/types/index.ts` (add `PublishStatus`/`PublishResult`)
-- Check `git log --oneline -5 -- <filepath>` before editing any shared file
+- Track B owns `src/` UI and CSS.
+- Coordinate with Track A immediately if Mastodon profile history turns out to be an import/ownership issue rather than a display issue.
+- Do not move back into hosted-identity frontend work until this polish gate is accepted.
