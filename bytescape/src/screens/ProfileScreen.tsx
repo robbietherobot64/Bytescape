@@ -61,8 +61,23 @@ const ADDABLE_MODULES: Array<{ type: string; label: string; emoji: string; uniqu
 ];
 
 /* ═══ Embed Detection ═══ */
-function detectEmbed(url: string): { url: string; label: string } | null {
-    const trimmed = url.trim();
+function detectEmbed(input: string): { url: string; label: string } | null {
+    const trimmed = input.trim();
+
+    // Handle <iframe> embed codes — extract src attribute
+    const iframeMatch = trimmed.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+    if (iframeMatch) {
+        const src = iframeMatch[1];
+        // Identify platform from iframe src
+        if (/bandcamp\.com/i.test(src)) return { url: src, label: 'Bandcamp' };
+        if (/soundcloud\.com|sndcdn\.com/i.test(src)) return { url: src, label: 'SoundCloud' };
+        if (/spotify\.com/i.test(src)) return { url: src, label: 'Spotify' };
+        if (/youtube\.com|youtube-nocookie\.com/i.test(src)) return { url: src, label: 'YouTube' };
+        // Generic iframe embed
+        return { url: src, label: 'Embed' };
+    }
+
+    // Handle raw URLs
     const bcMatch = trimmed.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/(track|album)\/([^/?#]+)/i);
     if (bcMatch) return { url: `https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/transparent=true/`, label: `Bandcamp · ${bcMatch[1]}` };
     if (/^https?:\/\/(www\.)?soundcloud\.com\/[^/]+\/[^/]+/i.test(trimmed)) return { url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false`, label: 'SoundCloud' };
@@ -74,6 +89,13 @@ function detectEmbed(url: string): { url: string; label: string } | null {
 }
 
 interface ProfileLink { label: string; url: string; }
+
+interface BlogEntry {
+    id: string;
+    title: string;
+    body: string;
+    timestamp: number;
+}
 
 interface GuestbookEntry {
     id: string;
@@ -104,7 +126,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [activeNav, setActiveNav] = useState('home');
     const [editMode, setEditMode] = useState(false);
     const [previewMode, setPreviewMode] = useState(false);
-    const [showCustomize, setShowCustomize] = useState(false);
     const [mediaDir, setMediaDir] = useState('');
     const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
 
@@ -128,10 +149,21 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Connections ─── */
     const [followCount, setFollowCount] = useState(0);
     const [contactCount, setContactCount] = useState(0);
-    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string }>>([]);
+    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string }>>([]);
     const [showAllConnections, setShowAllConnections] = useState(false);
     const [connectionSearch, setConnectionSearch] = useState('');
     const [connectionSourceFilter, setConnectionSourceFilter] = useState('all');
+
+    /* ─── Customize Dropdown ─── */
+    const [customizeDropdownOpen, setCustomizeDropdownOpen] = useState(false);
+    const [customizePanel, setCustomizePanel] = useState<string | null>(null);
+    const customizeDropdownRef = useRef<HTMLDivElement>(null);
+
+    /* ─── Blog Editor ─── */
+    const [editingBlogId, setEditingBlogId] = useState<string | null>(null);
+    const [blogTitle, setBlogTitle] = useState('');
+    const [blogBody, setBlogBody] = useState('');
+    const [expandedBlogId, setExpandedBlogId] = useState<string | null>(null);
 
     /* ─── Wall (Guestbook) ─── */
     const [wallEntries, setWallEntries] = useState<GuestbookEntry[]>([]);
@@ -225,25 +257,43 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     // Connections
     useEffect(() => {
-        const conns: Array<{ handle: string; source: string }> = [];
+        const conns: Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string }> = [];
         const promises: Promise<void>[] = [];
         if (auth?.did) {
             promises.push(
-                invoke<Array<{ did: string; handle: string; displayName?: string }>>('list_follows', { actor: auth.did })
+                invoke<Array<{ did: string; handle: string; displayName?: string; avatar?: string; description?: string }>>('list_follows', { actor: auth.did })
                     .then((follows) => {
                         setFollowCount(follows.length);
-                        follows.forEach(f => conns.push({ handle: f.handle || f.displayName || f.did.slice(0, 12), source: 'Bluesky' }));
+                        follows.forEach(f => {
+                            const displayName = f.displayName || f.handle || f.did.slice(0, 12);
+                            // Determine source by DID prefix or handle format
+                            const isMastodon = f.did?.startsWith('did:web:') || f.handle?.includes('@');
+                            const source = isMastodon ? 'Mastodon' : 'Bluesky';
+                            const profileUrl = isMastodon
+                                ? `https://${f.handle?.split('@').pop() || ''}/@${f.handle?.split('@')[0] || ''}`
+                                : `https://bsky.app/profile/${f.handle || f.did}`;
+                            conns.push({
+                                handle: displayName,
+                                source,
+                                avatar_url: f.avatar || undefined,
+                                display_name: f.displayName || undefined,
+                                profile_url: profileUrl,
+                            });
+                        });
                     })
                     .catch(() => {})
             );
         }
+        // Only load P2P contacts if the network might be active
         promises.push(
             invoke<Array<{ did: string; handle: string }>>('list_contacts')
                 .then((contacts) => {
-                    setContactCount(contacts.length);
-                    contacts.forEach(c => conns.push({ handle: c.handle || c.did.slice(0, 12), source: 'P2P' }));
+                    // Filter out contacts that have no handle (phantom/empty P2P entries)
+                    const realContacts = contacts.filter(c => c.handle && c.handle.trim().length > 0);
+                    setContactCount(realContacts.length);
+                    realContacts.forEach(c => conns.push({ handle: c.handle || c.did.slice(0, 12), source: 'P2P' }));
                 })
-                .catch(() => {})
+                .catch(() => { setContactCount(0); })
         );
         Promise.all(promises).then(() => setAllConnections(conns));
     }, [auth?.did]);
@@ -449,12 +499,26 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         return () => document.removeEventListener('mousedown', handleClick);
     }, [showAddModuleMenu]);
 
+    // Click-outside to close customize dropdown
+    useEffect(() => {
+        if (!customizeDropdownOpen) return;
+        function handleClick(e: MouseEvent) {
+            if (customizeDropdownRef.current && !customizeDropdownRef.current.contains(e.target as Node)) {
+                setCustomizeDropdownOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [customizeDropdownOpen]);
+
     // Save modules on edit mode exit
     const exitEditMode = useCallback(() => {
         setEditMode(false);
-        setShowCustomize(false);
+        setCustomizeDropdownOpen(false);
+        setCustomizePanel(null);
         setEditingModuleContent(null);
         setEditingModuleTitle(null);
+        setEditingBlogId(null);
         saveModules(modules);
     }, [modules, saveModules]);
 
@@ -665,17 +729,31 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 )}
 
                 <div className="profile-connections-grid">
-                    {displayList.map((c, i) => (
-                        <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-card">
-                            <div className="profile-connection-avatar">
-                                {c.handle[0]?.toUpperCase() || '?'}
+                    {displayList.map((c, i) => {
+                        const card = (
+                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
+                                <div className="profile-connection-avatar">
+                                    {c.avatar_url ? (
+                                        <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" />
+                                    ) : (
+                                        c.handle[0]?.toUpperCase() || '?'
+                                    )}
+                                </div>
+                                <div className="profile-connection-name" title={c.display_name || c.handle}>{c.display_name || c.handle}</div>
+                                <div className="profile-connection-platform">
+                                    <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
+                                </div>
                             </div>
-                            <div className="profile-connection-name" title={c.handle}>{c.handle}</div>
-                            <div className="profile-connection-platform">
-                                <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                        if (c.profile_url) {
+                            return (
+                                <a key={`${c.source}-${c.handle}-${i}`} href={c.profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-link">
+                                    {card}
+                                </a>
+                            );
+                        }
+                        return card;
+                    })}
                 </div>
 
                 {totalConns > 12 && (
@@ -868,16 +946,34 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     className="profile-module-editor"
                     value={mod.content || ''}
                     onChange={(e) => updateModuleContent(mod.id, e.target.value)}
-                    placeholder="Paste Bandcamp, SoundCloud, Spotify, or YouTube URLs (one per line)..."
+                    placeholder="Paste Bandcamp, SoundCloud, Spotify, or YouTube URLs or iframe embed codes (one per line)..."
                     autoFocus
                 />
             );
         }
         if (!mod.content) {
-            return <div className="profile-empty"><div className="profile-empty-icon">🎶</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add playlist URLs...' : 'No playlists yet.'}</p></div>;
+            return <div className="profile-empty"><div className="profile-empty-icon">🎶</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add playlist URLs or embeds...' : 'No playlists yet.'}</p></div>;
         }
         const lines = mod.content.split('\n').filter(l => l.trim());
-        const embeds = lines.map(l => detectEmbed(l.trim())).filter(Boolean) as Array<{ url: string; label: string }>;
+        // Each "line" might be a multi-line iframe tag — rejoin and split on <iframe
+        const rawContent = mod.content.trim();
+        const entries: string[] = [];
+        // Split by <iframe to handle pasted iframe blocks
+        if (rawContent.includes('<iframe')) {
+            const parts = rawContent.split(/(?=<iframe)/i);
+            parts.forEach(p => {
+                const t = p.trim();
+                if (t.startsWith('<iframe')) {
+                    entries.push(t);
+                } else {
+                    // Regular URL lines
+                    t.split('\n').filter(l => l.trim()).forEach(l => entries.push(l.trim()));
+                }
+            });
+        } else {
+            lines.forEach(l => entries.push(l.trim()));
+        }
+        const embeds = entries.map(l => detectEmbed(l)).filter(Boolean) as Array<{ url: string; label: string }>;
         if (embeds.length === 0) {
             return <div className="profile-listening-text"><span>🎶</span><span>{mod.content}</span></div>;
         }
@@ -896,33 +992,123 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function renderBlogs(mod: ProfileModule) {
-        if (editMode && editingModuleContent === mod.id) {
+        let entries: BlogEntry[] = [];
+        try { entries = JSON.parse(mod.content || '[]'); } catch { entries = []; }
+        // Migration: if content is not JSON array, treat as empty
+        if (!Array.isArray(entries)) entries = [];
+
+        if (editMode && editingBlogId === 'new') {
             return (
-                <textarea
-                    className="profile-module-editor"
-                    value={mod.content || ''}
-                    onChange={(e) => updateModuleContent(mod.id, e.target.value)}
-                    placeholder="Paste your blog URLs (WordPress, Ghost, Substack, etc.) — one per line..."
-                    autoFocus
-                />
+                <div className="profile-blog-editor">
+                    <input
+                        className="profile-blog-title-input"
+                        type="text"
+                        placeholder="Post title..."
+                        value={blogTitle}
+                        maxLength={200}
+                        onChange={(e) => setBlogTitle(e.target.value)}
+                        autoFocus
+                    />
+                    <textarea
+                        className="profile-blog-body-input"
+                        placeholder="Write your blog post..."
+                        value={blogBody}
+                        maxLength={10000}
+                        onChange={(e) => setBlogBody(e.target.value)}
+                    />
+                    <div className="profile-blog-editor-actions">
+                        <button className="profile-blog-publish-btn" onClick={() => {
+                            if (!blogTitle.trim()) return;
+                            const newEntry: BlogEntry = {
+                                id: generateId(),
+                                title: blogTitle.trim(),
+                                body: blogBody.trim(),
+                                timestamp: Math.floor(Date.now() / 1000),
+                            };
+                            const updated = [newEntry, ...entries];
+                            updateModuleContent(mod.id, JSON.stringify(updated));
+                            setBlogTitle('');
+                            setBlogBody('');
+                            setEditingBlogId(null);
+                        }}>Publish</button>
+                        <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); }}>Cancel</button>
+                    </div>
+                </div>
             );
         }
-        if (!mod.content) {
-            return <div className="profile-empty"><div className="profile-empty-icon">✍️</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add blog links...' : 'No blogs linked yet.'}</p></div>;
-        }
-        const lines = mod.content.split('\n').filter(l => l.trim());
-        return (
-            <div className="profile-links-list">
-                {lines.map((url, i) => {
-                    const trimmed = url.trim();
-                    let label = trimmed;
-                    try { label = new URL(trimmed).hostname; } catch { /* use raw */ }
-                    return (
-                        <div key={i} className="profile-link-item">
-                            ✍️ <a href={trimmed} target="_blank" rel="noopener noreferrer">{label}</a>
+
+        if (editMode && editingBlogId && editingBlogId !== 'new') {
+            const entry = entries.find(e => e.id === editingBlogId);
+            if (entry) {
+                return (
+                    <div className="profile-blog-editor">
+                        <input
+                            className="profile-blog-title-input"
+                            type="text"
+                            value={blogTitle}
+                            maxLength={200}
+                            onChange={(e) => setBlogTitle(e.target.value)}
+                            autoFocus
+                        />
+                        <textarea
+                            className="profile-blog-body-input"
+                            value={blogBody}
+                            maxLength={10000}
+                            onChange={(e) => setBlogBody(e.target.value)}
+                        />
+                        <div className="profile-blog-editor-actions">
+                            <button className="profile-blog-publish-btn" onClick={() => {
+                                const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim(), body: blogBody.trim() } : e);
+                                updateModuleContent(mod.id, JSON.stringify(updated));
+                                setBlogTitle('');
+                                setBlogBody('');
+                                setEditingBlogId(null);
+                            }}>Save</button>
+                            <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); }}>Cancel</button>
                         </div>
-                    );
-                })}
+                    </div>
+                );
+            }
+        }
+
+        return (
+            <div>
+                {editMode && (
+                    <button className="profile-blog-new-btn" onClick={() => { setBlogTitle(''); setBlogBody(''); setEditingBlogId('new'); }}>
+                        <BsPlusLg size={10} /> New Post
+                    </button>
+                )}
+                {entries.length === 0 && (
+                    <div className="profile-empty">
+                        <div className="profile-empty-icon">✍️</div>
+                        <p className="profile-empty-text">{editMode ? 'Click "New Post" to write your first blog entry.' : 'No blog posts yet.'}</p>
+                    </div>
+                )}
+                <div className="profile-blog-list">
+                    {entries.map(entry => (
+                        <div key={entry.id} className="profile-blog-entry">
+                            <div className="profile-blog-entry-header" onClick={() => setExpandedBlogId(expandedBlogId === entry.id ? null : entry.id)}>
+                                <h4 className="profile-blog-entry-title">{entry.title}</h4>
+                                <span className="profile-blog-entry-date">{new Date(entry.timestamp * 1000).toLocaleDateString()}</span>
+                                <span className="profile-blog-entry-expand">{expandedBlogId === entry.id ? '▲' : '▼'}</span>
+                            </div>
+                            {expandedBlogId === entry.id && (
+                                <div className="profile-blog-entry-body">
+                                    {entry.body.split('\n').map((line, i) => <p key={i}>{line || '\u00A0'}</p>)}
+                                    {editMode && (
+                                        <div className="profile-blog-entry-actions">
+                                            <button onClick={() => { setBlogTitle(entry.title); setBlogBody(entry.body); setEditingBlogId(entry.id); }}>✏️ Edit</button>
+                                            <button className="profile-module-edit-btn--danger" onClick={() => {
+                                                const updated = entries.filter(e => e.id !== entry.id);
+                                                updateModuleContent(mod.id, JSON.stringify(updated));
+                                            }}>🗑 Delete</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
             </div>
         );
     }
@@ -1212,37 +1398,36 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         );
     }
 
-    function renderCustomize() {
-        return (
-            <div className="profile-customize-panel">
-                {/* Theme Presets */}
-                <div className="profile-customize-section">
-                    <h3>🎭 Profile Theme</h3>
-                    <div className="profile-theme-grid">
-                        {Object.entries(PROFILE_THEME_PRESETS).map(([key, preset]) => (
-                            <button
-                                key={key}
-                                className={`profile-theme-swatch ${profileSettings.theme === key ? 'profile-theme-swatch--active' : ''}`}
-                                style={{ background: preset.banner, color: preset.text, borderColor: profileSettings.theme === key ? preset.accent : 'transparent' } as React.CSSProperties}
-                                onClick={() => saveSettings({
-                                    ...profileSettings,
-                                    theme: key,
-                                    banner_type: 'gradient',
-                                    banner_value: preset.banner,
-                                    banner_text_color: preset.text,
-                                    profile_background: preset.bg || undefined,
-                                    background_type: preset.bg ? 'color' : 'default',
-                                    background_value: preset.bg || '',
-                                })}
-                            >
-                                {preset.label}
-                            </button>
-                        ))}
-                    </div>
+    function renderCustomizeSection(section: string) {
+        if (section === 'theme') {
+            return (
+                <div className="profile-theme-grid">
+                    {Object.entries(PROFILE_THEME_PRESETS).map(([key, preset]) => (
+                        <button
+                            key={key}
+                            className={`profile-theme-swatch ${profileSettings.theme === key ? 'profile-theme-swatch--active' : ''}`}
+                            style={{ background: preset.banner, color: preset.text, borderColor: profileSettings.theme === key ? preset.accent : 'transparent' } as React.CSSProperties}
+                            onClick={() => saveSettings({
+                                ...profileSettings,
+                                theme: key,
+                                banner_type: 'gradient',
+                                banner_value: preset.banner,
+                                banner_text_color: preset.text,
+                                profile_background: preset.bg || undefined,
+                                background_type: preset.bg ? 'color' : 'default',
+                                background_value: preset.bg || '',
+                            })}
+                        >
+                            {preset.label}
+                        </button>
+                    ))}
                 </div>
+            );
+        }
 
-                <div className="profile-customize-section">
-                    <h3>🎨 Banner Header</h3>
+        if (section === 'banner') {
+            return (
+                <div>
                     <div className="profile-customize-row">
                         <label>
                             <input type="radio" name="banner" checked={bannerType === 'theme'} onChange={() => saveSettings({ ...profileSettings, banner_type: 'theme', banner_value: '' })} /> Match Theme
@@ -1277,9 +1462,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <button className="profile-customize-reset-btn" onClick={() => saveSettings({ ...profileSettings, banner_text_color: undefined })}>Reset</button>
                     </div>
                 </div>
+            );
+        }
 
-                <div className="profile-customize-section">
-                    <h3>🖼️ Profile Background</h3>
+        if (section === 'background') {
+            return (
+                <div>
                     <div className="profile-customize-row">
                         <label>
                             <input type="radio" name="bg" checked={bgType === 'default'} onChange={() => saveSettings({ ...profileSettings, background_type: 'default', background_value: '' })} /> Default
@@ -1320,9 +1508,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <button className="profile-bg-preset-btn" onClick={() => saveSettings({ ...profileSettings, profile_background: undefined })} title="Clear overlay">None</button>
                     </div>
                 </div>
+            );
+        }
 
-                <div className="profile-customize-section">
-                    <h3>📰 Marquee Ticker</h3>
+        if (section === 'marquee') {
+            return (
+                <div>
                     <div className="profile-customize-row">
                         <label>
                             <input
@@ -1362,8 +1553,10 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         </>
                     )}
                 </div>
-            </div>
-        );
+            );
+        }
+
+        return null;
     }
 
     /* ════════════════════ Main Render ════════════════════ */
@@ -1428,12 +1621,22 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 {auth && !previewMode && (
                     <div className="profile-hero-actions">
                         {editMode && (
-                            <button
-                                className={`profile-hero-btn ${showCustomize ? 'profile-hero-btn--active' : ''}`}
-                                onClick={() => setShowCustomize(!showCustomize)}
-                            >
-                                <BsPaletteFill size={14} /> Customize
-                            </button>
+                            <div className="profile-customize-dropdown-wrapper" ref={customizeDropdownRef}>
+                                <button
+                                    className={`profile-hero-btn ${customizeDropdownOpen ? 'profile-hero-btn--active' : ''}`}
+                                    onClick={() => { setCustomizeDropdownOpen(!customizeDropdownOpen); if (customizeDropdownOpen) setCustomizePanel(null); }}
+                                >
+                                    <BsPaletteFill size={14} /> Customize ▾
+                                </button>
+                                {customizeDropdownOpen && (
+                                    <div className="profile-customize-dropdown">
+                                        <button onClick={() => setCustomizePanel(customizePanel === 'theme' ? null : 'theme')}>🎭 Profile Theme</button>
+                                        <button onClick={() => setCustomizePanel(customizePanel === 'banner' ? null : 'banner')}>🎨 Banner Header</button>
+                                        <button onClick={() => setCustomizePanel(customizePanel === 'background' ? null : 'background')}>🖼️ Background</button>
+                                        <button onClick={() => setCustomizePanel(customizePanel === 'marquee' ? null : 'marquee')}>📰 Marquee Ticker</button>
+                                    </div>
+                                )}
+                            </div>
                         )}
                         <button
                             className="profile-hero-btn"
@@ -1480,8 +1683,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 )}
             </div>
 
-            {/* ═══ Customize Panel ═══ */}
-            {showCustomize && editMode && renderCustomize()}
+            {/* ═══ Customize Popup Panel ═══ */}
+            {customizePanel && editMode && (
+                <div className="profile-customize-popup">
+                    <div className="profile-customize-popup-header">
+                        <span>{customizePanel === 'theme' ? '🎭 Profile Theme' : customizePanel === 'banner' ? '🎨 Banner Header' : customizePanel === 'background' ? '🖼️ Background' : '📰 Marquee Ticker'}</span>
+                        <button className="profile-customize-popup-close" onClick={() => setCustomizePanel(null)}>✕</button>
+                    </div>
+                    <div className="profile-customize-popup-body">
+                        {renderCustomizeSection(customizePanel)}
+                    </div>
+                </div>
+            )}
 
             {/* ═══ Main Layout ═══ */}
             <div className="profile-main">
