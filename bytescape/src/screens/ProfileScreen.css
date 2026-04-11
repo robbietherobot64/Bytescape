@@ -735,12 +735,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.2;
+}
+
+/* Themed tooltip on connection cards */
+.profile-connection-card[data-tooltip] {
     position: relative;
 }
-.profile-connection-name[data-tooltip]:hover::after {
+.profile-connection-card[data-tooltip]:hover::after {
     content: attr(data-tooltip);
     position: absolute;
-    bottom: calc(100% + 6px);
+    bottom: calc(100% + 4px);
     left: 50%;
     transform: translateX(-50%);
     padding: 4px 10px;

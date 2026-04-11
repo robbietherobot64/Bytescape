@@ -758,7 +758,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 <div className="profile-connections-grid">
                     {displayList.map((c, i) => {
                         const card = (
-                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
+                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`} data-tooltip={c.display_name || c.handle}>
                                 <div className="profile-connection-avatar">
                                     {c.avatar_url ? (
                                         <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (c.display_name || c.handle)[0]?.toUpperCase() || '?'; }} />
@@ -766,7 +766,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                         c.handle[0]?.toUpperCase() || '?'
                                     )}
                                 </div>
-                                <div className="profile-connection-name" data-tooltip={c.display_name || c.handle}>{c.display_name || c.handle}</div>
+                                <div className="profile-connection-name">{c.display_name || c.handle}</div>
                                 <div className="profile-connection-meta">
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
                                     <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>

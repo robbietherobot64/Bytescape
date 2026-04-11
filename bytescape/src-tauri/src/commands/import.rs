@@ -2664,7 +2664,7 @@ pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::r
             did: m.did,
             handle: m.handle.unwrap_or_default(),
             display_name: m.display_name,
-            avatar: None,
+            avatar: m.avatar,
             description: None,
         }).collect())
     }.await;

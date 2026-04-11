@@ -53,6 +53,8 @@ pub struct BskyMember {
     pub handle: Option<String>,
     #[serde(rename = "displayName", default)]
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
