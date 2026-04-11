@@ -339,6 +339,10 @@ pub struct BytescapeItemHeader {
     pub media_mimes_count: usize,
     pub month: u32,
     pub day: u32,
+    /// True when this item is a reply to another post (reply_parent_uri is set)
+    pub is_reply: bool,
+    /// URI of the parent post this item replies to (for grouping/collapsing)
+    pub reply_parent_uri: Option<String>,
 }
 
 impl BytescapeItem {
@@ -369,6 +373,8 @@ impl BytescapeItem {
             media_mimes_count: self.media_mimes.len(),
             month: dt.month(),
             day: dt.day(),
+            is_reply: self.reply_parent_uri.is_some(),
+            reply_parent_uri: self.reply_parent_uri.clone(),
         }
     }
 }

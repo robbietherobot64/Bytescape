@@ -463,6 +463,7 @@ pub fn run() {
             commands::vault::list_contacts_unified,
             commands::vault::vault_gc_tombstones,
             commands::vault::delete_vault_item,
+            commands::vault::resolve_reply_parent,
             
             // Auth commands
             commands::auth::check_auth_status,

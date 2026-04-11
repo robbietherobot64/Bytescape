@@ -886,3 +886,218 @@ pub async fn delete_vault_item(
 
     db.delete_item_by_id(&item_id).await
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Reply Parent Resolution
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Lightweight parent post context for reply display.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReplyParentContext {
+    /// Platform URI of the parent post
+    pub uri: String,
+    /// Text content of the parent post
+    pub content: String,
+    /// Author handle (e.g. "@alice.bsky.social", "@alice@mastodon.social")
+    pub author_handle: String,
+    /// Author avatar URL
+    pub author_avatar: Option<String>,
+    /// Author DID or identifier
+    pub author_did: Option<String>,
+    /// Original post timestamp (unix seconds)
+    pub created_at: i64,
+    /// Image URLs from the parent post (if any)
+    pub image_urls: Vec<String>,
+    /// Whether this was resolved from the local vault vs network
+    pub from_vault: bool,
+}
+
+/// Resolve the parent post of a reply, returning its content and author info.
+///
+/// Tries the local vault first (by matching `original_id` against the URI).
+/// If not found locally, fetches from the appropriate platform API:
+/// - Bluesky: `app.bsky.feed.getPosts` (public API, no auth)
+/// - Mastodon: `GET /api/v1/statuses/{id}` (public endpoint)
+///
+/// # Parameters
+/// - `uri` — The `reply_parent_uri` from the reply item.
+///
+/// # Returns
+/// `ReplyParentContext` with the parent post's content, author, and metadata.
+///
+/// → IPC: `resolve_reply_parent` (frontend profile → reply context display)
+#[tauri::command]
+pub async fn resolve_reply_parent(
+    uri: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<ReplyParentContext, String> {
+    // ── 1. Try local vault first ──
+    {
+        let db_guard = state.db_manager.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            // Items are keyed as source:original_id — try common prefixes
+            for prefix in &["bluesky:", "mastodon:", "activitypub:"] {
+                let key = format!("{}{}", prefix, uri);
+                if let Ok(Some(item)) = db.get_item_by_id(&key).await {
+                    return Ok(ReplyParentContext {
+                        uri: uri.clone(),
+                        content: item.content.clone(),
+                        author_handle: item.author_handle.clone().unwrap_or_default(),
+                        author_avatar: item.author_avatar.clone(),
+                        author_did: item.author_did.clone(),
+                        created_at: item.original_timestamp,
+                        image_urls: item.media_paths.iter()
+                            .filter(|p| p.starts_with("http://") || p.starts_with("https://"))
+                            .cloned()
+                            .collect(),
+                        from_vault: true,
+                    });
+                }
+            }
+            // Also try direct ID lookup (item.id == uri)
+            if let Ok(Some(item)) = db.get_item_by_id(&uri).await {
+                return Ok(ReplyParentContext {
+                    uri: uri.clone(),
+                    content: item.content.clone(),
+                    author_handle: item.author_handle.clone().unwrap_or_default(),
+                    author_avatar: item.author_avatar.clone(),
+                    author_did: item.author_did.clone(),
+                    created_at: item.original_timestamp,
+                    image_urls: item.media_paths.iter()
+                        .filter(|p| p.starts_with("http://") || p.starts_with("https://"))
+                        .cloned()
+                        .collect(),
+                    from_vault: true,
+                });
+            }
+        }
+    }
+
+    // ── 2. Fetch from network ──
+    if uri.starts_with("at://") {
+        // Bluesky AT URI — use public getPosts API (no auth required)
+        resolve_bluesky_parent(&state.http_client, &uri).await
+    } else if uri.contains("/statuses/") || uri.contains("/api/v1/") {
+        // Mastodon-style URL — extract instance and status ID
+        resolve_mastodon_parent(&state.http_client, &uri).await
+    } else {
+        Err(format!("Cannot resolve reply parent: unsupported URI scheme: {}", uri))
+    }
+}
+
+/// Fetch a single Bluesky post via the public getPosts API.
+async fn resolve_bluesky_parent(
+    client: &reqwest::Client,
+    uri: &str,
+) -> Result<ReplyParentContext, String> {
+    let url = format!(
+        "https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?uris={}",
+        urlencoding::encode(uri)
+    );
+
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("Bluesky getPosts failed: {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let post = body.get("posts")
+        .and_then(|p| p.as_array())
+        .and_then(|a| a.first())
+        .ok_or("Post not found on Bluesky")?;
+
+    let author = post.get("author").unwrap_or(&serde_json::Value::Null);
+    let record = post.get("record").unwrap_or(&serde_json::Value::Null);
+
+    let created_at = record.get("createdAt")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    let mut image_urls = Vec::new();
+    if let Some(embed) = post.get("embed") {
+        crate::connectors::bluesky::extract_image_urls_from_view(embed, &mut image_urls);
+    }
+
+    Ok(ReplyParentContext {
+        uri: post.get("uri").and_then(|v| v.as_str()).unwrap_or(uri).to_string(),
+        content: record.get("text").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        author_handle: author.get("handle").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        author_avatar: author.get("avatar").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        author_did: author.get("did").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        created_at,
+        image_urls,
+        from_vault: false,
+    })
+}
+
+/// Fetch a single Mastodon status via the public API.
+async fn resolve_mastodon_parent(
+    client: &reqwest::Client,
+    uri: &str,
+) -> Result<ReplyParentContext, String> {
+    // Mastodon URIs look like: https://mastodon.social/users/alice/statuses/12345
+    // or https://mastodon.social/@alice/12345
+    // API endpoint: GET /api/v1/statuses/:id
+
+    // Parse instance and status ID from the URL
+    let parsed = url::Url::parse(uri).map_err(|e| format!("Invalid Mastodon URI: {}", e))?;
+    let host = parsed.host_str().ok_or("No host in Mastodon URI")?;
+
+    // Extract status ID — it's always the last path segment
+    let status_id = parsed.path_segments()
+        .and_then(|segs| segs.last())
+        .ok_or("Cannot extract status ID from URI")?;
+
+    let api_url = format!("https://{}/api/v1/statuses/{}", host, status_id);
+    let resp = client.get(&api_url).send().await.map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Mastodon status fetch failed: {}", resp.status()));
+    }
+
+    let status: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let account = status.get("account").unwrap_or(&serde_json::Value::Null);
+
+    let created_at = status.get("created_at")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(0);
+
+    // Strip HTML tags from Mastodon content
+    let content_html = status.get("content").and_then(|v| v.as_str()).unwrap_or_default();
+    let content = scraper::Html::parse_fragment(content_html)
+        .root_element()
+        .text()
+        .collect::<String>();
+
+    let image_urls: Vec<String> = status.get("media_attachments")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|a| a.get("type").and_then(|t| t.as_str()) == Some("image"))
+                .filter_map(|a| a.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let acct = account.get("acct").and_then(|v| v.as_str()).unwrap_or_default();
+    let handle = if acct.contains('@') {
+        format!("@{}", acct)
+    } else {
+        format!("@{}@{}", acct, host)
+    };
+
+    Ok(ReplyParentContext {
+        uri: uri.to_string(),
+        content,
+        author_handle: handle,
+        author_avatar: account.get("avatar").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        author_did: Some(format!("acct:{}@{}", acct, host)),
+        created_at,
+        image_urls,
+        from_vault: false,
+    })
+}
