@@ -412,6 +412,9 @@ impl DbManager {
     /// - `author_did` is `None` (archive imports without DID attribution), OR
     /// - `is_liked` is `true` (posts the user explicitly saved/liked)
     ///
+    /// Replies (`is_reply == true`) are excluded — they are contextual responses
+    /// meant for the original conversation, not the user's profile/vault surface.
+    ///
     /// Uses the cached header list for performance.
     ///
     /// `owner_dids` should contain ALL known identifiers for the user
@@ -420,6 +423,10 @@ impl DbManager {
     pub async fn list_my_item_headers(&self, owner_dids: &[String]) -> Result<Vec<BytescapeItemHeader>, String> {
         let all_headers = self.get_cached_headers().await?;
         let headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|item| {
+            // Exclude replies — they belong to the original conversation, not the profile
+            if item.is_reply {
+                return false;
+            }
             if item.is_liked {
                 true
             } else if let Some(ref did) = item.author_did {
