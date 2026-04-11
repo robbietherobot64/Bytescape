@@ -406,24 +406,22 @@ pub async fn get_timeline_unified(
     // The frontend has its own 2-minute stale-while-revalidate layer on top.
     let cache_ttl = std::time::Duration::from_secs(30);
 
-    // Load session DID upfront (keychain is not Clone)
-    let owner_did = state.keychain.load_session()
-        .ok()
-        .flatten()
-        .map(|(did, _)| did);
+    // Load all owner identifiers upfront (keychain is not Clone)
+    let owner_dids = state.keychain.all_owner_dids()
+        .unwrap_or_default();
 
     // ── Prepare vault future (will run in parallel with network) ──
     // Pass source_filter to the vault query so the DB returns only matching items.
     let db_manager_clone = state.db_manager.clone();
     let vault_offset_val = vault_offset.unwrap_or(0);
-    let owner_did_clone = owner_did.clone();
+    let owner_dids_clone = owner_dids.clone();
     let vault_source_filter = source_filter.clone();
     let vault_fut = async move {
-        if let Some(did) = owner_did_clone {
+        if !owner_dids_clone.is_empty() {
             let db_guard = db_manager_clone.read().await;
             if let Some(db) = db_guard.as_ref() {
                 if let Ok((items, _)) = db.list_my_items_paged(
-                    &did,
+                    &owner_dids_clone,
                     vault_source_filter.as_deref(),
                     200,
                     vault_offset_val,

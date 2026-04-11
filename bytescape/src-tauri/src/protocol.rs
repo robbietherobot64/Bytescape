@@ -521,12 +521,15 @@ impl BytescapeProtocol {
     /// Returns our profile + a page of BytescapeItems from the local vault.
     /// Strips sensitive fields (media_paths with local filesystem paths) before serving.
     async fn serve_feed(&self, my_profile: &PeerProfile, params: &FeedRequestParams) -> FeedResponse {
-        let owner_did = self.get_live_owner_did();
+        let app_state = self.app_handle.state::<crate::AppState>();
+        let owner_dids = app_state.keychain.all_owner_dids().unwrap_or_else(|_| {
+            vec![self.get_live_owner_did()]
+        });
         let db_guard = self.db_manager.read().await;
 
         let (items, total_count) = if let Some(db) = db_guard.as_ref() {
             match db.list_my_items_paged(
-                &owner_did,
+                &owner_dids,
                 params.source_filter.as_deref(),
                 params.limit.min(50), // Cap at 50 per request
                 params.offset,

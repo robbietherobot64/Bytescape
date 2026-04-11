@@ -355,11 +355,10 @@ pub async fn get_vault_stats(state: State<'_, AppState>) -> std::result::Result<
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
-    let owner_did = state.keychain.get_did()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "unknown".to_string());
+    let owner_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
     
-    db.vault_stats(&owner_did).await
+    db.vault_stats(&owner_dids).await
         .map_err(|e| e.to_string())
 }
 
@@ -374,11 +373,10 @@ pub async fn list_vault_sources(state: State<'_, AppState>) -> std::result::Resu
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
-    let owner_did = state.keychain.get_did()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "unknown".to_string());
+    let owner_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
     
-    db.list_vault_sources(&owner_did).await
+    db.list_vault_sources(&owner_dids).await
         .map_err(|e| e.to_string())
 }
 
@@ -412,9 +410,8 @@ pub async fn list_vault_posts_paged(
     let db = db_guard.as_ref()
         .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
     
-    let owner_did = state.keychain.get_did()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "unknown".to_string());
+    let owner_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
 
     let canary_path_only = std::env::var("BYTESCAPE_WILLOW_PATH_ONLY_READS")
         .ok()
@@ -425,24 +422,24 @@ pub async fn list_vault_posts_paged(
         .unwrap_or(false);
     
     let (items, total) = if let Some(prefix) = path_prefix.as_deref() {
-        db.list_my_items_by_path_prefix_paged(&owner_did, prefix, limit, offset).await
+        db.list_my_items_by_path_prefix_paged(&owner_dids, prefix, limit, offset).await
             .map_err(|e| e.to_string())?
     } else if let Some(source_name) = source.as_deref() {
         // Migration bridge: prefer path-prefix reads, then fall back to source-filter reads.
         let source_prefix = format!("/{}/", source_name.to_lowercase());
-        let by_path = db.list_my_items_by_path_prefix_paged(&owner_did, &source_prefix, limit, offset).await
+        let by_path = db.list_my_items_by_path_prefix_paged(&owner_dids, &source_prefix, limit, offset).await
             .map_err(|e| e.to_string())?;
 
         if canary_path_only {
             by_path
         } else if by_path.1 == 0 {
-            db.list_my_items_paged(&owner_did, Some(source_name), limit, offset).await
+            db.list_my_items_paged(&owner_dids, Some(source_name), limit, offset).await
                 .map_err(|e| e.to_string())?
         } else {
             by_path
         }
     } else {
-        db.list_my_items_paged(&owner_did, None, limit, offset).await
+        db.list_my_items_paged(&owner_dids, None, limit, offset).await
             .map_err(|e| e.to_string())?
     };
     

@@ -57,15 +57,13 @@ pub async fn export_vault_data(
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
-    let owner_did = match state.keychain.load_session() {
-        Ok(Some((did, _))) => did,
-        _ => return Err("No active session".to_string()),
-    };
+    let owner_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
 
     // ── 1. Collect items ──
     // NOTE: Loads ALL items into memory at once. For large vaults this could be
     // several hundred MB. Consider streaming serialization for future improvement.
-    let (items, _total) = db.list_my_items_paged(&owner_did, None, 100_000, 0).await?;
+    let (items, _total) = db.list_my_items_paged(&owner_dids, None, 100_000, 0).await?;
     let item_count = items.len();
 
     // ── 2. Collect contacts ──

@@ -408,20 +408,24 @@ impl DbManager {
     /// Returns headers for items that belong to the current user.
     ///
     /// An item is considered "mine" if:
-    /// - `author_did` matches `owner_did`, OR
+    /// - `author_did` matches ANY of `owner_dids`, OR
     /// - `author_did` is `None` (archive imports without DID attribution), OR
     /// - `is_liked` is `true` (posts the user explicitly saved/liked)
     ///
     /// Uses the cached header list for performance.
-    pub async fn list_my_item_headers(&self, owner_did: &str) -> Result<Vec<BytescapeItemHeader>, String> {
+    ///
+    /// `owner_dids` should contain ALL known identifiers for the user
+    /// (Bluesky `did:plc:`, Mastodon `acct:user@instance`, `did:key:`, etc.)
+    /// so that items imported from any connected platform are included.
+    pub async fn list_my_item_headers(&self, owner_dids: &[String]) -> Result<Vec<BytescapeItemHeader>, String> {
         let all_headers = self.get_cached_headers().await?;
         let headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|item| {
             if item.is_liked {
                 true
-            } else if item.author_did.as_deref() == Some(owner_did) {
-                true
+            } else if let Some(ref did) = item.author_did {
+                owner_dids.iter().any(|od| od == did)
             } else {
-                item.author_did.is_none()
+                true // author_did is None — archive imports
             }
         }).collect();
         Ok(headers)
@@ -431,8 +435,8 @@ impl DbManager {
     ///
     /// Matches items where the original post date's month and day match the given
     /// values, regardless of year. Used for nostalgic "memories" feature.
-    pub async fn list_items_on_this_day(&self, owner_did: &str, month: u32, day: u32) -> Result<Vec<BytescapeItem>, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_items_on_this_day(&self, owner_dids: &[String], month: u32, day: u32) -> Result<Vec<BytescapeItem>, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter().filter(|h| {
             h.month == month && h.day == day
         }).collect();
@@ -468,8 +472,8 @@ impl DbManager {
     /// 3. Bulk-fetch only the full items for that page
     ///
     /// Returns `(items_for_page, total_matching_count)`.
-    pub async fn list_my_items_paged(&self, owner_did: &str, source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
-        let mut header_all = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_my_items_paged(&self, owner_dids: &[String], source_filter: Option<&str>, limit: usize, offset: usize) -> Result<(Vec<BytescapeItem>, usize), String> {
+        let mut header_all = self.list_my_item_headers(owner_dids).await?;
 
         // Optional source filter
         if let Some(src) = source_filter {
@@ -574,12 +578,12 @@ impl DbManager {
     /// Returns `(items_for_page, total_matching_count)`.
     pub async fn list_my_items_by_path_prefix_paged(
         &self,
-        owner_did: &str,
+        owner_dids: &[String],
         path_prefix: &str,
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<BytescapeItem>, usize), String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let normalized_prefix = if path_prefix.starts_with('/') {
             path_prefix.to_string()
         } else {
@@ -608,8 +612,8 @@ impl DbManager {
 
     /// Returns all items from a specific source (e.g. "bluesky", "facebook").
     /// Filters the cached headers, then fetches full items for matches.
-    pub async fn list_items_by_source(&self, source: &str, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_items_by_source(&self, source: &str, owner_dids: &[String]) -> Result<Vec<BytescapeItem>, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
             .filter(|h| h.source.eq_ignore_ascii_case(source))
             .collect();
@@ -624,8 +628,8 @@ impl DbManager {
     }
 
     /// Returns all items of a specific content type (Status, Gallery, Article, Link, Video).
-    pub async fn list_items_by_type(&self, item_type: BytescapeType, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_items_by_type(&self, item_type: BytescapeType, owner_dids: &[String]) -> Result<Vec<BytescapeItem>, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
             .filter(|h| h.item_type == item_type)
             .collect();
@@ -641,8 +645,8 @@ impl DbManager {
 
     /// Returns all items within a timestamp range (inclusive on both ends).
     /// Timestamps are Unix seconds. Used for calendar/timeline views.
-    pub async fn list_items_by_date_range(&self, start_ts: i64, end_ts: i64, owner_did: &str) -> Result<Vec<BytescapeItem>, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_items_by_date_range(&self, start_ts: i64, end_ts: i64, owner_dids: &[String]) -> Result<Vec<BytescapeItem>, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let matching_headers: Vec<BytescapeItemHeader> = all_headers.into_iter()
             .filter(|h| h.original_timestamp >= start_ts && h.original_timestamp <= end_ts)
             .collect();
@@ -661,8 +665,8 @@ impl DbManager {
     /// Returns a sorted list of all distinct sources in the vault
     /// (e.g. ["bluesky", "facebook", "instagram", "local"]).
     /// Used to populate source filter dropdowns in the UI.
-    pub async fn list_vault_sources(&self, owner_did: &str) -> Result<Vec<String>, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn list_vault_sources(&self, owner_dids: &[String]) -> Result<Vec<String>, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let mut sources: Vec<String> = all_headers.iter()
             .map(|h| h.source.clone())
             .collect::<std::collections::HashSet<_>>()
@@ -676,8 +680,8 @@ impl DbManager {
     /// source and type, and count of items with media attachments.
     ///
     /// Used to display vault health/overview on the profile page.
-    pub async fn vault_stats(&self, owner_did: &str) -> Result<VaultStats, String> {
-        let all_headers = self.list_my_item_headers(owner_did).await?;
+    pub async fn vault_stats(&self, owner_dids: &[String]) -> Result<VaultStats, String> {
+        let all_headers = self.list_my_item_headers(owner_dids).await?;
         let total = all_headers.len();
         let mut by_source: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut by_type: std::collections::HashMap<String, usize> = std::collections::HashMap::new();

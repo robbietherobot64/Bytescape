@@ -73,14 +73,12 @@ pub async fn reclassify_vault_items(
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
 
-    // Get owner DID
-    let owner_did = match state.keychain.load_session() {
-        Ok(Some((did, _))) => did,
-        _ => return Err("No active session".to_string()),
-    };
+    // Get all owner identifiers for multi-identity matching
+    let owner_dids = state.keychain.all_owner_dids()
+        .map_err(|e| e.to_string())?;
 
     // Load all items
-    let (items, _total) = db.list_my_items_paged(&owner_did, None, 100_000, 0).await?;
+    let (items, _total) = db.list_my_items_paged(&owner_dids, None, 100_000, 0).await?;
 
     let total_scanned = items.len();
     let mut total_changed = 0usize;
