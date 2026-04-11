@@ -724,6 +724,10 @@ export interface ProfileModule {
     width: 'half' | 'full';
     background?: string;    // CSS background value for this module's card
     content?: string;       // Module-specific serialized content
+    font_family?: string;   // Custom font family
+    font_color?: string;    // Custom text color
+    font_size?: string;     // Custom font size (e.g. '14px')
+    module_theme?: string;  // Module box theme override
 }
 
 /** Profile settings (theme, background, module layout, customization preferences). */

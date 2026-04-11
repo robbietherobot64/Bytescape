@@ -10,6 +10,26 @@ import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash
 
 const PAGE_SIZE = 20;
 
+/* ═══ Profile Theme Presets ═══ */
+const PROFILE_THEME_PRESETS: Record<string, { label: string; bg: string; banner: string; text: string; accent: string }> = {
+    default:   { label: 'Default',     bg: '',                                                           banner: 'linear-gradient(135deg, rgba(0,0,128,0.85), rgba(75,0,130,0.65))', text: '#ffcc00', accent: '#7c3aed' },
+    midnight:  { label: 'Midnight',    bg: 'linear-gradient(180deg, #0f0c29, #302b63, #24243e)',         banner: 'linear-gradient(135deg, #0f0c29, #302b63)',                        text: '#a78bfa', accent: '#a78bfa' },
+    sunset:    { label: 'Sunset',      bg: 'linear-gradient(180deg, #2d1b00, #4a1a0a, #1a0a00)',         banner: 'linear-gradient(135deg, #f12711, #f5af19)',                        text: '#fef08a', accent: '#f5af19' },
+    forest:    { label: 'Forest',      bg: 'linear-gradient(180deg, #0b1a0b, #0d2818, #0a1f0a)',         banner: 'linear-gradient(135deg, #0b3d0b, #2d6a4f, #40916c)',              text: '#95d5b2', accent: '#40916c' },
+    ocean:     { label: 'Ocean',       bg: 'linear-gradient(180deg, #020a1a, #031a3a, #021230)',          banner: 'linear-gradient(135deg, #0077b6, #023e8a, #03045e)',              text: '#90e0ef', accent: '#0077b6' },
+    retrowave: { label: 'Retrowave',   bg: 'linear-gradient(180deg, #0d0221, #1a0533, #0d0221)',         banner: 'linear-gradient(135deg, #0d0221, #4a0e4e, #cc5577)',              text: '#ff6ec7', accent: '#ff6ec7' },
+    terminal:  { label: 'Terminal',    bg: '#0a0a0a',                                                    banner: '#111',                                                            text: '#00ff41', accent: '#00ff41' },
+    cream:     { label: 'Cream',       bg: 'linear-gradient(180deg, #1a1814, #2a2520, #1a1814)',         banner: 'linear-gradient(135deg, #3c2f1e, #5a4a35)',                        text: '#f5deb3', accent: '#daa520' },
+};
+
+/* ═══ Background Presets ═══ */
+const BG_PRESETS: Array<{ label: string; value: string }> = [
+    { label: 'Stars',       value: 'radial-gradient(2px 2px at 20px 30px, #eee, transparent), radial-gradient(2px 2px at 40px 70px, #fff, transparent), radial-gradient(1px 1px at 90px 40px, #ddd, transparent)' },
+    { label: 'Scanlines',   value: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px)' },
+    { label: 'Dots',        value: 'radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px)' },
+    { label: 'Diamonds',    value: 'repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.03) 20px)' },
+];
+
 /* ═══ Navigation Sections ═══ */
 const CORE_NAV = [
     { id: 'home', label: 'Home', emoji: '🏠' },
@@ -83,6 +103,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Core State ─── */
     const [activeNav, setActiveNav] = useState('home');
     const [editMode, setEditMode] = useState(false);
+    const [previewMode, setPreviewMode] = useState(false);
     const [showCustomize, setShowCustomize] = useState(false);
     const [mediaDir, setMediaDir] = useState('');
     const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
@@ -92,6 +113,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [editingModuleContent, setEditingModuleContent] = useState<string | null>(null);
     const [editingModuleTitle, setEditingModuleTitle] = useState<string | null>(null);
     const [showAddModuleMenu, setShowAddModuleMenu] = useState(false);
+    const [editingModuleStyle, setEditingModuleStyle] = useState<string | null>(null);
     const addMenuRef = useRef<HTMLDivElement>(null);
 
     /* ─── Custom Nav Pages ─── */
@@ -392,6 +414,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const updated = modules.map(m => m.id === id ? { ...m, title } : m);
         setModules(updated);
     }, [modules]);
+
+    const updateModuleStyle = useCallback((id: string, style: Partial<ProfileModule>) => {
+        const updated = modules.map(m => m.id === id ? { ...m, ...style } : m);
+        saveModules(updated);
+    }, [modules, saveModules]);
 
     const toggleModuleWidth = useCallback((id: string) => {
         const updated = modules.map(m => m.id === id ? { ...m, width: m.width === 'full' ? 'half' as const : 'full' as const } : m);
@@ -850,11 +877,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const visibleModules = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
         return (
             <div className="profile-module-grid">
-                {visibleModules.map((mod, idx) => (
+                {visibleModules.map((mod, idx) => {
+                    const modStyle: React.CSSProperties = {};
+                    if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
+                    if (mod.font_color) modStyle.color = mod.font_color;
+                    if (mod.font_size) modStyle.fontSize = mod.font_size;
+                    if (mod.font_family) modStyle.fontFamily = mod.font_family;
+
+                    return (
                     <div
                         key={mod.id}
                         className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}
-                        style={mod.background ? { background: mod.background, backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties : undefined}
+                        style={modStyle}
                     >
                         <div className="profile-module-header">
                             {editMode && (
@@ -877,11 +911,50 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             )}
                             {editMode && (
                                 <div className="profile-module-edit-controls">
+                                    <button className="profile-module-edit-btn" onClick={() => setEditingModuleStyle(editingModuleStyle === mod.id ? null : mod.id)} title="Style"><BsPaletteFill size={9} /></button>
                                     <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit content"><BsPencilFill size={9} /></button>
                                     <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
                                 </div>
                             )}
                         </div>
+
+                        {/* Per-module style editor */}
+                        {editMode && editingModuleStyle === mod.id && (
+                            <div className="profile-module-style-editor">
+                                <div className="profile-module-style-row">
+                                    <label>Font:</label>
+                                    <select value={mod.font_family || ''} onChange={(e) => updateModuleStyle(mod.id, { font_family: e.target.value || undefined })}>
+                                        <option value="">Default</option>
+                                        <option value="serif">Serif</option>
+                                        <option value="'Courier New', monospace">Monospace</option>
+                                        <option value="'Comic Sans MS', cursive">Comic Sans</option>
+                                        <option value="'Georgia', serif">Georgia</option>
+                                        <option value="'Impact', sans-serif">Impact</option>
+                                    </select>
+                                </div>
+                                <div className="profile-module-style-row">
+                                    <label>Size:</label>
+                                    <select value={mod.font_size || ''} onChange={(e) => updateModuleStyle(mod.id, { font_size: e.target.value || undefined })}>
+                                        <option value="">Default</option>
+                                        <option value="11px">Small</option>
+                                        <option value="13px">Medium</option>
+                                        <option value="15px">Large</option>
+                                        <option value="18px">XL</option>
+                                    </select>
+                                </div>
+                                <div className="profile-module-style-row">
+                                    <label>Text:</label>
+                                    <input type="color" value={mod.font_color || '#eeeeee'} onChange={(e) => updateModuleStyle(mod.id, { font_color: e.target.value })} />
+                                    <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { font_color: undefined })}>×</button>
+                                </div>
+                                <div className="profile-module-style-row">
+                                    <label>BG:</label>
+                                    <input type="color" value={mod.background || '#1a1a2e'} onChange={(e) => updateModuleStyle(mod.id, { background: e.target.value })} />
+                                    <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { background: undefined })}>×</button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="profile-module-body">
                             {renderModuleContent(mod)}
                         </div>
@@ -895,7 +968,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             </button>
                         )}
                     </div>
-                ))}
+                    );
+                })}
 
                 {editMode && (
                     <div className="profile-add-module" ref={addMenuRef}>
@@ -1075,6 +1149,32 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     function renderCustomize() {
         return (
             <div className="profile-customize-panel">
+                {/* Theme Presets */}
+                <div className="profile-customize-section">
+                    <h3>🎭 Profile Theme</h3>
+                    <div className="profile-theme-grid">
+                        {Object.entries(PROFILE_THEME_PRESETS).map(([key, preset]) => (
+                            <button
+                                key={key}
+                                className={`profile-theme-swatch ${profileSettings.theme === key ? 'profile-theme-swatch--active' : ''}`}
+                                style={{ background: preset.banner, color: preset.text, borderColor: profileSettings.theme === key ? preset.accent : 'transparent' } as React.CSSProperties}
+                                onClick={() => saveSettings({
+                                    ...profileSettings,
+                                    theme: key,
+                                    banner_type: 'gradient',
+                                    banner_value: preset.banner,
+                                    banner_text_color: preset.text,
+                                    profile_background: preset.bg || undefined,
+                                    background_type: preset.bg ? 'color' : 'default',
+                                    background_value: preset.bg || '',
+                                })}
+                            >
+                                {preset.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="profile-customize-section">
                     <h3>🎨 Banner Header</h3>
                     <div className="profile-customize-row">
@@ -1143,6 +1243,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             onChange={(e) => saveSettings({ ...profileSettings, background_type: 'image', background_value: e.target.value })}
                         />
                     )}
+                    <div className="profile-bg-presets">
+                        {BG_PRESETS.map((p) => (
+                            <button key={p.label} className="profile-bg-preset-btn"
+                                style={{ background: p.value } as React.CSSProperties}
+                                onClick={() => saveSettings({ ...profileSettings, profile_background: p.value })}
+                                title={p.label}
+                            >{p.label}</button>
+                        ))}
+                        <button className="profile-bg-preset-btn" onClick={() => saveSettings({ ...profileSettings, profile_background: undefined })} title="Clear overlay">None</button>
+                    </div>
                 </div>
 
                 <div className="profile-customize-section">
@@ -1249,7 +1359,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <div className="profile-hero-did">{auth?.web_did || auth?.did}</div>
                 </div>
 
-                {auth && (
+                {auth && !previewMode && (
                     <div className="profile-hero-actions">
                         {editMode && (
                             <button
@@ -1260,10 +1370,24 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             </button>
                         )}
                         <button
+                            className="profile-hero-btn"
+                            onClick={() => setPreviewMode(true)}
+                            title="Preview as external visitor"
+                        >
+                            👁 Preview
+                        </button>
+                        <button
                             className={`profile-hero-btn ${editMode ? 'profile-hero-btn--active' : ''}`}
                             onClick={() => { if (editMode) exitEditMode(); else setEditMode(true); }}
                         >
                             {editMode ? <><BsCheckLg size={14} /> Done</> : <><BsPencilFill size={14} /> Edit</>}
+                        </button>
+                    </div>
+                )}
+                {previewMode && (
+                    <div className="profile-hero-actions">
+                        <button className="profile-hero-btn profile-hero-btn--active" onClick={() => setPreviewMode(false)}>
+                            ✕ Exit Preview
                         </button>
                     </div>
                 )}
