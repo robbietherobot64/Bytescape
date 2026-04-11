@@ -5,8 +5,19 @@ Feedback:
 **Outstanding issues**
 
 Critical priorities:
-
-- We are now moving into a hosted url based identity, such that users will be able to host a profile and did document for cross platform verification.  See notes on next phase.  
-
-Lower priorities:
-- We need to host our data on a desktop server instance/pds and federate with the larger fediverse.  This will come after the cloud hosted option works.
+- Delete "Wall" section, it's redundant if we allow a guestbook module to be added.  That's a better approach to that idea anyway.
+- Media does not populate at all, despite having items in the vault that could be populated. 
+- Mastodon connections and posts are not showing (not sure if this is a backend issue or not)
+- The drag and drop of the modules just flat out does not work.  Or at least I can't figure out how to get it to work.  Even just an up/down arrow to be able to move modules around would be cool. 
+- Customization options are weak and buggy.  Text misaligned and clipping into toggle boxes, etc.  Let's take a totally different approach - When you select customize, you get a list of themes you can set your profile to, or you can set it yourself manually by selectiong a variety of parameters, including colors for each aspect of the site, window shapes/effects/textures, mouse skins, scroll wheel custom skins, etc.  Then, a section for background images, with prefilled templates, linked images/gifs, or uploads to the vault.  I.e., copy and paste what is in the settings customization section, but upgrade it and apply it to a profile specific view.  Throw in the marqee ticker as a bonus option, although we should look into how users can program that themselves eventually, i.e., making "*Custom*" modules actually function. Let's also make an edit button on each module when edited will allow the changing of the font, font color, font size, background, theme of the module box, etc.  So rich customization natively in every aspect of the site.
+- Allow adding/removing navigation sections.  Give users full edit control of what they have on their profile.  Start with the three we decided on, Home, Posts, and Media, but allow adding of either standalone modules as a custom site that they can add (say for example a blog and guestbook, that they title that navigation button as "Rob's Adventures").  Let's also brainstorm on what other custom navigation sections users might want to add.  
+ 
+Lower priority:
+- The header of the profile seems to be hardcoded into the infrastructure of the program somehow.  It never changes, no matter how many change requests I make.  Please make it match the theme of the profile overall, rather than some strange blue/purple fade banner dealio with yellow font.  Match both the font color and background. Otherwise, allow users to customize it with its own "Edit banner" button, allowing for either solid color selection, some basic effects, or custom image/gif upload/link.  
+- Allow users to add a nickname that displays above their username.  This can import from other platforms if users wish, or they can add a custom name.
+-  Connections is hideous.  It takes up tons of space and Let's put a face to the name, and integrate user profile pictures.  Let's make it a clean circle for the profile picture, with their name underneath, and a symbol for the platform.  We want to feel a human connection to people, and see their faces, not just some button with a name.  
+- Modules should not add to the side navigation bar.  They can potentially be added a dropdown directly of the home navigation, rather than a standalone section.
+- "Listening to" and "Playlists" should support embedding of bandcamp, soundcloud, and spotify links, with a functional player experience.  If we want to get really out there (and we do), we can look to add a visualizer module that plays a playlist and visualizes it, a la winamp.  This is easier said than done, but we are going to make it happen.
+- Blogs should actually allow linking of wordpress, ghost, or some other blogging software.
+- Make "fcbk" into "facebk".  Don't ask why, fcbk just sounds weird.
+- Add a preview button so users can see how their profile looks to external users (for now just one user type, but eventually multiple user types with different privacy settings set by the user).

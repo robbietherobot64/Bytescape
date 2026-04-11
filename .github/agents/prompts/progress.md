@@ -4,6 +4,29 @@
 
 ---
 
+## 📋 PM — New Architecture Source: Profile Dev Mode (2026-04-10)
+
+**User direction:** maximize profile customization and define a path for developer-level profile control (custom HTML/CSS/JS, GIF effects, deep theming).
+
+### PM source file created
+
+- `.github/agents/prompts/profile-dev-mode-architecture.md`
+
+### Intended use
+
+- Use this as the single architecture source when generating future profile-dev prompts.
+- Covers mode model, sandbox/capabilities, publish pipeline, and track split.
+
+### Direction update (same day)
+
+- User requested a simpler target comparable to Neocities/SpaceHey style profile customization.
+- Architecture source was rewritten to HTML/CSS-native custom pages with:
+  - custom pages in left navigation,
+  - optional home-page replacement by a selected custom page,
+  - no arbitrary JavaScript runtime in this phase.
+
+---
+
 ## 📋 PM — Sprint v19 Reactivation: Profile Customization (2026-04-10)
 
 **Trigger:** user reported that sprint v19 had effectively been skipped and requested that profile customization be reactivated before any hosted-identity work.
