@@ -322,8 +322,8 @@ function App() {
         if (!status.identity_ready) {
           setShowIdentitySetup(true);
         }
-        // Auto-sync Bluesky feed on every boot (only if user has a Bluesky session)
-        if (status.source === 'bluesky') {
+        // Auto-sync feeds on every boot (Bluesky + Mastodon if connected)
+        if (status.source === 'bluesky' || status.source === 'mastodon') {
           importBluesky();
         }
       }
@@ -458,6 +458,18 @@ function App() {
           console.error("App: Chat import FAILED:", chatErr);
         });
 
+      // Import Mastodon posts in parallel if a Mastodon session exists
+      const mastodonPromise = invoke<number>("import_mastodon_posts")
+        .then((mCount) => {
+          if (mCount > 0) console.log(`App: Imported ${mCount} Mastodon posts.`);
+        })
+        .catch((mErr: any) => {
+          // Silently skip if no Mastodon session — this is expected
+          if (!String(mErr).includes("No Mastodon session")) {
+            console.error("App: Mastodon import FAILED:", mErr);
+          }
+        });
+
       const count = await invoke<number>("import_bluesky_posts");
       console.log(`App: Import finished. Found ${count} new posts.`);
 
@@ -467,8 +479,9 @@ function App() {
         setImportStatus(`✅ Up to date — no new posts.`);
       }
 
-      // Wait for chat import to finish too (it likely already has)
+      // Wait for chat + Mastodon imports to finish too (they likely already have)
       await chatPromise;
+      await mastodonPromise;
 
       // Ensure stats and feed are reloaded AFTER the import is confirmed finished
       console.log("App: Reloading archive stats and feed posts...");
