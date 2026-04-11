@@ -749,24 +749,18 @@
     position: relative;
 }
 .profile-connection-hover-card {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 8px 12px;
+    position: fixed;
+    padding: 10px 14px;
     border-radius: 6px;
-    z-index: 50;
-    background: var(--profile-tooltip-bg, rgba(20,20,35,0.95));
+    z-index: 100;
+    background: var(--profile-tooltip-bg, rgba(20,20,35,0.97));
     color: var(--profile-tooltip-text, #fff);
     border: 1px solid var(--profile-tooltip-border, rgba(255,255,255,0.15));
-    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.7);
     text-align: center;
     white-space: nowrap;
-    min-width: 120px;
-}
-.profile-connection-card:hover .profile-connection-hover-card {
-    display: block;
+    min-width: 140px;
+    pointer-events: auto;
 }
 .profile-connection-hover-name {
     font-size: 12px;
@@ -776,11 +770,16 @@
 .profile-connection-hover-handle {
     font-size: 10px;
     opacity: 0.6;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
+}
+.profile-connection-hover-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 .profile-connection-hover-btn {
     display: inline-block;
-    padding: 3px 12px;
+    padding: 4px 14px;
     font-size: 10px;
     font-weight: 600;
     border-radius: 4px;
@@ -793,6 +792,20 @@
 }
 .profile-connection-hover-btn:hover {
     background: rgba(255,255,255,0.15);
+}
+.profile-connection-hover-btn--follow {
+    background: rgba(56, 189, 100, 0.35);
+    border-color: rgba(56, 189, 100, 0.5);
+}
+.profile-connection-hover-btn--follow:hover {
+    background: rgba(56, 189, 100, 0.55);
+}
+.profile-connection-hover-btn--unfollow {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.4);
+}
+.profile-connection-hover-btn--unfollow:hover {
+    background: rgba(239, 68, 68, 0.45);
 }
 .profile-connection-platform {
     font-size: 14px;

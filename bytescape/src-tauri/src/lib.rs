@@ -502,6 +502,8 @@ pub fn run() {
             commands::import::list_saved_feeds,
             commands::import::list_follows,
             commands::import::list_followers,
+            commands::import::bluesky_follow,
+            commands::import::bluesky_unfollow,
             commands::import::get_unified_feed,
             commands::import::publish_post,
             

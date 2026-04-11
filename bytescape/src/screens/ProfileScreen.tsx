@@ -149,11 +149,15 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Connections ─── */
     const [followingCount, setFollowingCount] = useState(0);
     const [followerCount, setFollowerCount] = useState(0);
-    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }>>([]);
+    const [allConnections, setAllConnections] = useState<Array<{ did: string; handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }>>([]);
     const [showAllConnections, setShowAllConnections] = useState(false);
     const [connectionSearch, setConnectionSearch] = useState('');
     const [connectionSourceFilter, setConnectionSourceFilter] = useState('all');
     const [connectionRelationFilter, setConnectionRelationFilter] = useState<'all' | 'following' | 'follower'>('all');
+    const [hoverCardIndex, setHoverCardIndex] = useState<number | null>(null);
+    const [hoverCardStyle, setHoverCardStyle] = useState<React.CSSProperties>({});
+    const [followLoading, setFollowLoading] = useState(false);
+    const hoverCardRef = useRef<HTMLDivElement>(null);
 
     /* ─── Customize Dropdown ─── */
     const [customizeDropdownOpen, setCustomizeDropdownOpen] = useState(false);
@@ -195,6 +199,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
     const [avatarError, setAvatarError] = useState(false);
+
+    /* ─── Click-outside handler for connection hover card ─── */
+    useEffect(() => {
+        if (hoverCardIndex === null) return;
+        const handler = (e: MouseEvent) => {
+            if (hoverCardRef.current && !hoverCardRef.current.contains(e.target as Node)) {
+                setHoverCardIndex(null);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [hoverCardIndex]);
 
     /* ════════ Profile Settings Persistence ════════ */
     useEffect(() => {
@@ -263,7 +279,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     // Connections
     useEffect(() => {
-        const conns: Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }> = [];
+        const conns: Array<{ did: string; handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }> = [];
         const promises: Promise<void>[] = [];
 
         const addProfileToConns = (f: { did: string; handle: string; displayName?: string; avatar?: string }, relation: 'following' | 'follower' | 'mutual') => {
@@ -274,7 +290,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 ? `https://${f.handle?.split('@').pop() || ''}/@${f.handle?.split('@')[0] || ''}`
                 : `https://bsky.app/profile/${f.handle || f.did}`;
             // Deduplicate: check if already added
-            const existing = conns.find(c => c.handle === displayName && c.source === source);
+            const existing = conns.find(c => c.did === f.did);
             if (existing) {
                 if (relation === 'follower' && existing.relation === 'following') existing.relation = 'mutual';
                 if (relation === 'following' && existing.relation === 'follower') existing.relation = 'mutual';
@@ -284,6 +300,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 return;
             }
             conns.push({
+                did: f.did,
                 handle: displayName,
                 source,
                 avatar_url: f.avatar || undefined,
@@ -710,6 +727,53 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         );
     }
 
+    function showHoverCard(cardEl: HTMLElement, listIndex: number) {
+        const rect = cardEl.getBoundingClientRect();
+        const cardW = 180;
+        let left = rect.left + rect.width / 2 - cardW / 2;
+        if (left < 8) left = 8;
+        if (left + cardW > window.innerWidth - 8) left = window.innerWidth - 8 - cardW;
+        let top = rect.bottom + 4;
+        // If would clip below viewport, show above
+        if (top + 120 > window.innerHeight) top = rect.top - 124;
+        setHoverCardStyle({ position: 'fixed', left, top, width: cardW } as React.CSSProperties);
+        setHoverCardIndex(listIndex);
+    }
+
+    async function handleFollow(c: typeof allConnections[0]) {
+        setFollowLoading(true);
+        try {
+            if (c.source === 'Bluesky') {
+                await invoke('bluesky_follow', { targetDid: c.did });
+            } else if (c.source === 'Mastodon') {
+                await invoke('mastodon_follow', { accountId: c.did });
+            }
+            // Update local state
+            setAllConnections(prev => prev.map(conn =>
+                conn.did === c.did ? { ...conn, relation: conn.relation === 'follower' ? 'mutual' : 'following' } : conn
+            ));
+            setFollowingCount(prev => prev + 1);
+        } catch (e) { console.error('Follow failed:', e); }
+        setFollowLoading(false);
+    }
+
+    async function handleUnfollow(c: typeof allConnections[0]) {
+        setFollowLoading(true);
+        try {
+            if (c.source === 'Bluesky') {
+                // Need to find the follow record URI — for now use deleteRecord approach
+                await invoke('bluesky_unfollow', { followUri: `at://${auth?.did}/app.bsky.graph.follow/${c.did}` });
+            } else if (c.source === 'Mastodon') {
+                await invoke('mastodon_unfollow', { accountId: c.did });
+            }
+            setAllConnections(prev => prev.map(conn =>
+                conn.did === c.did ? { ...conn, relation: conn.relation === 'mutual' ? 'follower' : 'follower' } : conn
+            ));
+            setFollowingCount(prev => Math.max(0, prev - 1));
+        } catch (e) { console.error('Unfollow failed:', e); }
+        setFollowLoading(false);
+    }
+
     function renderConnections() {
         const sourceEmoji: Record<string, string> = { Bluesky: '🦋', P2P: '🔗', Mastodon: '🐘', ActivityPub: '📡' };
         const relationEmoji: Record<string, string> = { following: '→', follower: '←', mutual: '⇄' };
@@ -764,9 +828,13 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 )}
 
                 <div className="profile-connections-grid">
-                    {displayList.map((c, i) => {
-                        const card = (
-                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
+                    {displayList.map((c, i) => (
+                        <div
+                            key={`${c.source}-${c.did}-${i}`}
+                            className="profile-connection-wrapper"
+                            onClick={(e) => { e.stopPropagation(); showHoverCard(e.currentTarget as HTMLElement, i); }}
+                        >
+                            <div className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
                                 <div className="profile-connection-avatar">
                                     {c.avatar_url ? (
                                         <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (c.display_name || c.handle)[0]?.toUpperCase() || '?'; }} />
@@ -779,27 +847,47 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
                                     <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>
                                 </div>
-                                {c.profile_url && (
-                                    <div className="profile-connection-hover-card">
-                                        <div className="profile-connection-hover-name">{c.display_name || c.handle}</div>
-                                        <div className="profile-connection-hover-handle">@{c.handle}</div>
-                                        <a href={c.profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-hover-btn">
-                                            View on {c.source}
-                                        </a>
-                                    </div>
-                                )}
                             </div>
-                        );
-                        if (c.profile_url) {
-                            return (
-                                <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-wrapper">
-                                    {card}
-                                </div>
-                            );
-                        }
-                        return <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-wrapper">{card}</div>;
-                    })}
+                        </div>
+                    ))}
                 </div>
+
+                {/* JS-positioned hover card (portal-style) */}
+                {hoverCardIndex !== null && displayList[hoverCardIndex] && (
+                    <div
+                        className="profile-connection-hover-card"
+                        style={hoverCardStyle}
+                        ref={hoverCardRef}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="profile-connection-hover-name">{displayList[hoverCardIndex].display_name || displayList[hoverCardIndex].handle}</div>
+                        <div className="profile-connection-hover-handle">@{displayList[hoverCardIndex].handle}</div>
+                        <div className="profile-connection-hover-actions">
+                            {displayList[hoverCardIndex].profile_url && (
+                                <a href={displayList[hoverCardIndex].profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-hover-btn">
+                                    View on {displayList[hoverCardIndex].source}
+                                </a>
+                            )}
+                            {(displayList[hoverCardIndex].relation === 'following' || displayList[hoverCardIndex].relation === 'mutual') ? (
+                                <button
+                                    className="profile-connection-hover-btn profile-connection-hover-btn--unfollow"
+                                    onClick={() => handleUnfollow(displayList[hoverCardIndex!])}
+                                    disabled={followLoading}
+                                >
+                                    {followLoading ? '...' : 'Unfollow'}
+                                </button>
+                            ) : (
+                                <button
+                                    className="profile-connection-hover-btn profile-connection-hover-btn--follow"
+                                    onClick={() => handleFollow(displayList[hoverCardIndex!])}
+                                    disabled={followLoading}
+                                >
+                                    {followLoading ? '...' : 'Follow'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {totalConns > 12 && (
                     <button

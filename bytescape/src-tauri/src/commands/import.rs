@@ -2695,6 +2695,87 @@ pub async fn list_followers(state: State<'_, AppState>, actor: String) -> std::r
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Bluesky Follow / Unfollow
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Follow a Bluesky account by DID.
+///
+/// Creates a `app.bsky.graph.follow` record on the user's PDS.
+///
+/// # IPC
+/// Frontend: `invoke<{ uri: string }>('bluesky_follow', { targetDid })`
+#[tauri::command]
+pub async fn bluesky_follow(
+    state: State<'_, AppState>,
+    target_did: String,
+) -> std::result::Result<serde_json::Value, String> {
+    let session = state.keychain.load_session()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("Not authenticated with Bluesky")?;
+    let (user_did, _) = session;
+    let access_jwt = state.get_fresh_access_jwt().await?;
+    let candidates = crate::connectors::bluesky::authenticated_xrpc_candidates(&access_jwt, true);
+    let pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
+    let client = crate::connectors::bluesky::BlueskyClient::with_jwt(&access_jwt);
+
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let url = format!("{}/com.atproto.repo.createRecord", pds_base);
+    let body = serde_json::json!({
+        "repo": user_did,
+        "collection": "app.bsky.graph.follow",
+        "record": {
+            "$type": "app.bsky.graph.follow",
+            "subject": target_did,
+            "createdAt": now
+        }
+    });
+
+    let resp = client.create_record(&url, body).await?;
+    if !resp.status().is_success() {
+        let err_body = resp.text().await.unwrap_or_default();
+        return Err(format!("Bluesky follow failed: {}", err_body));
+    }
+    resp.json::<serde_json::Value>().await.map_err(|e| format!("Parse error: {}", e))
+}
+
+/// Unfollow a Bluesky account by follow record URI.
+///
+/// Deletes the `app.bsky.graph.follow` record from the user's PDS.
+///
+/// # IPC
+/// Frontend: `invoke('bluesky_unfollow', { followUri })`
+#[tauri::command]
+pub async fn bluesky_unfollow(
+    state: State<'_, AppState>,
+    follow_uri: String,
+) -> std::result::Result<(), String> {
+    let session = state.keychain.load_session()
+        .map_err(|e| format!("Keychain error: {}", e))?
+        .ok_or("Not authenticated with Bluesky")?;
+    let (user_did, _) = session;
+    let access_jwt = state.get_fresh_access_jwt().await?;
+    let candidates = crate::connectors::bluesky::authenticated_xrpc_candidates(&access_jwt, true);
+    let pds_base = candidates.first().ok_or("Could not resolve Bluesky PDS")?;
+    let client = crate::connectors::bluesky::BlueskyClient::with_jwt(&access_jwt);
+
+    // Extract rkey from URI: at://did:plc:.../app.bsky.graph.follow/<rkey>
+    let rkey = follow_uri.rsplit('/').next().ok_or("Invalid follow URI")?;
+    let url = format!("{}/com.atproto.repo.deleteRecord", pds_base);
+    let body = serde_json::json!({
+        "repo": user_did,
+        "collection": "app.bsky.graph.follow",
+        "rkey": rkey
+    });
+
+    let resp = client.delete_record(&url, body).await?;
+    if !resp.status().is_success() {
+        let err_body = resp.text().await.unwrap_or_default();
+        return Err(format!("Bluesky unfollow failed: {}", err_body));
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Feed Aggregation
 // ═══════════════════════════════════════════════════════════════════════════════
 
