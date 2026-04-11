@@ -518,6 +518,10 @@ pub struct ProfileExport {
     pub sections: Vec<ProfileSection>,
     /// Avatar URL — either an external URL or base64 data URL for local images
     pub avatar: Option<String>,
+    /// Profile layout (HTML, CSS, GrapesJS editor state, widget data)
+    pub layout: Option<ProfileLayout>,
+    /// Guestbook entries
+    pub guestbook: Vec<GuestbookEntry>,
     /// ISO 8601 timestamp of when the export was generated
     pub exported_at: String,
 }
@@ -556,7 +560,13 @@ pub async fn export_profile_data(
     // 4. Resolve avatar — inline local files as base64 data URLs
     let avatar = resolve_avatar_for_export(&settings).await;
 
-    // 5. Bundle
+    // 5. Load profile layout (HTML/CSS/GrapesJS state)
+    let layout = db.get_profile_layout().await.ok().flatten();
+
+    // 6. Load guestbook entries
+    let guestbook = db.list_guestbook_entries().await.unwrap_or_default();
+
+    // 7. Bundle
     let exported_at = chrono::Utc::now().to_rfc3339();
 
     Ok(ProfileExport {
@@ -564,6 +574,8 @@ pub async fn export_profile_data(
         pages,
         sections,
         avatar,
+        layout,
+        guestbook,
         exported_at,
     })
 }
