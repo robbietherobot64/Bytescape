@@ -599,6 +599,13 @@
     transition: border-color 0.15s;
 }
 .profile-identity-item:hover { border-color: rgba(255,255,255,0.1); }
+.profile-identity-item--clickable { cursor: pointer; }
+.profile-identity-item--clickable:hover { border-color: var(--accent-purple, #7c3aed); }
+.profile-identity-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
 .profile-identity-emoji { font-size: 20px; flex-shrink: 0; }
 .profile-identity-info { flex: 1; min-width: 0; }
 .profile-identity-protocol {
@@ -738,25 +745,54 @@
 }
 
 /* Themed tooltip on connection cards */
-.profile-connection-card[data-tooltip] {
+.profile-connection-wrapper {
     position: relative;
 }
-.profile-connection-card[data-tooltip]:hover::after {
-    content: attr(data-tooltip);
+.profile-connection-hover-card {
+    display: none;
     position: absolute;
-    bottom: calc(100% + 4px);
+    top: 100%;
     left: 50%;
     transform: translateX(-50%);
-    padding: 4px 10px;
-    font-size: 11px;
-    white-space: nowrap;
-    border-radius: 4px;
-    pointer-events: none;
+    padding: 8px 12px;
+    border-radius: 6px;
     z-index: 50;
     background: var(--profile-tooltip-bg, rgba(20,20,35,0.95));
     color: var(--profile-tooltip-text, #fff);
     border: 1px solid var(--profile-tooltip-border, rgba(255,255,255,0.15));
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    text-align: center;
+    white-space: nowrap;
+    min-width: 120px;
+}
+.profile-connection-card:hover .profile-connection-hover-card {
+    display: block;
+}
+.profile-connection-hover-name {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+.profile-connection-hover-handle {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-bottom: 6px;
+}
+.profile-connection-hover-btn {
+    display: inline-block;
+    padding: 3px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 4px;
+    background: var(--profile-tooltip-border, rgba(124,58,237,0.3));
+    color: var(--profile-tooltip-text, #fff);
+    border: 1px solid rgba(255,255,255,0.15);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.profile-connection-hover-btn:hover {
+    background: rgba(255,255,255,0.15);
 }
 .profile-connection-platform {
     font-size: 14px;

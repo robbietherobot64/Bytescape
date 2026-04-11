@@ -673,31 +673,39 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             atproto: '🦋', bluesky: '🦋', activitypub: '🐘', mastodon: '🐘',
             meta: '📘', x: '𝕏', instagram: '📷',
         };
-        if (linkedAccounts.length === 0 && !auth?.did) {
+        const protocolUrl = (acct: LinkedAccount): string | null => {
+            const p = acct.protocol.toLowerCase();
+            const h = acct.display_handle.replace(/^@/, '');
+            if (p === 'bluesky' || p === 'atproto') return `https://bsky.app/profile/${h}`;
+            if (p === 'mastodon' || p === 'activitypub') {
+                const parts = h.split('@');
+                return parts.length >= 2 ? `https://${parts[1]}/@${parts[0]}` : null;
+            }
+            if (p === 'instagram') return `https://instagram.com/${h}`;
+            return null;
+        };
+        if (linkedAccounts.length === 0) {
             return <div className="profile-empty"><div className="profile-empty-icon">🔗</div><p className="profile-empty-text">No connected accounts yet.</p></div>;
         }
         return (
             <div className="profile-identities-list">
-                {auth?.did && (
-                    <div className="profile-identity-item">
-                        <span className="profile-identity-emoji">🌐</span>
-                        <div className="profile-identity-info">
-                            <div className="profile-identity-protocol">Bytescape</div>
-                            <div className="profile-identity-handle">{auth.web_did || auth.did}</div>
+                {linkedAccounts.map((acct, i) => {
+                    const url = protocolUrl(acct);
+                    const inner = (
+                        <div key={i} className={`profile-identity-item ${url ? 'profile-identity-item--clickable' : ''}`}>
+                            <span className="profile-identity-emoji">{protocolEmoji[acct.protocol] || '🔗'}</span>
+                            <div className="profile-identity-info">
+                                <div className="profile-identity-protocol">{acct.protocol}</div>
+                                <div className="profile-identity-handle">{acct.display_handle}</div>
+                            </div>
+                            {acct.active && <span className="profile-identity-badge profile-identity-badge--active">● Active</span>}
                         </div>
-                        <span className="profile-identity-badge profile-identity-badge--active">● Primary</span>
-                    </div>
-                )}
-                {linkedAccounts.map((acct, i) => (
-                    <div key={i} className="profile-identity-item">
-                        <span className="profile-identity-emoji">{protocolEmoji[acct.protocol] || '🔗'}</span>
-                        <div className="profile-identity-info">
-                            <div className="profile-identity-protocol">{acct.protocol}</div>
-                            <div className="profile-identity-handle">{acct.display_handle}</div>
-                        </div>
-                        {acct.active && <span className="profile-identity-badge profile-identity-badge--active">● Active</span>}
-                    </div>
-                ))}
+                    );
+                    if (url) {
+                        return <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="profile-identity-link">{inner}</a>;
+                    }
+                    return inner;
+                })}
             </div>
         );
     }
@@ -758,7 +766,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 <div className="profile-connections-grid">
                     {displayList.map((c, i) => {
                         const card = (
-                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`} data-tooltip={c.display_name || c.handle}>
+                            <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
                                 <div className="profile-connection-avatar">
                                     {c.avatar_url ? (
                                         <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (c.display_name || c.handle)[0]?.toUpperCase() || '?'; }} />
@@ -771,16 +779,25 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
                                     <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>
                                 </div>
+                                {c.profile_url && (
+                                    <div className="profile-connection-hover-card">
+                                        <div className="profile-connection-hover-name">{c.display_name || c.handle}</div>
+                                        <div className="profile-connection-hover-handle">@{c.handle}</div>
+                                        <a href={c.profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-hover-btn">
+                                            View on {c.source}
+                                        </a>
+                                    </div>
+                                )}
                             </div>
                         );
                         if (c.profile_url) {
                             return (
-                                <a key={`${c.source}-${c.handle}-${i}`} href={c.profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-link">
+                                <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-wrapper">
                                     {card}
-                                </a>
+                                </div>
                             );
                         }
-                        return card;
+                        return <div key={`${c.source}-${c.handle}-${i}`} className="profile-connection-wrapper">{card}</div>;
                     })}
                 </div>
 
