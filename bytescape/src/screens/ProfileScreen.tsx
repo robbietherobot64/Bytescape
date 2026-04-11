@@ -2,7 +2,7 @@ import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
-import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModule, VaultFile } from '../types';
+import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModule, ProfileCustomPage, VaultFile } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
@@ -94,6 +94,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [showAddModuleMenu, setShowAddModuleMenu] = useState(false);
     const addMenuRef = useRef<HTMLDivElement>(null);
 
+    /* ─── Custom Nav Pages ─── */
+    const [customPages, setCustomPages] = useState<ProfileCustomPage[]>([]);
+    const [showAddPageInput, setShowAddPageInput] = useState(false);
+    const [newPageLabel, setNewPageLabel] = useState('');
+    const [newPageEmoji, setNewPageEmoji] = useState('📄');
+
     /* ─── Identities ─── */
     const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 
@@ -140,6 +146,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         setProfileSettings(parsed);
                         if (parsed.modules && parsed.modules.length > 0) {
                             setModules(parsed.modules);
+                        }
+                        if (parsed.custom_pages) {
+                            setCustomPages(parsed.custom_pages);
                         }
                     } catch { /* ignore */ }
                 }
@@ -421,6 +430,64 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setEditingModuleTitle(null);
         saveModules(modules);
     }, [modules, saveModules]);
+
+    // Custom page CRUD
+    const saveCustomPages = useCallback(async (pages: ProfileCustomPage[]) => {
+        setCustomPages(pages);
+        const newSettings = { ...profileSettings, custom_pages: pages };
+        setProfileSettings(newSettings);
+        try {
+            await invoke('save_profile_settings', { settingsJson: JSON.stringify(newSettings) });
+        } catch (err) {
+            console.error('Failed to save custom pages:', err);
+        }
+    }, [profileSettings]);
+
+    const addCustomPage = useCallback(() => {
+        if (!newPageLabel.trim()) return;
+        const page: ProfileCustomPage = {
+            id: `page-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            label: newPageLabel.trim(),
+            emoji: newPageEmoji || '📄',
+            modules: [],
+        };
+        saveCustomPages([...customPages, page]);
+        setNewPageLabel('');
+        setNewPageEmoji('📄');
+        setShowAddPageInput(false);
+        setActiveNav(`custom-${page.id}`);
+    }, [newPageLabel, newPageEmoji, customPages, saveCustomPages]);
+
+    const removeCustomPage = useCallback((pageId: string) => {
+        saveCustomPages(customPages.filter(p => p.id !== pageId));
+        if (activeNav === `custom-${pageId}`) setActiveNav('home');
+    }, [customPages, saveCustomPages, activeNav]);
+
+    const addModuleToPage = useCallback((pageId: string, type: string, title: string) => {
+        const newMod: ProfileModule = {
+            id: generateId(),
+            type,
+            title,
+            order: 0,
+            visible: true,
+            width: 'full',
+            content: type === 'links' || type === 'gif-collection' ? '[]' : '',
+        };
+        const updated = customPages.map(p => {
+            if (p.id !== pageId) return p;
+            const mods = [...p.modules, { ...newMod, order: p.modules.length }];
+            return { ...p, modules: mods };
+        });
+        saveCustomPages(updated);
+    }, [customPages, saveCustomPages]);
+
+    const removeModuleFromPage = useCallback((pageId: string, moduleId: string) => {
+        const updated = customPages.map(p => {
+            if (p.id !== pageId) return p;
+            return { ...p, modules: p.modules.filter(m => m.id !== moduleId) };
+        });
+        saveCustomPages(updated);
+    }, [customPages, saveCustomPages]);
 
     const hasMore = offsetRef.current < total;
     const displayName = auth?.local_username || auth?.handle || 'Anonymous';
@@ -945,6 +1012,66 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         );
     }
 
+    function renderCustomPage(pageId: string) {
+        const page = customPages.find(p => p.id === pageId);
+        if (!page) return <div className="profile-empty"><div className="profile-empty-icon">❓</div><p className="profile-empty-text">Page not found.</p></div>;
+
+        const pageMods = page.modules.sort((a, b) => a.order - b.order);
+        const pageModTypes = new Set(pageMods.map(m => m.type));
+        const pageAvailableModules = ADDABLE_MODULES.filter(t => !t.unique || !pageModTypes.has(t.type));
+
+        return (
+            <div>
+                <div className="profile-section-header">
+                    <span className="profile-section-header-emoji">{page.emoji}</span> {page.label}
+                </div>
+
+                <div className="profile-module-grid">
+                    {pageMods.map((mod) => (
+                        <div key={mod.id} className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}>
+                            <div className="profile-module-header">
+                                <span className="profile-module-header-title">{mod.title}</span>
+                                {editMode && (
+                                    <div className="profile-module-edit-controls">
+                                        <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit"><BsPencilFill size={9} /></button>
+                                        <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModuleFromPage(pageId, mod.id)} title="Remove"><BsTrash size={9} /></button>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="profile-module-body">
+                                {renderModuleContent(mod)}
+                            </div>
+                        </div>
+                    ))}
+
+                    {editMode && (
+                        <div className="profile-add-module">
+                            <button className="profile-add-module-btn" onClick={() => setShowAddModuleMenu(!showAddModuleMenu)}>
+                                <BsPlusLg size={11} /> Add Module
+                            </button>
+                            {showAddModuleMenu && (
+                                <div className="profile-add-dropdown">
+                                    {pageAvailableModules.map((t) => (
+                                        <button key={t.type + t.label} onClick={() => { addModuleToPage(pageId, t.type, t.type === 'custom' ? 'My Section' : t.label); setShowAddModuleMenu(false); }}>
+                                            {t.emoji} {t.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {pageMods.length === 0 && !editMode && (
+                    <div className="profile-empty">
+                        <div className="profile-empty-icon">{page.emoji}</div>
+                        <p className="profile-empty-text">This page is empty. Click Edit to add modules.</p>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     function renderCustomize() {
         return (
             <div className="profile-customize-panel">
@@ -1182,6 +1309,55 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         </button>
                     ))}
 
+                    {/* Custom Pages */}
+                    {customPages.length > 0 && <div className="profile-nav-divider" />}
+                    {customPages.map(page => (
+                        <div key={page.id} className="profile-nav-custom-row">
+                            <button
+                                className={`profile-nav-item ${activeNav === `custom-${page.id}` ? 'profile-nav-item--active' : ''}`}
+                                onClick={() => setActiveNav(`custom-${page.id}`)}
+                            >
+                                <span className="profile-nav-emoji">{page.emoji}</span>
+                                {page.label}
+                            </button>
+                            {editMode && (
+                                <button className="profile-nav-remove-btn" onClick={() => removeCustomPage(page.id)} title="Remove page">✕</button>
+                            )}
+                        </div>
+                    ))}
+
+                    {editMode && (
+                        <div className="profile-nav-add">
+                            {showAddPageInput ? (
+                                <div className="profile-nav-add-form">
+                                    <input
+                                        type="text"
+                                        className="profile-nav-add-emoji-input"
+                                        value={newPageEmoji}
+                                        onChange={(e) => setNewPageEmoji(e.target.value.slice(0, 2))}
+                                        maxLength={2}
+                                        title="Page emoji"
+                                    />
+                                    <input
+                                        type="text"
+                                        className="profile-nav-add-label-input"
+                                        placeholder="Page name..."
+                                        value={newPageLabel}
+                                        onChange={(e) => setNewPageLabel(e.target.value)}
+                                        maxLength={30}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') addCustomPage(); }}
+                                        autoFocus
+                                    />
+                                    <button className="profile-nav-add-confirm" onClick={addCustomPage} disabled={!newPageLabel.trim()}>✓</button>
+                                    <button className="profile-nav-add-cancel" onClick={() => { setShowAddPageInput(false); setNewPageLabel(''); }}>✕</button>
+                                </div>
+                            ) : (
+                                <button className="profile-nav-add-btn" onClick={() => setShowAddPageInput(true)}>
+                                    <BsPlusLg size={10} /> Add Page
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </nav>
 
                 {/* Content Area */}
@@ -1190,6 +1366,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         {activeNav === 'home' && renderHome()}
                         {activeNav === 'posts' && renderPosts()}
                         {activeNav === 'media' && renderMedia()}
+                        {activeNav.startsWith('custom-') && renderCustomPage(activeNav.replace('custom-', ''))}
                     </div>
                 </div>
             </div>

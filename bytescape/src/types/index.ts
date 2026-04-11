@@ -742,6 +742,15 @@ export interface ProfileSettings {
     banner_type?: string;            // "theme" | "color" | "image" | "gradient"
     banner_value?: string;           // CSS color, image URL, or gradient
     banner_text_color?: string;      // Text color for banner overlay
+    custom_pages?: ProfileCustomPage[];  // Custom navigation pages
+}
+
+/** A user-created navigation page on the profile. */
+export interface ProfileCustomPage {
+    id: string;
+    label: string;          // Nav button label (e.g. "Rob's Adventures")
+    emoji: string;           // Emoji icon for nav
+    modules: ProfileModule[];  // Modules shown on this page
 }
 
 /** A single page in the multi-page profile website. */
