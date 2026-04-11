@@ -683,7 +683,24 @@ pub async fn list_contacts(state: State<'_, AppState>) -> std::result::Result<Ve
         }
     }
 
-    // ── 3. Sort: P2P-capable first, then alphabetically by handle ──
+    // ── 3. Mastodon follows ──
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        if let Ok(accounts) = crate::connectors::mastodon::get_following_list(&state.http_client, &session, None).await {
+            let instance = &session.instance;
+            for a in &accounts {
+                let pv = crate::connectors::mastodon::account_to_profile_view(instance, a);
+                contacts.entry(pv.did.clone()).or_insert_with(|| crate::db::Contact {
+                    did: pv.did,
+                    handle: pv.handle,
+                    p2p_capable: false,
+                    node_id: None,
+                    last_polled_at: 0,
+                });
+            }
+        }
+    }
+
+    // ── 4. Sort: P2P-capable first, then alphabetically by handle ──
     let mut result: Vec<crate::db::Contact> = contacts.into_values().collect();
     result.sort_by(|a, b| {
         b.p2p_capable.cmp(&a.p2p_capable)
@@ -783,7 +800,41 @@ pub async fn list_contacts_unified(
         }
     }
 
-    // ── 3. Sort: P2P-capable first, then alphabetically ──
+    // ── 3. Mastodon following + followers ──
+    if let Ok(session) = crate::connectors::mastodon::get_session_from_keychain(&state.keychain) {
+        // Following
+        if let Ok(accounts) = crate::connectors::mastodon::get_following_list(&state.http_client, &session, None).await {
+            let instance = &session.instance;
+            for a in &accounts {
+                let pv = crate::connectors::mastodon::account_to_profile_view(instance, a);
+                contacts.entry(pv.did.clone()).or_insert_with(|| serde_json::json!({
+                    "did": pv.did,
+                    "handle": pv.handle,
+                    "display_name": pv.display_name,
+                    "avatar": pv.avatar,
+                    "source": "mastodon",
+                    "p2p_capable": false,
+                }));
+            }
+        }
+        // Followers
+        if let Ok(accounts) = crate::connectors::mastodon::get_followers_list(&state.http_client, &session, None).await {
+            let instance = &session.instance;
+            for a in &accounts {
+                let pv = crate::connectors::mastodon::account_to_profile_view(instance, a);
+                contacts.entry(pv.did.clone()).or_insert_with(|| serde_json::json!({
+                    "did": pv.did,
+                    "handle": pv.handle,
+                    "display_name": pv.display_name,
+                    "avatar": pv.avatar,
+                    "source": "mastodon",
+                    "p2p_capable": false,
+                }));
+            }
+        }
+    }
+
+    // ── 4. Sort: P2P-capable first, then alphabetically ──
     let mut result: Vec<serde_json::Value> = contacts.into_values().collect();
     result.sort_by(|a, b| {
         let a_p2p = a.get("p2p_capable").and_then(|v| v.as_bool()).unwrap_or(false);

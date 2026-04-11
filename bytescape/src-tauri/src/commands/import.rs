@@ -1045,9 +1045,74 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         .unwrap_or_default()
         .as_secs();
 
-    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris).await;
+    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Bluesky).await;
 
     println!("Bluesky import: saved {} own posts", saved_posts);
+    Ok(saved_posts)
+}
+
+/// Import the authenticated user's own Mastodon posts into the local vault.
+///
+/// Fetches the user's statuses via `get_account_statuses_as_bsky()` (paginating
+/// up to 10 pages / ~400 posts), then saves them to the vault database with
+/// `source="mastodon"`. Existing posts are deduplicated via `known_uris`.
+///
+/// # IPC
+/// Frontend: `invoke<number>('import_mastodon_posts')`
+///
+/// # Returns
+/// Count of newly saved posts.
+#[tauri::command]
+pub async fn import_mastodon_posts(state: State<'_, AppState>) -> std::result::Result<usize, String> {
+    let session = crate::connectors::mastodon::get_session_from_keychain(&state.keychain)
+        .map_err(|e| format!("No Mastodon session: {}", e))?;
+
+    println!("lib: Starting import_mastodon_posts...");
+
+    let app_handle = state.app_handle.clone();
+    let app_data_dir = app_handle.path()
+        .app_data_dir()
+        .map_err(|e| format!("App data dir error: {}", e))?;
+    let media_dir = app_data_dir.join("media");
+    let sync_manager = state.sync_manager.lock().await.clone();
+
+    let _ = app_handle.emit("import-progress", crate::connectors::bluesky::ImportProgress {
+        source: "mastodon".to_string(),
+        stage: "fetching".to_string(),
+        posts_imported: 0,
+        photos_downloaded: 0,
+        current_item: "Fetching your Mastodon posts...".to_string(),
+    });
+
+    let db_guard = state.db_manager.read().await;
+    let known_uris = if let Some(db) = db_guard.as_ref() {
+        db.get_all_known_uris().await.unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    drop(db_guard);
+
+    let (imported_posts, _cursor) = crate::connectors::mastodon::get_account_statuses_as_bsky(
+        &state.http_client,
+        &session,
+        Some(40),
+        None,
+        Some(10),
+    ).await.map_err(|e| format!("Mastodon fetch error: {}", e))?;
+
+    // Save to database
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let saved_posts = save_posts("Mastodon Own", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Mastodon).await;
+
+    println!("Mastodon import: saved {} own posts", saved_posts);
     Ok(saved_posts)
 }
 
@@ -1068,6 +1133,7 @@ async fn save_posts(
     sync_manager: &Option<Arc<SyncManager>>,
     media_base_dir: Option<&Path>,
     known_uris: &std::collections::HashSet<String>,
+    source: Source,
 ) -> usize {
     let mut saved = 0;
     for post in posts {
@@ -1108,8 +1174,8 @@ async fn save_posts(
             original_timestamp: post.created_at,
             content: post.text.clone(),
             media_paths,
-            source: Source::Bluesky.as_str().to_string(),
-            path: willow_path_for_item(Source::Bluesky.as_str(), item_type, post.created_at, &post.cid),
+            source: source.as_str().to_string(),
+            path: willow_path_for_item(source.as_str(), item_type, post.created_at, &post.cid),
             imported_at: now,
             title: post.external_title.clone(),
             original_id: Some(post.uri.clone()),
@@ -1135,9 +1201,12 @@ async fn save_posts(
             media_mimes,
             syndication_status: SyndicationStatus::Syndicated,
             syndicated_uri: Some(post.uri.clone()),
-            audiences: vec![Audience::Local, Audience::Bluesky],
+            audiences: match source {
+                Source::Mastodon => vec![Audience::Local, Audience::Activitypub],
+                _ => vec![Audience::Local, Audience::Bluesky],
+            },
             share_history: vec![crate::models::SyndicationEvent {
-                platform: "bluesky".to_string(),
+                platform: source.as_str().to_string(),
                 uri: post.uri.clone(),
                 timestamp: post.created_at as u64,
                 active: true,

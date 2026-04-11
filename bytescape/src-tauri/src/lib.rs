@@ -488,6 +488,7 @@ pub fn run() {
             commands::import::debug_zip_contents,
             commands::import::commit_memories,
             commands::import::import_bluesky_posts,
+            commands::import::import_mastodon_posts,
             commands::import::migrate_willow_paths,
             commands::import::get_timeline,
             commands::import::get_author_feed,
