@@ -147,9 +147,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 
     /* ─── Connections ─── */
-    const [followCount, setFollowCount] = useState(0);
-    const [contactCount, setContactCount] = useState(0);
-    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string }>>([]);
+    const [followingCount, setFollowingCount] = useState(0);
+    const [followerCount, setFollowerCount] = useState(0);
+    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }>>([]);
     const [showAllConnections, setShowAllConnections] = useState(false);
     const [connectionSearch, setConnectionSearch] = useState('');
     const [connectionSourceFilter, setConnectionSourceFilter] = useState('all');
@@ -185,6 +185,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [mediaFiles, setMediaFiles] = useState<VaultFile[]>([]);
     const [mediaLoading, setMediaLoading] = useState(false);
     const [mediaThumbs, setMediaThumbs] = useState<Record<string, string>>({});
+
+    /* ─── Media Lightbox ─── */
+    const [lightboxFile, setLightboxFile] = useState<VaultFile | null>(null);
+    const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+    const [lightboxLoading, setLightboxLoading] = useState(false);
 
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
@@ -257,44 +262,53 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     // Connections
     useEffect(() => {
-        const conns: Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string }> = [];
+        const conns: Array<{ handle: string; source: string; avatar_url?: string; display_name?: string; profile_url?: string; relation: 'following' | 'follower' | 'mutual' }> = [];
         const promises: Promise<void>[] = [];
+
+        const addProfileToConns = (f: { did: string; handle: string; displayName?: string; avatar?: string }, relation: 'following' | 'follower' | 'mutual') => {
+            const displayName = f.displayName || f.handle || f.did.slice(0, 12);
+            const isMastodon = f.did?.startsWith('did:web:') || f.handle?.includes('@');
+            const source = isMastodon ? 'Mastodon' : 'Bluesky';
+            const profileUrl = isMastodon
+                ? `https://${f.handle?.split('@').pop() || ''}/@${f.handle?.split('@')[0] || ''}`
+                : `https://bsky.app/profile/${f.handle || f.did}`;
+            // Deduplicate: check if already added
+            const existing = conns.find(c => c.handle === displayName && c.source === source);
+            if (existing) {
+                if (relation === 'follower' && existing.relation === 'following') existing.relation = 'mutual';
+                if (relation === 'following' && existing.relation === 'follower') existing.relation = 'mutual';
+                return;
+            }
+            conns.push({
+                handle: displayName,
+                source,
+                avatar_url: f.avatar || undefined,
+                display_name: f.displayName || undefined,
+                profile_url: profileUrl,
+                relation,
+            });
+        };
+
         if (auth?.did) {
+            // Following
             promises.push(
                 invoke<Array<{ did: string; handle: string; displayName?: string; avatar?: string; description?: string }>>('list_follows', { actor: auth.did })
                     .then((follows) => {
-                        setFollowCount(follows.length);
-                        follows.forEach(f => {
-                            const displayName = f.displayName || f.handle || f.did.slice(0, 12);
-                            // Determine source by DID prefix or handle format
-                            const isMastodon = f.did?.startsWith('did:web:') || f.handle?.includes('@');
-                            const source = isMastodon ? 'Mastodon' : 'Bluesky';
-                            const profileUrl = isMastodon
-                                ? `https://${f.handle?.split('@').pop() || ''}/@${f.handle?.split('@')[0] || ''}`
-                                : `https://bsky.app/profile/${f.handle || f.did}`;
-                            conns.push({
-                                handle: displayName,
-                                source,
-                                avatar_url: f.avatar || undefined,
-                                display_name: f.displayName || undefined,
-                                profile_url: profileUrl,
-                            });
-                        });
+                        setFollowingCount(follows.length);
+                        follows.forEach(f => addProfileToConns(f, 'following'));
                     })
                     .catch(() => {})
             );
+            // Followers
+            promises.push(
+                invoke<Array<{ did: string; handle: string; displayName?: string; avatar?: string; description?: string }>>('list_followers', { actor: auth.did })
+                    .then((followers) => {
+                        setFollowerCount(followers.length);
+                        followers.forEach(f => addProfileToConns(f, 'follower'));
+                    })
+                    .catch(() => { setFollowerCount(0); })
+            );
         }
-        // Only load P2P contacts if the network might be active
-        promises.push(
-            invoke<Array<{ did: string; handle: string }>>('list_contacts')
-                .then((contacts) => {
-                    // Filter out contacts that have no handle (phantom/empty P2P entries)
-                    const realContacts = contacts.filter(c => c.handle && c.handle.trim().length > 0);
-                    setContactCount(realContacts.length);
-                    realContacts.forEach(c => conns.push({ handle: c.handle || c.did.slice(0, 12), source: 'P2P' }));
-                })
-                .catch(() => { setContactCount(0); })
-        );
         Promise.all(promises).then(() => setAllConnections(conns));
     }, [auth?.did]);
 
@@ -681,24 +695,26 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     function renderConnections() {
         const sourceEmoji: Record<string, string> = { Bluesky: '🦋', P2P: '🔗', Mastodon: '🐘', ActivityPub: '📡' };
+        const relationEmoji: Record<string, string> = { following: '→', follower: '←', mutual: '⇄' };
         const uniqueSources = [...new Set(allConnections.map(c => c.source))];
         const filtered = allConnections
             .filter(c => connectionSourceFilter === 'all' || c.source === connectionSourceFilter)
             .filter(c => !connectionSearch || c.handle.toLowerCase().includes(connectionSearch.toLowerCase()));
         const displayList = showAllConnections ? filtered : filtered.slice(0, 12);
         const totalConns = allConnections.length;
+        const mutualCount = allConnections.filter(c => c.relation === 'mutual').length;
 
         return (
             <div>
                 <div className="profile-connections-summary">
-                    {followCount > 0 && (
-                        <div className="profile-connections-stat">👥 <strong>{followCount}</strong> following</div>
+                    {followingCount > 0 && (
+                        <div className="profile-connections-stat">→ <strong>{followingCount}</strong> following</div>
                     )}
-                    {contactCount > 0 && (
-                        <div className="profile-connections-stat">🤝 <strong>{contactCount}</strong> contacts</div>
+                    {followerCount > 0 && (
+                        <div className="profile-connections-stat">← <strong>{followerCount}</strong> followers</div>
                     )}
-                    {totalConns > 0 && (
-                        <div className="profile-connections-stat">🌐 <strong>{totalConns}</strong> total connections</div>
+                    {mutualCount > 0 && (
+                        <div className="profile-connections-stat">⇄ <strong>{mutualCount}</strong> mutuals</div>
                     )}
                 </div>
 
@@ -740,8 +756,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     )}
                                 </div>
                                 <div className="profile-connection-name" title={c.display_name || c.handle}>{c.display_name || c.handle}</div>
-                                <div className="profile-connection-platform">
+                                <div className="profile-connection-meta">
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
+                                    <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>
                                 </div>
                             </div>
                         );
@@ -765,8 +782,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     </button>
                 )}
 
-                {totalConns === 0 && followCount === 0 && contactCount === 0 && (
-                    <div className="profile-empty"><div className="profile-empty-icon">👥</div><p className="profile-empty-text">No connections yet.</p></div>
+                {totalConns === 0 && followingCount === 0 && followerCount === 0 && (
+                    <div className="profile-empty"><div className="profile-empty-icon">👥</div><p className="profile-empty-text">No connections yet. Follow people on Bluesky or Mastodon to see them here.</p></div>
                 )}
             </div>
         );
@@ -1168,6 +1185,15 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
                                 </div>
                             )}
+                            {!editMode && !previewMode && (
+                                <button
+                                    className="profile-module-quick-edit"
+                                    onClick={() => { setEditMode(true); setEditingModuleContent(mod.id); }}
+                                    title="Edit this module"
+                                >
+                                    <BsPencilFill size={9} />
+                                </button>
+                            )}
                         </div>
 
                         {/* Per-module style editor */}
@@ -1304,6 +1330,32 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         );
     }
 
+    function openLightbox(file: VaultFile) {
+        setLightboxFile(file);
+        setLightboxUrl(null);
+        setLightboxLoading(true);
+        invoke<number[]>('vault_get_file_data', { fileId: file.id })
+            .then(bytes => {
+                const blob = new Blob([new Uint8Array(bytes)], { type: file.mime_type });
+                setLightboxUrl(URL.createObjectURL(blob));
+            })
+            .catch(e => console.error('Lightbox load failed:', e))
+            .finally(() => setLightboxLoading(false));
+    }
+
+    function closeLightbox() {
+        if (lightboxUrl && lightboxUrl.startsWith('blob:')) URL.revokeObjectURL(lightboxUrl);
+        setLightboxFile(null);
+        setLightboxUrl(null);
+    }
+
+    function lightboxNav(dir: -1 | 1) {
+        if (!lightboxFile) return;
+        const idx = mediaFiles.findIndex(f => f.id === lightboxFile.id);
+        const next = mediaFiles[idx + dir];
+        if (next) openLightbox(next);
+    }
+
     function renderMedia() {
         return (
             <div>
@@ -1319,7 +1371,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
                 <div className="profile-media-grid">
                     {mediaFiles.map(file => (
-                        <div key={file.id} className="profile-media-item">
+                        <div key={file.id} className="profile-media-item" onClick={() => openLightbox(file)}>
                             {mediaThumbs[file.id] ? (
                                 <img
                                     src={mediaThumbs[file.id]}
@@ -1773,6 +1825,36 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     </div>
                 </div>
             </div>
+
+            {/* ═══ Media Lightbox ═══ */}
+            {lightboxFile && (
+                <div className="profile-lightbox-backdrop" onClick={closeLightbox}>
+                    <div className="profile-lightbox" onClick={e => e.stopPropagation()}>
+                        <div className="profile-lightbox-topbar">
+                            <span className="profile-lightbox-name" title={lightboxFile.name}>{lightboxFile.name}</span>
+                            <button className="profile-lightbox-close" onClick={closeLightbox}>✕</button>
+                        </div>
+                        <div className="profile-lightbox-content">
+                            {lightboxLoading && <div className="profile-lightbox-loading">⏳</div>}
+                            {!lightboxLoading && lightboxUrl && lightboxFile.kind === 'Video' && (
+                                <video className="profile-lightbox-video" src={lightboxUrl} controls autoPlay />
+                            )}
+                            {!lightboxLoading && lightboxUrl && lightboxFile.kind !== 'Video' && (
+                                <img className="profile-lightbox-img" src={lightboxUrl} alt={lightboxFile.name} />
+                            )}
+                            {!lightboxLoading && !lightboxUrl && (
+                                <div className="profile-lightbox-loading">Failed to load</div>
+                            )}
+                            {mediaFiles.findIndex(f => f.id === lightboxFile.id) > 0 && (
+                                <button className="profile-lightbox-nav profile-lightbox-nav--prev" onClick={() => lightboxNav(-1)}>‹</button>
+                            )}
+                            {mediaFiles.findIndex(f => f.id === lightboxFile.id) < mediaFiles.length - 1 && (
+                                <button className="profile-lightbox-nav profile-lightbox-nav--next" onClick={() => lightboxNav(1)}>›</button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ═══ Marquee Footer ═══ */}
             {marqueeEnabled && (
