@@ -153,6 +153,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [showAllConnections, setShowAllConnections] = useState(false);
     const [connectionSearch, setConnectionSearch] = useState('');
     const [connectionSourceFilter, setConnectionSourceFilter] = useState('all');
+    const [connectionRelationFilter, setConnectionRelationFilter] = useState<'all' | 'following' | 'follower'>('all');
 
     /* ─── Customize Dropdown ─── */
     const [customizeDropdownOpen, setCustomizeDropdownOpen] = useState(false);
@@ -277,6 +278,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             if (existing) {
                 if (relation === 'follower' && existing.relation === 'following') existing.relation = 'mutual';
                 if (relation === 'following' && existing.relation === 'follower') existing.relation = 'mutual';
+                // Merge avatar/display_name if the existing entry is missing them
+                if (!existing.avatar_url && f.avatar) existing.avatar_url = f.avatar;
+                if (!existing.display_name && f.displayName) existing.display_name = f.displayName;
                 return;
             }
             conns.push({
@@ -601,6 +605,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const bgType = profileSettings.background_type || 'default';
     const bgValue = profileSettings.background_value || '';
     const containerStyle: React.CSSProperties = {};
+    const activePreset = PROFILE_THEME_PRESETS[profileSettings.theme || 'default'] || PROFILE_THEME_PRESETS.default;
+    // Set tooltip CSS custom properties from active theme
+    (containerStyle as Record<string, string>)['--profile-tooltip-bg'] = activePreset.banner;
+    (containerStyle as Record<string, string>)['--profile-tooltip-text'] = activePreset.text;
+    (containerStyle as Record<string, string>)['--profile-tooltip-border'] = activePreset.accent;
     if (profileSettings.profile_background) {
         containerStyle.background = profileSettings.profile_background;
     } else if (bgType === 'color' && bgValue) {
@@ -699,40 +708,42 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const uniqueSources = [...new Set(allConnections.map(c => c.source))];
         const filtered = allConnections
             .filter(c => connectionSourceFilter === 'all' || c.source === connectionSourceFilter)
+            .filter(c => connectionRelationFilter === 'all' || c.relation === connectionRelationFilter || (connectionRelationFilter === 'following' && c.relation === 'mutual') || (connectionRelationFilter === 'follower' && c.relation === 'mutual'))
             .filter(c => !connectionSearch || c.handle.toLowerCase().includes(connectionSearch.toLowerCase()));
         const displayList = showAllConnections ? filtered : filtered.slice(0, 12);
         const totalConns = allConnections.length;
-        const mutualCount = allConnections.filter(c => c.relation === 'mutual').length;
 
         return (
             <div>
-                <div className="profile-connections-summary">
-                    {followingCount > 0 && (
-                        <div className="profile-connections-stat">→ <strong>{followingCount}</strong> following</div>
-                    )}
-                    {followerCount > 0 && (
-                        <div className="profile-connections-stat">← <strong>{followerCount}</strong> followers</div>
-                    )}
-                    {mutualCount > 0 && (
-                        <div className="profile-connections-stat">⇄ <strong>{mutualCount}</strong> mutuals</div>
-                    )}
-                </div>
-
-                {uniqueSources.length > 1 && (
-                    <div className="profile-connections-filters">
+                <div className="profile-connections-filters">
+                    <div className="profile-connections-filters-left">
                         <button
-                            className={`profile-connections-filter-btn ${connectionSourceFilter === 'all' ? 'active' : ''}`}
-                            onClick={() => setConnectionSourceFilter('all')}
-                        >All</button>
+                            className={`profile-connections-filter-btn ${connectionSourceFilter === 'all' && connectionRelationFilter === 'all' ? 'active' : ''}`}
+                            onClick={() => { setConnectionSourceFilter('all'); setConnectionRelationFilter('all'); }}
+                        >All ({totalConns})</button>
                         {uniqueSources.map(s => (
                             <button
                                 key={s}
                                 className={`profile-connections-filter-btn ${connectionSourceFilter === s ? 'active' : ''}`}
-                                onClick={() => setConnectionSourceFilter(s)}
+                                onClick={() => { setConnectionSourceFilter(s); setConnectionRelationFilter('all'); }}
                             >{sourceEmoji[s] || '🌐'} {s}</button>
                         ))}
                     </div>
-                )}
+                    <div className="profile-connections-filters-right">
+                        {followingCount > 0 && (
+                            <button
+                                className={`profile-connections-filter-btn ${connectionRelationFilter === 'following' ? 'active' : ''}`}
+                                onClick={() => { setConnectionRelationFilter(connectionRelationFilter === 'following' ? 'all' : 'following'); setConnectionSourceFilter('all'); }}
+                            >→ {followingCount} following</button>
+                        )}
+                        {followerCount > 0 && (
+                            <button
+                                className={`profile-connections-filter-btn ${connectionRelationFilter === 'follower' ? 'active' : ''}`}
+                                onClick={() => { setConnectionRelationFilter(connectionRelationFilter === 'follower' ? 'all' : 'follower'); setConnectionSourceFilter('all'); }}
+                            >← {followerCount} followers</button>
+                        )}
+                    </div>
+                </div>
 
                 {showAllConnections && (
                     <input
@@ -750,12 +761,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             <div key={`${c.source}-${c.handle}-${i}`} className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
                                 <div className="profile-connection-avatar">
                                     {c.avatar_url ? (
-                                        <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" />
+                                        <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (c.display_name || c.handle)[0]?.toUpperCase() || '?'; }} />
                                     ) : (
                                         c.handle[0]?.toUpperCase() || '?'
                                     )}
                                 </div>
-                                <div className="profile-connection-name" title={c.display_name || c.handle}>{c.display_name || c.handle}</div>
+                                <div className="profile-connection-name" data-tooltip={c.display_name || c.handle}>{c.display_name || c.handle}</div>
                                 <div className="profile-connection-meta">
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
                                     <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>
