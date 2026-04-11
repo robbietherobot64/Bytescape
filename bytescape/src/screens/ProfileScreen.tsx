@@ -159,6 +159,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [hoverCardStyle, setHoverCardStyle] = useState<React.CSSProperties>({});
     const [followLoading, setFollowLoading] = useState(false);
     const hoverCardRef = useRef<HTMLDivElement>(null);
+    const hoverDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     /* ─── Customize Dropdown ─── */
     const [customizeDropdownOpen, setCustomizeDropdownOpen] = useState(false);
@@ -201,16 +202,19 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [showAvatarInput, setShowAvatarInput] = useState(false);
     const [avatarError, setAvatarError] = useState(false);
 
-    /* ─── Click-outside handler for connection hover card ─── */
+    /* ─── Dismiss hover card on scroll or click-outside ─── */
     useEffect(() => {
         if (hoverCardIndex === null) return;
-        const handler = (e: MouseEvent) => {
-            if (hoverCardRef.current && !hoverCardRef.current.contains(e.target as Node)) {
-                setHoverCardIndex(null);
-            }
+        const dismiss = () => setHoverCardIndex(null);
+        const handleClick = (e: MouseEvent) => {
+            if (hoverCardRef.current && !hoverCardRef.current.contains(e.target as Node)) dismiss();
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('mousedown', handleClick);
+        document.addEventListener('scroll', dismiss, true);
+        return () => {
+            document.removeEventListener('mousedown', handleClick);
+            document.removeEventListener('scroll', dismiss, true);
+        };
     }, [hoverCardIndex]);
 
     /* ════════ Profile Settings Persistence ════════ */
@@ -729,6 +733,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function showHoverCard(cardEl: HTMLElement, listIndex: number) {
+        if (hoverDismissTimer.current) { clearTimeout(hoverDismissTimer.current); hoverDismissTimer.current = null; }
         const rect = cardEl.getBoundingClientRect();
         const cardW = 180;
         let left = rect.left + rect.width / 2 - cardW / 2;
@@ -739,6 +744,14 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         if (top + 120 > window.innerHeight) top = rect.top - 124;
         setHoverCardStyle({ position: 'fixed', left, top, width: cardW } as React.CSSProperties);
         setHoverCardIndex(listIndex);
+    }
+
+    function startHoverDismiss() {
+        hoverDismissTimer.current = setTimeout(() => setHoverCardIndex(null), 200);
+    }
+
+    function cancelHoverDismiss() {
+        if (hoverDismissTimer.current) { clearTimeout(hoverDismissTimer.current); hoverDismissTimer.current = null; }
     }
 
     async function handleFollow(c: typeof allConnections[0]) {
@@ -833,13 +846,13 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <div
                             key={`${c.source}-${c.did}-${i}`}
                             className="profile-connection-wrapper"
-                            onClick={(e) => { e.stopPropagation(); showHoverCard(e.currentTarget as HTMLElement, i); }}
+                            onMouseEnter={(e) => showHoverCard(e.currentTarget as HTMLElement, i)}
+                            onMouseLeave={() => startHoverDismiss()}
                         >
                             <div className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
                                 <div
                                     className="profile-connection-avatar"
                                     onClick={(e) => { if (c.profile_url) { e.stopPropagation(); window.open(c.profile_url, '_blank', 'noopener,noreferrer'); } }}
-                                    title={c.profile_url ? `View ${c.display_name || c.handle} on ${c.source}` : undefined}
                                     style={c.profile_url ? { cursor: 'pointer' } as React.CSSProperties : undefined}
                                 >
                                     {c.avatar_url ? (
@@ -851,7 +864,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                 <div className="profile-connection-name">{c.display_name || c.handle}</div>
                                 <div className="profile-connection-meta">
                                     <span className="profile-connection-platform-icon">{sourceEmoji[c.source] || '🌐'}</span>
-                                    <span className="profile-connection-relation" title={c.relation}>{relationEmoji[c.relation] || ''}</span>
+                                    <span className="profile-connection-relation">{relationEmoji[c.relation] || ''}</span>
                                 </div>
                             </div>
                         </div>
@@ -864,6 +877,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         className="profile-connection-hover-card"
                         style={hoverCardStyle}
                         ref={hoverCardRef}
+                        onMouseEnter={() => cancelHoverDismiss()}
+                        onMouseLeave={() => startHoverDismiss()}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="profile-connection-hover-name">{displayList[hoverCardIndex].display_name || displayList[hoverCardIndex].handle}</div>
