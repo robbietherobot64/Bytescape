@@ -1,5 +1,6 @@
 import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
 import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModule, ProfileCustomPage, VaultFile } from '../types';
@@ -835,7 +836,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             onClick={(e) => { e.stopPropagation(); showHoverCard(e.currentTarget as HTMLElement, i); }}
                         >
                             <div className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
-                                <div className="profile-connection-avatar">
+                                <div
+                                    className="profile-connection-avatar"
+                                    onClick={(e) => { if (c.profile_url) { e.stopPropagation(); window.open(c.profile_url, '_blank', 'noopener,noreferrer'); } }}
+                                    title={c.profile_url ? `View ${c.display_name || c.handle} on ${c.source}` : undefined}
+                                    style={c.profile_url ? { cursor: 'pointer' } as React.CSSProperties : undefined}
+                                >
                                     {c.avatar_url ? (
                                         <img src={c.avatar_url} alt="" className="profile-connection-avatar-img" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (c.display_name || c.handle)[0]?.toUpperCase() || '?'; }} />
                                     ) : (
@@ -852,8 +858,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     ))}
                 </div>
 
-                {/* JS-positioned hover card (portal-style) */}
-                {hoverCardIndex !== null && displayList[hoverCardIndex] && (
+                {/* Hover card rendered via portal to escape backdrop-filter containing block */}
+                {hoverCardIndex !== null && displayList[hoverCardIndex] && createPortal(
                     <div
                         className="profile-connection-hover-card"
                         style={hoverCardStyle}
@@ -886,7 +892,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                 </button>
                             )}
                         </div>
-                    </div>
+                    </div>,
+                    document.body
                 )}
 
                 {totalConns > 12 && (
