@@ -2,35 +2,67 @@ import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
-import { AuthStatus, BytescapeItem, ProfileSettings } from '../types';
+import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModule, VaultFile } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
-import { ProfileBioSections } from '../components/ProfileBioSections';
-import { ProfilePageNav } from '../components/ProfilePageNav';
-import { ProfilePageEditor } from '../components/ProfilePageEditor';
-import { useProfilePages } from '../hooks/useProfilePages';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
-import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill } from 'react-icons/bs';
+import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsGripVertical, BsArrowsFullscreen } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
-/* ═══ Profile Theme Presets ═══ */
-const PROFILE_THEMES: Record<string, { label: string; heroGradient: string; accent: string; cardBg: string }> = {
-    default:   { label: 'Default',    heroGradient: 'linear-gradient(135deg, #000080 0%, #4b0082 50%, #2e003e 100%)', accent: '#ffcc00', cardBg: '' },
-    midnight:  { label: 'Midnight',   heroGradient: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', accent: '#a78bfa', cardBg: 'rgba(30,27,75,0.7)' },
-    sunset:    { label: 'Sunset',     heroGradient: 'linear-gradient(135deg, #f12711, #f5af19)', accent: '#fef08a', cardBg: 'rgba(120,30,10,0.5)' },
-    forest:    { label: 'Forest',     heroGradient: 'linear-gradient(135deg, #0b3d0b, #2d6a4f, #40916c)', accent: '#95d5b2', cardBg: 'rgba(11,61,11,0.5)' },
-    ocean:     { label: 'Ocean',      heroGradient: 'linear-gradient(135deg, #0077b6, #023e8a, #03045e)', accent: '#90e0ef', cardBg: 'rgba(2,62,138,0.5)' },
-    retrowave: { label: 'Retrowave',  heroGradient: 'linear-gradient(135deg, #0d0221, #4a0e4e, #cc5577)', accent: '#ff6ec7', cardBg: 'rgba(74,14,78,0.5)' },
-};
+/* ═══ Navigation Sections ═══ */
+const CORE_NAV = [
+    { id: 'home', label: 'Home', emoji: '🏠' },
+    { id: 'wall', label: 'Wall', emoji: '📋' },
+    { id: 'posts', label: 'Posts', emoji: '📰' },
+    { id: 'media', label: 'Media', emoji: '🖼️' },
+];
 
-const BACKGROUND_PATTERNS: Record<string, string> = {
-    scanlines: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px)',
-    dots: 'radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px)',
-    checkerboard: 'repeating-conic-gradient(rgba(255,255,255,0.03) 0% 25%, transparent 0% 50%)',
-    stars: 'radial-gradient(2px 2px at 20px 30px, #eee, transparent), radial-gradient(2px 2px at 40px 70px, #fff, transparent), radial-gradient(1px 1px at 90px 40px, #ddd, transparent)',
-    diamonds: 'repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.03) 20px)',
-};
+/* ═══ Default Home Modules ═══ */
+const DEFAULT_MODULES: ProfileModule[] = [
+    { id: 'identities', type: 'identities', title: 'Connected Platforms', order: 0, visible: true, width: 'full' },
+    { id: 'connections', type: 'connections', title: 'Connections', order: 1, visible: true, width: 'full' },
+];
+
+/* ═══ Addable Module Types ═══ */
+const ADDABLE_MODULES: Array<{ type: string; label: string; emoji: string; unique: boolean }> = [
+    { type: 'identities', label: 'Connected Platforms', emoji: '🔗', unique: true },
+    { type: 'connections', label: 'Connections', emoji: '👥', unique: true },
+    { type: 'about', label: 'About Me', emoji: '📝', unique: true },
+    { type: 'listening-to', label: 'Listening To', emoji: '🎵', unique: true },
+    { type: 'away-message', label: 'Away Message', emoji: '💤', unique: true },
+    { type: 'links', label: 'Links', emoji: '🔗', unique: true },
+    { type: 'guestbook', label: 'Guestbook', emoji: '💬', unique: true },
+    { type: 'gif-collection', label: 'GIF Collection', emoji: '🖼️', unique: true },
+    { type: 'blogs', label: 'Blogs', emoji: '✍️', unique: true },
+    { type: 'check-ins', label: 'Check Ins', emoji: '📍', unique: true },
+    { type: 'polls', label: 'Polls', emoji: '📊', unique: true },
+    { type: 'playlists', label: 'Playlists', emoji: '🎶', unique: true },
+    { type: 'custom', label: 'Custom Section', emoji: '✨', unique: false },
+];
+
+/* ═══ Embed Detection ═══ */
+function detectEmbed(url: string): { url: string; label: string } | null {
+    const trimmed = url.trim();
+    const bcMatch = trimmed.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/(track|album)\/([^/?#]+)/i);
+    if (bcMatch) return { url: `https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/transparent=true/`, label: `Bandcamp · ${bcMatch[1]}` };
+    if (/^https?:\/\/(www\.)?soundcloud\.com\/[^/]+\/[^/]+/i.test(trimmed)) return { url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false`, label: 'SoundCloud' };
+    const spMatch = trimmed.match(/^https?:\/\/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/i);
+    if (spMatch) return { url: `https://open.spotify.com/embed/${spMatch[1]}/${spMatch[2]}`, label: `Spotify · ${spMatch[1]}` };
+    const ytMatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+    if (ytMatch) return { url: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`, label: 'YouTube' };
+    return null;
+}
+
+interface ProfileLink { label: string; url: string; }
+
+interface GuestbookEntry {
+    id: string;
+    author: string;
+    message: string;
+    timestamp: number;
+    node_id: string | null;
+}
 
 interface PagedResult {
     items: BytescapeItem[];
@@ -44,7 +76,44 @@ interface ProfileScreenProps {
 
 type SourceFilter = 'all' | string;
 
+function generateId(): string {
+    return `mod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function ProfileScreen({ auth }: ProfileScreenProps) {
+    /* ─── Core State ─── */
+    const [activeNav, setActiveNav] = useState('home');
+    const [editMode, setEditMode] = useState(false);
+    const [showCustomize, setShowCustomize] = useState(false);
+    const [mediaDir, setMediaDir] = useState('');
+    const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
+
+    /* ─── Home Modules ─── */
+    const [modules, setModules] = useState<ProfileModule[]>(DEFAULT_MODULES.map(m => ({ ...m })));
+    const [editingModuleContent, setEditingModuleContent] = useState<string | null>(null);
+    const [editingModuleTitle, setEditingModuleTitle] = useState<string | null>(null);
+    const [showAddModuleMenu, setShowAddModuleMenu] = useState(false);
+    const [dragModuleId, setDragModuleId] = useState<string | null>(null);
+    const [dragOverModuleId, setDragOverModuleId] = useState<string | null>(null);
+    const addMenuRef = useRef<HTMLDivElement>(null);
+
+    /* ─── Identities ─── */
+    const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
+
+    /* ─── Connections ─── */
+    const [followCount, setFollowCount] = useState(0);
+    const [contactCount, setContactCount] = useState(0);
+    const [allConnections, setAllConnections] = useState<Array<{ handle: string; source: string }>>([]);
+    const [showAllConnections, setShowAllConnections] = useState(false);
+    const [connectionSearch, setConnectionSearch] = useState('');
+    const [connectionSourceFilter, setConnectionSourceFilter] = useState('all');
+
+    /* ─── Wall (Guestbook) ─── */
+    const [wallEntries, setWallEntries] = useState<GuestbookEntry[]>([]);
+    const [wallMessage, setWallMessage] = useState('');
+    const [wallSubmitting, setWallSubmitting] = useState(false);
+
+    /* ─── Posts ─── */
     const [items, setItems] = useState<BytescapeItem[]>([]);
     const [total, setTotal] = useState(0);
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
@@ -52,23 +121,29 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [editMode, setEditMode] = useState(false);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-    const [mediaDir, setMediaDir] = useState<string>('');
-    const [profileSettings, setProfileSettings] = useState<ProfileSettings>({});
-    const [showThemePanel, setShowThemePanel] = useState(false);
-    const [activePage, setActivePage] = useState<string | null>(null);
+    const offsetRef = useRef(0);
+
+    /* ─── Media ─── */
+    const [mediaFiles, setMediaFiles] = useState<VaultFile[]>([]);
+    const [mediaLoading, setMediaLoading] = useState(false);
+
+    /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
     const [avatarError, setAvatarError] = useState(false);
-    const offsetRef = useRef(0);
-    const { pages, savePage, deletePage, createPage } = useProfilePages();
 
-    /* ════════════════════ Profile settings persistence ════════════════════ */
+    /* ════════ Profile Settings Persistence ════════ */
     useEffect(() => {
         invoke<string | null>('get_profile_settings')
             .then((raw) => {
                 if (raw) {
-                    try { setProfileSettings(JSON.parse(raw)); } catch { /* ignore */ }
+                    try {
+                        const parsed = JSON.parse(raw) as ProfileSettings;
+                        setProfileSettings(parsed);
+                        if (parsed.modules && parsed.modules.length > 0) {
+                            setModules(parsed.modules);
+                        }
+                    } catch { /* ignore */ }
                 }
             })
             .catch(() => {});
@@ -83,7 +158,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         }
     }, []);
 
-    /* ════════════════════ Media path resolution ════════════════════ */
+    const saveModules = useCallback(async (updated: ProfileModule[]) => {
+        setModules(updated);
+        const newSettings = { ...profileSettings, modules: updated };
+        setProfileSettings(newSettings);
+        try {
+            await invoke('save_profile_settings', { settingsJson: JSON.stringify(newSettings) });
+        } catch (err) {
+            console.error('Failed to save modules:', err);
+        }
+    }, [profileSettings]);
+
+    /* ════════ Media Path Resolution ════════ */
     useEffect(() => {
         appDataDir().then(dir => setMediaDir(dir)).catch(console.error);
     }, []);
@@ -92,19 +178,56 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         if (!src) return '';
         if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('asset://') || src.startsWith('tauri://') || src.startsWith('blob:')) return src;
         if (mediaDir) {
-            if (src.startsWith('media/')) {
-                return convertFileSrc(`${mediaDir}/${src.replace(/^media\//, '')}`);
-            }
-            if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) {
-                return convertFileSrc(src);
-            }
+            if (src.startsWith('media/')) return convertFileSrc(`${mediaDir}/${src.replace(/^media\//, '')}`);
+            if (src.startsWith('/') || src.match(/^[A-Za-z]:\\/)) return convertFileSrc(src);
             return convertFileSrc(`${mediaDir}/${src}`);
         }
         return src;
     };
 
-    /* ════════════════════ Data loading ════════════════════ */
-    const loadInitial = useCallback(async () => {
+    /* ════════ Data Loading ════════ */
+
+    // Linked accounts
+    useEffect(() => {
+        invoke<LinkedAccount[]>('list_linked_accounts')
+            .then(setLinkedAccounts)
+            .catch(() => {});
+    }, []);
+
+    // Connections
+    useEffect(() => {
+        const conns: Array<{ handle: string; source: string }> = [];
+        const promises: Promise<void>[] = [];
+        if (auth?.did) {
+            promises.push(
+                invoke<Array<{ did: string; handle: string; displayName?: string }>>('list_follows', { actor: auth.did })
+                    .then((follows) => {
+                        setFollowCount(follows.length);
+                        follows.forEach(f => conns.push({ handle: f.handle || f.displayName || f.did.slice(0, 12), source: 'Bluesky' }));
+                    })
+                    .catch(() => {})
+            );
+        }
+        promises.push(
+            invoke<Array<{ did: string; handle: string }>>('list_contacts')
+                .then((contacts) => {
+                    setContactCount(contacts.length);
+                    contacts.forEach(c => conns.push({ handle: c.handle || c.did.slice(0, 12), source: 'P2P' }));
+                })
+                .catch(() => {})
+        );
+        Promise.all(promises).then(() => setAllConnections(conns));
+    }, [auth?.did]);
+
+    // Wall entries
+    useEffect(() => {
+        invoke<GuestbookEntry[]>('list_guestbook_entries')
+            .then(setWallEntries)
+            .catch(() => {});
+    }, []);
+
+    // Posts
+    const loadPosts = useCallback(async () => {
         if (!auth) return;
         setLoading(true);
         setError(null);
@@ -112,13 +235,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         try {
             const vaultSources = await invoke<string[]>('list_vault_sources');
             setSources(vaultSources);
-
             const result = await invoke<PagedResult>('list_vault_posts_paged', {
                 limit: PAGE_SIZE,
                 offset: 0,
                 source: sourceFilter === 'all' ? null : sourceFilter,
             });
-
             setItems(result.items);
             setTotal(result.total);
             offsetRef.current = result.items.length;
@@ -149,10 +270,28 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }, [loadingMore, total, sourceFilter]);
 
     useEffect(() => {
-        loadInitial();
-    }, [loadInitial]);
+        if (activeNav === 'posts') loadPosts();
+    }, [activeNav, loadPosts]);
 
-    /* ════════════════════ Handlers ════════════════════ */
+    // Media
+    const loadMedia = useCallback(async () => {
+        setMediaLoading(true);
+        try {
+            const files = await invoke<VaultFile[]>('vault_list_files');
+            setMediaFiles(files.filter(f => f.kind === 'Image' || f.kind === 'Video'));
+        } catch {
+            setMediaFiles([]);
+        } finally {
+            setMediaLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (activeNav === 'media') loadMedia();
+    }, [activeNav, loadMedia]);
+
+    /* ════════ Handlers ════════ */
+
     const handleSourceFilter = (s: SourceFilter) => {
         if (s === sourceFilter) return;
         setSourceFilter(s);
@@ -160,9 +299,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setTotal(0);
     };
 
-    const handleDeletePost = useCallback((id: string) => {
-        setDeleteConfirmId(id);
-    }, []);
+    const handleDeletePost = useCallback((id: string) => setDeleteConfirmId(id), []);
 
     const confirmDelete = useCallback(async () => {
         if (!deleteConfirmId) return;
@@ -177,29 +314,127 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         }
     }, [deleteConfirmId]);
 
+    // Wall
+    const addWallEntry = useCallback(async () => {
+        if (!wallMessage.trim()) return;
+        setWallSubmitting(true);
+        try {
+            const entry = await invoke<GuestbookEntry>('add_guestbook_entry', {
+                author: auth?.local_username || auth?.handle || 'Anonymous',
+                message: wallMessage.trim(),
+                nodeId: null,
+            });
+            setWallEntries(prev => [entry, ...prev]);
+            setWallMessage('');
+        } catch (err) {
+            console.error('Wall post failed:', err);
+        } finally {
+            setWallSubmitting(false);
+        }
+    }, [wallMessage, auth]);
+
+    const deleteWallEntry = useCallback(async (entryId: string) => {
+        try {
+            await invoke('delete_guestbook_entry', { entryId });
+            setWallEntries(prev => prev.filter(e => e.id !== entryId));
+        } catch (err) {
+            console.error('Wall delete failed:', err);
+        }
+    }, []);
+
+    // Module CRUD
+    const addModule = useCallback((type: string, title: string) => {
+        const newMod: ProfileModule = {
+            id: generateId(),
+            type,
+            title,
+            order: modules.length,
+            visible: true,
+            width: 'full',
+            content: type === 'links' || type === 'gif-collection' ? '[]' : '',
+        };
+        const updated = [...modules, newMod];
+        saveModules(updated);
+        setShowAddModuleMenu(false);
+    }, [modules, saveModules]);
+
+    const removeModule = useCallback((id: string) => {
+        saveModules(modules.filter(m => m.id !== id));
+    }, [modules, saveModules]);
+
+    const updateModuleContent = useCallback((id: string, content: string) => {
+        const updated = modules.map(m => m.id === id ? { ...m, content } : m);
+        setModules(updated);
+    }, [modules]);
+
+    const updateModuleTitle = useCallback((id: string, title: string) => {
+        const updated = modules.map(m => m.id === id ? { ...m, title } : m);
+        setModules(updated);
+    }, [modules]);
+
+    const toggleModuleWidth = useCallback((id: string) => {
+        const updated = modules.map(m => m.id === id ? { ...m, width: m.width === 'full' ? 'half' as const : 'full' as const } : m);
+        saveModules(updated);
+    }, [modules, saveModules]);
+
+    // Drag and drop
+    const handleModuleDragStart = useCallback((id: string) => setDragModuleId(id), []);
+    const handleModuleDragOver = useCallback((id: string) => setDragOverModuleId(id), []);
+
+    const handleModuleDrop = useCallback((targetId: string) => {
+        if (!dragModuleId || dragModuleId === targetId) {
+            setDragModuleId(null);
+            setDragOverModuleId(null);
+            return;
+        }
+        const fromIdx = modules.findIndex(m => m.id === dragModuleId);
+        const toIdx = modules.findIndex(m => m.id === targetId);
+        if (fromIdx === -1 || toIdx === -1) return;
+        const updated = [...modules];
+        const [moved] = updated.splice(fromIdx, 1);
+        updated.splice(toIdx, 0, moved);
+        updated.forEach((m, i) => m.order = i);
+        saveModules(updated);
+        setDragModuleId(null);
+        setDragOverModuleId(null);
+    }, [dragModuleId, modules, saveModules]);
+
+    // Click-outside to close add menu
+    useEffect(() => {
+        if (!showAddModuleMenu) return;
+        function handleClick(e: MouseEvent) {
+            if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+                setShowAddModuleMenu(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [showAddModuleMenu]);
+
+    // Save modules on edit mode exit
+    const exitEditMode = useCallback(() => {
+        setEditMode(false);
+        setShowCustomize(false);
+        setEditingModuleContent(null);
+        setEditingModuleTitle(null);
+        saveModules(modules);
+    }, [modules, saveModules]);
+
     const hasMore = offsetRef.current < total;
     const displayName = auth?.local_username || auth?.handle || 'Anonymous';
 
-    /* Resolve active theme values */
-    const activeThemeKey = profileSettings.theme || 'default';
-    const activeTheme = PROFILE_THEMES[activeThemeKey] || PROFILE_THEMES.default;
-    const heroStyle: React.CSSProperties = {
-        background: activeTheme.heroGradient,
-    };
-    const accentColor = activeTheme.accent;
-
-    /* Resolve background */
+    /* Background */
     const bgType = profileSettings.background_type || 'default';
     const bgValue = profileSettings.background_value || '';
-    const pageStyle: React.CSSProperties = {};
-    if (bgType === 'color' && bgValue) {
-        pageStyle.background = bgValue;
+    const containerStyle: React.CSSProperties = {};
+    if (profileSettings.profile_background) {
+        containerStyle.background = profileSettings.profile_background;
+    } else if (bgType === 'color' && bgValue) {
+        containerStyle.background = bgValue;
     } else if (bgType === 'image' && bgValue) {
-        pageStyle.backgroundImage = `url(${bgValue})`;
-        pageStyle.backgroundSize = 'cover';
-        pageStyle.backgroundPosition = 'center';
-    } else if (bgType === 'pattern' && BACKGROUND_PATTERNS[bgValue]) {
-        pageStyle.background = BACKGROUND_PATTERNS[bgValue];
+        containerStyle.backgroundImage = `url(${bgValue})`;
+        containerStyle.backgroundSize = 'cover';
+        containerStyle.backgroundPosition = 'center';
     }
 
     /* Marquee */
@@ -209,273 +444,481 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const marqueeSpeed = profileSettings.marquee_speed || 'medium';
     const marqueeSpeedMap: Record<string, string> = { slow: '20s', medium: '12s', fast: '6s' };
 
-    /* ════════════════════ Render ════════════════════ */
-    return (
-        <div className="profile-geocities" style={pageStyle}>
-            {/* ═══ Hero Banner ═══ */}
-            <div className="profile-hero" style={heroStyle}>
-                <div className="profile-hero-gradient" />
-                <div className="profile-hero-content">
-                    <div
-                        className={`profile-avatar-large ${editMode ? 'profile-avatar-large--editable' : ''}`}
-                        style={{ borderColor: accentColor } as React.CSSProperties}
-                        onClick={() => { if (editMode) setShowAvatarInput(!showAvatarInput); }}
-                        title={editMode ? 'Click to change avatar' : undefined}
-                    >
-                        {profileSettings.avatar_url && !avatarError ? (
-                            <img
-                                src={profileSettings.avatar_url}
-                                alt="Avatar"
-                                className="profile-avatar-img"
-                                onError={() => setAvatarError(true)}
-                            />
-                        ) : displayName ? (
-                            <span>{displayName[0].toUpperCase()}</span>
-                        ) : (
-                            <BsPersonFill size={32} />
-                        )}
-                        {editMode && <div className="profile-avatar-edit-overlay">📷</div>}
-                    </div>
-                    {showAvatarInput && editMode && (
-                        <div className="profile-avatar-input-popup">
-                            <input
-                                type="text"
-                                placeholder="Avatar image URL..."
-                                value={profileSettings.avatar_url || ''}
-                                maxLength={2000}
-                                onChange={(e) => {
-                                    setAvatarError(false);
-                                    saveSettings({ ...profileSettings, avatar_url: e.target.value || undefined });
-                                }}
-                                className="profile-avatar-url-input"
-                                autoFocus
-                            />
-                            <button className="profile-avatar-clear-btn" onClick={() => {
-                                saveSettings({ ...profileSettings, avatar_url: undefined });
-                                setAvatarError(false);
-                                setShowAvatarInput(false);
-                            }}>Clear</button>
+    const presentTypes = new Set(modules.map(m => m.type));
+    const availableModules = ADDABLE_MODULES.filter(
+        t => !t.unique || !presentTypes.has(t.type)
+    );
+
+    /* ════════════════════ Module Renderers ════════════════════ */
+
+    function renderModuleContent(mod: ProfileModule) {
+        if (editMode && editingModuleContent === mod.id) {
+            if (mod.type === 'links') return renderLinksEditor(mod);
+            if (mod.type === 'gif-collection') return renderGifEditor(mod);
+            return (
+                <textarea
+                    className="profile-module-editor"
+                    value={mod.content || ''}
+                    onChange={(e) => updateModuleContent(mod.id, e.target.value)}
+                    placeholder={`Enter your ${mod.title.toLowerCase()} here...`}
+                    autoFocus
+                />
+            );
+        }
+
+        switch (mod.type) {
+            case 'identities': return renderIdentities();
+            case 'connections': return renderConnections();
+            case 'about': return renderTextContent(mod, '📝', 'Tell the world about yourself.');
+            case 'listening-to': return renderListeningTo(mod);
+            case 'away-message': return renderTextContent(mod, '💤', 'Set your away message...');
+            case 'links': return renderLinksView(mod);
+            case 'guestbook': return renderGuestbook();
+            case 'gif-collection': return renderGifView(mod);
+            case 'blogs':
+            case 'check-ins':
+            case 'polls':
+            case 'playlists':
+                return renderPlaceholder(mod);
+            case 'custom': return renderTextContent(mod, '✨', 'Add your custom content...');
+            default: return renderPlaceholder(mod);
+        }
+    }
+
+    function renderIdentities() {
+        const protocolEmoji: Record<string, string> = {
+            atproto: '🦋', bluesky: '🦋', activitypub: '🐘', mastodon: '🐘',
+            meta: '📘', x: '𝕏', instagram: '📷',
+        };
+        if (linkedAccounts.length === 0 && !auth?.did) {
+            return <div className="profile-empty"><div className="profile-empty-icon">🔗</div><p className="profile-empty-text">No connected accounts yet.</p></div>;
+        }
+        return (
+            <div className="profile-identities-list">
+                {auth?.did && (
+                    <div className="profile-identity-item">
+                        <span className="profile-identity-emoji">🌐</span>
+                        <div className="profile-identity-info">
+                            <div className="profile-identity-protocol">Bytescape</div>
+                            <div className="profile-identity-handle">{auth.web_did || auth.did}</div>
                         </div>
-                    )}
-                    <div className="profile-hero-info">
-                        <h1 className="profile-display-name-large" style={{ color: accentColor } as React.CSSProperties}>{displayName}</h1>
-                        <div className="profile-did">{auth?.web_did || auth?.did}</div>
-                    </div>
-                </div>
-                {auth && (
-                    <div className="profile-hero-actions">
-                        {editMode && (
-                            <button
-                                className="profile-theme-btn"
-                                onClick={() => setShowThemePanel(!showThemePanel)}
-                            >
-                                <BsPaletteFill size={14} /> Theme
-                            </button>
-                        )}
-                        <button
-                            className="profile-edit-btn"
-                            onClick={() => { setEditMode(!editMode); if (editMode) setShowThemePanel(false); }}
-                        >
-                            {editMode ? <><BsCheckLg size={14} /> Done</> : <><BsPencilFill size={14} /> Edit</>}
-                        </button>
+                        <span className="profile-identity-badge profile-identity-badge--active">● Primary</span>
                     </div>
                 )}
-            </div>
-
-            {/* ═══ Theme/Background Panel ═══ */}
-            {showThemePanel && editMode && (
-                <div className="profile-theme-panel">
-                    <div className="profile-theme-section">
-                        <h3>🎨 Theme</h3>
-                        <div className="profile-theme-grid">
-                            {Object.entries(PROFILE_THEMES).map(([key, theme]) => (
-                                <button
-                                    key={key}
-                                    className={`profile-theme-swatch ${activeThemeKey === key ? 'active' : ''}`}
-                                    onClick={() => saveSettings({ ...profileSettings, theme: key })}
-                                    style={{ background: theme.heroGradient } as React.CSSProperties}
-                                    title={theme.label}
-                                >
-                                    <span className="profile-theme-swatch-label">{theme.label}</span>
-                                </button>
-                            ))}
+                {linkedAccounts.map((acct, i) => (
+                    <div key={i} className="profile-identity-item">
+                        <span className="profile-identity-emoji">{protocolEmoji[acct.protocol] || '🔗'}</span>
+                        <div className="profile-identity-info">
+                            <div className="profile-identity-protocol">{acct.protocol}</div>
+                            <div className="profile-identity-handle">{acct.display_handle}</div>
                         </div>
+                        {acct.active && <span className="profile-identity-badge profile-identity-badge--active">● Active</span>}
                     </div>
+                ))}
+            </div>
+        );
+    }
 
-                    <div className="profile-theme-section">
-                        <h3>🖼️ Background</h3>
-                        <div className="profile-bg-options">
-                            <label>
-                                <input type="radio" name="bg" checked={bgType === 'default'} onChange={() => saveSettings({ ...profileSettings, background_type: 'default', background_value: '' })} /> Default
-                            </label>
-                            <label>
-                                <input type="radio" name="bg" checked={bgType === 'color'} onChange={() => saveSettings({ ...profileSettings, background_type: 'color', background_value: '#1a1a2e' })} /> Solid Color
-                            </label>
-                            <label>
-                                <input type="radio" name="bg" checked={bgType === 'image'} onChange={() => saveSettings({ ...profileSettings, background_type: 'image', background_value: '' })} /> Image URL
-                            </label>
-                            <label>
-                                <input type="radio" name="bg" checked={bgType === 'pattern'} onChange={() => saveSettings({ ...profileSettings, background_type: 'pattern', background_value: 'scanlines' })} /> Pattern
-                            </label>
+    function renderConnections() {
+        const sourceEmoji: Record<string, string> = { Bluesky: '🦋', P2P: '🔗', Mastodon: '🐘', ActivityPub: '📡' };
+        const uniqueSources = [...new Set(allConnections.map(c => c.source))];
+        const filtered = allConnections
+            .filter(c => connectionSourceFilter === 'all' || c.source === connectionSourceFilter)
+            .filter(c => !connectionSearch || c.handle.toLowerCase().includes(connectionSearch.toLowerCase()));
+        const displayList = showAllConnections ? filtered : filtered.slice(0, 12);
+        const totalConns = allConnections.length;
+
+        return (
+            <div>
+                <div className="profile-connections-summary">
+                    {followCount > 0 && (
+                        <div className="profile-connections-stat">👥 <strong>{followCount}</strong> following</div>
+                    )}
+                    {contactCount > 0 && (
+                        <div className="profile-connections-stat">🤝 <strong>{contactCount}</strong> contacts</div>
+                    )}
+                    {totalConns > 0 && (
+                        <div className="profile-connections-stat">🌐 <strong>{totalConns}</strong> total connections</div>
+                    )}
+                </div>
+
+                {uniqueSources.length > 1 && (
+                    <div className="profile-connections-filters">
+                        <button
+                            className={`profile-connections-filter-btn ${connectionSourceFilter === 'all' ? 'active' : ''}`}
+                            onClick={() => setConnectionSourceFilter('all')}
+                        >All</button>
+                        {uniqueSources.map(s => (
+                            <button
+                                key={s}
+                                className={`profile-connections-filter-btn ${connectionSourceFilter === s ? 'active' : ''}`}
+                                onClick={() => setConnectionSourceFilter(s)}
+                            >{sourceEmoji[s] || '🌐'} {s}</button>
+                        ))}
+                    </div>
+                )}
+
+                {showAllConnections && (
+                    <input
+                        type="text"
+                        className="profile-connections-search"
+                        placeholder="Search connections..."
+                        value={connectionSearch}
+                        onChange={(e) => setConnectionSearch(e.target.value)}
+                    />
+                )}
+
+                <div className="profile-connections-list">
+                    {displayList.map((c, i) => (
+                        <span key={`${c.source}-${c.handle}-${i}`} className="profile-connection-chip">
+                            <span className="profile-connection-chip-avatar">{c.handle[0]?.toUpperCase() || '?'}</span>
+                            <span>{sourceEmoji[c.source] || '🌐'}</span>
+                            {c.handle}
+                        </span>
+                    ))}
+                </div>
+
+                {totalConns > 12 && (
+                    <button
+                        className="profile-connections-toggle"
+                        onClick={() => { setShowAllConnections(!showAllConnections); if (showAllConnections) setConnectionSearch(''); }}
+                    >
+                        {showAllConnections ? '▲ Show less' : `▼ Show all (${totalConns})`}
+                    </button>
+                )}
+
+                {totalConns === 0 && followCount === 0 && contactCount === 0 && (
+                    <div className="profile-empty"><div className="profile-empty-icon">👥</div><p className="profile-empty-text">No connections yet.</p></div>
+                )}
+            </div>
+        );
+    }
+
+    function renderTextContent(mod: ProfileModule, icon: string, placeholder: string) {
+        if (!mod.content) {
+            return (
+                <div className="profile-empty">
+                    <div className="profile-empty-icon">{icon}</div>
+                    <p className="profile-empty-text">{editMode ? `Click ✏️ to edit...` : placeholder}</p>
+                </div>
+            );
+        }
+        return (
+            <div className="profile-about-content">
+                {mod.content.split('\n').map((line, i) => (
+                    <p key={i}>{line || '\u00A0'}</p>
+                ))}
+            </div>
+        );
+    }
+
+    function renderListeningTo(mod: ProfileModule) {
+        if (!mod.content) {
+            return (
+                <div className="profile-listening-text">
+                    <span>💿</span>
+                    <span style={{ color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' } as React.CSSProperties}>
+                        {editMode ? 'Click ✏️ to set what you\'re listening to...' : 'Nothing playing right now.'}
+                    </span>
+                </div>
+            );
+        }
+        const embed = detectEmbed(mod.content);
+        if (embed) {
+            return (
+                <div>
+                    <div className="profile-listening-embed">
+                        <iframe
+                            src={embed.url}
+                            title={embed.label}
+                            allow="autoplay; encrypted-media"
+                            sandbox="allow-scripts allow-same-origin allow-popups"
+                        />
+                    </div>
+                    <div className="profile-listening-source">{embed.label}</div>
+                </div>
+            );
+        }
+        return <div className="profile-listening-text"><span>💿</span><span>{mod.content}</span></div>;
+    }
+
+    function renderLinksView(mod: ProfileModule) {
+        let links: ProfileLink[] = [];
+        try { links = JSON.parse(mod.content || '[]'); } catch { links = []; }
+        if (links.length === 0) {
+            return (
+                <div className="profile-empty">
+                    <div className="profile-empty-icon">🔗</div>
+                    <p className="profile-empty-text">{editMode ? 'Click ✏️ to add links...' : 'No links yet.'}</p>
+                </div>
+            );
+        }
+        return (
+            <div className="profile-links-list">
+                {links.map((link, i) => (
+                    <div key={i} className="profile-link-item">
+                        🔗 <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label || link.url}</a>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    function renderLinksEditor(mod: ProfileModule) {
+        let links: ProfileLink[] = [];
+        try { links = JSON.parse(mod.content || '[]'); } catch { links = []; }
+        const updateLink = (idx: number, field: 'label' | 'url', value: string) => {
+            const updated = [...links];
+            updated[idx] = { ...updated[idx], [field]: value };
+            updateModuleContent(mod.id, JSON.stringify(updated));
+        };
+        const addLink = () => updateModuleContent(mod.id, JSON.stringify([...links, { label: '', url: '' }]));
+        const removeLink = (idx: number) => updateModuleContent(mod.id, JSON.stringify(links.filter((_, i) => i !== idx)));
+
+        return (
+            <div>
+                {links.map((link, i) => (
+                    <div key={i} className="profile-link-edit-row">
+                        <input className="profile-link-input" type="text" placeholder="Label" value={link.label} onChange={(e) => updateLink(i, 'label', e.target.value)} />
+                        <input className="profile-link-input" type="text" placeholder="https://..." value={link.url} onChange={(e) => updateLink(i, 'url', e.target.value)} />
+                        <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeLink(i)}>✕</button>
+                    </div>
+                ))}
+                <button className="profile-module-edit-btn" onClick={addLink} style={{ width: 'auto', padding: '4px 10px', marginTop: 4 } as React.CSSProperties}>
+                    <BsPlusLg size={9} /> Add
+                </button>
+            </div>
+        );
+    }
+
+    function renderGifView(mod: ProfileModule) {
+        let gifs: string[] = [];
+        try { gifs = JSON.parse(mod.content || '[]'); } catch { gifs = []; }
+        if (gifs.length === 0) {
+            return <div className="profile-empty"><div className="profile-empty-icon">🖼️</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add GIFs...' : 'No GIFs yet.'}</p></div>;
+        }
+        return (
+            <div className="profile-gif-grid">
+                {gifs.map((url, i) => <img key={i} src={url} alt="" className="profile-gif-item" loading="lazy" />)}
+            </div>
+        );
+    }
+
+    function renderGifEditor(mod: ProfileModule) {
+        let gifs: string[] = [];
+        try { gifs = JSON.parse(mod.content || '[]'); } catch { gifs = []; }
+        const updateGif = (idx: number, value: string) => {
+            const updated = [...gifs]; updated[idx] = value;
+            updateModuleContent(mod.id, JSON.stringify(updated));
+        };
+        const addGif = () => updateModuleContent(mod.id, JSON.stringify([...gifs, '']));
+        const removeGif = (idx: number) => updateModuleContent(mod.id, JSON.stringify(gifs.filter((_, i) => i !== idx)));
+
+        return (
+            <div>
+                {gifs.map((url, i) => (
+                    <div key={i} className="profile-link-edit-row">
+                        <input className="profile-link-input" type="text" placeholder="https://example.com/funny.gif" value={url} onChange={(e) => updateGif(i, e.target.value)} />
+                        <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeGif(i)}>✕</button>
+                    </div>
+                ))}
+                <button className="profile-module-edit-btn" onClick={addGif} style={{ width: 'auto', padding: '4px 10px', marginTop: 4 } as React.CSSProperties}>
+                    <BsPlusLg size={9} /> Add GIF
+                </button>
+            </div>
+        );
+    }
+
+    function renderGuestbook() {
+        return (
+            <div>
+                <div className="profile-wall-form">
+                    <input
+                        className="profile-wall-input"
+                        type="text"
+                        placeholder="Sign the guestbook..."
+                        value={wallMessage}
+                        onChange={(e) => setWallMessage(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addWallEntry(); }}
+                        maxLength={500}
+                    />
+                    <button className="profile-wall-submit" onClick={addWallEntry} disabled={wallSubmitting || !wallMessage.trim()}>Sign</button>
+                </div>
+                {wallEntries.length === 0 && <div className="profile-empty"><div className="profile-empty-icon">✍️</div><p className="profile-empty-text">Be the first to sign!</p></div>}
+                <div className="profile-wall-entries">
+                    {wallEntries.slice(0, 10).map(entry => (
+                        <div key={entry.id} className="profile-wall-entry">
+                            <div className="profile-wall-entry-header">
+                                <span className="profile-wall-author">{entry.author}</span>
+                                <span className="profile-wall-time">{new Date(entry.timestamp * 1000).toLocaleDateString()}</span>
+                            </div>
+                            <div className="profile-wall-message">{entry.message}</div>
+                            <button className="profile-wall-delete" onClick={() => deleteWallEntry(entry.id)}>🗑 Remove</button>
                         </div>
-                        {bgType === 'color' && (
-                            <input
-                                type="color"
-                                className="profile-bg-color-input"
-                                value={bgValue || '#1a1a2e'}
-                                onChange={(e) => saveSettings({ ...profileSettings, background_type: 'color', background_value: e.target.value })}
-                            />
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    function renderPlaceholder(mod: ProfileModule) {
+        const emojiMap: Record<string, string> = { blogs: '✍️', 'check-ins': '📍', polls: '📊', playlists: '🎶' };
+        return (
+            <div className="profile-empty">
+                <div className="profile-empty-icon">{emojiMap[mod.type] || '✨'}</div>
+                <p className="profile-empty-text">{mod.title} — coming soon</p>
+            </div>
+        );
+    }
+
+    /* ════════════════════ Section Renderers ════════════════════ */
+
+    function renderHome() {
+        const visibleModules = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
+        return (
+            <div className="profile-module-grid">
+                {visibleModules.map((mod) => (
+                    <div
+                        key={mod.id}
+                        className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''} ${dragModuleId === mod.id ? 'profile-module--dragging' : ''} ${dragOverModuleId === mod.id ? 'profile-module--drag-over' : ''}`}
+                        style={mod.background ? { background: mod.background, backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties : undefined}
+                        draggable={editMode}
+                        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; handleModuleDragStart(mod.id); }}
+                        onDragOver={(e) => { e.preventDefault(); handleModuleDragOver(mod.id); }}
+                        onDrop={(e) => { e.preventDefault(); handleModuleDrop(mod.id); }}
+                        onDragEnd={() => { setDragModuleId(null); setDragOverModuleId(null); }}
+                    >
+                        <div className="profile-module-header">
+                            {editMode && <span className="profile-module-drag-handle"><BsGripVertical /></span>}
+                            {editMode && editingModuleTitle === mod.id ? (
+                                <input
+                                    className="profile-module-title-input"
+                                    value={mod.title}
+                                    onChange={(e) => updateModuleTitle(mod.id, e.target.value)}
+                                    onBlur={() => setEditingModuleTitle(null)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') setEditingModuleTitle(null); }}
+                                    autoFocus
+                                />
+                            ) : (
+                                <span className="profile-module-header-title" onDoubleClick={() => editMode && setEditingModuleTitle(mod.id)}>{mod.title}</span>
+                            )}
+                            {editMode && (
+                                <div className="profile-module-edit-controls">
+                                    <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit content"><BsPencilFill size={9} /></button>
+                                    <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
+                                </div>
+                            )}
+                        </div>
+                        <div className="profile-module-body">
+                            {renderModuleContent(mod)}
+                        </div>
+                        {editMode && (
+                            <button
+                                className="profile-module-resize-toggle"
+                                onClick={() => toggleModuleWidth(mod.id)}
+                                title={mod.width === 'full' ? 'Shrink to half' : 'Expand to full'}
+                            >
+                                <BsArrowsFullscreen />
+                            </button>
                         )}
-                        {bgType === 'image' && (
-                            <input
-                                type="text"
-                                className="profile-bg-url-input"
-                                placeholder="https://example.com/background.jpg"
-                                value={bgValue}
-                                maxLength={2000}
-                                onChange={(e) => saveSettings({ ...profileSettings, background_type: 'image', background_value: e.target.value })}
-                            />
-                        )}
-                        {bgType === 'pattern' && (
-                            <div className="profile-pattern-grid">
-                                {Object.keys(BACKGROUND_PATTERNS).map(p => (
-                                    <button
-                                        key={p}
-                                        className={`profile-pattern-btn ${bgValue === p ? 'active' : ''}`}
-                                        onClick={() => saveSettings({ ...profileSettings, background_type: 'pattern', background_value: p })}
-                                    >
-                                        {p}
+                    </div>
+                ))}
+
+                {editMode && (
+                    <div className="profile-add-module" ref={addMenuRef}>
+                        <button className="profile-add-module-btn" onClick={() => setShowAddModuleMenu(!showAddModuleMenu)}>
+                            <BsPlusLg size={11} /> Add Module
+                        </button>
+                        {showAddModuleMenu && (
+                            <div className="profile-add-dropdown">
+                                {availableModules.map((t) => (
+                                    <button key={t.type + t.label} onClick={() => addModule(t.type, t.type === 'custom' ? 'My Section' : t.label)}>
+                                        {t.emoji} {t.label}
                                     </button>
                                 ))}
                             </div>
                         )}
                     </div>
+                )}
+            </div>
+        );
+    }
 
-                    <div className="profile-theme-section">
-                        <h3>📰 Marquee Ticker</h3>
-                        <label className="profile-marquee-toggle">
-                            <input
-                                type="checkbox"
-                                checked={marqueeEnabled}
-                                onChange={(e) => saveSettings({ ...profileSettings, marquee_enabled: e.target.checked })}
-                            /> Enable scrolling ticker
-                        </label>
-                        {marqueeEnabled && (
-                            <div className="profile-marquee-options">
-                                <input
-                                    type="text"
-                                    className="profile-marquee-text-input"
-                                    placeholder="Your scrolling message..."
-                                    value={profileSettings.marquee_text || ''}
-                                    maxLength={500}
-                                    onChange={(e) => saveSettings({ ...profileSettings, marquee_text: e.target.value })}
-                                />
-                                <div className="profile-marquee-row">
-                                    <label>Color: <input
-                                        type="color"
-                                        value={marqueeColor}
-                                        onChange={(e) => saveSettings({ ...profileSettings, marquee_color: e.target.value })}
-                                    /></label>
-                                    <label>Speed:
-                                        <select
-                                            value={marqueeSpeed}
-                                            onChange={(e) => saveSettings({ ...profileSettings, marquee_speed: e.target.value })}
-                                        >
-                                            <option value="slow">Slow</option>
-                                            <option value="medium">Medium</option>
-                                            <option value="fast">Fast</option>
-                                        </select>
-                                    </label>
-                                </div>
-                            </div>
-                        )}
-                    </div>
+    function renderWall() {
+        return (
+            <div>
+                <div className="profile-section-header">
+                    <span className="profile-section-header-emoji">📋</span> Wall
                 </div>
-            )}
-
-            {/* ═══ Page Navigation ═══ */}
-            {(pages.length > 0 || editMode) && (
-                <ProfilePageNav
-                    pages={pages}
-                    activePage={activePage}
-                    editMode={editMode}
-                    onSelectPage={setActivePage}
-                    onCreatePage={async (title, type) => {
-                        const page = await createPage(title, type);
-                        setActivePage(page.id);
-                    }}
-                    onDeletePage={async (pageId) => {
-                        await deletePage(pageId);
-                        if (activePage === pageId) setActivePage(null);
-                    }}
-                />
-            )}
-
-            {/* ═══ Page Content (when a page is active) ═══ */}
-            {activePage && pages.find(p => p.id === activePage) && (
-                <div className="profile-page-container">
-                    <ProfilePageEditor
-                        page={pages.find(p => p.id === activePage)!}
-                        editMode={editMode}
-                        onSave={savePage}
+                <div className="profile-wall-form">
+                    <input
+                        className="profile-wall-input"
+                        type="text"
+                        placeholder="Leave a message on the wall..."
+                        value={wallMessage}
+                        onChange={(e) => setWallMessage(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addWallEntry(); }}
+                        maxLength={500}
                     />
+                    <button className="profile-wall-submit" onClick={addWallEntry} disabled={wallSubmitting || !wallMessage.trim()}>Post</button>
                 </div>
-            )}
+                {wallEntries.length === 0 && (
+                    <div className="profile-empty"><div className="profile-empty-icon">📋</div><p className="profile-empty-text">No wall posts yet. Be the first to leave a message!</p></div>
+                )}
+                <div className="profile-wall-entries">
+                    {wallEntries.map(entry => (
+                        <div key={entry.id} className="profile-wall-entry">
+                            <div className="profile-wall-entry-header">
+                                <span className="profile-wall-author">{entry.author}</span>
+                                <span className="profile-wall-time">{new Date(entry.timestamp * 1000).toLocaleDateString()}</span>
+                            </div>
+                            <div className="profile-wall-message">{entry.message}</div>
+                            <button className="profile-wall-delete" onClick={() => deleteWallEntry(entry.id)}>🗑 Remove</button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
 
-            {/* ═══ 2-Column Content Grid (Home) ═══ */}
-            {!activePage && <div className="profile-content-grid">
-                {/* Main column — posts */}
-                <div className="profile-main-column">
-                    {/* Source/network filter */}
-                    {sources.length > 1 && (
-                        <div className="wall-filters">
+    function renderPosts() {
+        return (
+            <div>
+                <div className="profile-section-header">
+                    <span className="profile-section-header-emoji">📰</span> Posts
+                </div>
+
+                {sources.length > 1 && (
+                    <div className="profile-posts-filters">
+                        <button
+                            className={`profile-posts-filter-btn ${sourceFilter === 'all' ? 'profile-posts-filter-btn--active' : ''}`}
+                            onClick={() => handleSourceFilter('all')}
+                        >All</button>
+                        {sources.map(s => (
                             <button
-                                className={`wall-filter-btn ${sourceFilter === 'all' ? 'active' : ''}`}
-                                onClick={() => handleSourceFilter('all')}
+                                key={s}
+                                className={`profile-posts-filter-btn ${sourceFilter === s ? 'profile-posts-filter-btn--active' : ''}`}
+                                onClick={() => handleSourceFilter(s)}
                             >
-                                All
+                                {platformEmoji(s)} {platformAbbrev(s)}
                             </button>
-                            {sources.map(s => (
-                                <button
-                                    key={s}
-                                    className={`wall-filter-btn ${sourceFilter === s ? 'active' : ''}`}
-                                    onClick={() => handleSourceFilter(s)}
-                                >
-                                    {platformEmoji(s)} {platformAbbrev(s)}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                        ))}
+                    </div>
+                )}
 
-                    {/* Delete confirmation */}
-                    {deleteConfirmId && (
-                        <div className="profile-delete-confirm">
-                            <span>Delete this post? This cannot be undone.</span>
-                            <button className="profile-delete-confirm-yes" onClick={confirmDelete}>🗑 Delete</button>
-                            <button className="profile-delete-confirm-no" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
-                        </div>
-                    )}
+                {deleteConfirmId && (
+                    <div className="profile-delete-confirm">
+                        <span>Delete this post? This cannot be undone.</span>
+                        <button className="profile-delete-yes" onClick={confirmDelete}>🗑 Delete</button>
+                        <button className="profile-delete-no" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+                    </div>
+                )}
 
-                    {loading && (
-                        <div className="wall-empty">
-                            <div className="wall-empty-icon">⏳</div>
-                            <p>Loading your posts...</p>
-                        </div>
-                    )}
+                {loading && <div className="profile-empty"><div className="profile-empty-icon">⏳</div><p className="profile-empty-text">Loading posts...</p></div>}
+                {error && !loading && <div className="profile-error"><strong>Error:</strong> {error}</div>}
+                {!loading && !error && items.length === 0 && <div className="profile-empty"><div className="profile-empty-icon">📭</div><p className="profile-empty-text">No posts yet. Import data from the Import screen!</p></div>}
 
-                    {error && !loading && (
-                        <div className="profile-error">
-                            <strong>Error:</strong> {error}
-                        </div>
-                    )}
-
-                    {!loading && !error && items.length === 0 && (
-                        <div className="wall-empty">
-                            <div className="wall-empty-icon">📭</div>
-                            <p>No posts yet. Import your data from the Import screen!</p>
-                        </div>
-                    )}
-
+                <div className="profile-posts-list">
                     {!loading && items.map(item => (
                         <div key={item.id} className="profile-post-wrapper">
                             <FeedEntryCard
@@ -486,31 +929,254 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             />
                         </div>
                     ))}
+                </div>
 
-                    {!loading && hasMore && (
-                        <div className="profile-load-more">
-                            <button
-                                className="wall-filter-btn"
-                                onClick={loadMore}
-                                disabled={loadingMore}
-                            >
-                                {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
-                            </button>
+                {!loading && hasMore && (
+                    <div className="profile-load-more">
+                        <button className="profile-load-more-btn" onClick={loadMore} disabled={loadingMore}>
+                            {loadingMore ? '⏳ Loading...' : `Load More (${items.length} / ${total})`}
+                        </button>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    function renderMedia() {
+        return (
+            <div>
+                <div className="profile-section-header">
+                    <span className="profile-section-header-emoji">🖼️</span> Media
+                </div>
+
+                {mediaLoading && <div className="profile-empty"><div className="profile-empty-icon">⏳</div><p className="profile-empty-text">Loading media...</p></div>}
+
+                {!mediaLoading && mediaFiles.length === 0 && (
+                    <div className="profile-empty"><div className="profile-empty-icon">🖼️</div><p className="profile-empty-text">No media files yet.</p></div>
+                )}
+
+                <div className="profile-media-grid">
+                    {mediaFiles.map(file => (
+                        <div key={file.id} className="profile-media-item">
+                            <img
+                                src={resolveMediaPath(file.name)}
+                                alt={file.name}
+                                loading="lazy"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
                         </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    function renderCustomize() {
+        return (
+            <div className="profile-customize-panel">
+                <div className="profile-customize-section">
+                    <h3>🖼️ Profile Background</h3>
+                    <div className="profile-customize-row">
+                        <label>
+                            <input type="radio" name="bg" checked={bgType === 'default'} onChange={() => saveSettings({ ...profileSettings, background_type: 'default', background_value: '' })} /> Default
+                        </label>
+                        <label>
+                            <input type="radio" name="bg" checked={bgType === 'color'} onChange={() => saveSettings({ ...profileSettings, background_type: 'color', background_value: '#1a1a2e' })} /> Color
+                        </label>
+                        <label>
+                            <input type="radio" name="bg" checked={bgType === 'image'} onChange={() => saveSettings({ ...profileSettings, background_type: 'image', background_value: '' })} /> Image
+                        </label>
+                    </div>
+                    {bgType === 'color' && (
+                        <input
+                            type="color"
+                            className="profile-customize-color"
+                            value={bgValue || '#1a1a2e'}
+                            onChange={(e) => saveSettings({ ...profileSettings, background_type: 'color', background_value: e.target.value })}
+                        />
+                    )}
+                    {bgType === 'image' && (
+                        <input
+                            type="text"
+                            className="profile-customize-input"
+                            placeholder="https://example.com/background.jpg"
+                            value={bgValue}
+                            maxLength={2000}
+                            onChange={(e) => saveSettings({ ...profileSettings, background_type: 'image', background_value: e.target.value })}
+                        />
                     )}
                 </div>
 
-                {/* Sidebar — bio widgets */}
-                <div className="profile-sidebar">
-                    <ProfileBioSections
-                        handle={auth?.handle}
-                        did={auth?.did}
-                        source={auth?.source}
-                    />
+                <div className="profile-customize-section">
+                    <h3>📰 Marquee Ticker</h3>
+                    <div className="profile-customize-row">
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={marqueeEnabled}
+                                onChange={(e) => saveSettings({ ...profileSettings, marquee_enabled: e.target.checked })}
+                            /> Enable scrolling ticker
+                        </label>
+                    </div>
+                    {marqueeEnabled && (
+                        <>
+                            <input
+                                type="text"
+                                className="profile-customize-input"
+                                placeholder="Your scrolling message..."
+                                value={profileSettings.marquee_text || ''}
+                                maxLength={500}
+                                onChange={(e) => saveSettings({ ...profileSettings, marquee_text: e.target.value })}
+                            />
+                            <div className="profile-customize-marquee-row">
+                                <label>Color: <input
+                                    type="color"
+                                    value={marqueeColor}
+                                    onChange={(e) => saveSettings({ ...profileSettings, marquee_color: e.target.value })}
+                                /></label>
+                                <label>Speed:
+                                    <select
+                                        value={marqueeSpeed}
+                                        onChange={(e) => saveSettings({ ...profileSettings, marquee_speed: e.target.value })}
+                                    >
+                                        <option value="slow">Slow</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="fast">Fast</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </>
+                    )}
                 </div>
-            </div>}
+            </div>
+        );
+    }
 
-            {/* ═══ Marquee Footer (opt-in) ═══ */}
+    /* ════════════════════ Main Render ════════════════════ */
+    return (
+        <div className="profile-container" style={containerStyle}>
+            {/* ═══ Hero Banner ═══ */}
+            <div className="profile-hero">
+                <div className="profile-hero-gradient" />
+                <div
+                    className={`profile-avatar ${editMode ? 'profile-avatar--editable' : ''}`}
+                    onClick={() => { if (editMode) setShowAvatarInput(!showAvatarInput); }}
+                    title={editMode ? 'Click to change avatar' : undefined}
+                >
+                    {profileSettings.avatar_url && !avatarError ? (
+                        <img src={profileSettings.avatar_url} alt="Avatar" onError={() => setAvatarError(true)} />
+                    ) : displayName ? (
+                        <span>{displayName[0].toUpperCase()}</span>
+                    ) : (
+                        <BsPersonFill size={32} />
+                    )}
+                    {editMode && <div className="profile-avatar-overlay">📷</div>}
+                </div>
+
+                <div className="profile-hero-info">
+                    <h1 className="profile-hero-name">{displayName}</h1>
+                    <div className="profile-hero-did">{auth?.web_did || auth?.did}</div>
+                </div>
+
+                {auth && (
+                    <div className="profile-hero-actions">
+                        {editMode && (
+                            <button
+                                className={`profile-hero-btn ${showCustomize ? 'profile-hero-btn--active' : ''}`}
+                                onClick={() => setShowCustomize(!showCustomize)}
+                            >
+                                <BsPaletteFill size={14} /> Customize
+                            </button>
+                        )}
+                        <button
+                            className={`profile-hero-btn ${editMode ? 'profile-hero-btn--active' : ''}`}
+                            onClick={() => { if (editMode) exitEditMode(); else setEditMode(true); }}
+                        >
+                            {editMode ? <><BsCheckLg size={14} /> Done</> : <><BsPencilFill size={14} /> Edit</>}
+                        </button>
+                    </div>
+                )}
+
+                {showAvatarInput && editMode && (
+                    <div className="profile-avatar-popup">
+                        <input
+                            type="text"
+                            placeholder="Avatar image URL..."
+                            value={profileSettings.avatar_url || ''}
+                            maxLength={2000}
+                            onChange={(e) => {
+                                setAvatarError(false);
+                                saveSettings({ ...profileSettings, avatar_url: e.target.value || undefined });
+                            }}
+                            autoFocus
+                        />
+                        <button onClick={() => {
+                            saveSettings({ ...profileSettings, avatar_url: undefined });
+                            setAvatarError(false);
+                            setShowAvatarInput(false);
+                        }}>Clear</button>
+                    </div>
+                )}
+            </div>
+
+            {/* ═══ Customize Panel ═══ */}
+            {showCustomize && editMode && renderCustomize()}
+
+            {/* ═══ Main Layout ═══ */}
+            <div className="profile-main">
+                {/* Left Navigation */}
+                <nav className="profile-nav">
+                    <div className="profile-nav-heading">Navigation</div>
+                    {CORE_NAV.map(section => (
+                        <button
+                            key={section.id}
+                            className={`profile-nav-item ${activeNav === section.id ? 'profile-nav-item--active' : ''}`}
+                            onClick={() => setActiveNav(section.id)}
+                        >
+                            <span className="profile-nav-emoji">{section.emoji}</span>
+                            {section.label}
+                        </button>
+                    ))}
+
+                    {/* Custom module nav items */}
+                    {modules.filter(m => m.visible && !['identities', 'connections'].includes(m.type)).length > 0 && (
+                        <>
+                            <div className="profile-nav-divider" />
+                            <div className="profile-nav-heading">Modules</div>
+                            {modules.filter(m => m.visible && !['identities', 'connections'].includes(m.type)).map(mod => {
+                                const emojiMap: Record<string, string> = {
+                                    about: '📝', 'listening-to': '🎵', 'away-message': '💤', links: '🔗',
+                                    guestbook: '💬', 'gif-collection': '🖼️', blogs: '✍️', 'check-ins': '📍',
+                                    polls: '📊', playlists: '🎶', custom: '✨',
+                                };
+                                return (
+                                    <button
+                                        key={mod.id}
+                                        className={`profile-nav-item ${activeNav === `mod-${mod.id}` ? 'profile-nav-item--active' : ''}`}
+                                        onClick={() => setActiveNav('home')}
+                                        title={`Jump to ${mod.title}`}
+                                    >
+                                        <span className="profile-nav-emoji">{emojiMap[mod.type] || '✨'}</span>
+                                        {mod.title}
+                                    </button>
+                                );
+                            })}
+                        </>
+                    )}
+                </nav>
+
+                {/* Content Area */}
+                <div className="profile-content">
+                    <div className="profile-content-inset">
+                        {activeNav === 'home' && renderHome()}
+                        {activeNav === 'wall' && renderWall()}
+                        {activeNav === 'posts' && renderPosts()}
+                        {activeNav === 'media' && renderMedia()}
+                    </div>
+                </div>
+            </div>
+
+            {/* ═══ Marquee Footer ═══ */}
             {marqueeEnabled && (
                 <div className="profile-footer">
                     <div

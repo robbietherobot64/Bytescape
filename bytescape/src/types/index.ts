@@ -712,11 +712,23 @@ export interface ProfileWidget {
     config: Record<string, unknown>;
 }
 
-// ─── Profile Types (v18a — Profile Polish) ───
+// ─── Profile Types (v20 — MySpace × Aero Redesign) ───
 
-/** Profile settings (theme, background, customization preferences). */
+/** A configurable module on the profile home page. */
+export interface ProfileModule {
+    id: string;
+    type: string;       // 'identities' | 'connections' | 'about' | 'listening-to' | 'away-message' | 'links' | 'guestbook' | 'gif-collection' | 'custom' | ...
+    title: string;
+    order: number;
+    visible: boolean;
+    width: 'half' | 'full';
+    background?: string;    // CSS background value for this module's card
+    content?: string;       // Module-specific serialized content
+}
+
+/** Profile settings (theme, background, module layout, customization preferences). */
 export interface ProfileSettings {
-    theme?: string;                  // "default" | "midnight" | "sunset" | "forest" | "retro" | "minimal" | "vaporwave" | "terminal"
+    theme?: string;
     background_type?: string;        // "default" | "color" | "image" | "pattern"
     background_value?: string;       // CSS color, image URL, or pattern name
     marquee_enabled?: boolean;
@@ -724,6 +736,8 @@ export interface ProfileSettings {
     marquee_color?: string;
     marquee_speed?: string;          // "slow" | "medium" | "fast"
     avatar_url?: string;             // URL for profile avatar image
+    modules?: ProfileModule[];       // Home page modules (identities, connections, etc.)
+    profile_background?: string;     // Overall profile background CSS
 }
 
 /** A single page in the multi-page profile website. */
