@@ -714,6 +714,16 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
         .map_err(|e| BytescapeError::Keychain(e.to_string()))?
         .ok_or_else(|| BytescapeError::Unauthenticated)?;
 
+    // Resolve author identity for stamping imported items (P2: author parity)
+    let user_handle = state.keychain.get_display_name();
+    let user_avatar: Option<String> = state.keychain.list_linked_accounts()
+        .ok()
+        .and_then(|accounts| {
+            accounts.into_iter()
+                .find(|a| a.active && a.avatar_url.is_some())
+                .and_then(|a| a.avatar_url)
+        });
+
     for mut msg in pending.messages.clone() {
         msg.owner_did = Some(user_did.clone());
         if let Err(e) = db.save_vault_message(&msg).await {
@@ -810,9 +820,9 @@ pub async fn commit_memories(state: State<'_, AppState>) -> std::result::Result<
             original_id: Some(stable_id.clone()),
             syndicated_uris: std::collections::HashMap::new(),
             syndicated_at: std::collections::HashMap::new(),
-            author_did: None,
-            author_handle: None,
-            author_avatar: None,
+            author_did: Some(user_did.clone()),
+            author_handle: Some(user_handle.clone()),
+            author_avatar: user_avatar.clone(),
             tagged_people: tagged_people,
             location: location,
             is_liked: false,
@@ -1092,13 +1102,53 @@ pub async fn import_mastodon_posts(state: State<'_, AppState>) -> std::result::R
     };
     drop(db_guard);
 
-    let (imported_posts, _cursor) = crate::connectors::mastodon::get_account_statuses_as_bsky(
+    let (mut imported_posts, _cursor) = crate::connectors::mastodon::get_account_statuses_as_bsky(
         &state.http_client,
         &session,
         Some(40),
         None,
         Some(10),
     ).await.map_err(|e| format!("Mastodon fetch error: {}", e))?;
+
+    // Download Mastodon media — status_to_bsky_post populates image_urls but
+    // leaves image_local_paths empty. Mirror what Bluesky import does: download
+    // each image and store as an Iroh blob (or filesystem fallback).
+    let _ = std::fs::create_dir_all(&media_dir);
+    for post in imported_posts.iter_mut() {
+        if post.image_urls.is_empty() {
+            continue;
+        }
+        for (i, img_url) in post.image_urls.iter().enumerate() {
+            let ext = if img_url.contains(".png") { "png" } else { "jpg" };
+            let filename = format!("masto_{}_{}.{}", post.cid, i, ext);
+            let dest = media_dir.join(&filename);
+
+            match state.http_client.get(img_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(bytes) = resp.bytes().await {
+                        if let Some(ref sync) = sync_manager {
+                            match sync.store_media_with_thumbnail(bytes.clone(), 256).await {
+                                Ok((media_hash, _thumb_hash)) => {
+                                    post.image_local_paths.push(format!("blob:{}", media_hash));
+                                    continue;
+                                }
+                                Err(e) => {
+                                    eprintln!("mastodon: Failed to store in Iroh, falling back: {}", e);
+                                }
+                            }
+                        }
+                        if std::fs::write(&dest, &bytes).is_ok() {
+                            let fname = dest.file_name().unwrap().to_string_lossy().to_string();
+                            post.image_local_paths.push(format!("media/{}", fname));
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("mastodon: Failed to download image: {}", img_url);
+                }
+            }
+        }
+    }
 
     // Save to database
     let db_guard = state.db_manager.read().await;

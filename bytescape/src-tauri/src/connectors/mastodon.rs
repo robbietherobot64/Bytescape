@@ -1127,11 +1127,12 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
     let text_content = strip_html(&effective.content);
     let instance_host = instance.replace("https://", "").replace("http://", "");
 
-    // MEMORY-CRITICAL: Prefer preview_url (small variant) over full-resolution url.
-    // WebKitGTK decodes every <img> to a full RGBA bitmap in process memory.
+    // Use full-resolution URLs for image_urls — vault import downloads these and
+    // stores as Iroh blobs with generated thumbnails. The preview_url optimization
+    // is only relevant for live feed display (handled by the frontend adapter).
     let image_urls: Vec<String> = effective.media_attachments.iter()
         .filter(|m| m.media_type == "image" || m.media_type == "gifv")
-        .map(|m| m.preview_url.clone().unwrap_or_else(|| m.url.clone()))
+        .map(|m| m.url.clone())
         .collect();
 
     let video_url = effective.media_attachments.iter()
