@@ -8,7 +8,7 @@ import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
 import { openInApp } from '../utils/openInApp';
-import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen } from 'react-icons/bs';
+import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen, BsArrowLeft, BsArrowRight } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -97,6 +97,7 @@ interface BlogEntry {
     title: string;
     body: string;
     timestamp: number;
+    external_url?: string;
 }
 
 interface GuestbookEntry {
@@ -174,6 +175,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [editingBlogId, setEditingBlogId] = useState<string | null>(null);
     const [blogTitle, setBlogTitle] = useState('');
     const [blogBody, setBlogBody] = useState('');
+    const [blogUrl, setBlogUrl] = useState('');
     const [expandedBlogId, setExpandedBlogId] = useState<string | null>(null);
 
     /* ─── Wall (Guestbook) ─── */
@@ -515,19 +517,43 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }, [modules, saveModules]);
 
     const toggleModuleWidth = useCallback((id: string) => {
-        const updated = modules.map(m => m.id === id ? { ...m, width: m.width === 'full' ? 'half' as const : 'full' as const } : m);
+        const updated = modules.map(m => {
+            if (m.id !== id) return m;
+            if (m.width === 'full') return { ...m, width: 'half' as const, column: (m.column ?? 0) as 0 | 1 };
+            return { ...m, width: 'full' as const };
+        });
         saveModules(updated);
     }, [modules, saveModules]);
 
-    // Move module up/down
+    // Move module up/down within its column
     const moveModule = useCallback((id: string, direction: 'up' | 'down') => {
-        const idx = modules.findIndex(m => m.id === id);
-        if (idx === -1) return;
-        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (targetIdx < 0 || targetIdx >= modules.length) return;
+        const mod = modules.find(m => m.id === id);
+        if (!mod) return;
+        // Get siblings: same column for half-width, or all full-width modules
+        const siblings = modules
+            .filter(m => m.visible)
+            .filter(m => mod.width === 'full' ? m.width === 'full' : (m.width === 'half' && (m.column ?? 0) === (mod.column ?? 0)))
+            .sort((a, b) => a.order - b.order);
+        const sibIdx = siblings.findIndex(m => m.id === id);
+        if (sibIdx === -1) return;
+        const targetSibIdx = direction === 'up' ? sibIdx - 1 : sibIdx + 1;
+        if (targetSibIdx < 0 || targetSibIdx >= siblings.length) return;
+        // Swap orders
         const updated = [...modules];
-        [updated[idx], updated[targetIdx]] = [updated[targetIdx], updated[idx]];
-        updated.forEach((m, i) => m.order = i);
+        const a = updated.find(m => m.id === siblings[sibIdx].id)!;
+        const b = updated.find(m => m.id === siblings[targetSibIdx].id)!;
+        const tmp = a.order;
+        a.order = b.order;
+        b.order = tmp;
+        saveModules(updated);
+    }, [modules, saveModules]);
+
+    // Move module to other column
+    const moveModuleColumn = useCallback((id: string) => {
+        const updated = modules.map(m => {
+            if (m.id !== id || m.width === 'full') return m;
+            return { ...m, column: ((m.column ?? 0) === 0 ? 1 : 0) as 0 | 1 };
+        });
         saveModules(updated);
     }, [modules, saveModules]);
 
@@ -1121,13 +1147,32 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             <div>
                 {gifs.map((url, i) => (
                     <div key={i} className="profile-link-edit-row">
-                        <input className="profile-link-input" type="text" placeholder="https://example.com/funny.gif" value={url} onChange={(e) => updateGif(i, e.target.value)} />
+                        <input
+                            className="profile-link-input"
+                            type="text"
+                            placeholder="Paste a GIF URL (e.g. https://i.imgur.com/abc.gif)"
+                            value={url}
+                            onChange={(e) => updateGif(i, e.target.value)}
+                            onPaste={(e) => {
+                                const text = e.clipboardData.getData('text').trim();
+                                if (text && !url) {
+                                    e.preventDefault();
+                                    updateGif(i, text);
+                                }
+                            }}
+                        />
+                        {url && <img src={url} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 3, flexShrink: 0 } as React.CSSProperties} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
                         <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeGif(i)}>✕</button>
                     </div>
                 ))}
                 <button className="profile-module-edit-btn" onClick={addGif} style={{ width: 'auto', padding: '4px 10px', marginTop: 4 } as React.CSSProperties}>
                     <BsPlusLg size={9} /> Add GIF
                 </button>
+                {gifs.length === 0 && (
+                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 6 } as React.CSSProperties}>
+                        Paste GIF URLs from Tenor, Giphy, Imgur, etc.
+                    </p>
+                )}
             </div>
         );
     }
@@ -1241,6 +1286,14 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         maxLength={10000}
                         onChange={(e) => setBlogBody(e.target.value)}
                     />
+                    <input
+                        className="profile-blog-title-input"
+                        type="url"
+                        placeholder="External link (optional) — e.g. https://myblog.wordpress.com/post"
+                        value={blogUrl}
+                        onChange={(e) => setBlogUrl(e.target.value)}
+                        style={{ fontSize: 12, fontWeight: 400 } as React.CSSProperties}
+                    />
                     <div className="profile-blog-editor-actions">
                         <button className="profile-blog-publish-btn" onClick={() => {
                             if (!blogTitle.trim()) return;
@@ -1249,14 +1302,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                 title: blogTitle.trim(),
                                 body: blogBody.trim(),
                                 timestamp: Math.floor(Date.now() / 1000),
+                                external_url: blogUrl.trim() || undefined,
                             };
                             const updated = [newEntry, ...entries];
                             updateModuleContent(mod.id, JSON.stringify(updated));
                             setBlogTitle('');
                             setBlogBody('');
+                            setBlogUrl('');
                             setEditingBlogId(null);
                         }}>Publish</button>
-                        <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); }}>Cancel</button>
+                        <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); setBlogUrl(''); }}>Cancel</button>
                     </div>
                 </div>
             );
@@ -1281,15 +1336,24 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             maxLength={10000}
                             onChange={(e) => setBlogBody(e.target.value)}
                         />
+                        <input
+                            className="profile-blog-title-input"
+                            type="url"
+                            placeholder="External link (optional)"
+                            value={blogUrl}
+                            onChange={(e) => setBlogUrl(e.target.value)}
+                            style={{ fontSize: 12, fontWeight: 400 } as React.CSSProperties}
+                        />
                         <div className="profile-blog-editor-actions">
                             <button className="profile-blog-publish-btn" onClick={() => {
-                                const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim(), body: blogBody.trim() } : e);
+                                const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim(), body: blogBody.trim(), external_url: blogUrl.trim() || undefined } : e);
                                 updateModuleContent(mod.id, JSON.stringify(updated));
                                 setBlogTitle('');
                                 setBlogBody('');
+                                setBlogUrl('');
                                 setEditingBlogId(null);
                             }}>Save</button>
-                            <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); }}>Cancel</button>
+                            <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); setBlogUrl(''); }}>Cancel</button>
                         </div>
                     </div>
                 );
@@ -1299,7 +1363,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         return (
             <div>
                 {editMode && (
-                    <button className="profile-blog-new-btn" onClick={() => { setBlogTitle(''); setBlogBody(''); setEditingBlogId('new'); }}>
+                    <button className="profile-blog-new-btn" onClick={() => { setBlogTitle(''); setBlogBody(''); setBlogUrl(''); setEditingBlogId('new'); }}>
                         <BsPlusLg size={10} /> New Post
                     </button>
                 )}
@@ -1320,9 +1384,18 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             {expandedBlogId === entry.id && (
                                 <div className="profile-blog-entry-body">
                                     {entry.body.split('\n').map((line, i) => <p key={i}>{line || '\u00A0'}</p>)}
+                                    {entry.external_url && (
+                                        <a
+                                            href="#"
+                                            className="profile-blog-external-link"
+                                            onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!); }}
+                                        >
+                                            🔗 Read on external blog
+                                        </a>
+                                    )}
                                     {editMode && (
                                         <div className="profile-blog-entry-actions">
-                                            <button onClick={() => { setBlogTitle(entry.title); setBlogBody(entry.body); setEditingBlogId(entry.id); }}>✏️ Edit</button>
+                                            <button onClick={() => { setBlogTitle(entry.title); setBlogBody(entry.body); setBlogUrl(entry.external_url || ''); setEditingBlogId(entry.id); }}>✏️ Edit</button>
                                             <button className="profile-module-edit-btn--danger" onClick={() => {
                                                 const updated = entries.filter(e => e.id !== entry.id);
                                                 updateModuleContent(mod.id, JSON.stringify(updated));
@@ -1352,110 +1425,133 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     function renderHome() {
         const visibleModules = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
-        return (
-            <div className="profile-module-grid">
-                {visibleModules.map((mod, idx) => {
-                    const modStyle: React.CSSProperties = {};
-                    if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
-                    if (mod.font_color) modStyle.color = mod.font_color;
-                    if (mod.font_size) modStyle.fontSize = mod.font_size;
-                    if (mod.font_family) modStyle.fontFamily = mod.font_family;
+        const fullWidthModules = visibleModules.filter(m => m.width === 'full');
+        const leftModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 0);
+        const rightModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 1);
 
-                    return (
-                    <div
-                        key={mod.id}
-                        className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}
-                        style={modStyle}
-                    >
-                        <div className="profile-module-header">
-                            {editMode && (
-                                <div className="profile-module-reorder">
-                                    <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={idx === 0} title="Move up"><BsChevronUp size={10} /></button>
-                                    <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={idx === visibleModules.length - 1} title="Move down"><BsChevronDown size={10} /></button>
-                                </div>
-                            )}
-                            {editMode && editingModuleTitle === mod.id ? (
-                                <input
-                                    className="profile-module-title-input"
-                                    value={mod.title}
-                                    onChange={(e) => updateModuleTitle(mod.id, e.target.value)}
-                                    onBlur={() => setEditingModuleTitle(null)}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') setEditingModuleTitle(null); }}
-                                    autoFocus
-                                />
-                            ) : (
-                                <span className="profile-module-header-title" onDoubleClick={() => editMode && setEditingModuleTitle(mod.id)}>{mod.title}</span>
-                            )}
-                            {editMode && (
-                                <div className="profile-module-edit-controls">
-                                    <button className="profile-module-edit-btn" onClick={() => setEditingModuleStyle(editingModuleStyle === mod.id ? null : mod.id)} title="Style"><BsPaletteFill size={9} /></button>
-                                    <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit content"><BsPencilFill size={9} /></button>
-                                    <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
-                                </div>
-                            )}
-                            {!editMode && !previewMode && (
-                                <button
-                                    className="profile-module-quick-edit"
-                                    onClick={() => { setEditMode(true); setEditingModuleContent(mod.id); }}
-                                    title="Edit this module"
-                                >
-                                    <BsPencilFill size={9} />
-                                </button>
-                            )}
-                        </div>
+        function renderModuleCard(mod: ProfileModule, columnList: ProfileModule[]) {
+            const colIdx = columnList.indexOf(mod);
+            const modStyle: React.CSSProperties = {};
+            if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
+            if (mod.font_color) modStyle.color = mod.font_color;
+            if (mod.font_size) modStyle.fontSize = mod.font_size;
+            if (mod.font_family) modStyle.fontFamily = mod.font_family;
 
-                        {/* Per-module style editor */}
-                        {editMode && editingModuleStyle === mod.id && (
-                            <div className="profile-module-style-editor">
-                                <div className="profile-module-style-row">
-                                    <label>Font:</label>
-                                    <select value={mod.font_family || ''} onChange={(e) => updateModuleStyle(mod.id, { font_family: e.target.value || undefined })}>
-                                        <option value="">Default</option>
-                                        <option value="serif">Serif</option>
-                                        <option value="'Courier New', monospace">Monospace</option>
-                                        <option value="'Comic Sans MS', cursive">Comic Sans</option>
-                                        <option value="'Georgia', serif">Georgia</option>
-                                        <option value="'Impact', sans-serif">Impact</option>
-                                    </select>
-                                </div>
-                                <div className="profile-module-style-row">
-                                    <label>Size:</label>
-                                    <select value={mod.font_size || ''} onChange={(e) => updateModuleStyle(mod.id, { font_size: e.target.value || undefined })}>
-                                        <option value="">Default</option>
-                                        <option value="11px">Small</option>
-                                        <option value="13px">Medium</option>
-                                        <option value="15px">Large</option>
-                                        <option value="18px">XL</option>
-                                    </select>
-                                </div>
-                                <div className="profile-module-style-row">
-                                    <label>Text:</label>
-                                    <input type="color" value={mod.font_color || '#eeeeee'} onChange={(e) => updateModuleStyle(mod.id, { font_color: e.target.value })} />
-                                    <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { font_color: undefined })}>×</button>
-                                </div>
-                                <div className="profile-module-style-row">
-                                    <label>BG:</label>
-                                    <input type="color" value={mod.background || '#1a1a2e'} onChange={(e) => updateModuleStyle(mod.id, { background: e.target.value })} />
-                                    <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { background: undefined })}>×</button>
-                                </div>
+            return (
+                <div
+                    key={mod.id}
+                    className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}
+                    style={modStyle}
+                >
+                    <div className="profile-module-header">
+                        {editMode && (
+                            <div className="profile-module-reorder">
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={colIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={colIdx === columnList.length - 1} title="Move down"><BsChevronDown size={10} /></button>
+                                {mod.width === 'half' && (
+                                    <button className="profile-module-arrow-btn" onClick={() => moveModuleColumn(mod.id)} title={`Move ${(mod.column ?? 0) === 0 ? 'right' : 'left'}`}>
+                                        {(mod.column ?? 0) === 0 ? <BsArrowRight size={10} /> : <BsArrowLeft size={10} />}
+                                    </button>
+                                )}
                             </div>
                         )}
-
-                        <div className="profile-module-body">
-                            {renderModuleContent(mod)}
-                        </div>
+                        {editMode && editingModuleTitle === mod.id ? (
+                            <input
+                                className="profile-module-title-input"
+                                value={mod.title}
+                                onChange={(e) => updateModuleTitle(mod.id, e.target.value)}
+                                onBlur={() => setEditingModuleTitle(null)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') setEditingModuleTitle(null); }}
+                                autoFocus
+                            />
+                        ) : (
+                            <span className="profile-module-header-title" onDoubleClick={() => editMode && setEditingModuleTitle(mod.id)}>{mod.title}</span>
+                        )}
                         {editMode && (
+                            <div className="profile-module-edit-controls">
+                                <button className="profile-module-edit-btn" onClick={() => setEditingModuleStyle(editingModuleStyle === mod.id ? null : mod.id)} title="Style"><BsPaletteFill size={9} /></button>
+                                <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit content"><BsPencilFill size={9} /></button>
+                                <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
+                            </div>
+                        )}
+                        {!editMode && !previewMode && (
                             <button
-                                className="profile-module-resize-toggle"
-                                onClick={() => toggleModuleWidth(mod.id)}
-                                title={mod.width === 'full' ? 'Shrink to half' : 'Expand to full'}
+                                className="profile-module-quick-edit"
+                                onClick={() => { setEditMode(true); setEditingModuleContent(mod.id); }}
+                                title="Edit this module"
                             >
-                                <BsArrowsFullscreen />
+                                <BsPencilFill size={9} />
                             </button>
                         )}
                     </div>
-                    );
-                })}
+
+                    {/* Per-module style editor */}
+                    {editMode && editingModuleStyle === mod.id && (
+                        <div className="profile-module-style-editor">
+                            <div className="profile-module-style-row">
+                                <label>Font:</label>
+                                <select value={mod.font_family || ''} onChange={(e) => updateModuleStyle(mod.id, { font_family: e.target.value || undefined })}>
+                                    <option value="">Default</option>
+                                    <option value="serif">Serif</option>
+                                    <option value="'Courier New', monospace">Monospace</option>
+                                    <option value="'Comic Sans MS', cursive">Comic Sans</option>
+                                    <option value="'Georgia', serif">Georgia</option>
+                                    <option value="'Impact', sans-serif">Impact</option>
+                                </select>
+                            </div>
+                            <div className="profile-module-style-row">
+                                <label>Size:</label>
+                                <select value={mod.font_size || ''} onChange={(e) => updateModuleStyle(mod.id, { font_size: e.target.value || undefined })}>
+                                    <option value="">Default</option>
+                                    <option value="11px">Small</option>
+                                    <option value="13px">Medium</option>
+                                    <option value="15px">Large</option>
+                                    <option value="18px">XL</option>
+                                </select>
+                            </div>
+                            <div className="profile-module-style-row">
+                                <label>Text:</label>
+                                <input type="color" value={mod.font_color || '#eeeeee'} onChange={(e) => updateModuleStyle(mod.id, { font_color: e.target.value })} />
+                                <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { font_color: undefined })}>×</button>
+                            </div>
+                            <div className="profile-module-style-row">
+                                <label>BG:</label>
+                                <input type="color" value={mod.background || '#1a1a2e'} onChange={(e) => updateModuleStyle(mod.id, { background: e.target.value })} />
+                                <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { background: undefined })}>×</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="profile-module-body">
+                        {renderModuleContent(mod)}
+                    </div>
+                    {editMode && (
+                        <button
+                            className="profile-module-resize-toggle"
+                            onClick={() => toggleModuleWidth(mod.id)}
+                            title={mod.width === 'full' ? 'Shrink to half' : 'Expand to full'}
+                        >
+                            <BsArrowsFullscreen />
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <div className="profile-module-layout">
+                {/* Full-width modules at top */}
+                {fullWidthModules.map(mod => renderModuleCard(mod, fullWidthModules))}
+
+                {/* Two independent columns */}
+                <div className="profile-module-columns">
+                    <div className="profile-module-column">
+                        {leftModules.map(mod => renderModuleCard(mod, leftModules))}
+                    </div>
+                    <div className="profile-module-column">
+                        {rightModules.map(mod => renderModuleCard(mod, rightModules))}
+                    </div>
+                </div>
 
                 {editMode && (
                     <div className="profile-add-module" ref={addMenuRef}>
@@ -1522,6 +1618,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                 resolveMediaPath={resolveMediaPath}
                                 mediaDir={mediaDir}
                                 onDelete={editMode ? handleDeletePost : undefined}
+                                previewDisplayName={previewMode ? (profileSettings.nickname || auth?.handle || 'User') : undefined}
                             />
                         </div>
                     ))}
@@ -1868,7 +1965,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <input
                             className="profile-hero-nickname-input"
                             type="text"
-                            placeholder="Add a nickname..."
+                            placeholder="Display name..."
                             value={profileSettings.nickname || ''}
                             maxLength={50}
                             onChange={(e) => saveSettings({ ...profileSettings, nickname: e.target.value || undefined })}
@@ -2058,6 +2155,30 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             )}
                             {mediaFiles.findIndex(f => f.id === lightboxFile.id) < mediaFiles.length - 1 && (
                                 <button className="profile-lightbox-nav profile-lightbox-nav--next" onClick={() => lightboxNav(1)}>›</button>
+                            )}
+                        </div>
+                        <div className="profile-lightbox-info">
+                            <div className="profile-lightbox-info-row">
+                                <span className="profile-lightbox-info-label">Source</span>
+                                <span className="profile-lightbox-info-value">{lightboxFile.source || 'Unknown'}</span>
+                            </div>
+                            <div className="profile-lightbox-info-row">
+                                <span className="profile-lightbox-info-label">Date</span>
+                                <span className="profile-lightbox-info-value">{lightboxFile.created_at ? new Date(lightboxFile.created_at * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : lightboxFile.added_at ? new Date(lightboxFile.added_at * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</span>
+                            </div>
+                            <div className="profile-lightbox-info-row">
+                                <span className="profile-lightbox-info-label">Type</span>
+                                <span className="profile-lightbox-info-value">{lightboxFile.kind} — {lightboxFile.mime_type}</span>
+                            </div>
+                            <div className="profile-lightbox-info-row">
+                                <span className="profile-lightbox-info-label">Size</span>
+                                <span className="profile-lightbox-info-value">{lightboxFile.size < 1024 * 1024 ? `${(lightboxFile.size / 1024).toFixed(1)} KB` : `${(lightboxFile.size / (1024 * 1024)).toFixed(1)} MB`}</span>
+                            </div>
+                            {lightboxFile.tags.length > 0 && (
+                                <div className="profile-lightbox-info-row">
+                                    <span className="profile-lightbox-info-label">Tags</span>
+                                    <span className="profile-lightbox-info-value">{lightboxFile.tags.join(', ')}</span>
+                                </div>
                             )}
                         </div>
                     </div>

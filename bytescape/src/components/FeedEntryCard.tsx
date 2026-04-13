@@ -83,6 +83,7 @@ interface FeedEntryCardProps {
     onEntryUpdated?: (id: string, audiences: Audience[]) => void;
     onDelete?: (id: string) => void;
     isQuote?: boolean;
+    previewDisplayName?: string;
 }
 
 /* ─── Component ─── */
@@ -95,7 +96,7 @@ interface FeedEntryCardProps {
  * - Uses feed helper exports from `./feed` to keep layout primitives consistent across views.
  * - Emits browser-level `navigate-hashtag` custom events consumed by feed navigation listeners.
  */
-function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, onDelete, isQuote = false }: FeedEntryCardProps) {
+function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated, onDelete, isQuote = false, previewDisplayName }: FeedEntryCardProps) {
     // ═══════════════════════════════════════════════════════════════════════════
     // Local UI state and derived presentation data
     // ═══════════════════════════════════════════════════════════════════════════
@@ -129,7 +130,7 @@ function FeedEntryCardInner({ entry, resolveMediaPath, mediaDir, onEntryUpdated,
     const mediaSources = entry.media_urls.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
     const thumbnailSources = entry.media_thumbnails.map(src => resolveMediaPath ? resolveMediaPath(src) : src);
 
-    const authorName = entry.author_handle || 'You';
+    const authorName = entry.author_handle || (previewDisplayName ? previewDisplayName : 'You');
     const displayContent = sanitizeDisplayContent(entry.content || '');
     const isGif = looksLikeGif(entry.link_url);
     const externalHost = entry.link_url ? safeHostname(entry.link_url) : '';

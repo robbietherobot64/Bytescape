@@ -3,6 +3,43 @@
 > This document is a running log of work completed by all agents. Updated after each commit. PM reviews this for status tracking.
 
 ---
+## 📋 PM — Sprint v21 Initialization: Profile Sign-off Punch List (2026-04-13)
+
+**Trigger:** user asked to initiate the next sprint files, archive the previous active sprint files, and roll all remaining issues forward.
+
+### Audit findings
+
+- The active root prompt set was still `v20`:
+  - `.github/agents/prompts/frontend-sprint-v20.md`
+  - `.github/agents/prompts/backend-sprint-v20.md`
+- The archive did not yet contain copies of the active `v20` prompt files.
+- The latest `user-feedback` confirms that v20 materially landed:
+  - media thumbnails + full-size gallery viewer
+  - Mastodon posts visible on the profile Posts page
+  - customization controls improved, but not fully cleaned up
+- The remaining work is now a narrow punch list rather than another broad profile rebuild:
+  - media provenance/context info box
+  - Mastodon image rendering parity
+  - customization alignment overlap cleanup
+  - true independent two-column layout with left/right movement
+  - preview author labeling and `Display name` terminology
+  - playlist paste reliability, GIF module usability, and minimal external-blog linking
+
+### PM actions
+
+1. Archived the previously active `v20` sprint prompt files into `.github/agents/prompts/archive/`.
+2. Removed the active `v20` prompt files from the root prompt folder.
+3. Wrote fresh active `v21` prompts focused only on the remaining profile sign-off issues.
+4. Split the remaining work by track:
+   - Track B: media info panel, independent columns, popup alignment, preview naming, and remaining module UX gaps
+   - Track A: Mastodon media parity, media provenance support, and any minimal owner-metadata fixes needed for preview correctness
+
+### Active prompt set
+
+- `.github/agents/prompts/backend-sprint-v21.md`
+- `.github/agents/prompts/frontend-sprint-v21.md`
+
+---
 ## 📋 PM — Prompt Cleanup: Remove Stale Active v19 Duplicates (2026-04-11)
 
 **Trigger:** user requested cleanup of old or outdated sprint files and duplicate prompt docs.

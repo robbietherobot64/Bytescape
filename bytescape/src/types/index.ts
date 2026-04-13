@@ -722,6 +722,7 @@ export interface ProfileModule {
     order: number;
     visible: boolean;
     width: 'half' | 'full';
+    column?: 0 | 1;        // Which column (0=left, 1=right). Full-width modules span both.
     background?: string;    // CSS background value for this module's card
     content?: string;       // Module-specific serialized content
     font_family?: string;   // Custom font family
