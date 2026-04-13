@@ -7,6 +7,7 @@ import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModul
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
+import { openInApp } from '../utils/openInApp';
 import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
@@ -160,6 +161,9 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [followLoading, setFollowLoading] = useState(false);
     const hoverCardRef = useRef<HTMLDivElement>(null);
     const hoverDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [hoverDropdownOpen, setHoverDropdownOpen] = useState(false);
+    const [blockConfirm, setBlockConfirm] = useState<{ connection: typeof allConnections[0]; blockAll: boolean } | null>(null);
+    const [blockLoading, setBlockLoading] = useState(false);
 
     /* ─── Customize Dropdown ─── */
     const [customizeDropdownOpen, setCustomizeDropdownOpen] = useState(false);
@@ -735,15 +739,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     function showHoverCard(cardEl: HTMLElement, listIndex: number) {
         if (hoverDismissTimer.current) { clearTimeout(hoverDismissTimer.current); hoverDismissTimer.current = null; }
         const rect = cardEl.getBoundingClientRect();
-        const cardW = 180;
+        const cardW = 200;
         let left = rect.left + rect.width / 2 - cardW / 2;
         if (left < 8) left = 8;
         if (left + cardW > window.innerWidth - 8) left = window.innerWidth - 8 - cardW;
         let top = rect.bottom + 4;
         // If would clip below viewport, show above
-        if (top + 120 > window.innerHeight) top = rect.top - 124;
+        if (top + 140 > window.innerHeight) top = rect.top - 144;
         setHoverCardStyle({ position: 'fixed', left, top, width: cardW } as React.CSSProperties);
         setHoverCardIndex(listIndex);
+        setHoverDropdownOpen(false);
     }
 
     function startHoverDismiss() {
@@ -852,7 +857,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             <div className={`profile-connection-card ${c.profile_url ? 'profile-connection-card--clickable' : ''}`}>
                                 <div
                                     className="profile-connection-avatar"
-                                    onClick={(e) => { if (c.profile_url) { e.stopPropagation(); window.open(c.profile_url, '_blank', 'noopener,noreferrer'); } }}
+                                    onClick={(e) => { if (c.profile_url) { e.stopPropagation(); openInApp(c.profile_url!, c.display_name || c.handle); } }}
                                     style={c.profile_url ? { cursor: 'pointer' } as React.CSSProperties : undefined}
                                 >
                                     {c.avatar_url ? (
@@ -878,34 +883,99 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         style={hoverCardStyle}
                         ref={hoverCardRef}
                         onMouseEnter={() => cancelHoverDismiss()}
-                        onMouseLeave={() => startHoverDismiss()}
+                        onMouseLeave={() => { if (!hoverDropdownOpen) startHoverDismiss(); }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="profile-connection-hover-name">{displayList[hoverCardIndex].display_name || displayList[hoverCardIndex].handle}</div>
                         <div className="profile-connection-hover-handle">@{displayList[hoverCardIndex].handle}</div>
                         <div className="profile-connection-hover-actions">
-                            {displayList[hoverCardIndex].profile_url && (
-                                <a href={displayList[hoverCardIndex].profile_url} target="_blank" rel="noopener noreferrer" className="profile-connection-hover-btn">
-                                    View on {displayList[hoverCardIndex].source}
-                                </a>
-                            )}
-                            {(displayList[hoverCardIndex].relation === 'following' || displayList[hoverCardIndex].relation === 'mutual') ? (
+                            <div className="profile-connection-hover-split">
+                                {(displayList[hoverCardIndex].relation === 'following' || displayList[hoverCardIndex].relation === 'mutual') ? (
+                                    <button
+                                        className="profile-connection-hover-btn profile-connection-hover-btn--unfollow profile-connection-hover-split-main"
+                                        onClick={() => handleUnfollow(displayList[hoverCardIndex!])}
+                                        disabled={followLoading}
+                                    >
+                                        {followLoading ? '...' : 'Unfollow'}
+                                    </button>
+                                ) : (
+                                    <button
+                                        className="profile-connection-hover-btn profile-connection-hover-btn--follow profile-connection-hover-split-main"
+                                        onClick={() => handleFollow(displayList[hoverCardIndex!])}
+                                        disabled={followLoading}
+                                    >
+                                        {followLoading ? '...' : 'Follow'}
+                                    </button>
+                                )}
                                 <button
-                                    className="profile-connection-hover-btn profile-connection-hover-btn--unfollow"
-                                    onClick={() => handleUnfollow(displayList[hoverCardIndex!])}
-                                    disabled={followLoading}
+                                    className="profile-connection-hover-btn profile-connection-hover-split-arrow"
+                                    onClick={() => setHoverDropdownOpen(!hoverDropdownOpen)}
                                 >
-                                    {followLoading ? '...' : 'Unfollow'}
+                                    ▾
                                 </button>
-                            ) : (
-                                <button
-                                    className="profile-connection-hover-btn profile-connection-hover-btn--follow"
-                                    onClick={() => handleFollow(displayList[hoverCardIndex!])}
-                                    disabled={followLoading}
-                                >
-                                    {followLoading ? '...' : 'Follow'}
-                                </button>
+                            </div>
+                            {hoverDropdownOpen && (
+                                <div className="profile-connection-hover-dropdown">
+                                    <button className="profile-connection-hover-dropdown-item" onClick={() => { setHoverDropdownOpen(false); /* TODO: open manage modal */ }}>
+                                        ⚙ Manage
+                                    </button>
+                                    <button className="profile-connection-hover-dropdown-item profile-connection-hover-dropdown-item--danger" onClick={() => {
+                                        setHoverDropdownOpen(false);
+                                        setBlockConfirm({ connection: displayList[hoverCardIndex!], blockAll: false });
+                                    }}>
+                                        🚫 Block
+                                    </button>
+                                </div>
                             )}
+                        </div>
+                    </div>,
+                    document.body
+                )}
+
+                {/* Block confirmation modal */}
+                {blockConfirm && createPortal(
+                    <div className="profile-block-overlay" onClick={() => setBlockConfirm(null)}>
+                        <div className="profile-block-modal" onClick={(e) => e.stopPropagation()}>
+                            <div className="profile-block-modal-title">Block {blockConfirm.connection.display_name || blockConfirm.connection.handle}?</div>
+                            <p className="profile-block-modal-text">
+                                They won't be able to see your posts or contact you on {blockConfirm.connection.source}.
+                            </p>
+                            <label className="profile-block-modal-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={blockConfirm.blockAll}
+                                    onChange={(e) => setBlockConfirm({ ...blockConfirm, blockAll: e.target.checked })}
+                                />
+                                Block on all platforms
+                            </label>
+                            <div className="profile-block-modal-actions">
+                                <button className="profile-block-modal-btn" onClick={() => setBlockConfirm(null)}>Cancel</button>
+                                <button
+                                    className="profile-block-modal-btn profile-block-modal-btn--confirm"
+                                    disabled={blockLoading}
+                                    onClick={async () => {
+                                        setBlockLoading(true);
+                                        try {
+                                            const c = blockConfirm.connection;
+                                            // Unfollow first if following
+                                            if (c.relation === 'following' || c.relation === 'mutual') {
+                                                try { await handleUnfollow(c); } catch { /* best effort */ }
+                                            }
+                                            // Block (platform-specific, future backend commands)
+                                            if (c.source === 'Bluesky') {
+                                                try { await invoke('bluesky_block', { targetDid: c.did }); } catch { /* not yet implemented */ }
+                                            }
+                                            // Remove from local connections list
+                                            setAllConnections(prev => prev.filter(conn => conn.did !== c.did));
+                                        } catch (e) { console.error('Block failed:', e); }
+                                        setBlockLoading(false);
+                                        setBlockConfirm(null);
+                                        setHoverCardIndex(null);
+                                    }}
+                                >
+                                    {blockLoading ? '...' : 'Block'}
+                                </button>
+                            </div>
                         </div>
                     </div>,
                     document.body
