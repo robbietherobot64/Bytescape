@@ -203,6 +203,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [lightboxFile, setLightboxFile] = useState<VaultFile | null>(null);
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [lightboxLoading, setLightboxLoading] = useState(false);
+    const [lightboxPostUrl, setLightboxPostUrl] = useState<string | null>(null);
 
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
@@ -483,11 +484,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     // Module CRUD
     const addModule = useCallback((type: string, title: string) => {
+        const maxOrder = modules.reduce((max, m) => Math.max(max, m.order), -1);
         const newMod: ProfileModule = {
             id: generateId(),
             type,
             title,
-            order: modules.length,
+            order: maxOrder + 1,
             visible: true,
             width: 'full',
             content: type === 'links' || type === 'gif-collection' ? '[]' : '',
@@ -529,16 +531,25 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const moveModule = useCallback((id: string, direction: 'up' | 'down') => {
         const mod = modules.find(m => m.id === id);
         if (!mod) return;
-        // Use global visible order so modules can move across width categories
-        const sorted = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
-        const idx = sorted.findIndex(m => m.id === id);
-        if (idx === -1) return;
-        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (targetIdx < 0 || targetIdx >= sorted.length) return;
-        // Swap orders
+        // Group-scoped: full-width among full-width, half among same column
+        const siblings = modules
+            .filter(m => m.visible)
+            .filter(m => mod.width === 'full'
+                ? m.width === 'full'
+                : (m.width === 'half' && (m.column ?? 0) === (mod.column ?? 0)))
+            .sort((a, b) => a.order - b.order);
+        const sibIdx = siblings.findIndex(m => m.id === id);
+        if (sibIdx === -1) return;
+        const targetSibIdx = direction === 'up' ? sibIdx - 1 : sibIdx + 1;
+        if (targetSibIdx < 0 || targetSibIdx >= siblings.length) return;
+        // Normalize: reassign contiguous orders to this group, then swap
         const updated = [...modules];
-        const a = updated.find(m => m.id === sorted[idx].id)!;
-        const b = updated.find(m => m.id === sorted[targetIdx].id)!;
+        siblings.forEach((sib, i) => {
+            const m = updated.find(u => u.id === sib.id)!;
+            m.order = i;
+        });
+        const a = updated.find(m => m.id === siblings[sibIdx].id)!;
+        const b = updated.find(m => m.id === siblings[targetSibIdx].id)!;
         const tmp = a.order;
         a.order = b.order;
         b.order = tmp;
@@ -1428,7 +1439,11 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const rightModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 1);
 
         function renderModuleCard(mod: ProfileModule) {
-            const globalIdx = visibleModules.indexOf(mod);
+            // Group-scoped index for up/down disable state
+            const group = mod.width === 'full'
+                ? fullWidthModules
+                : (mod.column ?? 0) === 0 ? leftModules : rightModules;
+            const groupIdx = group.indexOf(mod);
             const modStyle: React.CSSProperties = {};
             if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
             if (mod.font_color) modStyle.color = mod.font_color;
@@ -1444,8 +1459,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <div className="profile-module-header">
                         {editMode && (
                             <div className="profile-module-reorder">
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={globalIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={globalIdx === visibleModules.length - 1} title="Move down"><BsChevronDown size={10} /></button>
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={groupIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={groupIdx === group.length - 1} title="Move down"><BsChevronDown size={10} /></button>
                                 {mod.width === 'half' && (
                                     <button className="profile-module-arrow-btn" onClick={() => moveModuleColumn(mod.id)} title={`Move ${(mod.column ?? 0) === 0 ? 'right' : 'left'}`}>
                                         {(mod.column ?? 0) === 0 ? <BsArrowRight size={10} /> : <BsArrowLeft size={10} />}
@@ -1637,6 +1652,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setLightboxFile(file);
         setLightboxUrl(null);
         setLightboxLoading(true);
+        setLightboxPostUrl(null);
         invoke<number[]>('vault_get_file_data', { fileId: file.id })
             .then(bytes => {
                 const blob = new Blob([new Uint8Array(bytes)], { type: file.mime_type });
@@ -1644,12 +1660,19 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             })
             .catch(e => console.error('Lightbox load failed:', e))
             .finally(() => setLightboxLoading(false));
+        // Fetch linked post URL if item_id exists
+        if (file.item_id) {
+            invoke<BytescapeItem | null>('vault_get_item', { itemId: file.item_id })
+                .then(item => { if (item?.url) setLightboxPostUrl(item.url); })
+                .catch(() => { /* no linked post */ });
+        }
     }
 
     function closeLightbox() {
         if (lightboxUrl && lightboxUrl.startsWith('blob:')) URL.revokeObjectURL(lightboxUrl);
         setLightboxFile(null);
         setLightboxUrl(null);
+        setLightboxPostUrl(null);
     }
 
     function lightboxNav(dir: -1 | 1) {
@@ -2156,20 +2179,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             )}
                         </div>
                         <div className="profile-lightbox-info">
-                            {(() => {
-                                const linkedItem = lightboxFile.item_id ? items.find(it => it.id === lightboxFile.item_id) : null;
-                                const postUrl = linkedItem?.url;
-                                return postUrl ? (
-                                    <div className="profile-lightbox-info-row">
-                                        <span className="profile-lightbox-info-label">Post</span>
-                                        <span className="profile-lightbox-info-value">
-                                            <a href="#" className="profile-lightbox-post-link" onClick={(e) => { e.preventDefault(); openInApp(postUrl); }}>
-                                                View original post ↗
-                                            </a>
-                                        </span>
-                                    </div>
-                                ) : null;
-                            })()}
+                            {lightboxPostUrl && (
+                                <div className="profile-lightbox-info-row">
+                                    <span className="profile-lightbox-info-label">Post</span>
+                                    <span className="profile-lightbox-info-value">
+                                        <a href="#" className="profile-lightbox-post-link" onClick={(e) => { e.preventDefault(); openInApp(lightboxPostUrl); }}>
+                                            View original post ↗
+                                        </a>
+                                    </span>
+                                </div>
+                            )}
                             <div className="profile-lightbox-info-row">
                                 <span className="profile-lightbox-info-label">Source</span>
                                 <span className="profile-lightbox-info-value">{lightboxFile.source || 'Unknown'}</span>

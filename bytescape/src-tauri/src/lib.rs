@@ -441,6 +441,7 @@ pub fn run() {
             commands::vault::vault_upload_files_from_paths,
             commands::vault::vault_list_files,
             commands::vault::vault_get_file,
+            commands::vault::vault_get_item,
             commands::vault::vault_delete_file,
             commands::vault::vault_get_stats,
             commands::vault::vault_deduplicate_files,

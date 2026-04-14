@@ -192,6 +192,17 @@ pub async fn vault_get_file(file_id: String, state: State<'_, AppState>) -> std:
         .map_err(|e| e.to_string())
 }
 
+/// Retrieve a single vault item (BytescapeItem) by its ID.
+#[tauri::command]
+pub async fn vault_get_item(
+    item_id: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<Option<crate::models::BytescapeItem>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+    db.get_item_by_id(&item_id).await
+}
+
 /// Delete a file from the vault.
 /// 
 /// Writes a tombstone marker to the Iroh Doc entry.
