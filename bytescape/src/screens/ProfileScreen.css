@@ -1729,6 +1729,10 @@
     border: none;
     border-radius: 4px;
 }
+.profile-listening-embed {
+    overflow: hidden;
+    border-radius: 4px;
+}
 .profile-listening-source {
     margin-top: 4px;
     font-size: 10px;
@@ -1792,14 +1796,14 @@
 
 /* ─── GIF Collection ─── */
 .profile-gif-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
 }
 .profile-gif-item {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: cover;
+    max-width: 100%;
+    height: auto;
     border-radius: 4px;
     border: 1px solid rgba(255,255,255,0.05);
 }
@@ -1961,6 +1965,16 @@
 }
 .profile-lightbox-info-value {
     color: rgba(255,255,255,0.8);
+}
+.profile-lightbox-post-link {
+    color: var(--accent-blue, #60a5fa);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.profile-lightbox-post-link:hover {
+    color: #93c5fd;
+    text-decoration: underline;
 }
 
 /* ─── Per-Module Quick Edit ─── */

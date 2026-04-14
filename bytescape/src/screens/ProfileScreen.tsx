@@ -63,30 +63,30 @@ const ADDABLE_MODULES: Array<{ type: string; label: string; emoji: string; uniqu
 ];
 
 /* ═══ Embed Detection ═══ */
-function detectEmbed(input: string): { url: string; label: string } | null {
+function detectEmbed(input: string): { url: string; label: string; height: number } | null {
     const trimmed = input.trim();
 
-    // Handle <iframe> embed codes — extract src attribute
+    // Handle <iframe> embed codes — extract src attribute and optional height
     const iframeMatch = trimmed.match(/<iframe[^>]+src=["']([^"']+)["']/i);
     if (iframeMatch) {
         const src = iframeMatch[1];
-        // Identify platform from iframe src
-        if (/bandcamp\.com/i.test(src)) return { url: src, label: 'Bandcamp' };
-        if (/soundcloud\.com|sndcdn\.com/i.test(src)) return { url: src, label: 'SoundCloud' };
-        if (/spotify\.com/i.test(src)) return { url: src, label: 'Spotify' };
-        if (/youtube\.com|youtube-nocookie\.com/i.test(src)) return { url: src, label: 'YouTube' };
-        // Generic iframe embed
-        return { url: src, label: 'Embed' };
+        const hMatch = trimmed.match(/height=["']?(\d+)/i);
+        const parsedH = hMatch ? parseInt(hMatch[1], 10) : 0;
+        if (/bandcamp\.com/i.test(src)) return { url: src, label: 'Bandcamp', height: parsedH || 120 };
+        if (/soundcloud\.com|sndcdn\.com/i.test(src)) return { url: src, label: 'SoundCloud', height: parsedH || 166 };
+        if (/spotify\.com/i.test(src)) return { url: src, label: 'Spotify', height: parsedH || 152 };
+        if (/youtube\.com|youtube-nocookie\.com/i.test(src)) return { url: src, label: 'YouTube', height: parsedH || 315 };
+        return { url: src, label: 'Embed', height: parsedH || 152 };
     }
 
     // Handle raw URLs
     const bcMatch = trimmed.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/(track|album)\/([^/?#]+)/i);
-    if (bcMatch) return { url: `https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/transparent=true/`, label: `Bandcamp · ${bcMatch[1]}` };
-    if (/^https?:\/\/(www\.)?soundcloud\.com\/[^/]+\/[^/]+/i.test(trimmed)) return { url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false`, label: 'SoundCloud' };
+    if (bcMatch) return { url: `https://bandcamp.com/EmbeddedPlayer/${bcMatch[2]}=${bcMatch[3]}/size=large/bgcol=333333/linkcol=e99708/tracklist=false/transparent=true/`, label: `Bandcamp · ${bcMatch[1]}`, height: 470 };
+    if (/^https?:\/\/(www\.)?soundcloud\.com\/[^/]+\/[^/]+/i.test(trimmed)) return { url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(trimmed)}&color=%23ff5500&auto_play=false&hide_related=true&show_comments=false`, label: 'SoundCloud', height: 166 };
     const spMatch = trimmed.match(/^https?:\/\/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/i);
-    if (spMatch) return { url: `https://open.spotify.com/embed/${spMatch[1]}/${spMatch[2]}`, label: `Spotify · ${spMatch[1]}` };
+    if (spMatch) return { url: `https://open.spotify.com/embed/${spMatch[1]}/${spMatch[2]}`, label: `Spotify · ${spMatch[1]}`, height: spMatch[1] === 'track' ? 152 : 352 };
     const ytMatch = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
-    if (ytMatch) return { url: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`, label: 'YouTube' };
+    if (ytMatch) return { url: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`, label: 'YouTube', height: 315 };
     return null;
 }
 
@@ -529,19 +529,16 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const moveModule = useCallback((id: string, direction: 'up' | 'down') => {
         const mod = modules.find(m => m.id === id);
         if (!mod) return;
-        // Get siblings: same column for half-width, or all full-width modules
-        const siblings = modules
-            .filter(m => m.visible)
-            .filter(m => mod.width === 'full' ? m.width === 'full' : (m.width === 'half' && (m.column ?? 0) === (mod.column ?? 0)))
-            .sort((a, b) => a.order - b.order);
-        const sibIdx = siblings.findIndex(m => m.id === id);
-        if (sibIdx === -1) return;
-        const targetSibIdx = direction === 'up' ? sibIdx - 1 : sibIdx + 1;
-        if (targetSibIdx < 0 || targetSibIdx >= siblings.length) return;
+        // Use global visible order so modules can move across width categories
+        const sorted = modules.filter(m => m.visible).sort((a, b) => a.order - b.order);
+        const idx = sorted.findIndex(m => m.id === id);
+        if (idx === -1) return;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= sorted.length) return;
         // Swap orders
         const updated = [...modules];
-        const a = updated.find(m => m.id === siblings[sibIdx].id)!;
-        const b = updated.find(m => m.id === siblings[targetSibIdx].id)!;
+        const a = updated.find(m => m.id === sorted[idx].id)!;
+        const b = updated.find(m => m.id === sorted[targetIdx].id)!;
         const tmp = a.order;
         a.order = b.order;
         b.order = tmp;
@@ -1060,6 +1057,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <iframe
                             src={embed.url}
                             title={embed.label}
+                            style={{ height: embed.height } as React.CSSProperties}
                             allow="autoplay; encrypted-media"
                             sandbox="allow-scripts allow-same-origin allow-popups"
                         />
@@ -1243,7 +1241,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         } else {
             lines.forEach(l => entries.push(l.trim()));
         }
-        const embeds = entries.map(l => detectEmbed(l)).filter(Boolean) as Array<{ url: string; label: string }>;
+        const embeds = entries.map(l => detectEmbed(l)).filter(Boolean) as Array<{ url: string; label: string; height: number }>;
         if (embeds.length === 0) {
             return <div className="profile-listening-text"><span>🎶</span><span>{mod.content}</span></div>;
         }
@@ -1252,7 +1250,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                 {embeds.map((embed, i) => (
                     <div key={i} className="profile-playlist-item">
                         <div className="profile-listening-embed">
-                            <iframe src={embed.url} title={embed.label} allow="autoplay; encrypted-media" sandbox="allow-scripts allow-same-origin allow-popups" />
+                            <iframe src={embed.url} title={embed.label} style={{ height: embed.height } as React.CSSProperties} allow="autoplay; encrypted-media" sandbox="allow-scripts allow-same-origin allow-popups" />
                         </div>
                         <div className="profile-listening-source">{embed.label}</div>
                     </div>
@@ -1429,8 +1427,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const leftModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 0);
         const rightModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 1);
 
-        function renderModuleCard(mod: ProfileModule, columnList: ProfileModule[]) {
-            const colIdx = columnList.indexOf(mod);
+        function renderModuleCard(mod: ProfileModule) {
+            const globalIdx = visibleModules.indexOf(mod);
             const modStyle: React.CSSProperties = {};
             if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
             if (mod.font_color) modStyle.color = mod.font_color;
@@ -1446,8 +1444,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <div className="profile-module-header">
                         {editMode && (
                             <div className="profile-module-reorder">
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={colIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={colIdx === columnList.length - 1} title="Move down"><BsChevronDown size={10} /></button>
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={globalIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
+                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={globalIdx === visibleModules.length - 1} title="Move down"><BsChevronDown size={10} /></button>
                                 {mod.width === 'half' && (
                                     <button className="profile-module-arrow-btn" onClick={() => moveModuleColumn(mod.id)} title={`Move ${(mod.column ?? 0) === 0 ? 'right' : 'left'}`}>
                                         {(mod.column ?? 0) === 0 ? <BsArrowRight size={10} /> : <BsArrowLeft size={10} />}
@@ -1541,15 +1539,15 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         return (
             <div className="profile-module-layout">
                 {/* Full-width modules at top */}
-                {fullWidthModules.map(mod => renderModuleCard(mod, fullWidthModules))}
+                {fullWidthModules.map(mod => renderModuleCard(mod))}
 
                 {/* Two independent columns */}
                 <div className="profile-module-columns">
                     <div className="profile-module-column">
-                        {leftModules.map(mod => renderModuleCard(mod, leftModules))}
+                        {leftModules.map(mod => renderModuleCard(mod))}
                     </div>
                     <div className="profile-module-column">
-                        {rightModules.map(mod => renderModuleCard(mod, rightModules))}
+                        {rightModules.map(mod => renderModuleCard(mod))}
                     </div>
                 </div>
 
@@ -2158,6 +2156,20 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             )}
                         </div>
                         <div className="profile-lightbox-info">
+                            {(() => {
+                                const linkedItem = lightboxFile.item_id ? items.find(it => it.id === lightboxFile.item_id) : null;
+                                const postUrl = linkedItem?.url;
+                                return postUrl ? (
+                                    <div className="profile-lightbox-info-row">
+                                        <span className="profile-lightbox-info-label">Post</span>
+                                        <span className="profile-lightbox-info-value">
+                                            <a href="#" className="profile-lightbox-post-link" onClick={(e) => { e.preventDefault(); openInApp(postUrl); }}>
+                                                View original post ↗
+                                            </a>
+                                        </span>
+                                    </div>
+                                ) : null;
+                            })()}
                             <div className="profile-lightbox-info-row">
                                 <span className="profile-lightbox-info-label">Source</span>
                                 <span className="profile-lightbox-info-value">{lightboxFile.source || 'Unknown'}</span>
