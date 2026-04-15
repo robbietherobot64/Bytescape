@@ -1439,10 +1439,31 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function blogSaveDirect(modId: string, newContent: string) {
-        // Bypass updateModuleContent — directly build new modules array and persist
-        const newModules = modules.map(m => m.id === modId ? { ...m, content: newContent } : m);
-        saveModules(newModules);
-        console.log('[blog] saved content for module', modId, '→', newContent.length, 'chars');
+        // Check main modules first, then custom pages — bypass saveModules stale closure
+        const foundInMain = modules.some(m => m.id === modId);
+        if (foundInMain) {
+            const newModules = modules.map(m => m.id === modId ? { ...m, content: newContent } : m);
+            setModules(newModules);
+            const freshSettings = { ...profileSettings, modules: newModules, custom_pages: customPages };
+            setProfileSettings(freshSettings);
+            invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) })
+                .then(() => console.log('[blog] persisted to backend OK'))
+                .catch(err => console.error('[blog] backend save failed:', err));
+            console.log('[blog] saved to main modules for', modId, '\u2192', newContent.length, 'chars');
+        } else {
+            // Module is on a custom page
+            const newPages = customPages.map(p => ({
+                ...p,
+                modules: p.modules.map(m => m.id === modId ? { ...m, content: newContent } : m)
+            }));
+            setCustomPages(newPages);
+            const freshSettings = { ...profileSettings, modules, custom_pages: newPages };
+            setProfileSettings(freshSettings);
+            invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) })
+                .then(() => console.log('[blog] persisted to backend OK (custom page)'))
+                .catch(err => console.error('[blog] backend save failed:', err));
+            console.log('[blog] saved to custom page modules for', modId, '\u2192', newContent.length, 'chars');
+        }
     }
 
     function renderBlogs(mod: ProfileModule) {
