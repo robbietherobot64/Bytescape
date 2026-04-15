@@ -421,6 +421,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const loadMedia = useCallback(async () => {
         setMediaLoading(true);
         try {
+            // Clean up any vault files belonging to reposts before listing
+            try { await invoke<number>('vault_cleanup_repost_media'); } catch { /* skip if command unavailable */ }
             const files = await invoke<VaultFile[]>('vault_list_files');
             const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
             setMediaFiles(visual);
@@ -1436,11 +1438,59 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         );
     }
 
+    function blogSaveDirect(modId: string, newContent: string) {
+        // Bypass updateModuleContent — directly build new modules array and persist
+        const newModules = modules.map(m => m.id === modId ? { ...m, content: newContent } : m);
+        saveModules(newModules);
+        console.log('[blog] saved content for module', modId, '→', newContent.length, 'chars');
+    }
+
     function renderBlogs(mod: ProfileModule) {
         let entries: BlogEntry[] = [];
         try { entries = JSON.parse(mod.content || '[]'); } catch { entries = []; }
-        // Migration: if content is not JSON array, treat as empty
         if (!Array.isArray(entries)) entries = [];
+
+        const doBlogPublish = () => {
+            // Auto-generate title from body or URL if user left title empty
+            let title = blogTitle.trim();
+            const body = blogBody.trim();
+            const url = blogUrl.trim();
+            if (!title && url) {
+                try { title = new URL(url).hostname.replace(/^www\./, ''); } catch { title = url; }
+            }
+            if (!title && body) {
+                title = body.slice(0, 60) + (body.length > 60 ? '…' : '');
+            }
+            if (!title) {
+                console.warn('[blog] publish blocked — no title, body, or URL entered');
+                return;
+            }
+            const newEntry: BlogEntry = {
+                id: generateId(),
+                title,
+                body,
+                timestamp: Math.floor(Date.now() / 1000),
+                external_url: url || undefined,
+            };
+            const updated = [newEntry, ...entries];
+            console.log('[blog] publishing entry:', newEntry.title, '→', updated.length, 'total entries');
+            blogSaveDirect(mod.id, JSON.stringify(updated));
+            setExpandedBlogId(newEntry.id);
+            setBlogTitle('');
+            setBlogBody('');
+            setBlogUrl('');
+            setEditingBlogId(null);
+        };
+
+        const doBlogEdit = () => {
+            const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim() || e.title, body: blogBody.trim(), external_url: blogUrl.trim() || undefined } : e);
+            console.log('[blog] saving edit for entry', editingBlogId);
+            blogSaveDirect(mod.id, JSON.stringify(updated));
+            setBlogTitle('');
+            setBlogBody('');
+            setBlogUrl('');
+            setEditingBlogId(null);
+        };
 
         if (editMode && editingBlogId === 'new') {
             return (
@@ -1448,7 +1498,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <input
                         className="profile-blog-title-input"
                         type="text"
-                        placeholder="Post title..."
+                        placeholder="Post title (auto-generated if left blank)"
                         value={blogTitle}
                         maxLength={200}
                         onChange={(e) => setBlogTitle(e.target.value)}
@@ -1456,7 +1506,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     />
                     <textarea
                         className="profile-blog-body-input"
-                        placeholder="Write your blog post..."
+                        placeholder="Write your blog post…"
                         value={blogBody}
                         maxLength={10000}
                         onChange={(e) => setBlogBody(e.target.value)}
@@ -1464,28 +1514,13 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <input
                         className="profile-blog-title-input"
                         type="url"
-                        placeholder="External link (optional) — e.g. https://myblog.wordpress.com/post"
+                        placeholder="Link to your WordPress / Ghost / external blog post (optional)"
                         value={blogUrl}
                         onChange={(e) => setBlogUrl(e.target.value)}
                         style={{ fontSize: 12, fontWeight: 400 } as React.CSSProperties}
                     />
                     <div className="profile-blog-editor-actions">
-                        <button className="profile-blog-publish-btn" onClick={() => {
-                            if (!blogTitle.trim()) return;
-                            const newEntry: BlogEntry = {
-                                id: generateId(),
-                                title: blogTitle.trim(),
-                                body: blogBody.trim(),
-                                timestamp: Math.floor(Date.now() / 1000),
-                                external_url: blogUrl.trim() || undefined,
-                            };
-                            const updated = [newEntry, ...entries];
-                            updateModuleContent(mod.id, JSON.stringify(updated), true);
-                            setBlogTitle('');
-                            setBlogBody('');
-                            setBlogUrl('');
-                            setEditingBlogId(null);
-                        }}>Publish</button>
+                        <button className="profile-blog-publish-btn" onClick={doBlogPublish}>Publish</button>
                         <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); setBlogUrl(''); }}>Cancel</button>
                     </div>
                 </div>
@@ -1520,14 +1555,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             style={{ fontSize: 12, fontWeight: 400 } as React.CSSProperties}
                         />
                         <div className="profile-blog-editor-actions">
-                            <button className="profile-blog-publish-btn" onClick={() => {
-                                const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim(), body: blogBody.trim(), external_url: blogUrl.trim() || undefined } : e);
-                                updateModuleContent(mod.id, JSON.stringify(updated), true);
-                                setBlogTitle('');
-                                setBlogBody('');
-                                setBlogUrl('');
-                                setEditingBlogId(null);
-                            }}>Save</button>
+                            <button className="profile-blog-publish-btn" onClick={doBlogEdit}>Save</button>
                             <button className="profile-blog-cancel-btn" onClick={() => { setEditingBlogId(null); setBlogTitle(''); setBlogBody(''); setBlogUrl(''); }}>Cancel</button>
                         </div>
                     </div>
@@ -1573,7 +1601,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                             <button onClick={() => { setBlogTitle(entry.title); setBlogBody(entry.body); setBlogUrl(entry.external_url || ''); setEditingBlogId(entry.id); }}>✏️ Edit</button>
                                             <button className="profile-module-edit-btn--danger" onClick={() => {
                                                 const updated = entries.filter(e => e.id !== entry.id);
-                                                updateModuleContent(mod.id, JSON.stringify(updated), true);
+                                                blogSaveDirect(mod.id, JSON.stringify(updated));
                                             }}>🗑 Delete</button>
                                         </div>
                                     )}

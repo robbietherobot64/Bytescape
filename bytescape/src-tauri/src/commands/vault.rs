@@ -256,6 +256,45 @@ pub async fn vault_delete_file(file_id: String, state: State<'_, AppState>) -> s
         .map_err(|e| e.to_string())
 }
 
+/// Remove vault file entries that belong to reposted items.
+///
+/// Vault files linked to BytescapeItems where `reposted_by_did` is set are
+/// tombstoned so they no longer appear in the vault gallery. The underlying
+/// blob data remains in the Iroh store for feed display.
+///
+/// → IPC: `vault_cleanup_repost_media` (frontend — called once after import)
+#[tauri::command]
+pub async fn vault_cleanup_repost_media(state: State<'_, AppState>) -> std::result::Result<usize, String> {
+    let sync_guard = state.sync_manager.lock().await;
+    let sync = sync_guard.as_ref()
+        .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
+
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref()
+        .ok_or_else(|| BytescapeError::DatabaseNotInitialized)?;
+
+    let files = sync.vault_list_files().await
+        .map_err(|e| e.to_string())?;
+
+    let mut removed = 0usize;
+    for file in &files {
+        if let Some(ref item_id) = file.item_id {
+            if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
+                if item.reposted_by_did.is_some() {
+                    if let Err(e) = sync.vault_delete_file(&file.id).await {
+                        eprintln!("vault_cleanup_repost_media: failed to delete {}: {}", file.id, e);
+                    } else {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    println!("vault_cleanup_repost_media: removed {} repost media entries from vault", removed);
+    Ok(removed)
+}
+
 /// Get aggregate statistics about the vault.
 /// 
 /// Returns total file count, total size, and breakdowns by kind and source.

@@ -444,6 +444,7 @@ pub fn run() {
             commands::vault::vault_get_item,
             commands::vault::get_media_provenance,
             commands::vault::vault_delete_file,
+            commands::vault::vault_cleanup_repost_media,
             commands::vault::vault_get_stats,
             commands::vault::vault_deduplicate_files,
             commands::vault::vault_get_file_data,
