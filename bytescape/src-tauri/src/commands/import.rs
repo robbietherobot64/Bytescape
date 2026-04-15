@@ -1187,15 +1187,43 @@ async fn save_posts(
 ) -> usize {
     let mut saved = 0;
     for post in posts {
+        // If this post already exists in the vault, check if it needs a media
+        // backfill. Posts imported before media download was implemented have
+        // empty media_blobs — update them with the newly-downloaded media.
         if known_uris.contains(&post.uri) || known_uris.contains(&post.cid) {
-            println!("import: Skipping already known post (likely syndicated): {}", post.uri);
+            if !post.image_local_paths.is_empty() {
+                // Try to find the existing item and backfill its media
+                if let Ok(Some(mut existing)) = db.get_item_by_id(&post.cid).await {
+                    if existing.media_blobs.is_empty() {
+                        let imported_media = import_item_media_into_vault(
+                            sync_manager,
+                            &post.image_local_paths,
+                            source.as_str(),
+                            Some(post.cid.clone()),
+                            Some(post.created_at),
+                            media_base_dir,
+                        ).await;
+                        if !imported_media.is_empty() {
+                            existing.media_blobs = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
+                            existing.media_mimes = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
+                            existing.media_paths = post.image_local_paths.clone();
+                            if let Err(e) = db.upsert_item(&existing).await {
+                                eprintln!("import: Failed to backfill media for {}: {}", post.uri, e);
+                            } else {
+                                println!("import: Backfilled media for existing post: {} ({} blobs)", post.uri, existing.media_blobs.len());
+                                saved += 1;
+                            }
+                        }
+                    }
+                }
+            }
             continue;
         }
 
         let imported_media = import_item_media_into_vault(
             sync_manager,
             &post.image_local_paths,
-            Source::Bluesky.as_str(),
+            source.as_str(),
             Some(post.cid.clone()),
             Some(post.created_at),
             media_base_dir,

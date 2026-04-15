@@ -153,6 +153,30 @@ impl DbManager {
         Ok(None)
     }
 
+    /// Finds the vault item that contains a given blob hash in its `media_blobs`.
+    ///
+    /// Scans items looking for a matching blob reference. Returns the first match.
+    /// Used by the media provenance lightbox to show context for a selected image.
+    pub async fn find_item_by_blob_hash(&self, blob_hash: &str) -> Result<Option<BytescapeItem>, String> {
+        let needle = blob_hash.strip_prefix("blob:").unwrap_or(blob_hash);
+        let db = self.db.read().await;
+        let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+        let table = read_txn.open_table(ITEMS_TABLE).map_err(|e| e.to_string())?;
+
+        for row in table.iter().map_err(|e| e.to_string())? {
+            let (_, value) = row.map_err(|e| e.to_string())?;
+            if let Ok(item) = serde_json::from_str::<BytescapeItem>(value.value()) {
+                for blob in &item.media_blobs {
+                    let b = blob.strip_prefix("blob:").unwrap_or(blob);
+                    if b == needle {
+                        return Ok(Some(item));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Deletes a single vault item by its UUID.
     ///
     /// First tries a direct key lookup. If the key is `source:original_id`,

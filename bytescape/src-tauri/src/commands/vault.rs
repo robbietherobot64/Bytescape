@@ -39,11 +39,25 @@
 //!   slices in Rust; push limit/offset into the redb query.
 
 use bytes::Bytes;
+use serde::Serialize;
 use tauri::{State, Manager};
 
 use crate::error::BytescapeError;
 use crate::sync::{VaultFile, VaultFileStats, Hash, NamespaceId};
 use crate::AppState;
+
+/// Provenance metadata for a single media blob — returned by `get_media_provenance`.
+#[derive(Debug, Serialize)]
+pub struct MediaProvenance {
+    pub item_id: String,
+    pub source: String,
+    pub timestamp: i64,
+    pub content_snippet: String,
+    pub original_url: Option<String>,
+    pub author_handle: Option<String>,
+    pub author_avatar: Option<String>,
+    pub title: Option<String>,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // File Upload
@@ -201,6 +215,33 @@ pub async fn vault_get_item(
     let db_guard = state.db_manager.read().await;
     let db = db_guard.as_ref().ok_or("Database not initialized")?;
     db.get_item_by_id(&item_id).await
+}
+
+/// Media provenance lookup — find the vault item that contains a given blob hash.
+///
+/// Used by the profile lightbox to show context for a selected media item:
+/// source platform, original timestamp, post content snippet, and original URL.
+///
+/// # IPC
+/// Frontend: `invoke<MediaProvenance | null>('get_media_provenance', { blobHash })`
+#[tauri::command]
+pub async fn get_media_provenance(
+    blob_hash: String,
+    state: State<'_, AppState>,
+) -> std::result::Result<Option<MediaProvenance>, String> {
+    let db_guard = state.db_manager.read().await;
+    let db = db_guard.as_ref().ok_or("Database not initialized")?;
+    let item = db.find_item_by_blob_hash(&blob_hash).await?;
+    Ok(item.map(|i| MediaProvenance {
+        item_id: i.id,
+        source: i.source,
+        timestamp: i.original_timestamp,
+        content_snippet: i.content.chars().take(200).collect(),
+        original_url: i.url,
+        author_handle: i.author_handle,
+        author_avatar: i.author_avatar,
+        title: i.title,
+    }))
 }
 
 /// Delete a file from the vault.
