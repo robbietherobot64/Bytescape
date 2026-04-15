@@ -52,6 +52,7 @@ pub mod posting;          // Compose & publish
 pub mod interactions;     // Likes, reposts, bookmarks
 pub mod unfurl;           // URL preview cards
 pub mod browser;          // In-app browser helpers
+pub mod blog_feed;        // RSS/Atom blog feed discovery & parsing
 
 // ── Social & federation ─────────────────────────────────────────────────────
 pub mod syndicate;  // Cross-posting to external platforms
@@ -81,3 +82,4 @@ pub use browser::*;
 pub use mastodon::*;
 pub use relay::*;
 pub use groups::*;
+pub use blog_feed::*;

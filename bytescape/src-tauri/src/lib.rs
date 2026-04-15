@@ -577,6 +577,8 @@ pub fn run() {
             commands::profile::export_profile_data,
             // Link unfurling (C2.1)
             commands::unfurl::unfurl_link,
+            // Blog feed discovery & parsing
+            commands::blog_feed::fetch_blog_feed,
             // Classification commands
             commands::classify::reclassify_vault_items,
             // Export commands

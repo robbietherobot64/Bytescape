@@ -1711,6 +1711,16 @@
     color: #93c5fd;
     text-decoration: underline;
 }
+.profile-blog-publish-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.profile-blog-subscribe {
+    border: 1px dashed rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.02);
+}
 
 /* Theme preset grid */
 .profile-theme-grid {
