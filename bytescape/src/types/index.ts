@@ -743,7 +743,7 @@ export interface ProfileSettings {
     avatar_url?: string;             // URL for profile avatar image
     modules?: ProfileModule[];       // Home page modules (identities, connections, etc.)
     profile_background?: string;     // Overall profile background CSS
-    nickname?: string;               // Display nickname shown above username
+    nickname?: string;               // Display name shown above username
     banner_type?: string;            // "theme" | "color" | "image" | "gradient"
     banner_value?: string;           // CSS color, image URL, or gradient
     banner_text_color?: string;      // Text color for banner overlay

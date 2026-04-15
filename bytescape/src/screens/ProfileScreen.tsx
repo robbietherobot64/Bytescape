@@ -698,6 +698,28 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         if (editMode && editingModuleContent === mod.id) {
             if (mod.type === 'links') return renderLinksEditor(mod);
             if (mod.type === 'gif-collection') return renderGifEditor(mod);
+            if (mod.type === 'playlists') {
+                return (
+                    <textarea
+                        className="profile-module-editor"
+                        value={mod.content || ''}
+                        onChange={(e) => updateModuleContent(mod.id, e.target.value)}
+                        placeholder="Paste Bandcamp, SoundCloud, Spotify, or YouTube URLs or iframe embed codes (one per line)..."
+                        autoFocus
+                    />
+                );
+            }
+            if (mod.type === 'listening-to') {
+                return (
+                    <textarea
+                        className="profile-module-editor"
+                        value={mod.content || ''}
+                        onChange={(e) => updateModuleContent(mod.id, e.target.value)}
+                        placeholder="Paste a Spotify, YouTube, Bandcamp, or SoundCloud link or embed code..."
+                        autoFocus
+                    />
+                );
+            }
             return (
                 <textarea
                     className="profile-module-editor"
@@ -1133,11 +1155,35 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         let gifs: string[] = [];
         try { gifs = JSON.parse(mod.content || '[]'); } catch { gifs = []; }
         if (gifs.length === 0) {
-            return <div className="profile-empty"><div className="profile-empty-icon">🖼️</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add GIFs...' : 'No GIFs yet.'}</p></div>;
+            if (editMode) {
+                return (
+                    <div className="profile-empty">
+                        <div className="profile-empty-icon">🖼️</div>
+                        <p className="profile-empty-text">No GIFs yet.</p>
+                        <button
+                            className="profile-module-edit-btn"
+                            style={{ width: 'auto', padding: '6px 14px', marginTop: 8, fontSize: 12 } as React.CSSProperties}
+                            onClick={() => setEditingModuleContent(mod.id)}
+                        >
+                            <BsPlusLg size={9} /> Add GIFs
+                        </button>
+                    </div>
+                );
+            }
+            return <div className="profile-empty"><div className="profile-empty-icon">🖼️</div><p className="profile-empty-text">No GIFs yet.</p></div>;
         }
         return (
             <div className="profile-gif-grid">
                 {gifs.map((url, i) => <img key={i} src={url} alt="" className="profile-gif-item" loading="lazy" />)}
+                {editMode && (
+                    <button
+                        className="profile-gif-add-tile"
+                        onClick={() => setEditingModuleContent(mod.id)}
+                        title="Add more GIFs"
+                    >
+                        <BsPlusLg size={16} />
+                    </button>
+                )}
             </div>
         );
     }
@@ -1219,17 +1265,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function renderPlaylist(mod: ProfileModule) {
-        if (editMode && editingModuleContent === mod.id) {
-            return (
-                <textarea
-                    className="profile-module-editor"
-                    value={mod.content || ''}
-                    onChange={(e) => updateModuleContent(mod.id, e.target.value)}
-                    placeholder="Paste Bandcamp, SoundCloud, Spotify, or YouTube URLs or iframe embed codes (one per line)..."
-                    autoFocus
-                />
-            );
-        }
         if (!mod.content) {
             return <div className="profile-empty"><div className="profile-empty-icon">🎶</div><p className="profile-empty-text">{editMode ? 'Click ✏️ to add playlist URLs or embeds...' : 'No playlists yet.'}</p></div>;
         }
