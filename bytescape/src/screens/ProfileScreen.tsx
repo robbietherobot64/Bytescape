@@ -13,6 +13,17 @@ import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash
 
 const PAGE_SIZE = 20;
 
+/** Convert file:// URLs to Tauri asset protocol; pass HTTP URLs through unchanged */
+function resolveImageUrl(url: string | undefined): string | undefined {
+    if (!url) return undefined;
+    if (url.startsWith('file://')) {
+        // Strip file:// prefix and pass the path to convertFileSrc
+        const path = url.replace(/^file:\/\//, '');
+        return convertFileSrc(path);
+    }
+    return url;
+}
+
 /* ═══ Profile Theme Presets ═══ */
 const PROFILE_THEME_PRESETS: Record<string, { label: string; bg: string; banner: string; text: string; accent: string }> = {
     default:   { label: 'Default',     bg: '',                                                           banner: 'linear-gradient(135deg, rgba(0,0,128,0.85), rgba(75,0,130,0.65))', text: '#ffcc00', accent: '#7c3aed' },
@@ -682,7 +693,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     } else if (bgType === 'color' && bgValue) {
         containerStyle.background = bgValue;
     } else if (bgType === 'image' && bgValue) {
-        containerStyle.backgroundImage = `url(${bgValue})`;
+        containerStyle.backgroundImage = `url(${resolveImageUrl(bgValue) || bgValue})`;
         containerStyle.backgroundSize = 'cover';
         containerStyle.backgroundPosition = 'center';
     }
@@ -2110,7 +2121,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     if (bannerType === 'color' && bannerValue) {
         bannerStyle.background = bannerValue;
     } else if (bannerType === 'image' && bannerValue) {
-        bannerStyle.backgroundImage = `url(${bannerValue})`;
+        bannerStyle.backgroundImage = `url(${resolveImageUrl(bannerValue) || bannerValue})`;
         bannerStyle.backgroundSize = 'cover';
         bannerStyle.backgroundPosition = 'center';
     } else if (bannerType === 'gradient' && bannerValue) {
@@ -2132,7 +2143,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     title={editMode ? 'Click to change avatar' : undefined}
                 >
                     {profileSettings.avatar_url && !avatarError ? (
-                        <img src={profileSettings.avatar_url} alt="Avatar" onError={() => setAvatarError(true)} />
+                        <img src={resolveImageUrl(profileSettings.avatar_url)} alt="Avatar" onError={() => setAvatarError(true)} />
                     ) : displayName ? (
                         <span>{displayName[0].toUpperCase()}</span>
                     ) : (
