@@ -2,13 +2,14 @@ import "./ProfileScreen.css";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { appDataDir } from '@tauri-apps/api/path';
 import { AuthStatus, BytescapeItem, LinkedAccount, ProfileSettings, ProfileModule, ProfileCustomPage, VaultFile } from '../types';
 import { FeedEntryCard } from '../components/FeedEntryCard';
 import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
 import { openInApp } from '../utils/openInApp';
-import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen, BsArrowLeft, BsArrowRight } from 'react-icons/bs';
+import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen, BsArrowLeft, BsArrowRight, BsUpload, BsImages, BsLink45Deg } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -208,6 +209,12 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
     const [avatarError, setAvatarError] = useState(false);
+
+    /* ─── Vault Picker (for avatar/background) ─── */
+    const [vaultPickerMode, setVaultPickerMode] = useState<'avatar' | 'background' | null>(null);
+    const [vaultPickerFiles, setVaultPickerFiles] = useState<VaultFile[]>([]);
+    const [vaultPickerThumbs, setVaultPickerThumbs] = useState<Record<string, string>>({});
+    const [vaultPickerLoading, setVaultPickerLoading] = useState(false);
 
     /* ─── Dismiss hover card on scroll or click-outside ─── */
     useEffect(() => {
@@ -691,6 +698,114 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const availableModules = ADDABLE_MODULES.filter(
         t => !t.unique || !presentTypes.has(t.type)
     );
+
+    /* ════════════════════ Upload & Vault Picker ════════════════════ */
+
+    const openVaultPicker = useCallback(async (mode: 'avatar' | 'background') => {
+        setVaultPickerMode(mode);
+        setVaultPickerLoading(true);
+        try {
+            const files = await invoke<VaultFile[]>('vault_list_files');
+            const images = files.filter(f => f.kind === 'Image');
+            setVaultPickerFiles(images);
+            // Load thumbnails
+            const thumbs: Record<string, string> = {};
+            await Promise.all(images.slice(0, 60).map(async (f) => {
+                if (!f.thumbnail_hash) return;
+                try {
+                    const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                    if (bytes) {
+                        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                        thumbs[f.id] = URL.createObjectURL(blob);
+                    }
+                } catch { /* skip */ }
+            }));
+            setVaultPickerThumbs(thumbs);
+        } catch (e) {
+            console.error('Failed to load vault images:', e);
+        } finally {
+            setVaultPickerLoading(false);
+        }
+    }, []);
+
+    const pickVaultFile = useCallback(async (file: VaultFile) => {
+        // Get full file data and create a usable URL
+        try {
+            const bytes = await invoke<number[]>('vault_get_file_data', { fileId: file.id });
+            if (!bytes) return;
+            const blob = new Blob([new Uint8Array(bytes)], { type: file.mime_type });
+            const blobUrl = URL.createObjectURL(blob);
+
+            if (vaultPickerMode === 'avatar') {
+                // Save via save_avatar_image for persistent storage
+                const url = await invoke<string>('save_avatar_image', {
+                    imageData: bytes,
+                    mimeType: file.mime_type,
+                });
+                saveSettings({ ...profileSettings, avatar_url: url });
+                setAvatarError(false);
+                setShowAvatarInput(false);
+            } else if (vaultPickerMode === 'background') {
+                // For background, save the bytes as avatar-style persistent file and use that URL
+                const url = await invoke<string>('save_avatar_image', {
+                    imageData: bytes,
+                    mimeType: file.mime_type,
+                });
+                saveSettings({ ...profileSettings, background_type: 'image', background_value: url });
+            }
+            URL.revokeObjectURL(blobUrl);
+        } catch (e) {
+            console.error('Failed to pick vault file:', e);
+        }
+        setVaultPickerMode(null);
+        setVaultPickerFiles([]);
+        // Clean up thumb URLs
+        Object.values(vaultPickerThumbs).forEach(u => URL.revokeObjectURL(u));
+        setVaultPickerThumbs({});
+    }, [vaultPickerMode, profileSettings, saveSettings, vaultPickerThumbs]);
+
+    const uploadImageFromDisk = useCallback(async (target: 'avatar' | 'background') => {
+        try {
+            const selected = await open({
+                multiple: false,
+                title: target === 'avatar' ? 'Choose a profile picture' : 'Choose a background image',
+                filters: [{
+                    name: 'Images',
+                    extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
+                }],
+            });
+            if (!selected) return;
+            const path = Array.isArray(selected) ? selected[0] : selected;
+            if (!path) return;
+
+            // Upload to vault first, then use as avatar/background
+            const uploaded = await invoke<VaultFile[]>('vault_upload_files_from_paths', {
+                paths: [path],
+                tags: [target === 'avatar' ? 'profile-avatar' : 'profile-background'],
+            });
+            if (!uploaded || uploaded.length === 0) return;
+            const file = uploaded[0];
+
+            // Get the file data and save persistently
+            const bytes = await invoke<number[]>('vault_get_file_data', { fileId: file.id });
+            if (!bytes) return;
+
+            const url = await invoke<string>('save_avatar_image', {
+                imageData: bytes,
+                mimeType: file.mime_type,
+            });
+
+            if (target === 'avatar') {
+                saveSettings({ ...profileSettings, avatar_url: url });
+                setAvatarError(false);
+                setShowAvatarInput(false);
+            } else {
+                saveSettings({ ...profileSettings, background_type: 'image', background_value: url });
+            }
+        } catch (e) {
+            console.error('Upload failed:', e);
+        }
+    }, [profileSettings, saveSettings]);
 
     /* ════════════════════ Module Renderers ════════════════════ */
 
@@ -1901,14 +2016,27 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         />
                     )}
                     {bgType === 'image' && (
-                        <input
-                            type="text"
-                            className="profile-customize-input"
-                            placeholder="https://example.com/background.jpg"
-                            value={bgValue}
-                            maxLength={2000}
-                            onChange={(e) => saveSettings({ ...profileSettings, background_type: 'image', background_value: e.target.value })}
-                        />
+                        <div className="profile-bg-image-controls">
+                            <div className="profile-bg-upload-row">
+                                <button className="profile-upload-btn" onClick={() => uploadImageFromDisk('background')}>
+                                    <BsUpload size={11} /> Upload
+                                </button>
+                                <button className="profile-upload-btn" onClick={() => openVaultPicker('background')}>
+                                    <BsImages size={11} /> From Vault
+                                </button>
+                            </div>
+                            <div className="profile-bg-url-row">
+                                <BsLink45Deg size={12} style={{ flexShrink: 0, color: 'rgba(255,255,255,0.4)' } as React.CSSProperties} />
+                                <input
+                                    type="text"
+                                    className="profile-customize-input"
+                                    placeholder="Or paste image URL..."
+                                    value={bgValue}
+                                    maxLength={2000}
+                                    onChange={(e) => saveSettings({ ...profileSettings, background_type: 'image', background_value: e.target.value })}
+                                />
+                            </div>
+                        </div>
                     )}
                     <div className="profile-bg-presets">
                         {BG_PRESETS.map((p) => (
@@ -2076,18 +2204,28 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
                 {showAvatarInput && editMode && (
                     <div className="profile-avatar-popup">
-                        <input
-                            type="text"
-                            placeholder="Avatar image URL..."
-                            value={profileSettings.avatar_url || ''}
-                            maxLength={2000}
-                            onChange={(e) => {
-                                setAvatarError(false);
-                                saveSettings({ ...profileSettings, avatar_url: e.target.value || undefined });
-                            }}
-                            autoFocus
-                        />
-                        <button onClick={() => {
+                        <div className="profile-avatar-popup-actions">
+                            <button className="profile-upload-btn" onClick={() => uploadImageFromDisk('avatar')}>
+                                <BsUpload size={11} /> Upload
+                            </button>
+                            <button className="profile-upload-btn" onClick={() => openVaultPicker('avatar')}>
+                                <BsImages size={11} /> Vault
+                            </button>
+                        </div>
+                        <div className="profile-avatar-popup-url">
+                            <BsLink45Deg size={12} />
+                            <input
+                                type="text"
+                                placeholder="Or paste image URL..."
+                                value={profileSettings.avatar_url || ''}
+                                maxLength={2000}
+                                onChange={(e) => {
+                                    setAvatarError(false);
+                                    saveSettings({ ...profileSettings, avatar_url: e.target.value || undefined });
+                                }}
+                            />
+                        </div>
+                        <button className="profile-avatar-popup-clear" onClick={() => {
                             saveSettings({ ...profileSettings, avatar_url: undefined });
                             setAvatarError(false);
                             setShowAvatarInput(false);
@@ -2246,6 +2384,46 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     <span className="profile-lightbox-info-value">{lightboxFile.tags.join(', ')}</span>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ═══ Vault Image Picker Modal ═══ */}
+            {vaultPickerMode && (
+                <div className="profile-vault-picker-backdrop" onClick={() => { setVaultPickerMode(null); Object.values(vaultPickerThumbs).forEach(u => URL.revokeObjectURL(u)); setVaultPickerThumbs({}); }}>
+                    <div className="profile-vault-picker" onClick={e => e.stopPropagation()}>
+                        <div className="profile-vault-picker-header">
+                            <span>📁 {vaultPickerMode === 'avatar' ? 'Choose Profile Picture' : 'Choose Background Image'} — Vault</span>
+                            <button className="profile-lightbox-close" onClick={() => { setVaultPickerMode(null); Object.values(vaultPickerThumbs).forEach(u => URL.revokeObjectURL(u)); setVaultPickerThumbs({}); }}>✕</button>
+                        </div>
+                        <div className="profile-vault-picker-body">
+                            {vaultPickerLoading && <div className="profile-vault-picker-loading">Loading vault images...</div>}
+                            {!vaultPickerLoading && vaultPickerFiles.length === 0 && (
+                                <div className="profile-vault-picker-empty">
+                                    <p>No images in your vault yet.</p>
+                                    <button className="profile-upload-btn" onClick={() => { setVaultPickerMode(null); uploadImageFromDisk(vaultPickerMode!); }}>
+                                        <BsUpload size={11} /> Upload from computer instead
+                                    </button>
+                                </div>
+                            )}
+                            <div className="profile-vault-picker-grid">
+                                {vaultPickerFiles.map(file => (
+                                    <button
+                                        key={file.id}
+                                        className="profile-vault-picker-item"
+                                        onClick={() => pickVaultFile(file)}
+                                        title={file.name}
+                                    >
+                                        {vaultPickerThumbs[file.id] ? (
+                                            <img src={vaultPickerThumbs[file.id]} alt={file.name} />
+                                        ) : (
+                                            <div className="profile-vault-picker-placeholder">🖼️</div>
+                                        )}
+                                        <span className="profile-vault-picker-name">{file.name}</span>
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </div>
