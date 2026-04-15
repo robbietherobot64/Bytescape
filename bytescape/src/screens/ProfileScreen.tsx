@@ -826,6 +826,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     function renderModuleContent(mod: ProfileModule) {
         if (editMode && editingModuleContent === mod.id) {
+            if (mod.type === 'blogs') return renderBlogs(mod);
             if (mod.type === 'links') return renderLinksEditor(mod);
             if (mod.type === 'gif-collection') return renderGifEditor(mod);
             if (mod.type === 'playlists') {

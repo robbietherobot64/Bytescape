@@ -1220,14 +1220,22 @@ async fn save_posts(
             continue;
         }
 
-        let imported_media = import_item_media_into_vault(
-            sync_manager,
-            &post.image_local_paths,
-            source.as_str(),
-            Some(post.cid.clone()),
-            Some(post.created_at),
-            media_base_dir,
-        ).await;
+        // Skip vault file registration for reposts — media blobs are still
+        // stored for feed display, but VaultFile entries (which populate the
+        // vault gallery) are only created for the user's own posts.
+        let is_repost = post.reposted_by.is_some();
+        let imported_media = if is_repost {
+            Vec::new()
+        } else {
+            import_item_media_into_vault(
+                sync_manager,
+                &post.image_local_paths,
+                source.as_str(),
+                Some(post.cid.clone()),
+                Some(post.created_at),
+                media_base_dir,
+            ).await
+        };
         let media_blobs: Vec<String> = imported_media.iter().map(|(_, h, _)| h.clone()).collect();
         let mut media_mimes: Vec<String> = imported_media.iter().map(|(_, _, m)| m.clone()).collect();
         let mut media_paths = post.image_local_paths.clone();
