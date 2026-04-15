@@ -521,10 +521,14 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         saveModules(modules.filter(m => m.id !== id));
     }, [modules, saveModules]);
 
-    const updateModuleContent = useCallback((id: string, content: string) => {
+    const updateModuleContent = useCallback((id: string, content: string, persist = false) => {
         const updated = modules.map(m => m.id === id ? { ...m, content } : m);
-        setModules(updated);
-    }, [modules]);
+        if (persist) {
+            saveModules(updated);
+        } else {
+            setModules(updated);
+        }
+    }, [modules, saveModules]);
 
     const updateModuleTitle = useCallback((id: string, title: string) => {
         const updated = modules.map(m => m.id === id ? { ...m, title } : m);
@@ -1475,7 +1479,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                 external_url: blogUrl.trim() || undefined,
                             };
                             const updated = [newEntry, ...entries];
-                            updateModuleContent(mod.id, JSON.stringify(updated));
+                            updateModuleContent(mod.id, JSON.stringify(updated), true);
                             setBlogTitle('');
                             setBlogBody('');
                             setBlogUrl('');
@@ -1517,7 +1521,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <div className="profile-blog-editor-actions">
                             <button className="profile-blog-publish-btn" onClick={() => {
                                 const updated = entries.map(e => e.id === editingBlogId ? { ...e, title: blogTitle.trim(), body: blogBody.trim(), external_url: blogUrl.trim() || undefined } : e);
-                                updateModuleContent(mod.id, JSON.stringify(updated));
+                                updateModuleContent(mod.id, JSON.stringify(updated), true);
                                 setBlogTitle('');
                                 setBlogBody('');
                                 setBlogUrl('');
@@ -1568,7 +1572,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                             <button onClick={() => { setBlogTitle(entry.title); setBlogBody(entry.body); setBlogUrl(entry.external_url || ''); setEditingBlogId(entry.id); }}>✏️ Edit</button>
                                             <button className="profile-module-edit-btn--danger" onClick={() => {
                                                 const updated = entries.filter(e => e.id !== entry.id);
-                                                updateModuleContent(mod.id, JSON.stringify(updated));
+                                                updateModuleContent(mod.id, JSON.stringify(updated), true);
                                             }}>🗑 Delete</button>
                                         </div>
                                     )}
@@ -1824,7 +1828,13 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         // Fetch linked post URL if item_id exists
         if (file.item_id) {
             invoke<BytescapeItem | null>('vault_get_item', { itemId: file.item_id })
-                .then(item => { if (item?.url) setLightboxPostUrl(item.url); })
+                .then(item => {
+                    if (item?.url) {
+                        // Convert AT Protocol URIs to web URLs
+                        const atMatch = item.url.match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/(.+)$/);
+                        setLightboxPostUrl(atMatch ? `https://bsky.app/profile/${atMatch[1]}/post/${atMatch[2]}` : item.url);
+                    }
+                })
                 .catch(() => { /* no linked post */ });
         }
     }
