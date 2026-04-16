@@ -294,33 +294,56 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }, []);
 
     // Auto-refresh blog feeds on profile load (max once per hour)
+    // Uses a ref flag to run only once after initial load, avoiding stale closure issues
+    const feedRefreshRan = useRef(false);
     useEffect(() => {
-        if (modules.length === 0) return;
+        if (modules.length === 0 || feedRefreshRan.current) return;
+        feedRefreshRan.current = true;
         const allMods = [...modules];
         customPages.forEach(p => allMods.push(...p.modules));
         for (const mod of allMods) {
             if (mod.type !== 'blogs') continue;
             try {
                 const parsed = JSON.parse(mod.content || '{}');
-                const data = Array.isArray(parsed) ? null : parsed;
-                if (!data?.feed?.feed_url) continue;
-                const lastFetched = data.feed.last_fetched || 0;
+                const blogData = Array.isArray(parsed) ? null : parsed;
+                if (!blogData?.feed?.feed_url) continue;
+                const lastFetched = blogData.feed.last_fetched || 0;
                 const hourAgo = Math.floor(Date.now() / 1000) - 3600;
                 if (lastFetched > hourAgo) continue;
-                // Refresh in background
-                invoke<BlogFeedResult>('fetch_blog_feed', { url: data.feed.feed_url })
+                const modId = mod.id;
+                invoke<BlogFeedResult>('fetch_blog_feed', { url: blogData.feed.feed_url })
                     .then(result => {
-                        const existingUrls = new Set((data.entries || []).filter((e: BlogEntry) => e.external_url).map((e: BlogEntry) => e.external_url));
+                        const existingUrls = new Set((blogData.entries || []).filter((e: BlogEntry) => e.external_url).map((e: BlogEntry) => e.external_url));
                         const newEntries: BlogEntry[] = result.entries
                             .filter(fe => !fe.external_url || !existingUrls.has(fe.external_url))
                             .map(fe => ({
                                 id: fe.id, title: fe.title, body: fe.body, timestamp: fe.timestamp,
                                 external_url: fe.external_url || undefined, author: fe.author || undefined, from_feed: true,
                             }));
-                        const merged = [...newEntries, ...(data.entries || [])].sort((a: BlogEntry, b: BlogEntry) => b.timestamp - a.timestamp);
-                        const newData = { entries: merged, feed: { ...data.feed, last_fetched: Math.floor(Date.now() / 1000) } };
-                        blogSaveDirect(mod.id, JSON.stringify(newData));
-                        if (newEntries.length > 0) console.log('[blog] auto-refresh: added', newEntries.length, 'new entries');
+                        if (newEntries.length === 0) {
+                            console.log('[blog] auto-refresh: no new entries');
+                            return;
+                        }
+                        const merged = [...newEntries, ...(blogData.entries || [])].sort((a: BlogEntry, b: BlogEntry) => b.timestamp - a.timestamp);
+                        const newBlogContent = JSON.stringify({ entries: merged, feed: { ...blogData.feed, last_fetched: Math.floor(Date.now() / 1000) } });
+                        // Directly read fresh settings from backend to avoid stale closure
+                        invoke<string | null>('get_profile_settings').then(raw => {
+                            if (!raw) return;
+                            try {
+                                const fresh = JSON.parse(raw);
+                                const updatedModules = (fresh.modules || []).map((m: ProfileModule) => m.id === modId ? { ...m, content: newBlogContent } : m);
+                                const updatedPages = (fresh.custom_pages || []).map((p: ProfileCustomPage) => ({
+                                    ...p,
+                                    modules: p.modules.map((m: ProfileModule) => m.id === modId ? { ...m, content: newBlogContent } : m)
+                                }));
+                                const updated = { ...fresh, modules: updatedModules, custom_pages: updatedPages };
+                                invoke('save_profile_settings', { settingsJson: JSON.stringify(updated) });
+                                setModules(updatedModules);
+                                setCustomPages(updatedPages);
+                                setProfileSettings(updated);
+                                console.log('[blog] auto-refresh: added', newEntries.length, 'new entries (fresh save)');
+                            } catch { /* ignore */ }
+                        });
                     })
                     .catch(err => console.warn('[blog] auto-refresh failed:', err));
             } catch { /* not a blog module with feed */ }
@@ -1505,31 +1528,47 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function blogSaveDirect(modId: string, newContent: string) {
-        // Check main modules first, then custom pages — bypass saveModules stale closure
-        const foundInMain = modules.some(m => m.id === modId);
-        if (foundInMain) {
-            const newModules = modules.map(m => m.id === modId ? { ...m, content: newContent } : m);
-            setModules(newModules);
-            const freshSettings = { ...profileSettings, modules: newModules, custom_pages: customPages };
-            setProfileSettings(freshSettings);
-            invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) })
-                .then(() => console.log('[blog] persisted to backend OK'))
-                .catch(err => console.error('[blog] backend save failed:', err));
-            console.log('[blog] saved to main modules for', modId, '\u2192', newContent.length, 'chars');
-        } else {
-            // Module is on a custom page
-            const newPages = customPages.map(p => ({
+        // Read fresh settings from backend to avoid stale closure issues,
+        // then update the module content and save back
+        invoke<string | null>('get_profile_settings').then(raw => {
+            const base = raw ? JSON.parse(raw) : {};
+            const updatedModules = (base.modules || modules).map((m: ProfileModule) =>
+                m.id === modId ? { ...m, content: newContent } : m
+            );
+            const updatedPages = (base.custom_pages || customPages).map((p: ProfileCustomPage) => ({
                 ...p,
-                modules: p.modules.map(m => m.id === modId ? { ...m, content: newContent } : m)
+                modules: p.modules.map((m: ProfileModule) =>
+                    m.id === modId ? { ...m, content: newContent } : m
+                )
             }));
-            setCustomPages(newPages);
-            const freshSettings = { ...profileSettings, modules, custom_pages: newPages };
-            setProfileSettings(freshSettings);
-            invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) })
-                .then(() => console.log('[blog] persisted to backend OK (custom page)'))
+            const updated = { ...base, modules: updatedModules, custom_pages: updatedPages };
+            setModules(updatedModules);
+            setCustomPages(updatedPages);
+            setProfileSettings(updated);
+            invoke('save_profile_settings', { settingsJson: JSON.stringify(updated) })
+                .then(() => console.log('[blog] persisted to backend OK for', modId))
                 .catch(err => console.error('[blog] backend save failed:', err));
-            console.log('[blog] saved to custom page modules for', modId, '\u2192', newContent.length, 'chars');
-        }
+        }).catch(err => {
+            console.error('[blog] failed to read settings for save:', err);
+            // Fallback: save with current React state
+            const foundInMain = modules.some(m => m.id === modId);
+            if (foundInMain) {
+                const newModules = modules.map(m => m.id === modId ? { ...m, content: newContent } : m);
+                setModules(newModules);
+                const freshSettings = { ...profileSettings, modules: newModules, custom_pages: customPages };
+                setProfileSettings(freshSettings);
+                invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) });
+            } else {
+                const newPages = customPages.map(p => ({
+                    ...p,
+                    modules: p.modules.map(m => m.id === modId ? { ...m, content: newContent } : m)
+                }));
+                setCustomPages(newPages);
+                const freshSettings = { ...profileSettings, modules, custom_pages: newPages };
+                setProfileSettings(freshSettings);
+                invoke('save_profile_settings', { settingsJson: JSON.stringify(freshSettings) });
+            }
+        });
     }
 
     function renderBlogs(mod: ProfileModule) {
@@ -1824,6 +1863,15 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                         <button className="profile-blog-new-btn" onClick={() => { setBlogTitle(''); setBlogBody(''); setBlogUrl(''); setEditingBlogId('new'); }}>
                             <BsPlusLg size={10} /> New Post
                         </button>
+                        {entries.length > 0 && (
+                            <button
+                                className="profile-blog-cancel-btn"
+                                onClick={() => { saveBlogData({ entries: [] }); setBlogFeedError(''); }}
+                                style={{ fontSize: 11 } as React.CSSProperties}
+                            >
+                                {'\uD83D\uDDD1'} Clear All Posts
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -1857,7 +1905,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                         <a
                                             href="#"
                                             className="profile-blog-external-link"
-                                            onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!); }}
+                                            onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!, entry.title); }}
                                         >
                                             {'\uD83D\uDD17'} Read full post
                                         </a>
