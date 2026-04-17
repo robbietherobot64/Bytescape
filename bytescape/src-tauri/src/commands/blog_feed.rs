@@ -16,7 +16,11 @@ use crate::AppState;
 pub struct FeedBlogEntry {
     pub id: String,
     pub title: String,
+    /// Plain-text body (HTML stripped) — for summary/fallback display.
     pub body: String,
+    /// Sanitized HTML body — for iframe-based rich preview rendering.
+    /// Capped at 500KB. `<script>`, `<style>`, and event handlers are removed.
+    pub body_html: Option<String>,
     pub timestamp: i64,
     pub external_url: Option<String>,
     pub author: Option<String>,
@@ -169,6 +173,19 @@ fn parse_feed_xml(bytes: &[u8], feed_url: &str) -> Result<BlogFeedResult, String
                 .unwrap_or_default();
 
             let body_text = strip_html_tags(&body);
+            let body_html = if body.contains('<') {
+                let sanitized = sanitize_html(&body);
+                // Cap at 500KB to prevent memory bloat from pathological feeds
+                if sanitized.len() > 512_000 {
+                    Some(sanitized[..512_000].to_string())
+                } else if sanitized.trim().is_empty() {
+                    None
+                } else {
+                    Some(sanitized)
+                }
+            } else {
+                None
+            };
 
             let timestamp = entry
                 .published
@@ -198,6 +215,7 @@ fn parse_feed_xml(bytes: &[u8], feed_url: &str) -> Result<BlogFeedResult, String
                 id,
                 title,
                 body: body_text,
+                body_html,
                 timestamp,
                 external_url,
                 author,
@@ -249,6 +267,103 @@ fn resolve_url(base: &str, relative: &str) -> String {
         }
     }
     relative.to_string()
+}
+
+/// Sanitize HTML for safe iframe rendering.
+///
+/// Removes `<script>`, `<style>`, `<link>`, `<meta>`, `<iframe>`, `<object>`,
+/// `<embed>`, `<form>`, and `<base>` elements entirely.  Strips event-handler
+/// attributes (`on*`) and `javascript:` hrefs from remaining elements.
+fn sanitize_html(html: &str) -> String {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_fragment(html);
+
+    // Elements to remove entirely (including their content)
+    let dangerous_tags = ["script", "style", "link", "meta", "iframe",
+                          "object", "embed", "form", "base", "applet"];
+
+    // Build a set of node ids to remove
+    let mut remove_ids = std::collections::HashSet::new();
+    for tag in &dangerous_tags {
+        if let Ok(sel) = Selector::parse(tag) {
+            for el in doc.select(&sel) {
+                remove_ids.insert(el.id());
+            }
+        }
+    }
+
+    // Rebuild the HTML, filtering out dangerous elements and attributes
+    let mut output = String::with_capacity(html.len());
+
+    for node in doc.tree.nodes() {
+        let node_id = node.id();
+
+        // Skip nodes that are children of removed elements
+        let mut ancestor = node.parent();
+        let mut skip = false;
+        while let Some(anc) = ancestor {
+            if remove_ids.contains(&anc.id()) {
+                skip = true;
+                break;
+            }
+            ancestor = anc.parent();
+        }
+        if skip {
+            continue;
+        }
+
+        match node.value() {
+            scraper::Node::Element(el) => {
+                let tag = el.name();
+                if remove_ids.contains(&node_id) {
+                    continue;
+                }
+
+                output.push('<');
+                output.push_str(tag);
+
+                for (name, value) in el.attrs() {
+                    let name_lower = name.to_lowercase();
+                    // Skip event handler attributes
+                    if name_lower.starts_with("on") {
+                        continue;
+                    }
+                    // Skip javascript: protocol in href/src/action
+                    if (name_lower == "href" || name_lower == "src" || name_lower == "action")
+                        && value.trim_start().to_lowercase().starts_with("javascript:")
+                    {
+                        continue;
+                    }
+                    // Skip data: URIs in src (potential XSS vector)
+                    if name_lower == "src" && value.trim_start().to_lowercase().starts_with("data:text/html") {
+                        continue;
+                    }
+                    output.push(' ');
+                    output.push_str(name);
+                    output.push_str("=\"");
+                    // Escape HTML entities in attribute values
+                    for ch in value.chars() {
+                        match ch {
+                            '"' => output.push_str("&quot;"),
+                            '&' => output.push_str("&amp;"),
+                            '<' => output.push_str("&lt;"),
+                            '>' => output.push_str("&gt;"),
+                            _ => output.push(ch),
+                        }
+                    }
+                    output.push('"');
+                }
+                output.push('>');
+            }
+            scraper::Node::Text(text) => {
+                output.push_str(&text.text);
+            }
+            _ => {}
+        }
+    }
+
+    output
 }
 
 /// Strip HTML tags to produce plain text, preserving paragraph breaks.

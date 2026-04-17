@@ -408,6 +408,74 @@ impl SyncManager {
         Ok(())
     }
 
+    /// Register an already-stored blob as a VaultFile in the vault doc.
+    ///
+    /// Used by the import pipeline when media was imported as an Iroh blob
+    /// (blob:{hash} path) but no VaultFile metadata entry was created. This
+    /// ensures the media appears in the vault gallery alongside manually
+    /// uploaded files.
+    ///
+    /// If a VaultFile with the same blob_hash already exists, returns it
+    /// without creating a duplicate.
+    pub async fn register_existing_blob_as_vault_file(
+        &self,
+        blob_hash: Hash,
+        name: String,
+        mime_type: String,
+        source: String,
+        item_id: Option<String>,
+        created_at: Option<i64>,
+    ) -> Result<VaultFile, String> {
+        let hash_str = blob_hash.to_string();
+        let kind = VaultFileKind::from_mime(&mime_type);
+
+        // Avoid duplicate metadata entries for the same blob.
+        if let Some(existing) = self.vault_list_files().await?
+            .into_iter()
+            .find(|f| f.blob_hash == hash_str)
+        {
+            return Ok(existing);
+        }
+
+        // Try to get blob size; fall back to 0 if the blob reader doesn't
+        // support size queries or the blob is incomplete.
+        let size = {
+            use tokio::io::AsyncReadExt;
+            // Read a tiny probe just to confirm the blob exists; actual size
+            // is metadata we may not have.  0 is acceptable for gallery display.
+            let mut reader = self.blobs.reader(blob_hash);
+            let mut probe = [0u8; 1];
+            match reader.read(&mut probe).await {
+                Ok(_) => 0u64, // blob exists, size unknown
+                Err(_) => return Err(format!("Blob {} not found in store", hash_str)),
+            }
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let file = VaultFile {
+            id: Uuid::new_v4().to_string(),
+            name,
+            mime_type,
+            kind,
+            size,
+            blob_hash: hash_str.clone(),
+            thumbnail_hash: None,
+            source,
+            item_id,
+            added_at: now,
+            created_at,
+            tags: vec![],
+        };
+
+        self.upsert_vault_file_metadata(&file).await?;
+        println!("Vault: Registered existing blob as vault file '{}' (blob: {})", file.name, hash_str);
+        Ok(file)
+    }
+
     /// Add a file to the vault. Stores bytes in blobs, metadata in the vault doc.
     /// Returns the VaultFile metadata.
     pub async fn vault_add_file(

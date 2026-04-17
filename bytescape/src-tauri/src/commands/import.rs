@@ -1401,10 +1401,24 @@ async fn import_item_media_into_vault(
                 }
             };
 
-            // The blob is already in Iroh — just record its hash and MIME.
-            // No need to re-fetch the full blob or re-add it to the vault.
+            // The blob is already in Iroh — record its hash and MIME, and
+            // register a VaultFile entry so it appears in the vault gallery.
             let hash_str = format!("blob:{}", hash);
             imported_blobs.push((idx, hash_str, mime_type.clone()));
+
+            // Register the blob as a VaultFile so it shows in the media gallery.
+            let file_name = format!("{}-{}", source, idx);
+            if let Err(e) = sync.register_existing_blob_as_vault_file(
+                hash,
+                file_name,
+                mime_type.clone(),
+                source.to_string(),
+                item_id.clone(),
+                created_at,
+            ).await {
+                println!("import_item_media_into_vault: Failed to register vault file for {}: {}", hash, e);
+            }
+
             println!("import_item_media_into_vault: blob {} → {} (header-only detection)", &hash.to_string()[..8.min(hash.to_string().len())], mime_type);
             continue;
         }

@@ -262,7 +262,9 @@ pub async fn vault_delete_file(file_id: String, state: State<'_, AppState>) -> s
 /// tombstoned so they no longer appear in the vault gallery. The underlying
 /// blob data remains in the Iroh store for feed display.
 ///
-/// → IPC: `vault_cleanup_repost_media` (frontend — called once after import)
+/// Should be called once after a new import completes, NOT on every gallery load.
+///
+/// → IPC: `vault_cleanup_repost_media`
 #[tauri::command]
 pub async fn vault_cleanup_repost_media(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let sync_guard = state.sync_manager.lock().await;
@@ -276,16 +278,43 @@ pub async fn vault_cleanup_repost_media(state: State<'_, AppState>) -> std::resu
     let files = sync.vault_list_files().await
         .map_err(|e| e.to_string())?;
 
+    // Collect all unique item_ids to batch-lookup instead of N+1 queries
+    let item_ids: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.item_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Build a set of item IDs that are genuine reposts
+    let mut repost_item_ids = std::collections::HashSet::new();
+    for item_id in &item_ids {
+        if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
+            if item.reposted_by_did.is_some() {
+                repost_item_ids.insert(item_id.clone());
+            }
+        }
+    }
+
+    println!(
+        "vault_cleanup_repost_media: scanned {} vault files, {} unique item_ids, {} are reposts",
+        files.len(),
+        item_ids.len(),
+        repost_item_ids.len(),
+    );
+
     let mut removed = 0usize;
     for file in &files {
         if let Some(ref item_id) = file.item_id {
-            if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
-                if item.reposted_by_did.is_some() {
-                    if let Err(e) = sync.vault_delete_file(&file.id).await {
-                        eprintln!("vault_cleanup_repost_media: failed to delete {}: {}", file.id, e);
-                    } else {
-                        removed += 1;
-                    }
+            if repost_item_ids.contains(item_id) {
+                println!(
+                    "vault_cleanup_repost_media: tombstoning file id={} name='{}' source='{}' item_id={}",
+                    file.id, file.name, file.source, item_id,
+                );
+                if let Err(e) = sync.vault_delete_file(&file.id).await {
+                    eprintln!("vault_cleanup_repost_media: failed to delete {}: {}", file.id, e);
+                } else {
+                    removed += 1;
                 }
             }
         }
