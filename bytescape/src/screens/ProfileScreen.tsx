@@ -10,6 +10,7 @@ import { adaptBytescapeItem } from '../utils/adapters';
 import { platformEmoji, platformAbbrev } from '../utils/platform';
 import { openInApp } from '../utils/openInApp';
 import { BlogModule } from '../components/profile/BlogModule';
+import { MediaGallery } from '../components/profile/MediaGallery';
 import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen, BsArrowLeft, BsArrowRight, BsUpload, BsImages, BsLink45Deg } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
@@ -1823,37 +1824,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }
 
     function renderMedia() {
-        return (
-            <div>
-                <div className="profile-section-header">
-                    <span className="profile-section-header-emoji">🖼️</span> Media
-                </div>
-
-                {mediaLoading && <div className="profile-empty"><div className="profile-empty-icon">⏳</div><p className="profile-empty-text">Loading media...</p></div>}
-
-                {!mediaLoading && mediaFiles.length === 0 && (
-                    <div className="profile-empty"><div className="profile-empty-icon">🖼️</div><p className="profile-empty-text">No media files yet.</p></div>
-                )}
-
-                <div className="profile-media-grid">
-                    {mediaFiles.map(file => (
-                        <div key={file.id} className="profile-media-item" onClick={() => openLightbox(file)}>
-                            {mediaThumbs[file.id] ? (
-                                <img
-                                    src={mediaThumbs[file.id]}
-                                    alt={file.name}
-                                    loading="lazy"
-                                />
-                            ) : (
-                                <div className="profile-media-placeholder">
-                                    {file.kind === 'Video' ? '🎬' : '🖼️'}
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
+        return <MediaGallery mediaFiles={mediaFiles} mediaThumbs={mediaThumbs} mediaLoading={mediaLoading} onOpenLightbox={openLightbox} />;
     }
 
     function renderCustomPage(pageId: string) {
