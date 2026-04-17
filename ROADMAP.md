@@ -539,6 +539,52 @@ pnpm build:portal     → WasmProvider injected, outputs visitor portal
 
 ---
 
+## Phase 4.6: Fediverse Standards Readiness 🧭🌐 (NEW)
+**Goal:** Convert emerging fediverse interoperability standards into a shippable, testable Bytescape program with explicit gates: moderation exchange, portability/discovery exchange, federation trust hardening, and remote-media/feed reliability.
+
+**Duration:** 6-10 weeks (parallelized across Track A, Track B, and Infrastructure)
+
+> **Planning source of truth:** `.github/docs/fediverse-standards-readiness-brief.md`.
+>
+> **Execution rule:** run through existing active sprint cadence; no new sprint prompt generation required for this planning phase.
+
+### Workstreams
+
+#### F1. Trust and Verification Foundation (Track A)
+- [ ] **F1.1 AP Digest Enforcement**: Enforce digest verification for inbound AP payloads and quarantine failed verification attempts.
+- [ ] **F1.2 Signature Agility Hardening**: Prepare signature verification pipeline for newer profile compatibility while preserving current interoperability.
+- [ ] **F1.3 Federation Ingest Guardrails**: Complete timeout and private-network blocking coverage on all externally fetched actor/key/resource paths.
+
+#### F2. Moderation Exchange Adapter (Track A + B)
+- [ ] **F2.1 Moderation Event Normalization**: Internal schema for imported/exported moderation advisories with source provenance.
+- [ ] **F2.2 FIRES-Style Transport Adapter**: Standards adapter for ingest/export with signature checks and replay-safe processing.
+- [ ] **F2.3 Operator Provenance UX**: UI for policy recommendation source, confidence, and local action controls.
+
+#### F3. Portability and Discovery Adapter (Track A)
+- [ ] **F3.1 Capability Negotiation**: Discovery flow for peer feature support (announce, callback, backfill, subscriptions).
+- [ ] **F3.2 Announce + Callback State Machine**: Resumable workflow with idempotent checkpoints and audit trail.
+- [ ] **F3.3 Backfill Import Orchestration**: Deterministic retry behavior and duplicate-prevention for interrupted transfers.
+
+#### F4. Media and Feed Reliability Closure (Track A + B)
+- [ ] **F4.1 Remote Media Reference-First Path**: Persist remote media metadata first; lazy fetch + local cache for render reliability.
+- [ ] **F4.2 RSS Ingestion Completion**: Replace frontend placeholder RSS path with production ingest and unified feed integration.
+- [ ] **F4.3 Partial Availability UX**: User-visible states for staged import, backfill progress, and retry handling.
+
+#### F5. Conformance, Pilot, and Rollout Controls (Track I + PM)
+- [ ] **F5.1 Standards Fixture Harness**: Canonical payload corpus for moderation, portability, signatures, and adversarial cases.
+- [ ] **F5.2 Feature-Flagged Pilot**: Controlled rollout path with kill-switch and rollback safety.
+- [ ] **F5.3 Operations Runbook Update**: Incident handling, replay diagnosis, and conformance scorecard maintained by PM.
+
+### Program Gates (Go/No-Go)
+- [ ] **Gate S0**: Contracts + fixtures approved; ownership and interfaces frozen.
+- [ ] **Gate S1**: Trust pipeline passes security corpus; no AP interoperability regression.
+- [ ] **Gate S2**: Moderation exchange passes bidirectional fixture tests with provenance.
+- [ ] **Gate S3**: Portability transfer dry-run completes with deterministic resume.
+- [ ] **Gate S4**: Remote media + RSS quality targets met on pilot dataset.
+- [ ] **Gate S5**: Pilot sign-off and rollback drills complete.
+
+---
+
 ## Phase 5: Scale, Mobile & Web Portal 📱🌐 (MODIFIED)
 **Goal:** Mobile native clients, account migration wizards, web portal, self-host packaging. Station Protocol for P2P mesh relay.
 

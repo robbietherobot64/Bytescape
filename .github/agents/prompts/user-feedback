@@ -5,16 +5,9 @@ Feedback:
 **Outstanding issues**
 
 Critical priorities:
-- Media section now populates with thumb nails, and allows viewing full sized images in a nice gallery browser view.  Great!  Further modification request: Please include an information box at the bottom of the media with a link to the post that the media was uploaded in, date of upload, etc.  We want to know where this media was added, what platform, and the context overall.
-- Mastodon posts are now showing up on user post page, but images on mastodon posts are not showing up at all on the post page.
-- Customization options are much improved, but misaligned text and overlapping onto toggle boxes seems to be a perennial problem.  Please ensure all pop up windows toggle boxes have their text properly aligned to not overlap with each other. **STILL AN ISSUE AND VERY ANNOYING**  
-- We need a left/right direction arrow on the two column page layout, so we can swap modules left and right as needed.  Also, the boxes should be able to stack under each other as needed to fully fill the space.  I.e., if a box on the left is smaller than the box on the right, the box on the left should be able to have smaller boxes stacked underneath to fill the extra space the box on the right takes up.  As it is now, it seems the bottom of the largest box is what determines when the line for the next two boxes starts, as opposed to allowing boxes to flow into open vertical space as it becomes available.  More simply put, make each column independent from the otehr column, and filling the space efficiently.
+- Media section and vault now failt to show media uploaded from social media archives like facebook/instagram, or from linked accounts like bluesky/mastodon.  The only images showing in the vault/media section are uploaded media.
  
 Lower priority: 
 
 
-- "Listening to" and "Playlists" embedding worked for a hot minute, but then pasting stopped working entirely, so I can't test it out.  Maybe there is some issue with the latest build in that regard, but I'm not sure.  I was able to paste into pop up windows text boxes. 
-- Gif module does nothing when you click "add gifs".  It should pull from a library of gifs that we will build by default as a repository of old web style gifs users can use, but users can upload their own as well, and that will be the initial design, a linked or uploaded custom gif text box.  
-- Blogs should actually allow linking of wordpress, ghost, or some other blogging software.  Gotta strategize on this one.
-- Imported posts from facebook/instagram say "you" as the poster.  They can say that when in the user's view, but when in preview view, it should say the users' bytescape username or nickname if they have one.  
-- Nickname should be changed to display name.  
+- Blogs link to external blog sites like wordpress, but they only show the URL and "read full post" with the message "No content preview available.".  We need more seamless blog post integration, like an iframes type dealio to have each post as its own window that users can view the post in.  Something like that.

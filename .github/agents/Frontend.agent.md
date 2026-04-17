@@ -53,20 +53,6 @@ Read [../instructions/agent-guardrails.instructions.md](../instructions/agent-gu
 Read your full kickoff prompt: [prompts/frontend-b10-b11-sprint.md](prompts/frontend-b10-b11-sprint.md)
 Read the user's latest feedback: [prompts/user-feedback](prompts/user-feedback)
 
-**Priority 1** — Fix Article Reader (classify_feed_entry must be restored)
-**Priority 2** — Post height / aspect ratio
-**Priority 3** — Profile click navigation
-**Priority 4** — Following tab My Contacts cleanup
-**Priority 5** — Subscribed tab distinct purpose
-**Priority 6** — Screen space utilization (keep 960px limit!)
-**Priority 7** — Customize pencil button + drag/drop edit mode
-**Priority 8** — Profile layout tabs + bio sections
-**Priority 9** — Import screen 3-terminal redesign
-**Priority 10** — Social module first pass
-**Priority 11** — Connected accounts green plus button
-**Priority 12** — P2P Connections cleanup
-**Priority 13** — Hacker theme
-
 ## Prime Directive
 
 Follow the [memory instructions](../instructions/memory.instructions.md) at all times. You are DONE only when:
