@@ -220,6 +220,8 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [blogFeedLoading, setBlogFeedLoading] = useState(false);
     const [blogFeedError, setBlogFeedError] = useState('');
     const [blogSubscribeUrl, setBlogSubscribeUrl] = useState('');
+    const [blogIframeView, setBlogIframeView] = useState<Record<string, boolean>>({});
+    const [blogIframeLoaded, setBlogIframeLoaded] = useState<Record<string, 'loading' | 'loaded' | 'error'>>({});
 
     /* ─── Wall (Guestbook) ─── */
     const [wallEntries, setWallEntries] = useState<GuestbookEntry[]>([]);
@@ -1896,10 +1898,65 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                             </div>
                             {expandedBlogId === entry.id && (
                                 <div className="profile-blog-entry-body">
-                                    {entry.body ? entry.body.split('\n').map((line, i) => <p key={i}>{line || '\u00A0'}</p>) : (
-                                        <p style={{ color: 'var(--text-muted)', fontStyle: 'italic' } as React.CSSProperties}>No content preview available.</p>
-                                    )}
+                                    {/* View mode toggle for entries with external URLs */}
                                     {entry.external_url && (
+                                        <div className="profile-blog-view-toggle">
+                                            <button
+                                                className={`profile-blog-view-btn${!blogIframeView[entry.id] ? ' active' : ''}`}
+                                                onClick={() => setBlogIframeView(prev => ({ ...prev, [entry.id]: false }))}
+                                            >
+                                                {'\uD83D\uDCDD'} Text
+                                            </button>
+                                            <button
+                                                className={`profile-blog-view-btn${blogIframeView[entry.id] ? ' active' : ''}`}
+                                                onClick={() => {
+                                                    setBlogIframeView(prev => ({ ...prev, [entry.id]: true }));
+                                                    setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'loading' }));
+                                                }}
+                                            >
+                                                {'\uD83C\uDF10'} View Inline
+                                            </button>
+                                            <a
+                                                href="#"
+                                                className="profile-blog-external-link"
+                                                onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!, entry.title); }}
+                                                style={{ marginLeft: 'auto' } as React.CSSProperties}
+                                            >
+                                                {'\uD83D\uDD17'} Open in browser
+                                            </a>
+                                        </div>
+                                    )}
+                                    {/* Iframe embed view */}
+                                    {entry.external_url && blogIframeView[entry.id] ? (
+                                        <div className="profile-blog-iframe-container">
+                                            {blogIframeLoaded[entry.id] === 'loading' && (
+                                                <div className="profile-blog-iframe-loading">Loading post...</div>
+                                            )}
+                                            {blogIframeLoaded[entry.id] === 'error' && (
+                                                <div className="profile-blog-iframe-error">
+                                                    <p>This site doesn't allow embedded viewing.</p>
+                                                    {entry.body ? entry.body.split('\n').map((line, i) => <p key={i}>{line || '\u00A0'}</p>) : null}
+                                                </div>
+                                            )}
+                                            <iframe
+                                                src={entry.external_url}
+                                                className="profile-blog-iframe"
+                                                sandbox="allow-scripts allow-same-origin allow-popups"
+                                                referrerPolicy="no-referrer"
+                                                style={{ display: blogIframeLoaded[entry.id] === 'error' ? 'none' : 'block' } as React.CSSProperties}
+                                                onLoad={() => setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'loaded' }))}
+                                                onError={() => setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'error' }))}
+                                                title={entry.title}
+                                            />
+                                        </div>
+                                    ) : (
+                                        /* Text preview fallback */
+                                        entry.body ? entry.body.split('\n').map((line, i) => <p key={i}>{line || '\u00A0'}</p>) : (
+                                            !entry.external_url ? <p style={{ color: 'var(--text-muted)', fontStyle: 'italic' } as React.CSSProperties}>No content preview available.</p> : null
+                                        )
+                                    )}
+                                    {/* Read full post link only shown in text mode for entries without the toggle */}
+                                    {entry.external_url && !blogIframeView[entry.id] && !entry.body && (
                                         <a
                                             href="#"
                                             className="profile-blog-external-link"
