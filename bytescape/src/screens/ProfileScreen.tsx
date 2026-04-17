@@ -11,7 +11,8 @@ import { openInApp } from '../utils/openInApp';
 import { BlogModule } from '../components/profile/BlogModule';
 import { MediaGallery } from '../components/profile/MediaGallery';
 import { ConnectionsModule } from '../components/profile/ConnectionsModule';
-import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsChevronUp, BsChevronDown, BsArrowsFullscreen, BsArrowLeft, BsArrowRight, BsUpload, BsImages, BsLink45Deg } from 'react-icons/bs';
+import { ModuleCard } from '../components/profile/ModuleCard';
+import { BsPersonFill, BsPencilFill, BsCheckLg, BsPaletteFill, BsPlusLg, BsTrash, BsUpload, BsImages, BsLink45Deg } from 'react-icons/bs';
 
 const PAGE_SIZE = 20;
 
@@ -1303,115 +1304,31 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         const rightModules = visibleModules.filter(m => m.width === 'half' && (m.column ?? 0) === 1);
 
         function renderModuleCard(mod: ProfileModule) {
-            // Group-scoped index for up/down disable state
             const group = mod.width === 'full'
                 ? fullWidthModules
                 : (mod.column ?? 0) === 0 ? leftModules : rightModules;
-            const groupIdx = group.indexOf(mod);
-            const modStyle: React.CSSProperties = {};
-            if (mod.background) { modStyle.background = mod.background; modStyle.backgroundSize = 'cover'; modStyle.backgroundPosition = 'center'; }
-            if (mod.font_color) modStyle.color = mod.font_color;
-            if (mod.font_size) modStyle.fontSize = mod.font_size;
-            if (mod.font_family) modStyle.fontFamily = mod.font_family;
-
             return (
-                <div
+                <ModuleCard
                     key={mod.id}
-                    className={`profile-module profile-module--${mod.width} ${editMode ? 'profile-module--editing' : ''}`}
-                    style={modStyle}
-                >
-                    <div className="profile-module-header">
-                        {editMode && (
-                            <div className="profile-module-reorder">
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'up')} disabled={groupIdx === 0} title="Move up"><BsChevronUp size={10} /></button>
-                                <button className="profile-module-arrow-btn" onClick={() => moveModule(mod.id, 'down')} disabled={groupIdx === group.length - 1} title="Move down"><BsChevronDown size={10} /></button>
-                                {mod.width === 'half' && (
-                                    <button className="profile-module-arrow-btn" onClick={() => moveModuleColumn(mod.id)} title={`Move ${(mod.column ?? 0) === 0 ? 'right' : 'left'}`}>
-                                        {(mod.column ?? 0) === 0 ? <BsArrowRight size={10} /> : <BsArrowLeft size={10} />}
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                        {editMode && editingModuleTitle === mod.id ? (
-                            <input
-                                className="profile-module-title-input"
-                                value={mod.title}
-                                onChange={(e) => updateModuleTitle(mod.id, e.target.value)}
-                                onBlur={() => setEditingModuleTitle(null)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') setEditingModuleTitle(null); }}
-                                autoFocus
-                            />
-                        ) : (
-                            <span className="profile-module-header-title" onDoubleClick={() => editMode && setEditingModuleTitle(mod.id)}>{mod.title}</span>
-                        )}
-                        {editMode && (
-                            <div className="profile-module-edit-controls">
-                                <button className="profile-module-edit-btn" onClick={() => setEditingModuleStyle(editingModuleStyle === mod.id ? null : mod.id)} title="Style"><BsPaletteFill size={9} /></button>
-                                <button className="profile-module-edit-btn" onClick={() => setEditingModuleContent(editingModuleContent === mod.id ? null : mod.id)} title="Edit content"><BsPencilFill size={9} /></button>
-                                <button className="profile-module-edit-btn profile-module-edit-btn--danger" onClick={() => removeModule(mod.id)} title="Remove"><BsTrash size={9} /></button>
-                            </div>
-                        )}
-                        {!editMode && !previewMode && (
-                            <button
-                                className="profile-module-quick-edit"
-                                onClick={() => { setEditMode(true); setEditingModuleContent(mod.id); }}
-                                title="Edit this module"
-                            >
-                                <BsPencilFill size={9} />
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Per-module style editor */}
-                    {editMode && editingModuleStyle === mod.id && (
-                        <div className="profile-module-style-editor">
-                            <div className="profile-module-style-row">
-                                <label>Font:</label>
-                                <select value={mod.font_family || ''} onChange={(e) => updateModuleStyle(mod.id, { font_family: e.target.value || undefined })}>
-                                    <option value="">Default</option>
-                                    <option value="serif">Serif</option>
-                                    <option value="'Courier New', monospace">Monospace</option>
-                                    <option value="'Comic Sans MS', cursive">Comic Sans</option>
-                                    <option value="'Georgia', serif">Georgia</option>
-                                    <option value="'Impact', sans-serif">Impact</option>
-                                </select>
-                            </div>
-                            <div className="profile-module-style-row">
-                                <label>Size:</label>
-                                <select value={mod.font_size || ''} onChange={(e) => updateModuleStyle(mod.id, { font_size: e.target.value || undefined })}>
-                                    <option value="">Default</option>
-                                    <option value="11px">Small</option>
-                                    <option value="13px">Medium</option>
-                                    <option value="15px">Large</option>
-                                    <option value="18px">XL</option>
-                                </select>
-                            </div>
-                            <div className="profile-module-style-row">
-                                <label>Text:</label>
-                                <input type="color" value={mod.font_color || '#eeeeee'} onChange={(e) => updateModuleStyle(mod.id, { font_color: e.target.value })} />
-                                <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { font_color: undefined })}>×</button>
-                            </div>
-                            <div className="profile-module-style-row">
-                                <label>BG:</label>
-                                <input type="color" value={mod.background || '#1a1a2e'} onChange={(e) => updateModuleStyle(mod.id, { background: e.target.value })} />
-                                <button className="profile-customize-reset-btn" onClick={() => updateModuleStyle(mod.id, { background: undefined })}>×</button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="profile-module-body">
-                        {renderModuleContent(mod)}
-                    </div>
-                    {editMode && (
-                        <button
-                            className="profile-module-resize-toggle"
-                            onClick={() => toggleModuleWidth(mod.id)}
-                            title={mod.width === 'full' ? 'Shrink to half' : 'Expand to full'}
-                        >
-                            <BsArrowsFullscreen />
-                        </button>
-                    )}
-                </div>
+                    mod={mod}
+                    groupModules={group}
+                    editMode={editMode}
+                    previewMode={previewMode}
+                    editingModuleTitle={editingModuleTitle}
+                    editingModuleContent={editingModuleContent}
+                    editingModuleStyle={editingModuleStyle}
+                    onSetEditMode={setEditMode}
+                    onSetEditingModuleTitle={setEditingModuleTitle}
+                    onSetEditingModuleContent={setEditingModuleContent}
+                    onSetEditingModuleStyle={setEditingModuleStyle}
+                    onUpdateModuleTitle={updateModuleTitle}
+                    onUpdateModuleStyle={updateModuleStyle}
+                    onMoveModule={moveModule}
+                    onMoveModuleColumn={moveModuleColumn}
+                    onRemoveModule={removeModule}
+                    onToggleModuleWidth={toggleModuleWidth}
+                    renderContent={renderModuleContent}
+                />
             );
         }
 
