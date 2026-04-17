@@ -510,8 +510,6 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const loadMedia = useCallback(async () => {
         setMediaLoading(true);
         try {
-            // Clean up any vault files belonging to reposts before listing
-            try { await invoke<number>('vault_cleanup_repost_media'); } catch { /* skip if command unavailable */ }
             const files = await invoke<VaultFile[]>('vault_list_files');
             const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
             setMediaFiles(visual);
