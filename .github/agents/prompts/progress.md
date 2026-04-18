@@ -3,6 +3,47 @@
 > This document is a running log of work completed by all agents. Updated after each commit. PM reviews this for status tracking.
 
 ---
+## 📋 PM — Sprint v23 Initialization: Media Stability & Default Blog Embeds (2026-04-18)
+
+**Trigger:** user requested a review of the latest sprint quality and consistency, asked PM to incorporate the newest `user-feedback`, and asked for the next sprint prompts.
+
+### Current user feedback reviewed
+
+- Critical: memory leak is back and can freeze the whole system
+- Critical: image playback / image viewing is stuttery and janky again
+- Lower priority: blog link posts should default to rich inline iframe display, with opt-out to link-only behavior
+
+### PM audit findings
+
+- The earlier v22 media-visibility fix landed, but the current code still contains likely stability regressions:
+  - `ProfileScreen.tsx` still invokes `vault_cleanup_repost_media` on media-tab load
+  - media grids and picker flows fall back to `vault_get_file_data` when thumbnails are missing
+  - `VaultScreen.tsx` also falls back to full-image reads for thumbnails
+  - `BlogModule.tsx` defaults to text view instead of inline iframe mode
+- The latest frontend implementation also drifted from the v22 prompt boundaries:
+  - the prompt said to remove cleanup from the media-tab path
+  - the prompt said Track B must not modify Rust files, but the latest track-b-labeled commits touched backend Rust files
+
+### Verification snapshot at PM review time
+
+- `npx tsc --noEmit` ✅
+- `pnpm test -- --run` ✅ `273/273` passing
+- `cargo check` ✅
+- Residual note: Vitest still emits existing `act(...)` warnings from `ComposeBox.test.tsx`, but the suite passes
+
+### PM actions
+
+1. Archived the active v22 prompt files into `.github/agents/prompts/archive/`.
+2. Removed the active v22 prompts from the root prompt folder.
+3. Issued new active v23 prompts focused narrowly on media-memory stabilization, playback smoothness, and default-inline blog behavior.
+4. Re-centered the sprint on track discipline and hot-path performance instead of more profile polish.
+
+### Active prompt set
+
+- `.github/agents/prompts/backend-sprint-v23.md`
+- `.github/agents/prompts/frontend-sprint-v23.md`
+
+---
 ## 📋 PM — Fediverse Standards Readiness Planning Baseline (2026-04-15)
 
 **Trigger:** user requested a concrete PM-executable plan from the Mastodon standards analysis, with roadmap/design-brief consolidation, and explicitly asked for no new prompts for other agents.
