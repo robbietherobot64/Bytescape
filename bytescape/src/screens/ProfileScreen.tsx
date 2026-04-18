@@ -471,6 +471,10 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const loadMedia = useCallback(async () => {
         setMediaLoading(true);
         try {
+            // Clean up vault media not authored by the current user
+            if (auth?.did) {
+                await invoke('vault_cleanup_repost_media', { userDid: auth.did }).catch(() => {});
+            }
             const files = await invoke<VaultFile[]>('vault_list_files');
             const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
             setMediaFiles(visual);
@@ -501,7 +505,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         } finally {
             setMediaLoading(false);
         }
-    }, []);
+    }, [auth?.did]);
 
     useEffect(() => {
         if (activeNav === 'media') loadMedia();

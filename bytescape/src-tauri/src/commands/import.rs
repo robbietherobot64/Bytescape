@@ -1055,7 +1055,7 @@ pub async fn import_bluesky_posts(state: State<'_, AppState>) -> std::result::Re
         .unwrap_or_default()
         .as_secs();
 
-    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Bluesky).await;
+    let saved_posts = save_posts("Own Feed", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Bluesky, &user_did).await;
 
     println!("Bluesky import: saved {} own posts", saved_posts);
     Ok(saved_posts)
@@ -1160,7 +1160,15 @@ pub async fn import_mastodon_posts(state: State<'_, AppState>) -> std::result::R
         .unwrap_or_default()
         .as_secs();
 
-    let saved_posts = save_posts("Mastodon Own", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Mastodon).await;
+    let saved_posts =     {
+        let instance_host = session.instance.replace("https://", "").replace("http://", "");
+        let user_acct = if session.acct.contains('@') {
+            format!("acct:{}", session.acct)
+        } else {
+            format!("acct:{}@{}", session.acct, instance_host)
+        };
+        save_posts("Mastodon Own", db, &imported_posts, false, now, &sync_manager, Some(&media_dir), &known_uris, Source::Mastodon, &user_acct).await
+    };
 
     println!("Mastodon import: saved {} own posts", saved_posts);
     Ok(saved_posts)
@@ -1184,6 +1192,7 @@ async fn save_posts(
     media_base_dir: Option<&Path>,
     known_uris: &std::collections::HashSet<String>,
     source: Source,
+    user_did: &str,
 ) -> usize {
     let mut saved = 0;
     for post in posts {
@@ -1220,12 +1229,10 @@ async fn save_posts(
             continue;
         }
 
-        // Skip vault file registration for reposts and replies — media blobs
-        // are still stored for feed display, but VaultFile entries (which
-        // populate the vault gallery) are only created for the user's own
-        // original posts (not replies to other posts).
-        let skip_vault = post.reposted_by.is_some() || post.reply_parent_uri.is_some();
-        let imported_media = if skip_vault {
+        // Skip vault file registration for posts not authored by the user.
+        // Only media the user uploaded directly should appear in the vault.
+        let is_own_post = post.author_did == user_did;
+        let imported_media = if !is_own_post {
             Vec::new()
         } else {
             import_item_media_into_vault(
