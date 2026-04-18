@@ -474,14 +474,23 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             const files = await invoke<VaultFile[]>('vault_list_files');
             const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
             setMediaFiles(visual);
-            // Fetch thumbnails for images
+            // Fetch thumbnails: prefer dedicated thumbnail, fall back to full image
             const thumbs: Record<string, string> = {};
             await Promise.all(visual.map(async (f) => {
-                if (f.kind !== 'Image' || !f.thumbnail_hash) return;
+                if (f.kind !== 'Image') return;
                 try {
-                    const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                    if (f.thumbnail_hash) {
+                        const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                        if (bytes) {
+                            const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                            thumbs[f.id] = URL.createObjectURL(blob);
+                            return;
+                        }
+                    }
+                    // No thumbnail hash or thumbnail fetch failed — use full image
+                    const bytes = await invoke<number[]>('vault_get_file_data', { fileId: f.id });
                     if (bytes) {
-                        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                        const blob = new Blob([new Uint8Array(bytes)], { type: f.mime_type || 'image/jpeg' });
                         thumbs[f.id] = URL.createObjectURL(blob);
                     }
                 } catch { /* skip */ }
@@ -772,14 +781,21 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
             const files = await invoke<VaultFile[]>('vault_list_files');
             const images = files.filter(f => f.kind === 'Image');
             setVaultPickerFiles(images);
-            // Load thumbnails
+            // Load thumbnails: prefer dedicated thumbnail, fall back to full image
             const thumbs: Record<string, string> = {};
             await Promise.all(images.slice(0, 60).map(async (f) => {
-                if (!f.thumbnail_hash) return;
                 try {
-                    const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                    if (f.thumbnail_hash) {
+                        const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
+                        if (bytes) {
+                            const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                            thumbs[f.id] = URL.createObjectURL(blob);
+                            return;
+                        }
+                    }
+                    const bytes = await invoke<number[]>('vault_get_file_data', { fileId: f.id });
                     if (bytes) {
-                        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                        const blob = new Blob([new Uint8Array(bytes)], { type: f.mime_type || 'image/jpeg' });
                         thumbs[f.id] = URL.createObjectURL(blob);
                     }
                 } catch { /* skip */ }

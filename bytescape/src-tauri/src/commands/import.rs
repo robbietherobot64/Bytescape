@@ -1220,11 +1220,12 @@ async fn save_posts(
             continue;
         }
 
-        // Skip vault file registration for reposts — media blobs are still
-        // stored for feed display, but VaultFile entries (which populate the
-        // vault gallery) are only created for the user's own posts.
-        let is_repost = post.reposted_by.is_some();
-        let imported_media = if is_repost {
+        // Skip vault file registration for reposts and replies — media blobs
+        // are still stored for feed display, but VaultFile entries (which
+        // populate the vault gallery) are only created for the user's own
+        // original posts (not replies to other posts).
+        let skip_vault = post.reposted_by.is_some() || post.reply_parent_uri.is_some();
+        let imported_media = if skip_vault {
             Vec::new()
         } else {
             import_item_media_into_vault(

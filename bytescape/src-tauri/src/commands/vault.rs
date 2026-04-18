@@ -286,27 +286,28 @@ pub async fn vault_cleanup_repost_media(state: State<'_, AppState>) -> std::resu
         .into_iter()
         .collect();
 
-    // Build a set of item IDs that are genuine reposts
-    let mut repost_item_ids = std::collections::HashSet::new();
+    // Build a set of item IDs that are reposts or replies — their media
+    // shouldn't clutter the vault gallery.
+    let mut excluded_item_ids = std::collections::HashSet::new();
     for item_id in &item_ids {
         if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
-            if item.reposted_by_did.is_some() {
-                repost_item_ids.insert(item_id.clone());
+            if item.reposted_by_did.is_some() || item.reply_parent_uri.is_some() {
+                excluded_item_ids.insert(item_id.clone());
             }
         }
     }
 
     println!(
-        "vault_cleanup_repost_media: scanned {} vault files, {} unique item_ids, {} are reposts",
+        "vault_cleanup_repost_media: scanned {} vault files, {} unique item_ids, {} excluded (reposts/replies)",
         files.len(),
         item_ids.len(),
-        repost_item_ids.len(),
+        excluded_item_ids.len(),
     );
 
     let mut removed = 0usize;
     for file in &files {
         if let Some(ref item_id) = file.item_id {
-            if repost_item_ids.contains(item_id) {
+            if excluded_item_ids.contains(item_id) {
                 println!(
                     "vault_cleanup_repost_media: tombstoning file id={} name='{}' source='{}' item_id={}",
                     file.id, file.name, file.source, item_id,
