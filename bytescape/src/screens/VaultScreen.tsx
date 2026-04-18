@@ -108,21 +108,35 @@ function FileThumbnail({ file }: { file: VaultFile }) {
 
     useEffect(() => {
         if (thumbUrl) return; // already loaded from cache
-        if (file.kind !== 'Image' || !file.thumbnail_hash) return;
+        if (file.kind !== 'Image') return;
 
         let cancelled = false;
-        invoke<number[]>('vault_get_thumbnail', { fileId: file.id })
-            .then(bytes => {
-                if (cancelled || !bytes) return;
-                const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
-                const url = URL.createObjectURL(blob);
-                cacheThumbUrl(file.id, url);
-                setThumbUrl(url);
-            })
-            .catch(() => { /* silently fail */ });
+        (async () => {
+            try {
+                // Try dedicated thumbnail first
+                if (file.thumbnail_hash) {
+                    const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: file.id });
+                    if (!cancelled && bytes) {
+                        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
+                        const url = URL.createObjectURL(blob);
+                        cacheThumbUrl(file.id, url);
+                        setThumbUrl(url);
+                        return;
+                    }
+                }
+                // Fall back to full image
+                const bytes = await invoke<number[]>('vault_get_file_data', { fileId: file.id });
+                if (!cancelled && bytes) {
+                    const blob = new Blob([new Uint8Array(bytes)], { type: file.mime_type || 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    cacheThumbUrl(file.id, url);
+                    setThumbUrl(url);
+                }
+            } catch { /* silently fail */ }
+        })();
 
         return () => { cancelled = true; };
-    }, [file.id, file.kind, file.thumbnail_hash, thumbUrl]);
+    }, [file.id, file.kind, file.thumbnail_hash, file.mime_type, thumbUrl]);
 
     if (thumbUrl) {
         return <img src={thumbUrl} alt={file.name} className="vault-card-img" loading="lazy" />;

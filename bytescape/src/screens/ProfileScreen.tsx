@@ -1482,6 +1482,24 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         setLightboxPostUrl(null);
     }
 
+    async function deleteMediaFile(fileId: string) {
+        try {
+            await invoke('vault_delete_file', { fileId });
+            setMediaFiles(prev => prev.filter(f => f.id !== fileId));
+            // Clean up thumbnail blob URL
+            const thumbUrl = mediaThumbs[fileId];
+            if (thumbUrl && thumbUrl.startsWith('blob:')) URL.revokeObjectURL(thumbUrl);
+            setMediaThumbs(prev => {
+                const next = { ...prev };
+                delete next[fileId];
+                return next;
+            });
+            closeLightbox();
+        } catch (e) {
+            console.error('Failed to delete media file:', e);
+        }
+    }
+
     function lightboxNav(dir: -1 | 1) {
         if (!lightboxFile) return;
         const idx = mediaFiles.findIndex(f => f.id === lightboxFile.id);
@@ -1958,6 +1976,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <div className="profile-lightbox" onClick={e => e.stopPropagation()}>
                         <div className="profile-lightbox-topbar">
                             <span className="profile-lightbox-name" title={lightboxFile.name}>{lightboxFile.name}</span>
+                            <button className="profile-lightbox-delete" onClick={() => { if (confirm('Delete this media file? This cannot be undone.')) deleteMediaFile(lightboxFile.id); }} title="Delete">🗑️</button>
                             <button className="profile-lightbox-close" onClick={closeLightbox}>✕</button>
                         </div>
                         <div className="profile-lightbox-content">
