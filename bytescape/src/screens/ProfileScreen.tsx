@@ -505,7 +505,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
         } finally {
             setMediaLoading(false);
         }
-    }, [auth?.did]);
+    }, []);
 
     useEffect(() => {
         if (activeNav === 'media') loadMedia();

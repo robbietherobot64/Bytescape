@@ -262,28 +262,18 @@ pub async fn vault_delete_file(file_id: String, state: State<'_, AppState>) -> s
 /// tombstoned so they no longer appear in the vault gallery. The underlying
 /// blob data remains in the Iroh store for feed display.
 ///
-/// Remove vault media not authored by the given user.
+/// Remove vault media linked to reposts or replied-to posts.
 ///
-/// Keeps only media from items where `author_did` matches `user_did`.
-/// This excludes reposts, quote-post embeds from other users, replies
-/// surfacing others' media, and any other posts not directly authored.
+/// Keeps all archive imports (Facebook, Instagram, etc.) and the user's own
+/// posts on any platform. Only removes media from items that are reposts
+/// (`reposted_by_did` is set) or replies to other posts (`reply_parent_uri`
+/// is set).
 ///
 /// Should be called once when the media gallery first loads.
 ///
 /// → IPC: `vault_cleanup_repost_media`
 #[tauri::command]
-pub async fn vault_cleanup_repost_media(user_did: Option<String>, state: State<'_, AppState>) -> std::result::Result<usize, String> {
-    let user_did = match user_did {
-        Some(did) if !did.is_empty() => did,
-        _ => {
-            // Try to get DID from keychain
-            match state.keychain.load_session() {
-                Ok(Some((did, _))) => did,
-                _ => return Ok(0), // No user session — can't filter
-            }
-        }
-    };
-
+pub async fn vault_cleanup_repost_media(state: State<'_, AppState>) -> std::result::Result<usize, String> {
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
@@ -303,24 +293,22 @@ pub async fn vault_cleanup_repost_media(user_did: Option<String>, state: State<'
         .into_iter()
         .collect();
 
-    // Build a set of item IDs NOT authored by the user — their media
+    // Build a set of item IDs that are reposts or replies — their media
     // shouldn't appear in the vault gallery.
     let mut excluded_item_ids = std::collections::HashSet::new();
     for item_id in &item_ids {
         if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
-            let authored_by_user = item.author_did.as_deref() == Some(user_did.as_str());
-            if !authored_by_user {
+            if item.reposted_by_did.is_some() || item.reply_parent_uri.is_some() {
                 excluded_item_ids.insert(item_id.clone());
             }
         }
     }
 
     println!(
-        "vault_cleanup_repost_media: scanned {} vault files, {} unique item_ids, {} excluded (not authored by {})",
+        "vault_cleanup_repost_media: scanned {} vault files, {} unique item_ids, {} excluded (reposts/replies)",
         files.len(),
         item_ids.len(),
         excluded_item_ids.len(),
-        user_did,
     );
 
     let mut removed = 0usize;
@@ -340,7 +328,7 @@ pub async fn vault_cleanup_repost_media(user_did: Option<String>, state: State<'
         }
     }
 
-    println!("vault_cleanup_repost_media: removed {} non-authored media entries from vault", removed);
+    println!("vault_cleanup_repost_media: removed {} repost/reply media entries from vault", removed);
     Ok(removed)
 }
 
