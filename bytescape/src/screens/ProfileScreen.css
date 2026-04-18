@@ -2173,6 +2173,68 @@
     background: rgba(255,80,80,0.15);
     color: #ff6666;
 }
+/* ═══ Delete Confirmation Modal ═══ */
+.profile-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10001;
+    backdrop-filter: blur(4px);
+}
+.profile-confirm-modal {
+    background: var(--bg-secondary, #1a1a2e);
+    border: 1px solid var(--border-color, #333);
+    border-radius: 10px;
+    padding: 28px 32px 22px;
+    max-width: 360px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.profile-confirm-icon {
+    font-size: 36px;
+    margin-bottom: 12px;
+}
+.profile-confirm-text {
+    color: var(--text-primary, #eee);
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0 0 20px;
+}
+.profile-confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+.profile-confirm-btn {
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+}
+.profile-confirm-btn--cancel {
+    background: var(--bg-tertiary, #252540);
+    color: var(--text-secondary, #aaa);
+    border-color: var(--border-color, #333);
+}
+.profile-confirm-btn--cancel:hover {
+    background: var(--bg-primary, #16162a);
+    color: var(--text-primary, #eee);
+}
+.profile-confirm-btn--delete {
+    background: #cc3333;
+    color: #fff;
+}
+.profile-confirm-btn--delete:hover {
+    background: #ee4444;
+}
+
 .profile-lightbox-close {
     background: none;
     border: none;

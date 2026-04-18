@@ -221,6 +221,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [lightboxLoading, setLightboxLoading] = useState(false);
     const [lightboxPostUrl, setLightboxPostUrl] = useState<string | null>(null);
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
     /* ─── Avatar ─── */
     const [showAvatarInput, setShowAvatarInput] = useState(false);
@@ -1976,7 +1977,7 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                     <div className="profile-lightbox" onClick={e => e.stopPropagation()}>
                         <div className="profile-lightbox-topbar">
                             <span className="profile-lightbox-name" title={lightboxFile.name}>{lightboxFile.name}</span>
-                            <button className="profile-lightbox-delete" onClick={() => { if (confirm('Delete this media file? This cannot be undone.')) deleteMediaFile(lightboxFile.id); }} title="Delete">🗑️</button>
+                            <button className="profile-lightbox-delete" onClick={() => setConfirmDeleteId(lightboxFile.id)} title="Delete">🗑️</button>
                             <button className="profile-lightbox-close" onClick={closeLightbox}>✕</button>
                         </div>
                         <div className="profile-lightbox-content">
@@ -2030,6 +2031,20 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
                                     <span className="profile-lightbox-info-value">{lightboxFile.tags.join(', ')}</span>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ═══ Delete Confirmation Modal ═══ */}
+            {confirmDeleteId && (
+                <div className="profile-confirm-backdrop" onClick={() => setConfirmDeleteId(null)}>
+                    <div className="profile-confirm-modal" onClick={e => e.stopPropagation()}>
+                        <div className="profile-confirm-icon">🗑️</div>
+                        <p className="profile-confirm-text">Are you sure you want to delete this file and the associated post?</p>
+                        <div className="profile-confirm-actions">
+                            <button className="profile-confirm-btn profile-confirm-btn--cancel" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                            <button className="profile-confirm-btn profile-confirm-btn--delete" onClick={() => { deleteMediaFile(confirmDeleteId); setConfirmDeleteId(null); }}>Yes, Delete</button>
                         </div>
                     </div>
                 </div>
