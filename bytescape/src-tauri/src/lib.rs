@@ -987,6 +987,62 @@ pub fn run() {
                 }
             });
 
+            // Background: clean up repost/reply media from vault gallery
+            // Previously only triggered by frontend on gallery open — now runs
+            // automatically at startup so gallery listings are always clean.
+            let repost_cleanup_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                let state = repost_cleanup_handle.state::<AppState>();
+
+                let sync_guard = state.sync_manager.lock().await;
+                let sync = match sync_guard.as_ref() {
+                    Some(s) => s,
+                    None => return,
+                };
+                let db = {
+                    let guard = state.db_manager.read().await;
+                    match guard.as_ref() {
+                        Some(d) => d.clone(),
+                        None => { drop(sync_guard); return; }
+                    }
+                };
+
+                let files = match sync.vault_list_files().await {
+                    Ok(f) => f,
+                    Err(_) => { drop(sync_guard); return; }
+                };
+
+                let item_ids: Vec<String> = files.iter()
+                    .filter_map(|f| f.item_id.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter().collect();
+
+                let mut excluded = std::collections::HashSet::new();
+                for item_id in &item_ids {
+                    if let Ok(Some(item)) = db.get_item_by_id(item_id).await {
+                        if item.reposted_by_did.is_some() || item.reply_parent_uri.is_some() {
+                            excluded.insert(item_id.clone());
+                        }
+                    }
+                }
+
+                let mut removed = 0usize;
+                for file in &files {
+                    if let Some(ref id) = file.item_id {
+                        if excluded.contains(id) {
+                            if sync.vault_delete_file(&file.id).await.is_ok() {
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+                drop(sync_guard);
+                if removed > 0 {
+                    println!("startup: cleaned {} repost/reply media entries from vault", removed);
+                }
+            });
+
             // Background: cross-store blob consistency check (P7)
             // Verifies that all blob hashes referenced in BytescapeItem.media_blobs
             // actually exist in the Iroh blob store. Logs orphans and broken references.

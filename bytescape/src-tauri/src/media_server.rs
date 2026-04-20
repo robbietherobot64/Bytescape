@@ -77,7 +77,9 @@ pub async fn start_warp_media_server(app_data_dir: PathBuf) -> u16 {
                 // a new HTTP round-trip + demuxer init.
                 "public, max-age=3600, immutable"
             } else {
-                "public, max-age=300, immutable"
+                // Images: match video caching to avoid rapid re-fetches
+                // during gallery scrolling and feed navigation.
+                "public, max-age=3600, immutable"
             };
 
             resp.headers_mut().insert(

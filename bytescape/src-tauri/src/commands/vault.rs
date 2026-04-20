@@ -359,6 +359,8 @@ pub async fn vault_deduplicate_files(state: State<'_, AppState>) -> std::result:
 /// Get the raw content bytes for a vault file.
 /// 
 /// Fetches the file from Iroh Blobs using the stored hash.
+/// Capped at 50 MB to prevent massive IPC payloads — use the media server
+/// URL for larger files (videos, large archives).
 #[tauri::command]
 pub async fn vault_get_file_data(file_id: String, state: State<'_, AppState>) -> std::result::Result<Vec<u8>, String> {
     let sync_guard = state.sync_manager.lock().await;
@@ -391,6 +393,15 @@ pub async fn vault_get_file_data(file_id: String, state: State<'_, AppState>) ->
         sync.export_media_to_file(hash, &cache_path).await
             .map_err(|e| e.to_string())?;
     }
+    // Enforce IPC size cap — files over 50 MB should use media server URL instead.
+    let metadata = std::fs::metadata(&cache_path).map_err(|e| e.to_string())?;
+    if metadata.len() > 50 * 1024 * 1024 {
+        return Err(format!(
+            "File too large for IPC transfer ({:.1} MB). Use the media server URL instead.",
+            metadata.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    
     let data = std::fs::read(&cache_path)
         .map_err(|e| e.to_string())?;
     
@@ -400,16 +411,24 @@ pub async fn vault_get_file_data(file_id: String, state: State<'_, AppState>) ->
 /// Get the thumbnail bytes for a vault file.
 /// 
 /// Returns None if the file has no thumbnail (non-images or thumbnail generation failed).
+/// For images that lack a persisted thumbnail, generates one on demand and caches it.
 #[tauri::command]
 pub async fn vault_get_thumbnail(file_id: String, state: State<'_, AppState>) -> std::result::Result<Option<Vec<u8>>, String> {
     let sync_guard = state.sync_manager.lock().await;
     let sync = sync_guard.as_ref()
         .ok_or_else(|| BytescapeError::SyncNotInitialized)?;
     
-    let file = sync.vault_get_file(&file_id).await
+    let mut file = sync.vault_get_file(&file_id).await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| BytescapeError::FileNotFound(file_id.clone()))?;
     
+    // If no thumbnail exists for an image, generate one on demand
+    if file.thumbnail_hash.is_none() {
+        if file.kind == crate::sync::VaultFileKind::Image {
+            let _ = sync.generate_thumbnail_for_vault_file(&mut file).await;
+        }
+    }
+
     match file.thumbnail_hash {
         Some(thumb_str) => {
             let hash: Hash = match thumb_str.parse() {

@@ -319,6 +319,56 @@ impl SyncManager {
         Ok(buf.into_inner())
     }
 
+    /// Generate and persist a thumbnail for an existing vault file that lacks one.
+    ///
+    /// Reads the original blob, decodes and resizes as WebP, stores the
+    /// thumbnail blob, and updates the vault file metadata.  Returns the
+    /// thumbnail hash on success or `None` if the image can't be decoded.
+    ///
+    /// Only operates on `VaultFileKind::Image` files — returns `None` for
+    /// non-image kinds.
+    pub async fn generate_thumbnail_for_vault_file(&self, file: &mut VaultFile) -> Result<Option<Hash>, String> {
+        if file.kind != VaultFileKind::Image {
+            return Ok(None);
+        }
+        if file.thumbnail_hash.is_some() {
+            // Already has a thumbnail
+            let h: Hash = file.thumbnail_hash.as_ref().unwrap().parse()
+                .map_err(|e| format!("invalid thumbnail hash: {}", e))?;
+            return Ok(Some(h));
+        }
+
+        let blob_hash: Hash = file.blob_hash.parse()
+            .map_err(|e| format!("invalid blob hash: {}", e))?;
+
+        // Read the original image (cap at 20 MB to avoid blowing memory on
+        // accidentally huge files — skip thumbnail gen for those).
+        let data = {
+            use tokio::io::AsyncReadExt;
+            let mut reader = self.blobs.reader(blob_hash);
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf).await.map_err(|e| e.to_string())?;
+            if buf.len() > 20 * 1024 * 1024 {
+                eprintln!("generate_thumbnail_for_vault_file: skipping {} — blob too large ({}B)", file.id, buf.len());
+                return Ok(None);
+            }
+            buf
+        };
+
+        match Self::generate_webp_thumbnail(&data, 256) {
+            Ok(thumb_bytes) => {
+                let thumb_hash = self.store_media(Bytes::from(thumb_bytes)).await?;
+                file.thumbnail_hash = Some(thumb_hash.to_string());
+                self.upsert_vault_file_metadata(file).await?;
+                Ok(Some(thumb_hash))
+            }
+            Err(e) => {
+                eprintln!("generate_thumbnail_for_vault_file: decode failed for {}: {}", file.id, e);
+                Ok(None)
+            }
+        }
+    }
+
     /// Retrieve media bytes by hash.
     ///
     /// **Warning:** This reads the entire blob into memory.  Use only for blobs
