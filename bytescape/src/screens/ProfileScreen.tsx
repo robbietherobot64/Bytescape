@@ -469,37 +469,34 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     }, [activeNav, loadPosts]);
 
     // Media
+    const MEDIA_THUMB_BATCH = 30;
     const loadMedia = useCallback(async () => {
         setMediaLoading(true);
         try {
-            // Clean up vault media not authored by the current user
-            if (auth?.did) {
-                await invoke('vault_cleanup_repost_media', { userDid: auth.did }).catch(() => {});
-            }
             const files = await invoke<VaultFile[]>('vault_list_files');
             const visual = files.filter(f => f.kind === 'Image' || f.kind === 'Video');
             setMediaFiles(visual);
-            // Fetch thumbnails: prefer dedicated thumbnail, fall back to full image
+            // Revoke old thumbnail blob URLs before replacing
+            setMediaThumbs(prev => {
+                Object.values(prev).forEach(u => { if (u.startsWith('blob:')) URL.revokeObjectURL(u); });
+                return {};
+            });
+            // Fetch lightweight thumbnails only — no full-image fallback
+            // Capped to first batch to avoid memory pressure
+            const thumbTargets = visual.filter(f => f.kind === 'Image' && f.thumbnail_hash).slice(0, MEDIA_THUMB_BATCH);
             const thumbs: Record<string, string> = {};
-            await Promise.all(visual.map(async (f) => {
-                if (f.kind !== 'Image') return;
-                try {
-                    if (f.thumbnail_hash) {
+            for (let i = 0; i < thumbTargets.length; i += 10) {
+                const batch = thumbTargets.slice(i, i + 10);
+                await Promise.all(batch.map(async (f) => {
+                    try {
                         const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
                         if (bytes) {
                             const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
                             thumbs[f.id] = URL.createObjectURL(blob);
-                            return;
                         }
-                    }
-                    // No thumbnail hash or thumbnail fetch failed — use full image
-                    const bytes = await invoke<number[]>('vault_get_file_data', { fileId: f.id });
-                    if (bytes) {
-                        const blob = new Blob([new Uint8Array(bytes)], { type: f.mime_type || 'image/jpeg' });
-                        thumbs[f.id] = URL.createObjectURL(blob);
-                    }
-                } catch { /* skip */ }
-            }));
+                    } catch { /* skip — show placeholder */ }
+                }));
+            }
             setMediaThumbs(thumbs);
         } catch {
             setMediaFiles([]);
@@ -510,6 +507,13 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
 
     useEffect(() => {
         if (activeNav === 'media') loadMedia();
+        // Revoke media thumb blob URLs when leaving the media tab or unmounting
+        return () => {
+            setMediaThumbs(prev => {
+                Object.values(prev).forEach(u => { if (u.startsWith('blob:')) URL.revokeObjectURL(u); });
+                return prev; // don't clear — the revocation is the important part
+            });
+        };
     }, [activeNav, loadMedia]);
 
     /* ════════ Handlers ════════ */
@@ -782,29 +786,30 @@ export function ProfileScreen({ auth }: ProfileScreenProps) {
     const openVaultPicker = useCallback(async (mode: 'avatar' | 'background') => {
         setVaultPickerMode(mode);
         setVaultPickerLoading(true);
+        // Revoke old picker thumbnail blob URLs before replacing
+        setVaultPickerThumbs(prev => {
+            Object.values(prev).forEach(u => { if (u.startsWith('blob:')) URL.revokeObjectURL(u); });
+            return {};
+        });
         try {
             const files = await invoke<VaultFile[]>('vault_list_files');
             const images = files.filter(f => f.kind === 'Image');
             setVaultPickerFiles(images);
-            // Load thumbnails: prefer dedicated thumbnail, fall back to full image
+            // Load lightweight thumbnails only — no full-image fallback
+            const thumbTargets = images.filter(f => f.thumbnail_hash).slice(0, 30);
             const thumbs: Record<string, string> = {};
-            await Promise.all(images.slice(0, 60).map(async (f) => {
-                try {
-                    if (f.thumbnail_hash) {
+            for (let i = 0; i < thumbTargets.length; i += 10) {
+                const batch = thumbTargets.slice(i, i + 10);
+                await Promise.all(batch.map(async (f) => {
+                    try {
                         const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: f.id });
                         if (bytes) {
                             const blob = new Blob([new Uint8Array(bytes)], { type: 'image/webp' });
                             thumbs[f.id] = URL.createObjectURL(blob);
-                            return;
                         }
-                    }
-                    const bytes = await invoke<number[]>('vault_get_file_data', { fileId: f.id });
-                    if (bytes) {
-                        const blob = new Blob([new Uint8Array(bytes)], { type: f.mime_type || 'image/jpeg' });
-                        thumbs[f.id] = URL.createObjectURL(blob);
-                    }
-                } catch { /* skip */ }
-            }));
+                    } catch { /* skip — show placeholder */ }
+                }));
+            }
             setVaultPickerThumbs(thumbs);
         } catch (e) {
             console.error('Failed to load vault images:', e);

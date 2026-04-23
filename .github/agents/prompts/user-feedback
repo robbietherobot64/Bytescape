@@ -5,9 +5,10 @@ Feedback:
 **Outstanding issues**
 
 Critical priorities:
-- Media section and vault now failt to show media uploaded from social media archives like facebook/instagram, or from linked accounts like bluesky/mastodon.  The only images showing in the vault/media section are uploaded media.
+- Memory leak is now back again, leading to a full system crash and freeze. 
+- Image playback has gone back to being stuttery and janky.  
  
 Lower priority: 
 
 
-- Blogs link to external blog sites like wordpress, but they only show the URL and "read full post" with the message "No content preview available.".  We need more seamless blog post integration, like an iframes type dealio to have each post as its own window that users can view the post in.  Something like that.
+- Blogs should be expanded in iframes by default when you put a link.  If the user wants it to just be a link, there can be a check box, but adding a link as a post to a blog should default to a rich display of the page as a blog post in full size post view.

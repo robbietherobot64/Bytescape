@@ -62,6 +62,13 @@ export function BlogModule({ mod, editMode, onSaveDirect }: BlogModuleProps) {
     const [blogIframeView, setBlogIframeView] = useState<Record<string, boolean>>({});
     const [blogIframeLoaded, setBlogIframeLoaded] = useState<Record<string, 'loading' | 'loaded' | 'error'>>({});
 
+    // Default: entries with external_url start in iframe view
+    const isIframeView = (entryId: string, hasUrl: boolean): boolean => {
+        if (!hasUrl) return false;
+        // If user has explicitly toggled, respect that; otherwise default to true
+        return blogIframeView[entryId] ?? true;
+    };
+
     // Parse module content
     let data: BlogModuleData = { entries: [] };
     try {
@@ -248,7 +255,14 @@ export function BlogModule({ mod, editMode, onSaveDirect }: BlogModuleProps) {
             <div className="profile-blog-list">
                 {entries.map(entry => (
                     <div key={entry.id} className="profile-blog-entry">
-                        <div className="profile-blog-entry-header" onClick={() => setExpandedBlogId(expandedBlogId === entry.id ? null : entry.id)}>
+                        <div className="profile-blog-entry-header" onClick={() => {
+                            const expanding = expandedBlogId !== entry.id;
+                            setExpandedBlogId(expanding ? entry.id : null);
+                            // Set iframe loading state when expanding an entry that defaults to iframe view
+                            if (expanding && entry.external_url && isIframeView(entry.id, true) && !blogIframeLoaded[entry.id]) {
+                                setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'loading' }));
+                            }
+                        }}>
                             <h4 className="profile-blog-entry-title">{entry.title}</h4>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 } as React.CSSProperties}>
                                 {entry.author && <span style={{ fontSize: 10, color: 'var(--text-muted)' } as React.CSSProperties}>by {entry.author}</span>}
@@ -261,10 +275,10 @@ export function BlogModule({ mod, editMode, onSaveDirect }: BlogModuleProps) {
                             <div className="profile-blog-entry-body">
                                 {entry.external_url && (
                                     <div className="profile-blog-view-toggle">
-                                        <button className={`profile-blog-view-btn${!blogIframeView[entry.id] ? ' active' : ''}`} onClick={() => setBlogIframeView(prev => ({ ...prev, [entry.id]: false }))}>
+                                        <button className={`profile-blog-view-btn${!isIframeView(entry.id, true) ? ' active' : ''}`} onClick={() => setBlogIframeView(prev => ({ ...prev, [entry.id]: false }))}>
                                             {'\uD83D\uDCDD'} Text
                                         </button>
-                                        <button className={`profile-blog-view-btn${blogIframeView[entry.id] ? ' active' : ''}`} onClick={() => { setBlogIframeView(prev => ({ ...prev, [entry.id]: true })); setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'loading' })); }}>
+                                        <button className={`profile-blog-view-btn${isIframeView(entry.id, true) ? ' active' : ''}`} onClick={() => { setBlogIframeView(prev => ({ ...prev, [entry.id]: true })); setBlogIframeLoaded(prev => ({ ...prev, [entry.id]: 'loading' })); }}>
                                             {'\uD83C\uDF10'} View Inline
                                         </button>
                                         <a href="#" className="profile-blog-external-link" onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!, entry.title); }} style={{ marginLeft: 'auto' } as React.CSSProperties}>
@@ -272,7 +286,7 @@ export function BlogModule({ mod, editMode, onSaveDirect }: BlogModuleProps) {
                                         </a>
                                     </div>
                                 )}
-                                {entry.external_url && blogIframeView[entry.id] ? (
+                                {entry.external_url && isIframeView(entry.id, true) ? (
                                     <div className="profile-blog-iframe-container">
                                         {blogIframeLoaded[entry.id] === 'loading' && <div className="profile-blog-iframe-loading">Loading post...</div>}
                                         {blogIframeLoaded[entry.id] === 'error' && (
@@ -288,7 +302,7 @@ export function BlogModule({ mod, editMode, onSaveDirect }: BlogModuleProps) {
                                         !entry.external_url ? <p style={{ color: 'var(--text-muted)', fontStyle: 'italic' } as React.CSSProperties}>No content preview available.</p> : null
                                     )
                                 )}
-                                {entry.external_url && !blogIframeView[entry.id] && !entry.body && (
+                                {entry.external_url && !isIframeView(entry.id, true) && !entry.body && (
                                     <a href="#" className="profile-blog-external-link" onClick={(e) => { e.preventDefault(); openInApp(entry.external_url!, entry.title); }}>
                                         {'\uD83D\uDD17'} Read full post
                                     </a>

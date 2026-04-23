@@ -3,6 +3,54 @@
 ## Mission
 To build a local-first Social Vault—an "Engine and Lens" system that bridges the gap between Web2 convenience and Web3 sovereignty.
 
+## Current Delivery Board
+
+This is the operational view of the roadmap.
+
+The phase breakdown below is still useful as the long-form backlog and architecture record, but the board here is the faster answer to: what is done, what is active now, and what is still ahead.
+
+### Done
+- [x] Foundation through Phase 3 is broadly complete: local vault model, archive import, media vault, P2P identity, P2P chat/sync, and the Willow bridge are all real shipped groundwork.
+- [x] Core social/account plumbing is in place: Bluesky OAuth, ActivityPub core, Mastodon baseline, syndication history/rollback, and linked-account identity cleanup.
+- [x] Profile/platform baseline exists: customizable profile surface, module/page system, vault gallery/lightbox foundation, omnibar/history/tab system, and theme customization groundwork.
+- [x] Rich content groundwork exists: rich text facets, mentions/hashtags, article editor, link cards, Yjs collaboration base, and initial blog/RSS-style module support.
+- [x] Server and standards planning exists on paper: server-foundation architecture, adapter pattern, and fediverse-standards readiness brief are scoped even if not yet delivered.
+
+### In Progress
+- [-] Media stability and memory regression closure: current active work is on stopping freeze-level memory growth, removing heavy thumbnail fallbacks, and fixing janky image/media viewing.
+- [-] Blog embed behavior polish: inline iframe blog rendering exists, but it still needs to become the default behavior with a cleaner fallback path.
+- [-] Profile/vault regression cleanup: recent work is in stabilization mode rather than new feature mode, especially around media handling and hot-path performance.
+- [-] Track discipline and hot-path cleanup: recent sprint reviews surfaced cases where implementation drifted from prompt boundaries and from intended ownership lines.
+
+### To Do
+- [ ] Hosted identity and server foundation: `bytescape.social`, `did:web`, custom AP hosting, PDS deployment, Iroh relay, Sync Bridge, and public identity resolution.
+- [ ] Fediverse standards readiness implementation: trust hardening, moderation exchange, portability/discovery exchange, RSS completion, remote-media reliability, and conformance gates.
+- [ ] Scale/web/mobile follow-through: mobile lifecycle + push, migration wizards, `RestDataProvider`, web SPA, visitor portal, and self-host packaging.
+- [ ] Remaining major Track A/B/C backlog: AP rich features, RSS/Atom connector completion, polls/video upload/audio, groups moderation completion, deep linking, unified search, and privacy/browser work.
+- [ ] Email engine: linked email accounts first, AP-address messaging next, hosted email later.
+
+### Dependency Map
+
+```text
+Stable local vault + media pipeline
+├─> Smooth profile / vault UX
+│   ├─> Public profile hosting + hosted identity
+│   └─> Reliable blog, RSS, and remote media presentation
+├─> Federation hardening + standards readiness
+│   └─> Safer portability, moderation exchange, and pilot rollout
+├─> Relay / server foundation
+│   ├─> Multi-device sync
+│   ├─> Migration flows
+│   └─> Web portal + self-host packaging
+└─> Hosted infrastructure maturity
+  └─> Email engine + broader protocol surface
+```
+
+### Reading Guide
+- If you want the live execution picture, use this board first.
+- If you want detailed scope, dependency notes, or historical rationale, use the phase sections below.
+- If a sprint conflicts with the board, the board should be updated rather than letting the roadmap silently drift.
+
 ## ✅ Completed: Foundation ✅
 - [x] **Core P2P Identity**: Generates Iroh Node IDs.
 - [x] **Basic Bluesky Bridge**: `getTimeline`, `getAuthorFeed`, etc

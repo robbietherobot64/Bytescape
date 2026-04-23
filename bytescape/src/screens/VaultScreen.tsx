@@ -113,7 +113,7 @@ function FileThumbnail({ file }: { file: VaultFile }) {
         let cancelled = false;
         (async () => {
             try {
-                // Try dedicated thumbnail first
+                // Only load lightweight thumbnails — never fall back to full image in grid
                 if (file.thumbnail_hash) {
                     const bytes = await invoke<number[]>('vault_get_thumbnail', { fileId: file.id });
                     if (!cancelled && bytes) {
@@ -121,18 +121,9 @@ function FileThumbnail({ file }: { file: VaultFile }) {
                         const url = URL.createObjectURL(blob);
                         cacheThumbUrl(file.id, url);
                         setThumbUrl(url);
-                        return;
                     }
                 }
-                // Fall back to full image
-                const bytes = await invoke<number[]>('vault_get_file_data', { fileId: file.id });
-                if (!cancelled && bytes) {
-                    const blob = new Blob([new Uint8Array(bytes)], { type: file.mime_type || 'image/jpeg' });
-                    const url = URL.createObjectURL(blob);
-                    cacheThumbUrl(file.id, url);
-                    setThumbUrl(url);
-                }
-            } catch { /* silently fail */ }
+            } catch { /* silently fail — show placeholder */ }
         })();
 
         return () => { cancelled = true; };
