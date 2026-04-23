@@ -1,48 +1,92 @@
-# Project 1: Profile Media Image Preview Investigation
+# Project 1: Guided Lab - Fix Profile Media Previews Safely
 
-## Project Goal
-Investigate and fix image preview behavior in the profile media section while preserving memory stability.
+## Lab Goal
 
-## Why This Project
-- It is directly relevant to active priorities.
-- It touches a practical path: media loading, thumbnails, and UI rendering.
-- It is scoped enough for a first guided bugfix.
+Restore missing image previews in profile media while preserving current memory-safety constraints.
 
-## Target Files (Start Here)
-- bytescape/src/screens/ProfileScreen.tsx
-- bytescape/src/screens/VaultScreen.tsx
-- bytescape/src/components/BlobImage.tsx
+This lab is intentionally guided. Follow it in order.
 
-## Step-by-Step Plan
-1. Reproduce
-- Open profile media section with archive-imported images and uploaded images.
-- Record exactly which items do not show previews.
+## What You Are Practicing
 
-2. Trace Data Path
-- Identify which command fetches file list.
-- Identify which command fetches thumbnail bytes.
-- Confirm when fallback behavior is expected or intentionally disabled.
+1. Reproduction discipline
+2. Flow tracing discipline
+3. Hypothesis testing discipline
+4. Minimal-fix implementation discipline
+5. Verification discipline
 
-3. Form Hypotheses
-- Missing thumbnail_hash for some imported files
-- Thumbnail fetch command failing for specific source types
-- Blob URL lifecycle revokes too early
-- UI path only supports one source shape
+## Files You Will Touch First
 
-4. Add Temporary Instrumentation
-- Add focused logs around thumbnail fetch success/failure and file id.
-- Avoid broad noisy logs.
+1. bytescape/src/screens/ProfileScreen.tsx
+2. bytescape/src/screens/VaultScreen.tsx
+3. bytescape/src-tauri/src/commands/vault.rs
+4. bytescape/src-tauri/src/sync.rs
 
-5. Validate Hypotheses
-- Confirm which hypothesis matches observed behavior.
-- Remove temporary logs after learning.
+You may not need to edit all four; they define the full path.
 
-6. Implement Minimal Fix
-- Keep memory-safe behavior intact.
-- Prefer narrow changes in one file if possible.
+## Phase A: Reproduce Precisely
 
-7. Verify
-Run from /home/korendian/Bytescape/bytescape
+1. Launch app with pnpm tauri dev
+2. Open profile media section
+3. Compare behavior for:
+	- uploaded images
+	- archive-imported images
+4. Record counts in this template:
+
+- total visual items:
+- previews shown:
+- previews missing:
+- missing item ids (at least 5):
+
+Do not code yet.
+
+## Phase B: Observe Data Reality
+
+Inspect the flow in ProfileScreen loadMedia and answer these exact checks:
+
+1. Is the item filtered out before thumbnail fetch?
+2. Does it have kind === 'Image'?
+3. Does it have thumbnail_hash?
+4. Does vault_get_thumbnail return bytes or null?
+
+Use narrow temporary logging only around those checks.
+
+## Phase C: Decision Tree (Do Not Skip)
+
+Choose one branch based on your observations.
+
+Branch 1: Many broken items have no thumbnail_hash
+
+- Likely issue: metadata lacks generated thumbnail references.
+- Investigate thumbnail generation behavior in backend path.
+- Candidate fix: ensure on-demand thumbnail generation path is consistently reached.
+
+Branch 2: thumbnail_hash exists but command returns null/error
+
+- Likely issue: thumbnail blob missing, parse issue, or export/read path failure.
+- Investigate vault_get_thumbnail implementation and cache export behavior.
+
+Branch 3: bytes returned but preview still missing
+
+- Likely issue: frontend URL lifecycle or render condition bug.
+- Inspect Blob URL creation and revocation timing.
+
+Branch 4: only first N items show previews
+
+- Likely issue: batch cap behavior or selection logic.
+- Inspect MEDIA_THUMB_BATCH and filters around thumbnail targets.
+
+## Phase D: Implement A Minimal Fix
+
+Rules:
+
+1. Keep fix small and local.
+2. Do not reintroduce full-image fallback in grid path unless explicitly justified.
+3. Preserve Blob URL cleanup behavior.
+4. Add one short comment only if logic is non-obvious.
+
+## Phase E: Validate
+
+Run from /home/korendian/Bytescape/bytescape:
 
 ```bash
 (cd src-tauri && cargo check)
@@ -50,13 +94,27 @@ npx tsc --noEmit
 pnpm test -- --run
 ```
 
-8. Document
-- What was broken
-- Root cause
-- What changed
-- What remains risky
+Manual validation checklist:
 
-## Success Criteria
-- Profile media previews render for affected images.
-- No regression in validation checks.
-- No reintroduction of heavy full-image fallback behavior without explicit reason.
+1. Missing previews now render for affected set
+2. UI remains responsive when opening media tab
+3. No obvious increase in memory pressure from fallback behavior
+
+## Phase F: Write A Short Lab Report
+
+Add this to progress-tracker.md:
+
+- Reproduction summary
+- Branch selected from decision tree
+- Root cause statement (1-2 lines)
+- Files changed
+- Verification command results
+- Residual risk
+
+## Completion Standard
+
+This lab is complete only when:
+
+1. You can explain why previews were missing.
+2. You can explain why your fix is safe for memory.
+3. Validation commands pass.
