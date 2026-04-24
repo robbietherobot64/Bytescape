@@ -1,5 +1,9 @@
 # Week 1: Runtime Flow, Contracts, and First Stability Fix
 
+Prerequisite: complete the Foundations track first.
+
+If the lessons here feel too dense, return to learning-lab/foundations and finish those modules before continuing.
+
 ## Week 1 Outcome
 
 By the end of this week, you should be able to:

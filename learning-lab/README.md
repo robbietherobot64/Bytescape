@@ -2,8 +2,10 @@
 
 This is now a teach-first curriculum, not a loose task list.
 
-The goal is to teach you the codebase from top to bottom in a structured order:
-startup -> app shell -> state and providers -> Tauri command bridge -> backend commands -> storage and sync -> debugging and bugfixing.
+The goal is to teach programming fundamentals first, then teach the codebase from top to bottom.
+
+Learning order is now:
+coding basics -> app startup -> app shell -> state and providers -> Tauri command bridge -> backend commands -> storage and sync -> debugging and bugfixing.
 
 ## What You Get In Every Lesson
 
@@ -19,9 +21,11 @@ You should never have to "wander the code" with no direction.
 ## Read Order
 
 1. CURRICULUM.md
-2. CODEBASE_TOP_TO_BOTTOM.md
-3. week-01/README.md
-4. week-01 lessons in order
+2. foundations/README.md
+3. foundations lessons in order
+4. CODEBASE_TOP_TO_BOTTOM.md
+5. week-01/README.md
+6. week-01 lessons in order
 
 ## Program Goal
 
@@ -29,6 +33,7 @@ Near-term target: become reliable at fixing stability bugs and adding simple fea
 
 Success means you can:
 
+- Understand core coding concepts without guessing
 - Explain a frontend-to-backend call path from memory
 - Locate command registration and implementation quickly
 - Compare Rust and TypeScript contracts without guessing
@@ -53,6 +58,7 @@ pnpm tauri dev
 ## Current Lab Files
 
 - CURRICULUM.md: full multi-week lesson plan
+- foundations/: beginner coding fundamentals track
 - CODEBASE_TOP_TO_BOTTOM.md: architecture walkthrough in dependency order
 - quiz-results.md: baseline assessment
 - progress-tracker.md: session notes and competency gate tracking

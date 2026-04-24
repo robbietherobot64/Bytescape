@@ -22,6 +22,31 @@ By the end of this curriculum, you should be able to:
 
 ## Phase Structure
 
+## Phase 0 (Week 0-1): Coding Foundations First
+
+Focus: learn core programming concepts before codebase deep dives.
+
+Lessons:
+
+1. How code executes (inputs, outputs, call flow)
+2. Variables, types, conditionals, loops
+3. Functions, objects, arrays, interfaces
+4. Async/await, Promise basics, error handling
+5. Debugging and testing basics
+6. Rust command syntax essentials for this project
+
+Practice style:
+
+- Small syntax examples first
+- Then one mapping example from real Bytescape code
+- Then short checkpoint questions
+
+Outcome:
+
+- You can read basic TypeScript and Rust command code confidently.
+- You can follow control flow without getting lost.
+- You are ready for Week 1 architecture tracing.
+
 ## Phase 1 (Week 1): Runtime Foundations
 
 Focus: understand how the app starts, routes data, and serves media to UI.
