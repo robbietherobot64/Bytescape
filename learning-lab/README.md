@@ -23,9 +23,11 @@ You should never have to "wander the code" with no direction.
 1. CURRICULUM.md
 2. foundations/README.md
 3. foundations lessons in order
-4. CODEBASE_TOP_TO_BOTTOM.md
-5. week-01/README.md
-6. week-01 lessons in order
+4. foundations/EXERCISES.md
+5. foundations exercises in order
+6. CODEBASE_TOP_TO_BOTTOM.md
+7. week-01/README.md
+8. week-01 lessons in order
 
 ## Program Goal
 
@@ -59,6 +61,7 @@ pnpm tauri dev
 
 - CURRICULUM.md: full multi-week lesson plan
 - foundations/: beginner coding fundamentals track
+- foundations/EXERCISES.md and exercise files: mandatory practice track
 - CODEBASE_TOP_TO_BOTTOM.md: architecture walkthrough in dependency order
 - quiz-results.md: baseline assessment
 - progress-tracker.md: session notes and competency gate tracking

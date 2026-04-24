@@ -40,12 +40,17 @@ Practice style:
 - Small syntax examples first
 - Then one mapping example from real Bytescape code
 - Then short checkpoint questions
+- Then the foundations exercise pack with scored results
 
 Outcome:
 
 - You can read basic TypeScript and Rust command code confidently.
 - You can follow control flow without getting lost.
 - You are ready for Week 1 architecture tracing.
+
+Advancement rule:
+
+- Complete foundations exercises and score 34/40 or higher before starting Week 1.
 
 ## Phase 1 (Week 1): Runtime Foundations
 

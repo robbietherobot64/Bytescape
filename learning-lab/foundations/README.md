@@ -23,6 +23,18 @@ After this Foundations track, you should be able to:
 5. lesson-04-debugging-and-testing-basics.md
 6. lesson-05-rust-basics-for-this-project.md
 
+## Exercise Order (After Lessons)
+
+1. EXERCISES.md
+2. exercise-01-typescript-core.md
+3. exercise-02-async-and-error-flow.md
+4. exercise-03-rust-signatures-and-results.md
+5. exercise-04-tauri-boundary-trace.md
+
+Optional self-check:
+
+- answer-key.md (open only after attempting all exercises)
+
 ## How To Study
 
 For each lesson:
@@ -37,4 +49,4 @@ For each lesson:
 
 Recommended: 4-6 focused sessions over 1 week.
 
-Only move to Week 1 after you finish this track.
+Only move to Week 1 after you finish this track and score at least 34/40 on exercises.

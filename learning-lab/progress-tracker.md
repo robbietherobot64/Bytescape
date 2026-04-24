@@ -24,6 +24,20 @@
 - [ ] Lesson 04 completed: debugging and testing basics
 - [ ] Lesson 05 completed: rust basics for this project
 
+## Foundations Exercise Checklist
+- [ ] Exercise 01 completed: TypeScript core
+- [ ] Exercise 02 completed: async and error flow
+- [ ] Exercise 03 completed: Rust signatures and results
+- [ ] Exercise 04 completed: Tauri boundary trace
+
+## Foundations Exercise Score
+- Exercise 01 score (out of 10):
+- Exercise 02 score (out of 10):
+- Exercise 03 score (out of 10):
+- Exercise 04 score (out of 10):
+- Total score (out of 40):
+- Week 1 readiness (34+):
+
 ## Foundations Session Log
 
 ### Foundations Session 1
