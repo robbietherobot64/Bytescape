@@ -321,6 +321,12 @@ pub async fn get_home_timeline(
     let instance = &session.instance;
     Ok(statuses
         .into_iter()
+        // Include original posts and boosts (reblog is Some).
+        // Exclude replies (in_reply_to_id set on a non-boost status) — these
+        // are the user's own replies to others, which should not appear in the
+        // home feed. Boosted posts that happen to be replies are still shown
+        // because the user explicitly chose to boost them.
+        .filter(|s| s.reblog.is_some() || s.in_reply_to_id.is_none())
         .map(|s| status_to_bytescape_item(instance, &s))
         .collect())
 }
@@ -354,6 +360,10 @@ pub async fn get_home_timeline_as_bsky(
 
     Ok(statuses
         .iter()
+        // Include original posts and boosts (reblog is Some).
+        // Exclude replies — statuses with in_reply_to_id on a non-boost entry
+        // are comments the account made on other posts, which clutter the feed.
+        .filter(|s| s.reblog.is_some() || s.in_reply_to_id.is_none())
         .map(|s| status_to_bsky_post(&session.instance, s))
         .collect())
 }
@@ -987,7 +997,13 @@ pub fn status_to_bytescape_item(instance: &str, status: &MastodonStatus) -> Byte
         .find(|m| m.media_type == "image" || m.media_type == "gifv")
         .and_then(|m| m.preview_url.clone().or_else(|| Some(m.url.clone())));
 
-    let timestamp = chrono::DateTime::parse_from_rfc3339(&effective.created_at)
+    // Use the outer status timestamp for sorting:
+    // - For boosts (reblog is Some), status.created_at is the boost event time, which
+    //   must be used so the boost sorts to when the boost happened, not when the
+    //   original post was published (which could be months ago). Without this fix,
+    //   boosts sink to the bottom of the feed and get evicted by the item cap.
+    // - For original posts, status.created_at == effective.created_at anyway.
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&status.created_at)
         .map(|dt| dt.timestamp())
         .unwrap_or(0);
 
@@ -1142,7 +1158,13 @@ pub fn status_to_bsky_post(instance: &str, status: &MastodonStatus) -> crate::co
         .find(|m| m.media_type == "video")
         .and_then(|m| m.preview_url.clone());
 
-    let timestamp = chrono::DateTime::parse_from_rfc3339(&effective.created_at)
+    // Use the outer status timestamp for sorting:
+    // - For boosts (reblog is Some), status.created_at is the boost event time, which
+    //   must be used so the boost sorts to when the boost happened, not when the
+    //   original post was published (which could be months ago). Without this fix,
+    //   boosts sink to the bottom of the feed and get evicted by the item cap.
+    // - For original posts, status.created_at == effective.created_at anyway.
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&status.created_at)
         .map(|dt| dt.timestamp())
         .unwrap_or(0);
 
