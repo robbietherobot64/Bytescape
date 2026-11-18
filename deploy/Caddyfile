@@ -1,0 +1,101 @@
+# Bytescape — TLS termination + durable OAuth metadata + SPA static + API proxy.
+#
+# The client-metadata.json is served STATICALLY, before everything, so
+# Bluesky PAR client validation keeps working even when the app is down.
+# (2026-10-08: app downtime previously broke all Bluesky logins because the
+# metadata lived only in the app.)
+# (2026-10-11: the server binary has no static routes — the SPA is served by
+# Caddy from /srv/bytescape/frontend; only /api, /oauth, /uploads reach the app.)
+
+bytescape.social {
+	@oauth_meta path /oauth/client-metadata.json
+	handle @oauth_meta {
+		rewrite * /client-metadata.json
+		root * /srv/bytescape/static
+		file_server
+	}
+
+	# /inbox is the AP shared inbox (endpoints.sharedInbox) — always backend,
+	# every method. Mastodon's DeliveryWorker POSTs with Content-Type only
+	# (no Accept), so Accept-based negotiation must never gate AP delivery.
+	@backend path /api/* /oauth/* /uploads/* /xrpc/* /.well-known/* /nodeinfo/* /users/* /actors/* /inbox
+	handle @backend {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# ActivityPub actor surface at /@{user}. All non-GET requests (inbox
+	# deliveries: Follow/Accept/Undo POSTs) reach the backend unconditionally.
+	# GET keeps content negotiation: AP clients get the actor document, browsers
+	# fall through to the SPA profile page. AP sub-resources (inbox, collections)
+	# always reach the backend regardless of Accept or method.
+	@ap_actor path /@*
+	handle @ap_actor {
+		@ap_get method GET
+		handle @ap_get {
+			@ap_sub path */inbox */outbox */followers */following
+			@ap_negotiate header Accept *activity+json*
+			handle @ap_sub {
+				reverse_proxy 127.0.0.1:8080
+			}
+			handle @ap_negotiate {
+				reverse_proxy 127.0.0.1:8080
+			}
+			handle {
+				root * /srv/bytescape/frontend
+				try_files {path} /index.html
+				file_server
+			}
+		}
+		handle {
+			reverse_proxy 127.0.0.1:8080
+		}
+	}
+
+	@wiki path /wiki /wiki/*
+	handle @wiki {
+		redir /wiki /wiki/ 301
+		header Cache-Control "no-cache"
+		root * /srv/bytescape
+		try_files {path} /wiki/index.html
+		file_server
+	}
+
+	handle {
+		root * /srv/bytescape/frontend
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Feed generator service (did:web) — publishes topic feeds anyone can follow.
+# The DID document is served static-first so feed lookups survive app downtime.
+feeds.bytescape.social {
+	@feedgen_did path /.well-known/did.json
+	handle @feedgen_did {
+		rewrite * /did.json
+		root * /srv/bytescape/static
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}
+
+# Standalone Events site — same proxy shape as the main site, its own static
+# root (independent build: `npm run build:events` → rsync to
+# /srv/bytescape/events). SPA fallback carries the /event/<at-uri> deep links.
+# No /oauth/client-metadata here by design: sign-in is an SSO hop to the main
+# site (events app carries no ATProto OAuth client).
+events.bytescape.social {
+	@backend path /api/* /oauth/* /uploads/* /xrpc/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle {
+		root * /srv/bytescape/events
+		try_files {path} /index.html
+		file_server
+	}
+}

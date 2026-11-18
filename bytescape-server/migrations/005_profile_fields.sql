@@ -1,0 +1,8 @@
+-- Add extended profile fields to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pronouns TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS relationship_status TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS occupation TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT[] DEFAULT '{}';

@@ -1,0 +1,112 @@
+[package]
+name = "bytescape-server"
+version = "0.1.0"
+edition = "2024"
+description = "bytescape.social — federated social server"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
+regex = "1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tokio = { version = "1", features = ["full"] }
+parking_lot = "0.12"
+tokio-stream = "0.1"
+
+# Database
+sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio", "macros"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auth / Crypto
+jsonwebtoken = "9"
+argon2 = "0.5"
+ed25519-dalek = "2"
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+hex = "0.4"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.9"
+blake3 = "1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+chacha20poly1305 = "0.10"
+url = "2"
+bs58 = "0.5"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
+
+# Async utilities
+futures = "0.3"
+
+# Crypto hashing (used by Mastodon OAuth, PDS, refresh tokens)
+sha2 = { version = "0.10", features = ["oid"] }
+
+# AT Protocol / PDS (spike — rsky library crates for MST, repo, DID, crypto)
+# rsky crates are not all published to crates.io; use path deps to vendored copy
+rsky-repo = { path = "vendor-rsky-min/rsky-repo" }
+rsky-crypto = { path = "vendor-rsky-min/rsky-crypto" }
+rsky-identity = { path = "vendor-rsky-min/rsky-identity" }
+rsky-syntax = { path = "vendor-rsky-min/rsky-syntax" }
+rsky-common = { path = "vendor-rsky-min/rsky-common" }
+secp256k1 = { version = "0.28", features = ["global-context", "serde", "rand", "hashes", "rand-std"] }
+lexicon_cid = { package = "cid", version = "0.11", features = ["serde-codec"] }
+serde_ipld_dagcbor = { version = "0.6", features = ["codec"] }
+ipld-core = "0.4"
+serde_cbor = "0.11"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+indexmap = { version = "1.9", features = ["serde-1"] }
+multihash = "0.19"
+async-trait = "0.1"
+iroh-car = "0.5"
+ciborium = "0.2"
+bytes = "1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+atom_syndication = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+once_cell = "1"
+mime_guess = "2"
+
+# Object storage
+aws-sdk-s3 = "1"
+aws-config = "1"
+
+# Upload utilities
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Env file loading
+dotenvy = "0.15"
+
+# Email (SMTP)
+lettre = { version = "0.11", features = ["smtp-transport", "tokio1", "builder", "tokio1-native-tls"] }
+
+# RSS parsing
+rss = "2"
+
+# ZIP archive handling
+zip = { version = "2", default-features = false, features = ["deflate"] }
+urlencoding = "2.1.3"
+
+# Facebook HTML parsing
+scraper = "0.22"
+
+# Image processing (Bluesky compression)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+anyhow = "1.0.103"
+
+[dev-dependencies]
+tower-http = { version = "0.6", features = ["validate-request"] }
+
+# Patch: core2 0.4.0 is yanked on crates.io; multihash 0.19 depends on it.
+# Shim re-exports std::io traits (core2 is only needed for no_std; we're on std).
+[patch.crates-io]
+core2 = { path = "vendor-rsky-min/core2-shim" }

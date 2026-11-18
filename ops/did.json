@@ -1,0 +1,16 @@
+{
+  "@context": ["https://www.w3.org/ns/did/v1"],
+  "id": "did:web:feeds.bytescape.social",
+  "service": [
+    {
+      "id": "#bsky_feed",
+      "type": "BskyFeedGenerator",
+      "serviceEndpoint": "https://feeds.bytescape.social"
+    },
+    {
+      "id": "did:web:feeds.bytescape.social#bsky_feed",
+      "type": "BskyFeedGenerator",
+      "serviceEndpoint": "https://feeds.bytescape.social"
+    }
+  ]
+}

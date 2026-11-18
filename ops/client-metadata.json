@@ -1,0 +1,23 @@
+{
+ "client_id": "https://bytescape.social/oauth/client-metadata.json",
+ "client_name": "Bytescape",
+ "client_uri": "https://bytescape.social",
+ "logo_uri": "https://bytescape.social/logo.png",
+ "tos_uri": "https://bytescape.social/tos",
+ "policy_uri": "https://bytescape.social/privacy",
+ "redirect_uris": [
+  "http://127.0.0.1:8080/api/auth/bluesky/callback",
+  "https://bytescape.social/api/auth/bluesky/callback"
+ ],
+ "scope": "atproto transition:generic:basic rpc:app.bsky.actor.getProfile?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.actor.getPreferences?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.actor.putPreferences?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.actor.getProfiles?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.graph.getFollows?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.graph.getFollowers?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.getAuthorFeed?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.getFeed?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.getFeedGenerator?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.searchActors?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.searchPosts?aud=did:web:api.bsky.app%23bsky_appview rpc:app.bsky.feed.post?aud=did:web:api.bsky.app%23bsky_appview repo:app.bsky.feed.post repo:app.bsky.feed.like repo:app.bsky.feed.repost repo:app.bsky.graph.follow repo:app.bsky.feed.generator repo:com.bytescape.story repo:app.bsky.actor.status blob:*/* rpc:com.atproto.identity.resolveHandle?aud=did:web:api.bsky.app%23bsky_appview rpc:chat.bsky.convo.getConvoForMembers?aud=did:web:api.bsky.chat%23bsky_chat rpc:chat.bsky.convo.getConvo?aud=did:web:api.bsky.chat%23bsky_chat rpc:chat.bsky.convo.listConvos?aud=did:web:api.bsky.chat%23bsky_chat rpc:chat.bsky.convo.getMessages?aud=did:web:api.bsky.chat%23bsky_chat rpc:chat.bsky.convo.sendMessage?aud=did:web:api.bsky.chat%23bsky_chat repo:app.bsky.feed.post?action=create",
+ "grant_types": [
+  "authorization_code",
+  "refresh_token"
+ ],
+ "response_types": [
+  "code"
+ ],
+ "token_endpoint_auth_method": "none",
+ "application_type": "native",
+ "dpop_bound_access_tokens": true
+}

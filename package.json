@@ -1,0 +1,19 @@
+{
+  "name": "bytescape",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:events": "npm run dev -w apps/events",
+    "build:web": "npm run build -w apps/web",
+    "build:events": "npm run build -w apps/events",
+    "deploy:test:web": "bash scripts/deploy-web-test.sh",
+    "deploy:prod:web": "bash scripts/deploy-web-prod.sh",
+    "deploy:test:events": "npm run build:events && rsync -az --delete apps/events/dist/ root@test.bytescape.social:/srv/bytescape-test/events/"
+  }
+}

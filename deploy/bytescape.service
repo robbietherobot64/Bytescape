@@ -1,0 +1,22 @@
+[Unit]
+Description=Bytescape server (PDS + AppView + REST API)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bytescape
+Group=bytescape
+WorkingDirectory=/opt/bytescape
+EnvironmentFile=/opt/bytescape/.env
+ExecStart=/opt/bytescape/bytescape-server
+Restart=always
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

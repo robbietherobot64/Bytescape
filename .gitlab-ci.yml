@@ -1,0 +1,112 @@
+# GitLab CI/CD for Bytescape
+# Pipeline: check → deploy (main branch only)
+
+stages:
+  - check
+  - deploy
+
+variables:
+  RUST_VERSION: "1.85"
+  NODE_VERSION: "20"
+
+# ── Backend: cargo check (non-blocking for now — needs system deps) ──
+backend-check:
+  stage: check
+  image: rust:$RUST_VERSION
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq libpq-dev pkg-config
+    - cd bytescape-server
+  script:
+    - cargo check --release 2>&1 | tail -5
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"
+  allow_failure: true
+  cache:
+    key: cargo-$CI_COMMIT_REF_SLUG
+    paths:
+      - bytescape-server/target/
+      - ~/.cargo/registry/
+    policy: pull-push
+
+# ── Frontend: TypeScript check + build (npm workspace root) ──
+frontend-check:
+  stage: check
+  image: node:$NODE_VERSION
+  before_script:
+    - npm ci --silent
+  script:
+    - npm run build:web
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"
+  allow_failure: true
+  cache:
+    key: npm-$CI_COMMIT_REF_SLUG
+    paths:
+      - node_modules/
+    policy: pull-push
+
+# ── Events site: independent build (its own deployable static app) ──
+events-check:
+  stage: check
+  image: node:$NODE_VERSION
+  before_script:
+    - npm ci --silent
+  script:
+    - npm run build:events
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"
+  allow_failure: true
+  cache:
+    key: npm-events-$CI_COMMIT_REF_SLUG
+    paths:
+      - node_modules/
+    policy: pull-push
+
+# ── Deploy to production (main branch only, manual trigger) ──
+deploy-production:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY" | base64 -d | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "StrictHostKeyChecking no" >> ~/.ssh/config
+  script:
+    - |
+      ssh root@$DEPLOY_SERVER << 'EOF'
+        /opt/deploy.sh
+      EOF
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"
+      when: manual
+  environment:
+    name: production
+    url: https://bytescape.social
+
+# ── Wiki: build + publish to /wiki (daily schedule + wiki changes on main) ──
+# Builds the publish tree with deploy/wiki-build.py (nav manifest, exclusions,
+# root-doc copies), then rsyncs and swaps it on the server. The schedule
+# exclusion on the jobs above keeps a scheduled pipeline to just this job.
+wiki-publish:
+  stage: deploy
+  image: python:3-alpine
+  before_script:
+    - apk add --no-cache rsync openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY" | base64 -d | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "StrictHostKeyChecking no" >> ~/.ssh/config
+  script:
+    - python3 deploy/wiki-build.py --out build/wiki-staging
+    - bash deploy/wiki-publish.sh --staging build/wiki-staging --host root@bytescape.social
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - wiki/**
+        - deploy/wiki-build.py
+        - deploy/wiki-publish.sh

@@ -1,0 +1,11 @@
+-- Sprint review 2026-11-14 (CR-2/CR-10): the 30s repeat-click window used to
+-- read only ap_activities' undone_at — a shadow the home-REST cohort never
+-- writes and at:// reactions have no equivalent for. A just-removed reaction
+-- now keeps a short shadow row (`retracted_at`) so the legacy double-click
+-- collapse sees it regardless of reaction identity; `ReactionRow::delete`
+-- soft-deletes into this slot and opportunistically purges shadows older than
+-- a day (the window is 30 seconds).
+--
+-- Idempotent: the boot runner re-runs every migration at each start; adding
+-- an existing column is a no-op.
+ALTER TABLE reactions ADD COLUMN IF NOT EXISTS retracted_at TIMESTAMPTZ;

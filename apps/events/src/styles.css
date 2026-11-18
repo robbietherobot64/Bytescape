@@ -1,0 +1,74 @@
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111;
+  --bg-tertiary: #161616;
+  --accent: #00ff41;
+  --accent-dim: #0a3a0a;
+  --text-primary: #00ff41;
+  --text-secondary: #b8ffb8;
+  --text-muted: #5a8a5a;
+  --border-dim: #0a3a0a;
+  --border-color: #0a3a0a;
+  --danger: #ff3333;
+  --warning: #ffb020;
+  --font-retro: "VT323", monospace;
+  --font-mono: "Share Tech Mono", monospace;
+  --transition: 0.15s;
+  font-family: "Share Tech Mono", monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* App chrome (screens themselves live in @bytescape/events-ui). */
+.events-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.events-app-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-dim);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.events-brand {
+  font-family: "VT323", monospace;
+  font-size: 1.5rem;
+  color: var(--text-primary);
+  text-decoration: none;
+  letter-spacing: 0.05em;
+}
+
+.events-brand-sub {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.events-app-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.events-app-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  min-height: 0;
+}
+
+@media (max-width: 640px) {
+  .events-app-body {
+    padding: 10px;
+  }
+}

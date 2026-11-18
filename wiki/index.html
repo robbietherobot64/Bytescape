@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- The wiki is mounted at /wiki; without this base, entry URLs like
+         /wiki or /wiki/<unknown> (server fallback) would resolve relative
+         fetches against the wrong directory. -->
+    <base href="/wiki/">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Bytescape Wiki</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: #24292e;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+            background: #f6f8fa;
+            border-right: 1px solid #e1e4e8;
+            padding: 20px 0;
+            overflow-y: auto;
+            height: 100vh;
+            position: sticky;
+            top: 0;
+        }
+
+        .sidebar-header {
+            padding: 0 20px 20px;
+            border-bottom: 1px solid #e1e4e8;
+            margin-bottom: 16px;
+        }
+
+        .sidebar-header h1 {
+            font-size: 20px;
+            color: #24292e;
+        }
+
+        .sidebar-header p {
+            font-size: 12px;
+            color: #586069;
+            margin-top: 4px;
+        }
+
+        .nav-section {
+            margin-bottom: 16px;
+        }
+
+        .nav-section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #586069;
+            padding: 0 20px;
+            margin-bottom: 8px;
+        }
+
+        .nav-link {
+            display: block;
+            padding: 6px 20px;
+            color: #0366d6;
+            text-decoration: none;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .nav-link:hover {
+            background: #e1e4e8;
+        }
+
+        .nav-link.active {
+            background: #0366d6;
+            color: white;
+            font-weight: 500;
+        }
+
+        .nav-error {
+            color: #cb2431;
+            padding: 6px 20px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        /* Main content */
+        .main {
+            flex: 1;
+            padding: 40px 60px;
+            max-width: 900px;
+            overflow-y: auto;
+        }
+
+        .breadcrumb {
+            font-size: 13px;
+            color: #586069;
+            margin-bottom: 20px;
+        }
+
+        .breadcrumb a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        /* Markdown content styling */
+        .content h1 {
+            font-size: 2em;
+            border-bottom: 1px solid #e1e4e8;
+            padding-bottom: 0.3em;
+            margin-bottom: 16px;
+        }
+
+        .content h2 {
+            font-size: 1.5em;
+            border-bottom: 1px solid #e1e4e8;
+            padding-bottom: 0.3em;
+            margin-top: 24px;
+            margin-bottom: 16px;
+        }
+
+        .content h3 {
+            font-size: 1.25em;
+            margin-top: 20px;
+            margin-bottom: 12px;
+        }
+
+        .content h4 {
+            font-size: 1em;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+
+        .content p {
+            margin-bottom: 16px;
+        }
+
+        .content ul, .content ol {
+            margin-bottom: 16px;
+            padding-left: 2em;
+        }
+
+        .content li {
+            margin-bottom: 4px;
+        }
+
+        .content code {
+            background: #f6f8fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 85%;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+
+        .content pre {
+            background: #f6f8fa;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+        }
+
+        .content pre code {
+            background: none;
+            padding: 0;
+            font-size: 85%;
+        }
+
+        .content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+
+        .content th, .content td {
+            border: 1px solid #e1e4e8;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        .content th {
+            background: #f6f8fa;
+            font-weight: 600;
+        }
+
+        .content blockquote {
+            border-left: 4px solid #0366d6;
+            padding: 0 16px;
+            color: #586069;
+            margin-bottom: 16px;
+        }
+
+        .content a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+
+        .content a:hover {
+            text-decoration: underline;
+        }
+
+        .content hr {
+            border: none;
+            border-top: 1px solid #e1e4e8;
+            margin: 24px 0;
+        }
+
+        .content img {
+            max-width: 100%;
+        }
+
+        /* Loading */
+        .loading {
+            color: #586069;
+            font-style: italic;
+        }
+
+        /* Error */
+        .error {
+            color: #cb2431;
+            background: #ffeef0;
+            padding: 16px;
+            border-radius: 6px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+            .main {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>Bytescape Wiki</h1>
+            <p>AT Protocol + ActivityPub</p>
+        </div>
+        <div id="nav-container"></div>
+    </nav>
+    <main class="main">
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div class="content" id="content">
+            <p class="loading">Loading...</p>
+        </div>
+    </main>
+
+    <script src="vendor/marked.min.js"></script>
+    <script>
+        // Navigation manifest — generated at publish time by
+        // deploy/wiki-build.py from the files actually in the publish tree.
+        let PAGES = [];
+        let currentPage = null;
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Load pages.json; on failure show a visible error state instead of
+        // an empty nav (spec: manifest failure is visible).
+        async function loadNav() {
+            const container = document.getElementById('nav-container');
+            try {
+                const response = await fetch('pages.json?t=' + Date.now());
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                if (!Array.isArray(data) || data.length === 0) {
+                    throw new Error('manifest is empty');
+                }
+                PAGES = data;
+                buildNav();
+            } catch (err) {
+                PAGES = [];
+                container.innerHTML =
+                    '<div class="nav-error">Navigation unavailable — ' +
+                    escapeHtml(err.message) + '</div>';
+            }
+        }
+
+        function buildNav() {
+            // Manifest failed to load → the sidebar holds the error state;
+            // never wipe it with an empty rebuild.
+            if (PAGES.length === 0) return;
+            const container = document.getElementById('nav-container');
+            const sections = {};
+            PAGES.forEach(page => {
+                (sections[page.section] = sections[page.section] || []).push(page);
+            });
+            let html = '';
+            for (const [section, pages] of Object.entries(sections)) {
+                html += '<div class="nav-section">';
+                html += '<div class="nav-section-title">' + escapeHtml(section) + '</div>';
+                pages.forEach(page => {
+                    const active = currentPage === page.path ? ' active' : '';
+                    html += '<a class="nav-link' + active + '" data-path="' +
+                        escapeHtml(page.path) + '">' + escapeHtml(page.title) + '</a>';
+                });
+                html += '</div>';
+            }
+            container.innerHTML = html;
+        }
+
+        function updateBreadcrumb(page) {
+            const breadcrumb = document.getElementById('breadcrumb');
+            if (page.path === 'index.md') {
+                breadcrumb.innerHTML = 'Home';
+            } else {
+                breadcrumb.innerHTML = '<a onclick="loadPage(\'index.md\')">Home</a> / ' +
+                    escapeHtml(page.section) + ' / ' + escapeHtml(page.title);
+            }
+        }
+
+        // Resolve a relative link against the current page's directory,
+        // clamping ".." at the publish root.
+        function resolveWikiHref(href) {
+            const baseDir = currentPage && currentPage.includes('/')
+                ? currentPage.slice(0, currentPage.lastIndexOf('/'))
+                : '';
+            const combined = baseDir ? baseDir + '/' + href : href;
+            const segments = [];
+            for (const segment of combined.split('/')) {
+                if (segment === '' || segment === '.') continue;
+                if (segment === '..') { segments.pop(); continue; }
+                segments.push(segment);
+            }
+            return segments.join('/');
+        }
+
+        function pathFromHash() {
+            const hash = location.hash || '';
+            if (hash.startsWith('#/')) {
+                try { return decodeURIComponent(hash.slice(2)); } catch (e) { return hash.slice(2); }
+            }
+            return null;
+        }
+
+        // Deep links may omit the .md extension (spec: #/users/overview).
+        function normalizePath(path) {
+            if (!path || path.endsWith('.md')) return path;
+            if (PAGES.some(p => p.path === path + '.md')) return path + '.md';
+            return path;
+        }
+
+        async function loadPage(path, options = {}) {
+            path = normalizePath(path);
+            const updateHash = options.updateHash !== false;
+            const content = document.getElementById('content');
+            const page = PAGES.find(p => p.path === path);
+
+            currentPage = path;
+            buildNav();
+            updateBreadcrumb(page || { path: path, title: path, section: '' });
+            content.innerHTML = '<p class="loading">Loading...</p>';
+
+            if (updateHash) {
+                const target = '#/' + path;
+                if (location.hash !== target) location.hash = target;
+            }
+
+            try {
+                const response = await fetch(path + '?t=' + Date.now());
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('text/html')) {
+                    // The server's fallback page (unknown path) — not markdown.
+                    throw new Error('page not found');
+                }
+                const markdown = await response.text();
+                content.innerHTML = marked.parse(markdown);
+            } catch (err) {
+                content.innerHTML = '<div class="error">Failed to load page: ' +
+                    escapeHtml(err.message) + '</div>';
+            }
+        }
+
+        // Sidebar clicks (delegated — paths come from the manifest).
+        document.getElementById('nav-container').addEventListener('click', event => {
+            const link = event.target.closest('[data-path]');
+            if (link) loadPage(link.getAttribute('data-path'));
+        });
+
+        // In-content links: relative .md links stay inside the wiki; absolute
+        // http(s) and "#" links keep default browser behavior.
+        document.getElementById('content').addEventListener('click', event => {
+            const anchor = event.target.closest('a[href]');
+            if (!anchor) return;
+            const href = anchor.getAttribute('href');
+            if (!href || href.startsWith('#')) return;
+            if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // absolute scheme
+            const pathOnly = href.split('#')[0].split('?')[0];
+            if (!pathOnly.toLowerCase().endsWith('.md')) return;
+            event.preventDefault();
+            loadPage(resolveWikiHref(pathOnly));
+        });
+
+        // Back/forward follow wiki navigation via the hash.
+        window.addEventListener('hashchange', () => {
+            const path = pathFromHash();
+            if (path && path !== currentPage) loadPage(path, { updateHash: false });
+        });
+
+        // Initialize: nav manifest first, then the deep-linked page (or home).
+        (async function init() {
+            await loadNav();
+            const fromHash = pathFromHash();
+            loadPage(fromHash || 'index.md', { updateHash: !fromHash });
+        })();
+    </script>
+</body>
+</html>

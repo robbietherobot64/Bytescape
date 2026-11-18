@@ -1,0 +1,81 @@
+use crate::block_map::BlocksAndMissing;
+use crate::error::DataStoreError;
+use crate::parse;
+use crate::storage::ObjAndBytes;
+use crate::types::RepoRecord;
+use crate::util::cbor_to_lex_record;
+use anyhow::Result;
+use lexicon_cid::Cid;
+use serde_cbor::Value as CborValue;
+use std::future::Future;
+use std::pin::Pin;
+
+#[allow(clippy::type_complexity)]
+pub trait ReadableBlockstore: Send + Sync {
+    fn get_bytes<'a>(
+        &'a self,
+        cid: &'a Cid,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + 'a>>;
+    fn has<'a>(
+        &'a self,
+        cid: Cid,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + 'a>>;
+    fn get_blocks<'a>(
+        &'a self,
+        cids: Vec<Cid>,
+    ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + 'a>>;
+
+    fn attempt_read<'a>(
+        &'a self,
+        cid: &'a Cid,
+        check: Box<dyn Fn(CborValue) -> bool + Send + Sync>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ObjAndBytes>>> + Send + 'a>> {
+        Box::pin(async move {
+            let bytes = match self.get_bytes(cid).await {
+                Ok(Some(bytes)) => bytes,
+                _ => return Ok(None),
+            };
+            parse::parse_obj_by_kind(bytes, *cid, check).map(Some)
+        })
+    }
+
+    fn read_obj_and_bytes<'a>(
+        &'a self,
+        cid: &'a Cid,
+        check: Box<dyn Fn(CborValue) -> bool + Send + Sync>,
+    ) -> Pin<Box<dyn Future<Output = Result<ObjAndBytes>> + Send + 'a>> {
+        Box::pin(async move {
+            self.attempt_read(cid, check)
+                .await?
+                .ok_or_else(|| DataStoreError::MissingBlock(cid.to_string()).into())
+        })
+    }
+
+    fn read_obj<'a>(
+        &'a self,
+        cid: &'a Cid,
+        check: Box<dyn Fn(CborValue) -> bool + Send + Sync>,
+    ) -> Pin<Box<dyn Future<Output = Result<CborValue>> + Send + 'a>> {
+        Box::pin(async move { Ok(self.read_obj_and_bytes(cid, check).await?.obj) })
+    }
+
+    fn attempt_read_record<'a>(
+        &'a self,
+        cid: &'a Cid,
+    ) -> Pin<Box<dyn Future<Output = Option<RepoRecord>> + Send + 'a>> {
+        Box::pin(async move { (self.read_record(cid).await).ok() })
+    }
+
+    fn read_record<'a>(
+        &'a self,
+        cid: &'a Cid,
+    ) -> Pin<Box<dyn Future<Output = Result<RepoRecord>> + Send + 'a>> {
+        Box::pin(async move {
+            let bytes = self.get_bytes(cid).await?;
+            bytes
+                .map(cbor_to_lex_record)
+                .transpose()?
+                .ok_or_else(|| DataStoreError::MissingBlock(cid.to_string()).into())
+        })
+    }
+}

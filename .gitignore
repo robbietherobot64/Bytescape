@@ -1,0 +1,35 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+
+# Environment (never commit real .env files)
+.env
+.env.local
+bytescape-server/.env
+
+# Operating system / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Runtime data
+bytescape-server/uploads/
+bytescape-server/backups/
+bytescape-server/private_stories/
+
+# Verification / QA output
+qa-shots/
+*.log
+
+# GDPR data archives (user data — never commit). Test fixtures excepted:
+# small, representative archives checked in with the import tests.
+instagram-*/
+facebook-*/
+*.zip
+!bytescape-server/tests/fixtures/*.zip
